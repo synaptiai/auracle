@@ -1,0 +1,588 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic support system — playbook and whiteboard pack</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EDEFF1; --card:#FFFFFF; --ink:#10171E; --ink2:#46525E; --ink3:#7B8894;
+  --rule:#D5DADF; --rule2:#C2C9D0;
+  --agent:#0E6E58; --agent-bg:#DCEFE9; --agent-ink:#0A4D3D; --agent-sub:#2E7A66;
+  --human:#A4431F; --human-bg:#F7E5DC; --human-ink:#7C3116; --human-sub:#A4431F;
+  --neutral-bg:#E2E7EA; --neutral-ink:#26313A; --neutral-sub:#5A6772;
+  --band-b:#EFE7DC;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --paper:#0D1317; --card:#141C22; --ink:#E5EAED; --ink2:#A2AEB7; --ink3:#717E88;
+    --rule:#232D35; --rule2:#2E3A43;
+    --agent:#5FCCAA; --agent-bg:#123029; --agent-ink:#A9E6CE; --agent-sub:#6FBFA4;
+    --human:#E4906B; --human-bg:#33190F; --human-ink:#F0B79A; --human-sub:#C7845F;
+    --neutral-bg:#1C252C; --neutral-ink:#D3DBE0; --neutral-sub:#8E9AA3;
+    --band-b:#2B2519;
+  }
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:"Source Serif 4",Georgia,serif; font-size:17px; line-height:1.62;
+  font-variant-numeric:tabular-nums;
+}
+.wrap{max-width:1020px;margin:0 auto;padding:0 28px 100px}
+.col{max-width:760px}
+h1,h2,h3,.tag,.bar b{font-family:Archivo,"Helvetica Neue",Arial,sans-serif}
+.kicker,.eyebrow,.rule-label,.phase-n,.part-n{font-family:"IBM Plex Mono",ui-monospace,monospace}
+
+header{padding:64px 0 0}
+.kicker{
+  font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink3);
+  margin:0 0 26px; display:flex; gap:14px; flex-wrap:wrap; align-items:baseline;
+}
+.kicker span:not(:last-child)::after{content:" /"; color:var(--rule2)}
+h1{font-size:clamp(38px,6.4vw,68px); line-height:.98; letter-spacing:-.035em; font-weight:700; margin:0 0 22px; max-width:14ch}
+.thesis{font-size:clamp(19px,2.2vw,23px); line-height:1.45; margin:0; max-width:34ch}
+.thesis em{font-style:normal; box-shadow:inset 0 -.42em 0 var(--agent-bg)}
+.sub{color:var(--ink2); max-width:56ch; margin:18px 0 0}
+
+.band{margin:54px 0 0; border-top:1px solid var(--rule); padding-top:14px}
+.band-head{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:12px}
+.band-head .rule-label{font-size:11px; letter-spacing:.13em; text-transform:uppercase; color:var(--ink3)}
+.bars{display:flex; height:52px; border:1px solid var(--rule2); border-radius:3px; overflow:hidden}
+.bar{position:relative; display:flex; align-items:center; padding:0 16px; min-width:0}
+.bar + .bar{border-left:1px solid var(--rule2)}
+.b1{flex:0 0 22%; background:var(--card)}
+.b2{flex:0 0 28%; background:var(--band-b)}
+.b3{flex:1 1 auto; background:var(--agent-bg)}
+.bar b{font-weight:600; font-size:14px; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.b1 b{color:var(--human-ink)} .b2 b{color:var(--ink)} .b3 b{color:var(--agent-ink)}
+.scale{display:flex; margin-top:8px; font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--ink3)}
+.scale span{flex:0 0 22%} .scale span:nth-child(2){flex:0 0 28%} .scale span:last-child{flex:1 1 auto; text-align:right}
+.band-note{margin:14px 0 0; font-size:15px; color:var(--ink2); max-width:60ch}
+
+.part{margin-top:88px; border-top:2px solid var(--ink); padding-top:12px; display:flex; gap:14px; align-items:baseline; flex-wrap:wrap}
+.part-n{font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink3)}
+.part p{margin:0; font-size:15px; color:var(--ink2); flex:1 1 320px}
+.part h2{font-size:clamp(22px,2.6vw,28px)}
+
+section{margin-top:66px}
+.sec-head{display:flex; align-items:baseline; gap:14px; border-bottom:1px solid var(--rule); padding-bottom:10px; margin-bottom:26px; flex-wrap:wrap}
+h2{font-size:clamp(24px,3vw,32px); letter-spacing:-.025em; font-weight:600; margin:0; flex:1 1 auto}
+h3{font-size:19px; letter-spacing:-.015em; font-weight:600; margin:38px 0 4px}
+.tag{font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; padding:4px 8px; border-radius:2px; white-space:nowrap; font-weight:500}
+.t-agent{background:var(--agent-bg); color:var(--agent-ink)}
+.t-human{background:var(--human-bg); color:var(--human-ink)}
+.t-shared{background:var(--neutral-bg); color:var(--neutral-ink)}
+p{margin:0 0 16px}
+ul{margin:0 0 18px; padding:0; list-style:none}
+li{position:relative; padding-left:24px; margin-bottom:9px}
+li::before{content:""; position:absolute; left:2px; top:.62em; width:9px; height:1px; background:var(--rule2)}
+.why{border-left:2px solid var(--agent); padding:2px 0 2px 18px; margin:20px 0 0; font-size:15.5px; color:var(--ink2)}
+.why b{font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--agent); display:block; margin-bottom:4px; font-weight:500}
+
+figure{margin:30px 0 10px; background:var(--card); border:1px solid var(--rule); border-radius:4px; padding:22px 20px 16px}
+figure svg{display:block; width:100%; height:auto}
+figcaption{margin-top:14px; padding-top:12px; border-top:1px solid var(--rule); font-size:14.5px; color:var(--ink2); max-width:70ch}
+figcaption b{font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink3); display:block; margin-bottom:4px; font-weight:500}
+svg text{font-family:Archivo,sans-serif}
+.st{font-size:13.5px; font-weight:600}
+.ss{font-size:11.5px}
+.sl{font-size:10.5px; font-family:"IBM Plex Mono",monospace; fill:var(--ink3); letter-spacing:.08em}
+.sf{font-size:11px; font-family:"IBM Plex Mono",monospace; fill:var(--ink2)}
+.a rect{fill:var(--agent-bg); stroke:var(--agent); stroke-width:.6}
+.a .st{fill:var(--agent-ink)} .a .ss{fill:var(--agent-sub)} .a .sf{fill:var(--agent-sub)}
+.h rect{fill:var(--human-bg); stroke:var(--human); stroke-width:.6}
+.h .st{fill:var(--human-ink)} .h .ss{fill:var(--human-sub)} .h .sf{fill:var(--human-sub)}
+.n rect{fill:var(--neutral-bg); stroke:var(--rule2); stroke-width:.6}
+.n .st{fill:var(--neutral-ink)} .n .ss{fill:var(--neutral-sub)} .n .sf{fill:var(--neutral-sub)}
+.frame{fill:none; stroke:var(--rule2); stroke-width:.6; stroke-dasharray:3 3}
+.lane{fill:var(--paper); stroke:var(--rule); stroke-width:.6}
+.arr{stroke:var(--ink3); stroke-width:1.1; fill:none}
+.hair{stroke:var(--rule2); stroke-width:.6; fill:none}
+
+.phases{border-top:1px solid var(--rule)}
+.phase{display:grid; grid-template-columns:64px 1fr; gap:20px; padding:22px 0; border-bottom:1px solid var(--rule)}
+.phase-n{font-size:12px; letter-spacing:.1em; color:var(--ink3); padding-top:5px}
+.phase h3{margin:0 0 8px; font-size:18px}
+.phase ul{margin:0}
+
+.script{background:var(--card); border:1px solid var(--rule); border-radius:4px; padding:26px 26px 10px}
+.script h3:first-child{margin-top:0}
+
+.sources{margin-top:34px; font-size:14px; color:var(--ink2)}
+.sources a{color:var(--ink2); text-decoration:none; border-bottom:1px solid var(--rule2)}
+.sources a:hover{color:var(--ink); border-color:var(--ink3)}
+.sources ul{columns:2; column-gap:36px}
+.sources li{margin-bottom:6px; break-inside:avoid}
+footer{margin-top:70px; padding-top:16px; border-top:1px solid var(--rule); font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink3); display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap}
+a:focus-visible{outline:2px solid var(--agent); outline-offset:3px}
+
+@media (max-width:640px){
+  .wrap{padding:0 18px 70px}
+  header{padding-top:40px}
+  .bars{height:auto; flex-direction:column}
+  .bar{padding:12px 14px}
+  .bar + .bar{border-left:none; border-top:1px solid var(--rule2)}
+  .b1,.b2,.b3{flex:1 1 auto}
+  .scale{display:none}
+  .phase{grid-template-columns:1fr; gap:6px}
+  .sources ul{columns:1}
+}
+@media print{
+  body{background:#fff; font-size:10.5pt; line-height:1.5}
+  .wrap{max-width:none; padding:0}
+  figure,.phase,.script{break-inside:avoid}
+  .sec-head,h2,h3{break-after:avoid}
+  .part{break-after:avoid; margin-top:34px}
+  .bar b{font-size:11px}
+  .b2{flex:0 0 33%}
+  section{margin-top:34px}
+  h1{font-size:34pt}
+  figure{padding:14px 14px 10px}
+  footer{break-inside:avoid}
+  *{-webkit-print-color-adjust:exact; print-color-adjust:exact}
+}
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="kicker"><span>Whiteboard pack</span><span>Support architecture</span><span>v2</span></p>
+  <h1>Support as an event-driven system</h1>
+  <p class="thesis">Volume grows faster than headcount. The answer is not more agents, it is <em>a boundary you can defend</em>.</p>
+  <p class="sub">Two parts. Part one is the session: three diagrams to draw on the wall, in order, with the argument each one is designed to provoke. Part two is the build underneath, with the detail diagrams you reach for when someone asks how a piece actually works.</p>
+
+  <div class="band">
+    <div class="band-head">
+      <span class="rule-label">Classifier confidence</span>
+      <span class="rule-label">Who resolves</span>
+    </div>
+    <div class="bars">
+      <div class="bar b1"><b>Manual triage</b></div>
+      <div class="bar b2"><b>Agent suggests, human approves</b></div>
+      <div class="bar b3"><b>Automated resolution</b></div>
+    </div>
+    <div class="scale"><span>0</span><span>60</span><span>85 &nbsp;&nbsp;&nbsp;100</span></div>
+    <p class="band-note">The split is by confidence and risk, not by topic. The same billing question can land in any of the three bands depending on what the classifier knows about the account. Set these two numbers before you set anything else.</p>
+  </div>
+</header>
+
+<div class="part">
+  <span class="part-n">Part one</span>
+  <h2>The session</h2>
+  <p>Three diagrams, drawn in this order. Each one raises the question the next one answers.</p>
+</div>
+
+<section>
+  <div class="sec-head"><h2>The system map</h2><span class="tag t-shared">Draw first</span></div>
+  <figure>
+    <svg viewBox="0 0 680 536" role="img" aria-label="Channels feed a multi-agent support brain backed by a unified knowledge layer, which routes work to support, product and customer success, with metrics underneath.">
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+      <g class="n"><rect x="250" y="40" width="180" height="56" rx="3"/><text class="st" x="340" y="60" text-anchor="middle" dominant-baseline="central">Channels</text><text class="ss" x="340" y="80" text-anchor="middle" dominant-baseline="central">In-app, email, chat, API</text></g>
+      <line x1="340" y1="96" x2="340" y2="123" class="arr" marker-end="url(#ar)"/>
+      <rect class="frame" x="40" y="125" width="600" height="185" rx="6"/>
+      <text class="sl" x="56" y="146">SUPPORT BRAIN</text>
+      <g class="a"><rect x="60" y="166" width="132" height="56" rx="3"/><text class="st" x="126" y="184" text-anchor="middle" dominant-baseline="central">Intake</text><text class="ss" x="126" y="204" text-anchor="middle" dominant-baseline="central">classify, enrich</text></g>
+      <g class="a"><rect x="202" y="166" width="132" height="56" rx="3"/><text class="st" x="268" y="184" text-anchor="middle" dominant-baseline="central">Answer</text><text class="ss" x="268" y="204" text-anchor="middle" dominant-baseline="central">grounded retrieval</text></g>
+      <g class="a"><rect x="344" y="166" width="132" height="56" rx="3"/><text class="st" x="410" y="184" text-anchor="middle" dominant-baseline="central">Workflow</text><text class="ss" x="410" y="204" text-anchor="middle" dominant-baseline="central">runs automations</text></g>
+      <g class="a"><rect x="486" y="166" width="132" height="56" rx="3"/><text class="st" x="552" y="184" text-anchor="middle" dominant-baseline="central">Escalation</text><text class="ss" x="552" y="204" text-anchor="middle" dominant-baseline="central">human handoff</text></g>
+      <g class="n"><rect x="60" y="236" width="558" height="52" rx="3"/><text class="st" x="339" y="253" text-anchor="middle" dominant-baseline="central">Unified knowledge layer</text><text class="ss" x="339" y="273" text-anchor="middle" dominant-baseline="central">Docs, tickets, telemetry, CRM, release notes</text></g>
+      <line x1="130" y1="312" x2="130" y2="348" class="arr" marker-end="url(#ar)"/>
+      <line x1="340" y1="312" x2="340" y2="348" class="arr" marker-end="url(#ar)"/>
+      <line x1="550" y1="312" x2="550" y2="348" class="arr" marker-end="url(#ar)"/>
+      <g class="h"><rect x="40" y="350" width="180" height="56" rx="3"/><text class="st" x="130" y="368" text-anchor="middle" dominant-baseline="central">Support team</text><text class="ss" x="130" y="388" text-anchor="middle" dominant-baseline="central">escalations, full context</text></g>
+      <g class="h"><rect x="250" y="350" width="180" height="56" rx="3"/><text class="st" x="340" y="368" text-anchor="middle" dominant-baseline="central">Product and eng</text><text class="ss" x="340" y="388" text-anchor="middle" dominant-baseline="central">bugs, feature asks</text></g>
+      <g class="h"><rect x="460" y="350" width="180" height="56" rx="3"/><text class="st" x="550" y="368" text-anchor="middle" dominant-baseline="central">Customer success</text><text class="ss" x="550" y="388" text-anchor="middle" dominant-baseline="central">health risks, accounts</text></g>
+      <line x1="130" y1="408" x2="130" y2="438" class="arr" marker-end="url(#ar)"/>
+      <line x1="340" y1="408" x2="340" y2="438" class="arr" marker-end="url(#ar)"/>
+      <line x1="550" y1="408" x2="550" y2="438" class="arr" marker-end="url(#ar)"/>
+      <g class="n"><rect x="40" y="440" width="600" height="56" rx="3"/><text class="st" x="340" y="458" text-anchor="middle" dominant-baseline="central">Metrics and guardrails</text><text class="ss" x="340" y="478" text-anchor="middle" dominant-baseline="central">Containment, CSAT, escalation rate, re-open rate, audit logs</text></g>
+    </svg>
+    <figcaption><b>How to narrate it</b>Left to right, top to bottom. Every support event passes through the brain, which decides one of three things: answer, run an automation, or escalate. Nothing routes around it, which is what makes the metrics bar at the bottom meaningful.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="sec-head"><h2>The case lifecycle</h2><span class="tag t-shared">Draw second</span></div>
+  <figure>
+    <svg viewBox="0 0 680 506" role="img" aria-label="Four swimlanes: user, agents, humans, product. A request is triaged then auto-resolved, human-confirmed, or handed off, before feeding the backlog and returning to the user.">
+      <defs><marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+      <rect class="lane" x="40" y="40" width="600" height="84" rx="3"/>
+      <rect class="lane" x="40" y="132" width="600" height="150" rx="3"/>
+      <rect class="lane" x="40" y="290" width="600" height="84" rx="3"/>
+      <rect class="lane" x="40" y="382" width="600" height="84" rx="3"/>
+      <text class="sl" x="50" y="60">USER</text>
+      <text class="sl" x="50" y="152">AGENTS</text>
+      <text class="sl" x="50" y="310">HUMANS</text>
+      <text class="sl" x="50" y="402">PRODUCT</text>
+      <g class="n"><rect x="56" y="66" width="130" height="46" rx="3"/><text class="st" x="121" y="89" text-anchor="middle" dominant-baseline="central">Request in</text></g>
+      <g class="n"><rect x="348" y="66" width="130" height="46" rx="3"/><text class="st" x="413" y="89" text-anchor="middle" dominant-baseline="central">Response</text></g>
+      <g class="a"><rect x="56" y="158" width="130" height="52" rx="3"/><text class="st" x="121" y="175" text-anchor="middle" dominant-baseline="central">Intake</text><text class="ss" x="121" y="195" text-anchor="middle" dominant-baseline="central">classify, route</text></g>
+      <g class="a"><rect x="202" y="158" width="130" height="52" rx="3"/><text class="st" x="267" y="175" text-anchor="middle" dominant-baseline="central">Auto-resolve</text><text class="ss" x="267" y="195" text-anchor="middle" dominant-baseline="central">conf. &gt; 85</text></g>
+      <g class="a"><rect x="202" y="220" width="130" height="52" rx="3"/><text class="st" x="267" y="237" text-anchor="middle" dominant-baseline="central">Human check</text><text class="ss" x="267" y="257" text-anchor="middle" dominant-baseline="central">conf. 60 to 85</text></g>
+      <g class="a"><rect x="348" y="220" width="130" height="52" rx="3"/><text class="st" x="413" y="237" text-anchor="middle" dominant-baseline="central">Feedback</text><text class="ss" x="413" y="257" text-anchor="middle" dominant-baseline="central">cluster, dedupe</text></g>
+      <g class="h"><rect x="202" y="316" width="130" height="52" rx="3"/><text class="st" x="267" y="333" text-anchor="middle" dominant-baseline="central">Handoff</text><text class="ss" x="267" y="353" text-anchor="middle" dominant-baseline="central">conf. &lt; 60</text></g>
+      <g class="h"><rect x="494" y="408" width="130" height="52" rx="3"/><text class="st" x="559" y="425" text-anchor="middle" dominant-baseline="central">Backlog</text><text class="ss" x="559" y="445" text-anchor="middle" dominant-baseline="central">roadmap items</text></g>
+      <line x1="121" y1="112" x2="121" y2="156" class="arr" marker-end="url(#ar2)"/>
+      <line x1="186" y1="184" x2="200" y2="184" class="arr" marker-end="url(#ar2)"/>
+      <path d="M186 184 L194 184 L194 246 L200 246" class="arr" marker-end="url(#ar2)"/>
+      <path d="M121 210 L121 342 L200 342" class="arr" marker-end="url(#ar2)"/>
+      <path d="M267 158 L267 89 L346 89" class="arr" marker-end="url(#ar2)"/>
+      <line x1="332" y1="246" x2="346" y2="246" class="arr" marker-end="url(#ar2)"/>
+      <path d="M332 342 L413 342 L413 274" class="arr" marker-end="url(#ar2)"/>
+      <path d="M478 246 L486 246 L486 434 L492 434" class="arr" marker-end="url(#ar2)"/>
+      <path d="M624 408 L636 408 L636 89 L480 89" class="arr" marker-end="url(#ar2)"/>
+    </svg>
+    <figcaption><b>How to narrate it</b>One request, four actors, three resolution paths. Follow the three arrows out of intake and say the confidence number out loud each time. The long arrow up the right edge is the changelog reaching the person who reported the problem.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="sec-head"><h2>The learning loop</h2><span class="tag t-shared">Draw third</span></div>
+  <figure>
+    <svg viewBox="0 0 680 284" role="img" aria-label="User signals feed tagging, which drives product and knowledge base changes, which drive proactive outreach, which returns fewer and better signals.">
+      <defs><marker id="ar3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+      <g class="a"><rect x="40" y="60" width="135" height="56" rx="3"/><text class="st" x="107" y="78" text-anchor="middle" dominant-baseline="central">User signals</text><text class="ss" x="107" y="98" text-anchor="middle" dominant-baseline="central">tickets, usage, surveys</text></g>
+      <g class="a"><rect x="195" y="60" width="135" height="56" rx="3"/><text class="st" x="262" y="78" text-anchor="middle" dominant-baseline="central">Tagging</text><text class="ss" x="262" y="98" text-anchor="middle" dominant-baseline="central">cluster, dedupe, score</text></g>
+      <g class="h"><rect x="350" y="60" width="135" height="56" rx="3"/><text class="st" x="417" y="78" text-anchor="middle" dominant-baseline="central">Product, KB</text><text class="ss" x="417" y="98" text-anchor="middle" dominant-baseline="central">ships the change</text></g>
+      <g class="h"><rect x="505" y="60" width="135" height="56" rx="3"/><text class="st" x="572" y="78" text-anchor="middle" dominant-baseline="central">Outreach</text><text class="ss" x="572" y="98" text-anchor="middle" dominant-baseline="central">guides, in-app, notes</text></g>
+      <line x1="177" y1="88" x2="193" y2="88" class="arr" marker-end="url(#ar3)"/>
+      <line x1="332" y1="88" x2="348" y2="88" class="arr" marker-end="url(#ar3)"/>
+      <line x1="487" y1="88" x2="503" y2="88" class="arr" marker-end="url(#ar3)"/>
+      <path d="M572 116 L572 160 L107 160 L107 118" class="arr" marker-end="url(#ar3)"/>
+      <text class="sl" x="340" y="180" text-anchor="middle">FEWER TICKETS, HIGHER-QUALITY SIGNAL</text>
+      <g class="n"><rect x="190" y="200" width="300" height="44" rx="3"/><text class="ss" x="340" y="222" text-anchor="middle" dominant-baseline="central">Containment, CSAT, onboarding effort score</text></g>
+    </svg>
+    <figcaption><b>How to narrate it</b>This is the diagram that decides whether the system improves or only deflects. Put a name against the return arrow before the session ends. Without an owner, volume drops, everyone declares victory, and the signal never reaches the roadmap.</figcaption>
+  </figure>
+</section>
+
+<div class="part">
+  <span class="part-n">Part two</span>
+  <h2>The build</h2>
+  <p>What sits behind each box on the wall. Detail diagrams here are backup, not slides. Draw them only when someone asks.</p>
+</div>
+
+<section>
+  <div class="col">
+    <div class="sec-head"><h2>Front door</h2><span class="tag t-agent">Agent owns</span></div>
+    <ul>
+      <li>One entry point across chat, email, in-app widget and API. Enrich with plan, workspace, account state and recent product events before anything is classified.</li>
+      <li>Classification produces three things at once: type, urgency and confidence. Type decides the destination. Confidence decides who handles it.</li>
+      <li>Above 85, auto-route and resolve. Between 60 and 85, the agent drafts and a human approves. Below 60, manual triage with the enrichment already attached.</li>
+      <li>Bug, feature request and usage confusion go to different systems. Bugs carry structured fields into the issue tracker. Feature requests go to the feedback store, never the ticket queue.</li>
+    </ul>
+    <div class="why"><b>Why</b>Triage before the queue removes the back-and-forth. Tagging and routing is the highest-return first move because it improves throughput without taking risky actions.</div>
+  </div>
+  <figure>
+    <svg viewBox="0 0 680 588" role="img" aria-label="Detailed intake flow: request is enriched, classified, split by confidence into manual triage, agent-suggests, or auto-resolve, then routed by type to the issue tracker, feedback store or answer agent.">
+      <defs><marker id="ar4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+      <g class="n"><rect x="270" y="30" width="140" height="44" rx="3"/><text class="st" x="340" y="52" text-anchor="middle" dominant-baseline="central">Inbound request</text></g>
+      <line x1="340" y1="74" x2="340" y2="92" class="arr" marker-end="url(#ar4)"/>
+      <g class="n"><rect x="40" y="94" width="140" height="56" rx="3"/><text class="st" x="110" y="112" text-anchor="middle" dominant-baseline="central">Context sources</text><text class="ss" x="110" y="132" text-anchor="middle" dominant-baseline="central">auth, billing, telemetry</text></g>
+      <line x1="180" y1="122" x2="198" y2="122" class="arr" marker-end="url(#ar4)"/>
+      <g class="a"><rect x="200" y="94" width="280" height="56" rx="3"/><text class="st" x="340" y="112" text-anchor="middle" dominant-baseline="central">Enrich</text><text class="ss" x="340" y="132" text-anchor="middle" dominant-baseline="central">plan, workspace, recent events, history</text></g>
+      <line x1="340" y1="150" x2="340" y2="176" class="arr" marker-end="url(#ar4)"/>
+      <g class="a"><rect x="200" y="178" width="280" height="56" rx="3"/><text class="st" x="340" y="196" text-anchor="middle" dominant-baseline="central">Classify</text><text class="ss" x="340" y="216" text-anchor="middle" dominant-baseline="central">type, urgency, sentiment, confidence</text></g>
+      <path d="M340 234 L340 250" class="hair"/>
+      <path d="M125 250 L545 250" class="hair"/>
+      <path d="M125 250 L125 258" class="arr" marker-end="url(#ar4)"/>
+      <path d="M330 250 L330 258" class="arr" marker-end="url(#ar4)"/>
+      <path d="M545 250 L545 258" class="arr" marker-end="url(#ar4)"/>
+      <g class="h"><rect x="40" y="262" width="170" height="44" rx="3"/><text class="st" x="125" y="284" text-anchor="middle" dominant-baseline="central">conf. &lt; 60</text></g>
+      <g class="n"><rect x="230" y="262" width="200" height="44" rx="3"/><text class="st" x="330" y="284" text-anchor="middle" dominant-baseline="central">conf. 60 to 85</text></g>
+      <g class="a"><rect x="450" y="262" width="190" height="44" rx="3"/><text class="st" x="545" y="284" text-anchor="middle" dominant-baseline="central">conf. &gt; 85</text></g>
+      <line x1="125" y1="306" x2="125" y2="326" class="arr" marker-end="url(#ar4)"/>
+      <line x1="330" y1="306" x2="330" y2="326" class="arr" marker-end="url(#ar4)"/>
+      <line x1="545" y1="306" x2="545" y2="326" class="arr" marker-end="url(#ar4)"/>
+      <g class="h"><rect x="40" y="328" width="170" height="56" rx="3"/><text class="st" x="125" y="346" text-anchor="middle" dominant-baseline="central">Manual triage</text><text class="ss" x="125" y="366" text-anchor="middle" dominant-baseline="central">context pre-attached</text></g>
+      <g class="n"><rect x="230" y="328" width="200" height="56" rx="3"/><text class="st" x="330" y="346" text-anchor="middle" dominant-baseline="central">Agent suggests</text><text class="ss" x="330" y="366" text-anchor="middle" dominant-baseline="central">human approves the tag</text></g>
+      <g class="a"><rect x="450" y="328" width="190" height="56" rx="3"/><text class="st" x="545" y="346" text-anchor="middle" dominant-baseline="central">Auto-route</text><text class="ss" x="545" y="366" text-anchor="middle" dominant-baseline="central">no human touch</text></g>
+      <path d="M125 384 L125 406" class="hair"/>
+      <path d="M330 384 L330 406" class="hair"/>
+      <path d="M545 384 L545 406" class="hair"/>
+      <path d="M125 406 L545 406" class="hair"/>
+      <path d="M340 406 L340 424" class="arr" marker-end="url(#ar4)"/>
+      <g class="a"><rect x="200" y="426" width="280" height="44" rx="3"/><text class="st" x="340" y="448" text-anchor="middle" dominant-baseline="central">Route by type</text></g>
+      <path d="M340 470 L340 486" class="hair"/>
+      <path d="M135 486 L545 486" class="hair"/>
+      <path d="M135 486 L135 494" class="arr" marker-end="url(#ar4)"/>
+      <path d="M340 486 L340 494" class="arr" marker-end="url(#ar4)"/>
+      <path d="M545 486 L545 494" class="arr" marker-end="url(#ar4)"/>
+      <g class="h"><rect x="40" y="498" width="190" height="56" rx="3"/><text class="st" x="135" y="516" text-anchor="middle" dominant-baseline="central">Issue tracker</text><text class="ss" x="135" y="536" text-anchor="middle" dominant-baseline="central">bug, structured fields</text></g>
+      <g class="h"><rect x="245" y="498" width="190" height="56" rx="3"/><text class="st" x="340" y="516" text-anchor="middle" dominant-baseline="central">Feedback store</text><text class="ss" x="340" y="536" text-anchor="middle" dominant-baseline="central">feature request</text></g>
+      <g class="a"><rect x="450" y="498" width="190" height="56" rx="3"/><text class="st" x="545" y="516" text-anchor="middle" dominant-baseline="central">Answer agent</text><text class="ss" x="545" y="536" text-anchor="middle" dominant-baseline="central">usage confusion</text></g>
+    </svg>
+    <figcaption><b>Detail: intake and triage</b>Two independent decisions, made in one pass. The horizontal split is confidence and decides who touches the ticket. The vertical split at the bottom is type and decides which system receives it. Teams conflate these and end up routing feature requests into the support queue.</figcaption>
+  </figure>
+</section>
+
+<section class="col">
+  <div class="sec-head"><h2>Knowledge layer</h2><span class="tag t-shared">Shared</span></div>
+  <ul>
+    <li>One hub: docs, FAQs, troubleshooting flows, release notes, public changelog. This is the grounding source for every agent.</li>
+    <li>Structure content around intents, not features. "Why is my workspace locked" is a page. Target a 90-second self-solve.</li>
+    <li>Every agent answer cites the article or snippet it came from, so answers can be audited and corrected.</li>
+  </ul>
+  <div class="why"><b>Why</b>Grounded answers are correctable. Ungrounded answers are not. This is also the box teams skip, and it is the one that determines whether the rest works.</div>
+</section>
+
+<section class="col">
+  <div class="sec-head"><h2>Autonomous resolution</h2><span class="tag t-agent">Agent owns</span></div>
+  <ul>
+    <li>Start with password resets, account access checks, and subscription or plan status, wired to auth and billing.</li>
+    <li>Deterministic flows for onboarding questions: inviting teammates, connecting a provider, first workflow run.</li>
+    <li>Fire automation off product events. An error code or rate-limit trigger either fixes the issue or offers a one-click fix.</li>
+  </ul>
+  <div class="why"><b>Why</b>High volume and low complexity first. Containment in the 60 to 70 percent range is reachable on this class of ticket without moving CSAT.</div>
+</section>
+
+<section class="col">
+  <div class="sec-head"><h2>In-product support</h2><span class="tag t-agent">Agent owns</span></div>
+  <ul>
+    <li>Embed the agent where the work happens, with access to the current page, recent actions and workspace configuration.</li>
+    <li>Side panel on complex flows: explain the error, propose the fix, or open a ticket that is already filled in.</li>
+    <li>Behaviour triggers. Three failed retries on the same action offers help before the user files anything.</li>
+  </ul>
+  <div class="why"><b>Why</b>A ticket that is never filed costs nothing to resolve. Catching friction at the point of failure beats catching it after churn risk appears.</div>
+</section>
+
+<section class="col">
+  <div class="sec-head"><h2>Noise and signal</h2><span class="tag t-shared">Shared</span></div>
+  <ul>
+    <li>Feedback intake is a separate flow from incident support. Structured fields: workflow affected, frequency, business impact.</li>
+    <li>Cluster into themes and merge duplicates automatically. Product sees trends, not raw volume.</li>
+    <li>Changelog entries reference the intents they close. Tell people when their report shipped.</li>
+  </ul>
+  <div class="why"><b>Why</b>Treating all feedback as equal buries the signal. Closing the loop out loud is what makes people willing to use self-service next time.</div>
+</section>
+
+<section class="col">
+  <div class="sec-head"><h2>Proactive education</h2><span class="tag t-human">Human owns</span></div>
+  <ul>
+    <li>Effort-score micro-surveys at defined moments: first automation run, first cowork session, first integration.</li>
+    <li>Playbooks for the common jobs to be done. Support reuses them as the canonical answer rather than writing prose each time.</li>
+    <li>Surface recorded sessions automatically when a ticket matches the topic.</li>
+  </ul>
+  <div class="why"><b>Why</b>Short surveys at the moment of friction produce better data than long ones sent a week later.</div>
+</section>
+
+<section>
+  <div class="col">
+    <div class="sec-head"><h2>Escalation design</h2><span class="tag t-shared">Shared</span></div>
+    <ul>
+      <li>Policy per intent, not per channel. The matrix below is the whole policy. Every intent gets a risk tier, and the tier plus the confidence band determines who acts.</li>
+      <li>Hard triggers override the matrix regardless of confidence: negative sentiment, phrases like cancel or security, high-value accounts, and multi-channel contact inside a short window.</li>
+      <li>Nothing crosses the boundary empty-handed. The handoff payload is a contract, not a courtesy.</li>
+    </ul>
+  </div>
+  <figure>
+    <svg viewBox="0 0 680 300" role="img" aria-label="Policy matrix mapping intent risk tier against classifier confidence band to determine whether an agent or a human resolves.">
+      <text class="sl" x="40" y="34">INTENT RISK</text>
+      <text class="sl" x="245" y="34" text-anchor="middle">CONF. &lt; 60</text>
+      <text class="sl" x="405" y="34" text-anchor="middle">CONF. 60 TO 85</text>
+      <text class="sl" x="565" y="34" text-anchor="middle">CONF. &gt; 85</text>
+      <line x1="40" y1="46" x2="640" y2="46" class="hair"/>
+      <g class="n"><rect x="40" y="58" width="120" height="60" rx="3"/><text class="st" x="100" y="88" text-anchor="middle" dominant-baseline="central">Low</text></g>
+      <g class="n"><rect x="170" y="58" width="150" height="60" rx="3"/><text class="st" x="245" y="80" text-anchor="middle" dominant-baseline="central">Human triage</text><text class="ss" x="245" y="98" text-anchor="middle" dominant-baseline="central">tag it, then automate</text></g>
+      <g class="a"><rect x="330" y="58" width="150" height="60" rx="3"/><text class="st" x="405" y="80" text-anchor="middle" dominant-baseline="central">Auto, logged</text><text class="ss" x="405" y="98" text-anchor="middle" dominant-baseline="central">sampled weekly</text></g>
+      <g class="a"><rect x="490" y="58" width="150" height="60" rx="3"/><text class="st" x="565" y="80" text-anchor="middle" dominant-baseline="central">Auto-resolve</text><text class="ss" x="565" y="98" text-anchor="middle" dominant-baseline="central">no human touch</text></g>
+      <g class="n"><rect x="40" y="128" width="120" height="60" rx="3"/><text class="st" x="100" y="158" text-anchor="middle" dominant-baseline="central">Medium</text></g>
+      <g class="h"><rect x="170" y="128" width="150" height="60" rx="3"/><text class="st" x="245" y="150" text-anchor="middle" dominant-baseline="central">Human</text><text class="ss" x="245" y="168" text-anchor="middle" dominant-baseline="central">agent attaches context</text></g>
+      <g class="n"><rect x="330" y="128" width="150" height="60" rx="3"/><text class="st" x="405" y="150" text-anchor="middle" dominant-baseline="central">Agent drafts</text><text class="ss" x="405" y="168" text-anchor="middle" dominant-baseline="central">human sends</text></g>
+      <g class="a"><rect x="490" y="128" width="150" height="60" rx="3"/><text class="st" x="565" y="150" text-anchor="middle" dominant-baseline="central">Auto, notified</text><text class="ss" x="565" y="168" text-anchor="middle" dominant-baseline="central">human can reverse</text></g>
+      <g class="n"><rect x="40" y="198" width="120" height="60" rx="3"/><text class="st" x="100" y="228" text-anchor="middle" dominant-baseline="central">High</text></g>
+      <g class="h"><rect x="170" y="198" width="150" height="60" rx="3"/><text class="st" x="245" y="220" text-anchor="middle" dominant-baseline="central">Human</text><text class="ss" x="245" y="238" text-anchor="middle" dominant-baseline="central">senior queue</text></g>
+      <g class="h"><rect x="330" y="198" width="150" height="60" rx="3"/><text class="st" x="405" y="220" text-anchor="middle" dominant-baseline="central">Human</text><text class="ss" x="405" y="238" text-anchor="middle" dominant-baseline="central">agent preps only</text></g>
+      <g class="h"><rect x="490" y="198" width="150" height="60" rx="3"/><text class="st" x="565" y="220" text-anchor="middle" dominant-baseline="central">Human</text><text class="ss" x="565" y="238" text-anchor="middle" dominant-baseline="central">agent preps only</text></g>
+      <text class="sl" x="40" y="284">HARD TRIGGERS OVERRIDE EVERY CELL: SENTIMENT, CANCELLATION, SECURITY, ACCOUNT VALUE</text>
+    </svg>
+    <figcaption><b>Detail: policy matrix</b>Nine cells is the entire escalation policy. High-risk intents never automate, however confident the classifier is, because confidence measures classification accuracy and not the cost of being wrong. That distinction is worth stating explicitly in the room.</figcaption>
+  </figure>
+  <figure>
+    <svg viewBox="0 0 680 396" role="img" aria-label="The escalation payload contains transcript, predicted intent, confidence score, customer segment, recent product events and attempted actions before reaching a human agent.">
+      <defs><marker id="ar5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+      <g class="a"><rect x="40" y="125" width="130" height="56" rx="3"/><text class="st" x="105" y="143" text-anchor="middle" dominant-baseline="central">Escalation</text><text class="ss" x="105" y="163" text-anchor="middle" dominant-baseline="central">agent</text></g>
+      <line x1="170" y1="153" x2="196" y2="153" class="arr" marker-end="url(#ar5)"/>
+      <rect class="frame" x="200" y="40" width="440" height="210" rx="6"/>
+      <text class="sl" x="216" y="60">ESCALATION PAYLOAD</text>
+      <g class="n"><rect x="215" y="70" width="195" height="48" rx="3"/><text class="st" x="312" y="94" text-anchor="middle" dominant-baseline="central">Transcript</text></g>
+      <g class="n"><rect x="425" y="70" width="195" height="48" rx="3"/><text class="st" x="522" y="94" text-anchor="middle" dominant-baseline="central">Predicted intent</text></g>
+      <g class="n"><rect x="215" y="126" width="195" height="48" rx="3"/><text class="st" x="312" y="150" text-anchor="middle" dominant-baseline="central">Confidence score</text></g>
+      <g class="n"><rect x="425" y="126" width="195" height="48" rx="3"/><text class="st" x="522" y="150" text-anchor="middle" dominant-baseline="central">Customer segment</text></g>
+      <g class="n"><rect x="215" y="182" width="195" height="48" rx="3"/><text class="st" x="312" y="206" text-anchor="middle" dominant-baseline="central">Recent product events</text></g>
+      <g class="n"><rect x="425" y="182" width="195" height="48" rx="3"/><text class="st" x="522" y="206" text-anchor="middle" dominant-baseline="central">Attempted actions</text></g>
+      <line x1="420" y1="250" x2="420" y2="288" class="arr" marker-end="url(#ar5)"/>
+      <g class="h"><rect x="335" y="290" width="170" height="48" rx="3"/><text class="st" x="420" y="314" text-anchor="middle" dominant-baseline="central">Human agent</text></g>
+      <text class="sl" x="40" y="372">IF A FIELD IS MISSING, THE HANDOFF FAILS AUDIT</text>
+    </svg>
+    <figcaption><b>Detail: handoff payload</b>Six fields. Attempted actions is the one people forget and the one that matters most, because without it the human repeats work the agent already did and the customer gets asked the same question twice.</figcaption>
+  </figure>
+</section>
+
+<section class="col">
+  <div class="sec-head"><h2>Metrics</h2><span class="tag t-shared">Shared</span></div>
+  <ul>
+    <li>Containment rate, escalation frequency, fallback rate, re-open rate, and CSAT split by automated versus human resolution.</li>
+    <li>Standard events at intake, classification, action, escalation and resolution, so flows can be traced and tested against each other.</li>
+    <li>Weekly review of automation errors, top intents by volume, and near misses where automation almost resolved the case.</li>
+  </ul>
+  <div class="why"><b>Why</b>Near misses are the cheapest source of the next automation. They tell you exactly which threshold to move.</div>
+</section>
+
+<section>
+  <div class="col">
+    <div class="sec-head"><h2>Architecture</h2><span class="tag t-shared">Shared</span></div>
+    <ul>
+      <li>Five agents with narrow jobs: intake, answer, workflow, feedback, escalation. Each reads and writes the same schema.</li>
+      <li>The schema is the contract. Ticket is the spine. Intent carries the risk tier and policy, which is what makes the escalation matrix executable rather than a document.</li>
+      <li>Vector-backed knowledge layer with a named owner per source. If nobody owns docs, tickets and telemetry, this is a staffing problem, not an architecture problem.</li>
+    </ul>
+  </div>
+  <figure>
+    <svg viewBox="0 0 680 278" role="img" aria-label="Support schema: a ticket entity linked to intent, event, customer context, product context and resolution entities with their fields.">
+      <defs><marker id="ar6" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+      <g class="a"><rect x="190" y="30" width="300" height="76" rx="3"/><text class="st" x="340" y="48" text-anchor="middle" dominant-baseline="central">ticket</text><text class="sf" x="340" y="72" text-anchor="middle" dominant-baseline="central">id · channel · state · opened_at</text><text class="sf" x="340" y="90" text-anchor="middle" dominant-baseline="central">intent_id · customer_id</text></g>
+      <path d="M340 106 L340 125" class="hair"/>
+      <path d="M96 125 L584 125" class="hair"/>
+      <path d="M96 125 L96 133" class="arr" marker-end="url(#ar6)"/>
+      <path d="M218 125 L218 133" class="arr" marker-end="url(#ar6)"/>
+      <path d="M340 125 L340 133" class="arr" marker-end="url(#ar6)"/>
+      <path d="M462 125 L462 133" class="arr" marker-end="url(#ar6)"/>
+      <path d="M584 125 L584 133" class="arr" marker-end="url(#ar6)"/>
+      <g class="n"><rect x="40" y="137" width="112" height="100" rx="3"/><text class="st" x="96" y="155" text-anchor="middle" dominant-baseline="central">intent</text><text class="sf" x="96" y="180" text-anchor="middle" dominant-baseline="central">label</text><text class="sf" x="96" y="198" text-anchor="middle" dominant-baseline="central">risk_tier</text><text class="sf" x="96" y="216" text-anchor="middle" dominant-baseline="central">policy</text></g>
+      <g class="n"><rect x="162" y="137" width="112" height="100" rx="3"/><text class="st" x="218" y="155" text-anchor="middle" dominant-baseline="central">event</text><text class="sf" x="218" y="180" text-anchor="middle" dominant-baseline="central">type</text><text class="sf" x="218" y="198" text-anchor="middle" dominant-baseline="central">actor</text><text class="sf" x="218" y="216" text-anchor="middle" dominant-baseline="central">ts</text></g>
+      <g class="n"><rect x="284" y="137" width="112" height="100" rx="3"/><text class="st" x="340" y="155" text-anchor="middle" dominant-baseline="central">customer</text><text class="sf" x="340" y="180" text-anchor="middle" dominant-baseline="central">plan</text><text class="sf" x="340" y="198" text-anchor="middle" dominant-baseline="central">segment</text><text class="sf" x="340" y="216" text-anchor="middle" dominant-baseline="central">health</text></g>
+      <g class="n"><rect x="406" y="137" width="112" height="100" rx="3"/><text class="st" x="462" y="155" text-anchor="middle" dominant-baseline="central">product</text><text class="sf" x="462" y="180" text-anchor="middle" dominant-baseline="central">workspace</text><text class="sf" x="462" y="198" text-anchor="middle" dominant-baseline="central">page</text><text class="sf" x="462" y="216" text-anchor="middle" dominant-baseline="central">error_code</text></g>
+      <g class="n"><rect x="528" y="137" width="112" height="100" rx="3"/><text class="st" x="584" y="155" text-anchor="middle" dominant-baseline="central">resolution</text><text class="sf" x="584" y="180" text-anchor="middle" dominant-baseline="central">mode</text><text class="sf" x="584" y="198" text-anchor="middle" dominant-baseline="central">confidence</text><text class="sf" x="584" y="216" text-anchor="middle" dominant-baseline="central">csat</text></g>
+      <text class="sl" x="40" y="262">EVERY AGENT READS AND WRITES THIS SHAPE. NO AGENT-LOCAL STATE.</text>
+    </svg>
+    <figcaption><b>Detail: support schema</b>Ticket is the spine and everything else hangs off it. Two fields carry disproportionate weight. Intent.risk_tier makes the policy matrix executable, and resolution.mode is what lets you split CSAT by automated versus human without a separate reporting pipeline.</figcaption>
+  </figure>
+  <figure>
+    <svg viewBox="0 0 680 468" role="img" aria-label="Four-layer implementation stack: experience, orchestration and agents, systems of record, and knowledge and storage.">
+      <defs><marker id="ar7" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+      <rect class="frame" x="40" y="30" width="600" height="90" rx="4"/>
+      <text class="sl" x="52" y="50">LAYER 1 — EXPERIENCE</text>
+      <g class="n"><rect x="60" y="64" width="133" height="44" rx="3"/><text class="st" x="126" y="86" text-anchor="middle" dominant-baseline="central">Web app</text></g>
+      <g class="n"><rect x="202" y="64" width="133" height="44" rx="3"/><text class="st" x="268" y="86" text-anchor="middle" dominant-baseline="central">Support portal</text></g>
+      <g class="n"><rect x="344" y="64" width="133" height="44" rx="3"/><text class="st" x="410" y="86" text-anchor="middle" dominant-baseline="central">Docs site</text></g>
+      <g class="n"><rect x="486" y="64" width="133" height="44" rx="3"/><text class="st" x="552" y="86" text-anchor="middle" dominant-baseline="central">Email and chat</text></g>
+      <line x1="340" y1="120" x2="340" y2="134" class="arr" marker-end="url(#ar7)"/>
+      <rect class="frame" x="40" y="136" width="600" height="90" rx="4"/>
+      <text class="sl" x="52" y="156">LAYER 2 — ORCHESTRATION</text>
+      <g class="a"><rect x="60" y="170" width="104" height="44" rx="3"/><text class="st" x="112" y="192" text-anchor="middle" dominant-baseline="central">Intake</text></g>
+      <g class="a"><rect x="174" y="170" width="104" height="44" rx="3"/><text class="st" x="226" y="192" text-anchor="middle" dominant-baseline="central">Answer</text></g>
+      <g class="a"><rect x="288" y="170" width="104" height="44" rx="3"/><text class="st" x="340" y="192" text-anchor="middle" dominant-baseline="central">Workflow</text></g>
+      <g class="a"><rect x="402" y="170" width="104" height="44" rx="3"/><text class="st" x="454" y="192" text-anchor="middle" dominant-baseline="central">Feedback</text></g>
+      <g class="a"><rect x="516" y="170" width="104" height="44" rx="3"/><text class="st" x="568" y="192" text-anchor="middle" dominant-baseline="central">Escalation</text></g>
+      <line x1="340" y1="226" x2="340" y2="240" class="arr" marker-end="url(#ar7)"/>
+      <rect class="frame" x="40" y="242" width="600" height="90" rx="4"/>
+      <text class="sl" x="52" y="262">LAYER 3 — SYSTEMS OF RECORD</text>
+      <g class="n"><rect x="60" y="276" width="104" height="44" rx="3"/><text class="st" x="112" y="298" text-anchor="middle" dominant-baseline="central">Helpdesk</text></g>
+      <g class="n"><rect x="174" y="276" width="104" height="44" rx="3"/><text class="st" x="226" y="298" text-anchor="middle" dominant-baseline="central">CRM</text></g>
+      <g class="n"><rect x="288" y="276" width="104" height="44" rx="3"/><text class="st" x="340" y="298" text-anchor="middle" dominant-baseline="central">Issues</text></g>
+      <g class="n"><rect x="402" y="276" width="104" height="44" rx="3"/><text class="st" x="454" y="298" text-anchor="middle" dominant-baseline="central">Billing</text></g>
+      <g class="n"><rect x="516" y="276" width="104" height="44" rx="3"/><text class="st" x="568" y="298" text-anchor="middle" dominant-baseline="central">Telemetry</text></g>
+      <line x1="340" y1="332" x2="340" y2="346" class="arr" marker-end="url(#ar7)"/>
+      <rect class="frame" x="40" y="348" width="600" height="90" rx="4"/>
+      <text class="sl" x="52" y="368">LAYER 4 — KNOWLEDGE AND STORAGE</text>
+      <g class="n"><rect x="60" y="382" width="133" height="44" rx="3"/><text class="st" x="126" y="404" text-anchor="middle" dominant-baseline="central">Docs and KB</text></g>
+      <g class="n"><rect x="202" y="382" width="133" height="44" rx="3"/><text class="st" x="268" y="404" text-anchor="middle" dominant-baseline="central">Vector store</text></g>
+      <g class="n"><rect x="344" y="382" width="133" height="44" rx="3"/><text class="st" x="410" y="404" text-anchor="middle" dominant-baseline="central">Ticket store</text></g>
+      <g class="n"><rect x="486" y="382" width="133" height="44" rx="3"/><text class="st" x="552" y="404" text-anchor="middle" dominant-baseline="central">Warehouse</text></g>
+    </svg>
+    <figcaption><b>Detail: implementation stack</b>Use this one when the conversation turns to build versus buy. Layer 3 is almost always bought. Layer 2 is the part you own, and it is the only layer where the schema is enforced. Layer 4 is where ownership arguments actually need settling.</figcaption>
+  </figure>
+</section>
+
+<section class="col">
+  <div class="sec-head"><h2>Build order</h2><span class="tag t-shared">Phased</span></div>
+  <div class="phases">
+    <div class="phase">
+      <div class="phase-n">PHASE 1</div>
+      <div>
+        <h3>Audit and triage</h3>
+        <ul>
+          <li>Tag three to four weeks of interactions by intent, volume, handle time and repeat rate. Rank the top 10 to 20 by return.</li>
+          <li>Define the support schema. Ship intake and triage with confidence bands and basic routing.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-n">PHASE 2</div>
+      <div>
+        <h3>Self-service and volume</h3>
+        <ul>
+          <li>Stand up the knowledge layer and connect it to the answer agent with retrieval grounding.</li>
+          <li>Automate password and account flows end to end. Launch in-product support on the most complex workflow you have.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-n">PHASE 3</div>
+      <div>
+        <h3>Feedback loops</h3>
+        <ul>
+          <li>Split feedback intake from incident support. Add clustering and deduplication.</li>
+          <li>Wire changes into a changelog that references the intents it closes. Instrument onboarding with effort scores.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-n">PHASE 4</div>
+      <div>
+        <h3>Higher-risk automation</h3>
+        <ul>
+          <li>Add workflows with real side effects, governed by per-intent risk policy, idempotency keys and audit logs.</li>
+          <li>Feed closed tickets back into intent models. Auto-propose knowledge updates where automation struggled.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="col">
+  <div class="sec-head"><h2>Running the session</h2><span class="tag t-human">Facilitator</span></div>
+  <div class="script">
+    <h3>Expect the argument about which tickets get automated</h3>
+    <p>Do not let the room have it by topic. The lifecycle diagram exists to show that the split is by confidence and risk. Redraw the two thresholds live if people push. That is the productive version of the argument. If they push further, put up the policy matrix.</p>
+    <h3>Ask who owns each knowledge source</h3>
+    <p>Point at the knowledge layer box and read the list out loud. Docs, tickets, telemetry, CRM, release notes. If nobody names an owner for each, stop and fix that before discussing agents.</p>
+    <h3>Name the return arrow</h3>
+    <p>Most support automation quietly fails at the loop diagram, not the system map. Volume drops, everyone declares victory, and the signal never reaches the roadmap. Leave the session with a person attached to that arrow.</p>
+    <h3>Close on two numbers</h3>
+    <p>The starting confidence thresholds and the first three intents to automate. Everything else in this pack can be decided later.</p>
+  </div>
+</section>
+
+<section class="col sources">
+  <div class="sec-head"><h2>Source material</h2><span class="tag t-shared">Reference</span></div>
+  <p>Practitioner playbooks the underlying notes drew on.</p>
+  <ul>
+    <li><a href="https://blog.usesupportify.com/a-complete-playbook-on-customer-support-automation-for-saas/">Supportify — automation playbook</a></li>
+    <li><a href="https://macsources.com/customer-support-automation-the-playbook-for-scaling-saas-support/">MacSources — scaling support</a></li>
+    <li><a href="https://deepforce.io/guides/customer-support-automation">Deepforce — automation guide</a></li>
+    <li><a href="https://gleantap.com/how-saas-companies-use-customer-support-automation/">Gleantap — SaaS automation</a></li>
+    <li><a href="https://www.bland.ai/blog/saas-customer-support-best-practices">Bland — support practices</a></li>
+    <li><a href="https://www.haloagents.ai/blog/saas-customer-support-best-practices">Halo Agents — support practices</a></li>
+    <li><a href="https://supplo.io/blog/saas-customer-support">Supplo — SaaS support</a></li>
+    <li><a href="https://gigabpo.com/saas-customer-support-best-practices/">GigaBPO — support practices</a></li>
+    <li><a href="https://www.zonkafeedback.com/blog/saas-customer-support">Zonka — feedback loops</a></li>
+    <li><a href="https://www.freshworks.com/customer-service/support/saas/">Freshworks — SaaS support</a></li>
+    <li><a href="https://kalevent.com/blog/best-practices-customer-support-automation">Kalevent — automation practices</a></li>
+    <li><a href="https://umatechnology.org/best-practices-using-support-ticket-automation-flows-in-high-growth-saas-teams/">Uma — ticket automation flows</a></li>
+    <li><a href="https://www.launchnotes.com/blog/the-ultimate-guide-to-saas-customer-support-best-practices">LaunchNotes — closing the loop</a></li>
+    <li><a href="https://insights.daffodilsw.com/blog/building-a-customer-support-ai-agent-architecture-walkthrough">Daffodil — agent architecture</a></li>
+    <li><a href="https://dev.to/exploredataaiml/building-an-intelligent-customer-support-system-with-multi-agent-architecture-236h">dev.to — multi-agent support</a></li>
+    <li><a href="https://docs.aws.amazon.com/solutions/workforce-management-using-amazon-bedrock/">AWS — workforce management reference</a></li>
+  </ul>
+</section>
+
+<footer>
+  <span>Agentic support system</span>
+  <span>Whiteboard pack v2</span>
+</footer>
+
+</div>

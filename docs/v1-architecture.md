@@ -1,0 +1,667 @@
+# Agentic Support System. V1 Foundational Architecture
+
+Reference architecture for support automation with evidence gates.
+TypeScript. Postgres. No orchestration framework.
+
+---
+
+## 1. Scope
+
+This document specifies each component that processes a support request. The
+flow starts at the inbound message. The flow stops at one of two results. The
+first result is an internal write that the system does automatically. The second
+result is a reply to the customer that a person approves.
+
+### 1.1 In V1
+
+- Intake.
+- Classification.
+- Retrieval.
+- Composition of the answer.
+- Two evidence gates.
+- Policy evaluation.
+- Internal writes.
+- Approval of customer replies.
+- Replay evaluation.
+- Induction of the taxonomy.
+- Calibration of the threshold.
+
+### 1.2 Not in V1
+
+- Replies to customers that the system sends automatically.
+- Compensation of an action that the system cannot reverse.
+- Conversation state for more than one ticket thread.
+- Automatic clusters of feedback.
+- A different threshold for each intent.
+- Online A/B tests.
+
+### 1.3 The contracts are the deliverable
+
+Adopters replace the prompts quickly. The port interfaces, the ledger schema and
+the gate rules must be correct. These parts are the deliverable.
+
+---
+
+## 2. Decision register
+
+Each component refers to the decisions that it obeys. The decisions are the only
+authority in this document. If you cannot trace a statement to a decision, the
+statement is an implementation detail. You can change it.
+
+| ID | Decision | Rejected alternatives |
+|----|----------|----------------------|
+| DEC-01 | Open source reference. Synapti internal tools are the test bed | Own venture first; client product |
+| DEC-02 | Start from raw ticket history that has no tags | Assume a corpus with tags; start with no data |
+| DEC-03 | The autonomy limit is a write that you can reverse | Read only; writes that include billing |
+| DEC-04 | A Postgres ledger and a transactional outbox | DBOS; Temporal; LangGraph checkpointer |
+| DEC-05 | Two independent gates: sample agreement and coverage | One mixed confidence score |
+| DEC-06 | Each adapter declares its capability. Autonomy decreases to agree | A shim that removes duplicates; refuse the adapter |
+| DEC-07 | The composer must cite or abstain. A check tests each claim | A threshold on the retrieval score |
+| DEC-08 | TypeScript core | Python core; Go core |
+| DEC-09 | Replay scores: action match, human sample, judge triage | The judge gives the primary score |
+| DEC-10 | Clusters give the taxonomy. A person curates it to 25 intents | An imposed taxonomy; open codes |
+| DEC-11 | The helpdesk shows gated actions in its own draft state | A Slack queue; a new web queue |
+| DEC-12 | Internal writes are automatic. Customer replies need approval | All reversible writes are automatic |
+| DEC-13 | One global threshold. A person sets a risk tier for each intent | A threshold that the system learns for each intent |
+| DEC-14 | The disclosure field is mandatory on each customer reply | A configuration flag; documentation only |
+| DEC-15 | Do not remove personal data in the runtime path. Use a DPA | Remove personal data everywhere |
+| DEC-16 | OpenRouter supplies the models | Vercel AI SDK; one provider only |
+| DEC-17 | The data guarantee is configurable and documented | Force zero data retention on each request |
+| DEC-18 | The public repository contains synthetic fixtures only | A cleared subset of real tickets |
+| DEC-19 | Documentation states the compliance position. No machine check | A configuration that refuses real data |
+| DEC-20 | Cold start: replay the history, then go live with gates | A separate shadow phase |
+| DEC-21 | Hybrid BM25 and dense retrieval with RRF. The reranker is on | Dense retrieval only |
+| DEC-22 | Index the documents and the canonical resolutions | Documents only; raw resolved tickets |
+| DEC-23 | Each document declares an owner and a review date | Weight by date only; no freshness model |
+| DEC-24 | A semantic idempotency key for each action | The key alone; the lease alone |
+| DEC-25 | Limit the cost, the steps and the clock time | A step limit only; no limits |
+| DEC-26 | Pin the prompt version and the model version | Record the versions only |
+| DEC-27 | Partition the queue by `ticket_id`. One consumer for each partition | A lease with a lock service |
+| DEC-28 | A fencing epoch that increases. Check it at insert and at send | Adjust the lease time limit |
+| DEC-29 | Each action class declares its delivery rule | One global at-least-once rule |
+| DEC-30 | If the delivery state is unknown, escalate. Do not retry | Retry blind; abandon blind |
+| DEC-31 | A gold set of 770 cases. Fit on one half. Report the other half | 385 cases with a caveat |
+| DEC-32 | Action match scores the disposition, not the intent label | Silver labels from the induction job |
+| DEC-33 | Add provenance metadata to each generated text | The disclosure text alone |
+
+---
+
+## 3. What the evidence showed
+
+Six results changed the design. The architecture is not clear without them.
+
+### 3.1 A model cannot report its own confidence
+
+If you ask a model for a confidence value, the value collects at 0.9 and 1.0.
+You cannot set a threshold on such a value.
+
+Agreement between samples does agree with correctness. A self-report does not. DEC-05 exists because of this result.
+The classifier samples. It does not ask.
+
+### 3.2 Agreement cannot find a confident error
+
+A simulation used 20 000 tickets for each condition. Agreement is useful when
+the errors go to one adjacent intent. The precision increases by 0.125 at
+p=0.70. Agreement is almost useless when a majority vote already corrects the
+error. The precision increases by 0.003, and the system abstains on 56 percent
+of the tickets.
+
+If the model is wrong on a ticket in the same way each time, all samples agree.
+The samples agree on the wrong answer. No number of samples finds this error.
+This result is the reason for a second and independent gate.
+
+### 3.3 A threshold for each intent is not possible
+
+One global threshold needs 385 labelled tickets for an interval of 5 percent.
+A threshold for each of 25 intents needs approximately 2 400 tickets. Intent
+frequencies obey a Zipf distribution. Therefore the intent at rank 20 needs a
+corpus of approximately 7 700 tickets. DEC-13 exists because of this result.
+
+### 3.4 A correct idempotency key is not a concurrency design
+
+A key that you make from the action data has a limit. Two concurrent runs
+collide at the insert, and one run loses. If the run that loses continues to the
+`queued` state, it waits for a result that no component supplies.
+
+The key also gives no protection when the two runs make different data. A refund
+of 50 and a refund of 100 give different keys. The unique constraint does not
+operate.
+
+A lease with no fencing token does not close this gap. A process can stop for a
+long time. The lease expires. A second process gets the lease. The first process
+starts again and writes. No time limit prevents this failure.
+
+DEC-27 and DEC-28 exist because of these results.
+
+### 3.5 The delivery rule belongs to the action
+
+One global at-least-once rule is not sufficient. A retry of a refund to a system
+with no idempotency support can pay the customer two times. An abandoned
+ticket-close leaves an old ticket only. The safer rule changes with the action.
+DEC-29 and DEC-30 exist because of this result.
+
+### 3.6 Set the containment target low
+
+Vendors advertise 67 to 86 percent resolution. Production reports show 42 to 50
+percent. One independent test of 500 tickets gave 38 percent. B2B systems give
+17 to 25 points less than the vendor numbers. Plan for 35 to 45 percent in V1.
+Measure resolution. Do not measure deflection.
+
+---
+
+## 4. Components
+
+### 4.1 Ingress
+
+**`IngressAdapter`** (port). Obeys DEC-06, DEC-01.
+
+The adapter changes each inbound event into a `Ticket` and a `Message`. Each
+adapter declares its capabilities.
+
+```ts
+interface AdapterCapabilities {
+  supportsIdempotencyKey: boolean;   // controls automatic writes
+  supportsReadBack:       boolean;   // lets the relay reconcile
+  supportsDraftState:     boolean;   // necessary for DEC-11
+  supportsStructuredFields: boolean; // necessary for bug records
+  supportsThreading:      boolean;
+}
+```
+
+The policy engine reads these capabilities. If `supportsIdempotencyKey` is
+false, all write actions go to the approval path. The risk tier does not change
+this. The intent does not change this. Autonomy decreases to agree with the guarantee that the target system gives.
+
+ The system declares this decrease. An
+operator does not find it in production.
+
+Supply three reference adapters: IMAP and SMTP, a webhook, and one real
+helpdesk. Three adapters are sufficient to show that the contract is general.
+
+### 4.2 Ledger
+
+**`ledger`** (Postgres). Obeys DEC-04, DEC-24, DEC-26, DEC-27, DEC-28.
+
+The ledger holds all state. No component keeps state outside the ledger.
+
+```sql
+CREATE TABLE run (
+  run_id       uuid PRIMARY KEY,
+  ticket_id    text    NOT NULL,
+  partition    integer NOT NULL,   -- DEC-27: hash(ticket_id) % N
+  epoch        bigint  NOT NULL,   -- DEC-28: fencing token
+  state        text    NOT NULL,
+  prompt_ver   text    NOT NULL,
+  model_ver    text    NOT NULL,
+  cost_cents   integer NOT NULL DEFAULT 0,
+  steps_used   integer NOT NULL DEFAULT 0,
+  deadline_at  timestamptz NOT NULL
+);
+
+CREATE TABLE ticket_epoch (          -- the highest epoch that was accepted
+  ticket_id    text PRIMARY KEY,
+  epoch        bigint NOT NULL
+);
+
+CREATE TABLE step_journal (
+  run_id uuid, step_id text, status text, result jsonb,
+  prompt_ver text, model_ver text, cost_cents integer,
+  PRIMARY KEY (run_id, step_id)
+);
+
+CREATE TABLE outbox (
+  run_id       uuid, step_id text,
+  idem_key     text   NOT NULL,
+  epoch        bigint NOT NULL,
+  action_class text   NOT NULL,     -- DEC-29: selects the delivery rule
+  delivery     text   NOT NULL,     -- 'at_least_once' | 'at_most_once'
+  payload      jsonb  NOT NULL,
+  status       text   NOT NULL DEFAULT 'pending',
+  PRIMARY KEY (run_id, step_id),
+  UNIQUE (idem_key)
+);
+```
+
+**Partitions.** The system removes the concurrency. It does not control the
+concurrency. `hash(ticket_id)` gives the partition. One consumer owns each
+partition. Therefore two runs on one ticket cannot occur together. The cost is a
+procedure to rebalance the partitions at each deployment.
+
+**The fencing epoch.** During a rebalance, two consumers can own one partition
+for a short time. Each write carries its epoch. The `ticket_epoch` table records
+the highest epoch. The ledger refuses each write that has a lower epoch. The
+ledger does the refusal and the write in one operation. This is the only design
+that is safe when a process stops for an unknown time.
+
+**Liveness.** A run that does not insert its outbox record must not go to the
+`queued` state. It must go to the `superseded` state and stop. If both runs go
+to `queued`, the run that lost waits without a limit.
+
+The implementation must obey two rules:
+
+1. Commit the state change and the outbox insert in one transaction.
+2. Treat an insert of zero records as a different result. Do not ignore it.
+
+### 4.3 Run coordinator
+
+**`coordinator`**. Obeys DEC-04, DEC-25, DEC-27, DEC-28.
+
+The coordinator is a state machine. It has no framework, no agent loop and no
+control flow from the model.
+
+```
+received -> classified -> retrieved -> composed -> gated
+  -> executing          (automatic path, internal writes only)
+  -> awaiting_approval  (customer replies, DEC-12)
+  -> resolved | escalated | superseded | abandoned
+```
+
+The coordinator does these tasks:
+
+1. Read the next ticket from its partition.
+2. Move the run forward by one state.
+3. Write each step to the journal before it acts.
+4. Add the fencing epoch to each write.
+5. Apply the limits on cost, steps and clock time.
+
+There is no lease. The partition gives exclusive access in normal operation. The
+fencing epoch gives safety during a rebalance.
+
+**Limits.** DEC-25 sets a limit on the cost in cents, on the number of steps and
+on the clock time. If the run reaches a limit, this is not an error. The run
+goes to `escalated` and keeps its partial work. A high cost then becomes visible
+in operations. It does not become a surprise in the invoice.
+
+### 4.4 Outbox relay
+
+**`relay`**. Obeys DEC-04, DEC-06, DEC-28, DEC-29, DEC-30.
+
+The relay is a different process. It reads the records in the outbox that have
+the `pending` status. It calls the adapter with the `idem_key` and the `epoch`.
+Then it sets the status to `sent`.
+
+Send first. Set the status second. Do not set the status first.
+
+The relay reads the delivery rule from the record. It does not read a global
+setting.
+
+| Adapter idempotency | Duplicate costs more | Loss costs more |
+|---|---|---|
+| Supported | at-least-once. Retry | at-least-once. Retry |
+| Not supported | **at-most-once**. Escalate | at-least-once. Retry |
+
+If the adapter has no idempotency support and the relay cannot find the delivery
+state, the relay must not retry. It sets the record to `delivery_unknown`. It
+sends the record to the approval queue and states the uncertainty. A retry can
+pay a second refund. A silent abandon can leave a customer with no answer.
+Escalation is the only action that does not select a failure for the operator.
+
+If the adapter has read-back support, the relay reads the target system. Then it
+reconciles. It does not escalate.
+
+**The approval path does not solve duplicate delivery.** It prevents an
+automatic and incorrect action. The relay still sends through the same adapter
+after the approval. The relay can still stop during the send. These are two
+different problems.
+
+### 4.5 Classifier
+
+**`classifier`**. Obeys DEC-05, DEC-10, DEC-13.
+
+The classifier samples the labels 9 times at a temperature above zero. It gives
+the most frequent intent and the agreement fraction.
+
+```ts
+const CLASSIFIER_K   = 9;
+const GATE_AGREEMENT = 0.6;   // the seed value. Calibrate it per DEC-13
+```
+
+The simulation gives this guidance. At k=9 and a threshold of 0.6, the precision
+is 0.985 and 74 percent of the tickets pass. At k=5 and a threshold of 0.8, the
+precision is 0.970 and 54 percent pass. More samples with a lower threshold is
+better on both measurements.
+
+**WARNING: Set the temperature above zero.**
+**At a temperature of zero, all samples are the same. The agreement is always**
+**1.0. The gate then passes each ticket and reports full confidence. Make this**
+**an assertion in the code. Do not make it a comment.**
+
+**Cost.** The classifier is not inexpensive against the answer step. Nine copies
+of a taxonomy of 1 200 tokens make the classifier 2.5 times the cost of the
+answer step. The classifier is 57 percent of the model cost for each ticket.
+
+A prompt cache decreases the cost to approximately the cost of the answer step.
+The cache does not decrease it below that cost. At test-bed volume the cache
+does not operate. A cache with a time limit of 5 minutes needs more than
+approximately 12 tickets each hour.
+
+Accept the cost. The model cost for each ticket is approximately 0.08 USD. A
+person costs 10 to 100 times more.
+
+If the cost becomes a problem later, use a cascade of two stages. An embedding
+classifier does the easy tickets. The 9 samples operate on the unclear tickets
+only. This is a different component. It is not in V1.
+
+### 4.6 Retriever
+
+**`retriever`**. Obeys DEC-21, DEC-22, DEC-23.
+
+The retriever uses two methods. Postgres supplies both. BM25 uses `tsvector`.
+Dense retrieval uses `pgvector`. Reciprocal Rank Fusion mixes the two result
+sets.
+
+RRF uses the ranks. It does not use the scores. BM25 scores have no upper limit.
+Cosine values do have a limit. Therefore a weighted average of the scores is not
+stable.
+
+BM25 is more important here than in the general case. Support tickets contain
+many error codes, part numbers and account numbers. Dense retrieval is weak on
+these tokens. BM25 is also more useful on a small corpus.
+
+**The reranker.** DEC-21 makes the reranker active. It gives the largest single
+increase in quality, approximately 17 points of MRR@3. The reranker needs a
+minimum of 50 candidates. At 20 candidates it is worse than no reranker. On a
+small corpus, 50 candidates can be a large part of the corpus. This is
+acceptable and inexpensive.
+
+**Freshness.** Each indexed document declares an `owner` and a `review_by` date.
+The system removes each document that is out of date from the automatic path.
+The document stays available for an answer that a person approves. The abstain
+signal then reports the documents that need a review. This report costs nothing
+more.
+
+**Index contents.** Index the documents and the canonical resolutions that a
+person approved. Do not index the raw resolved tickets. Raw tickets put personal
+data in permanent storage. Raw tickets also keep advice that was correct one
+time only.
+
+### 4.7 Composer and groundedness check
+
+**`composer`**. Obeys DEC-07.
+
+Each claim must have a citation to a retrieved text span. If the composer cannot
+cite a claim, the composer must abstain. An abstain result is a correct output.
+It is not a failure. It is also the least expensive way to find a gap in the
+knowledge.
+
+**`groundedness`**. Obeys DEC-07.
+
+This component divides the draft into single claims. It tests each claim against
+the retrieved text. If a claim adds information that the text does not contain,
+the response is not grounded.
+
+Use two thresholds:
+
+| Value | Action |
+|---|---|
+| Below 0.80 | Send to a person for review |
+| Below 0.70 | Block. Do not send |
+
+This component operates on the automatic path only. Therefore the cost occurs
+where it prevents damage.
+
+This component is the second gate. It is independent of the first gate by
+design. It is the only defence against a confident error, because agreement
+cannot find a confident error. See paragraph 3.2.
+
+### 4.8 Policy engine
+
+**`policy`**. Obeys DEC-03, DEC-06, DEC-12, DEC-13.
+
+This component is a pure function. It does not call a model.
+
+Inputs: the risk tier of the intent, the agreement value, the groundedness
+value, the adapter capabilities and the action class.
+Output: `auto`, `gated` or `escalate`.
+
+```
+if (!capabilities.supportsIdempotencyKey && action.isWrite) return 'gated';
+if (action.isCustomerVisible)                                return 'gated';
+if (intent.riskTier === 'high')                              return 'gated';
+if (agreement    < GATE_AGREEMENT)                           return 'escalate';
+if (groundedness < 0.70)                                     return 'escalate';
+if (groundedness < 0.80)                                     return 'gated';
+return 'auto';
+```
+
+A person sets the risk tier for each intent. The system does not learn the tier.
+See DEC-13. A high-risk intent never goes to the automatic path. The gate values
+do not change this. Confidence measures the accuracy of the classification.
+
+It does not measure the cost of an error. These are different quantities.
+
+### 4.9 Approval bridge
+
+**`approval`**. Obeys DEC-11, DEC-14, DEC-33.
+
+The bridge writes each gated action into the draft state of the adapter.
+Adopters do not install a new interface. This is the purpose of DEC-11.
+
+Each customer reply must have two items:
+
+1. A `disclosure` field that is not empty.
+2. Provenance metadata that a machine can read.
+
+The bridge refuses to send a reply that does not have both items.
+
+**Two different obligations.** EU AI Act Article 50(1) applies now.
+Article 50(2) applies from 2 December 2026. The grace period of four months
+applies to systems that were on the market before 2 August 2026. This system was
+not.
+
+**CAUTION: The marking method for text is not certain.**
+**C2PA covers images, audio and video. Text has no equivalent standard.**
+**V1 adds provenance as structured metadata on the message record. It also adds**
+**the metadata to adapter headers where the adapter permits this. This document**
+**cannot decide if the method satisfies Article 50(2). Get legal advice before**
+**you go live.**
+
+### 4.10 Evaluation
+
+**`replay`**. Obeys DEC-09, DEC-20, DEC-26, DEC-31, DEC-32.
+
+Three methods score a run. Each method has a different task.
+
+**Method 1. Action match.** This method operates on the full history. It scores
+the routing decision against the disposition that you can observe. It does not
+score against an intent label.
+
+A disposition is a result of the work. Untagged history contains dispositions.
+Examples of a disposition:
+
+- The queue that received the ticket.
+- An escalation.
+- A macro that operated.
+- A refund.
+- The time to the first human reply.
+
+Do not score against an intent label. DEC-02 states that the history has no
+tags. Intent labels come from the induction job. The induction job is the
+component under test. Dispositions need no labels.
+
+They are independent of the taxonomy. Therefore a full-corpus signal is
+possible.
+
+Limit: action match scores the routing only. It cannot show if a reply was good.
+It is sufficient to control merges. It is not sufficient to publish.
+
+**Method 2. Human review.** This method gives the numbers for the README. The
+gold set has 770 cases. Fit the thresholds on one half. Report each published
+number from the other half. See DEC-31.
+
+Do not use one set of cases for both tasks. That method is selection on the test
+data. A simulation of 2 000 trials shows the effect. If you select the best of 13
+thresholds on 385 cases, the reported precision increases by approximately
+2.5 points. This is one half of a 5 percent interval. The split removes this
+effect.
+
+The cost is a wider interval, approximately 3 percent at p=0.9.
+
+The strata need care. At 385 cases and three risk tiers, each stratum has
+approximately 128 cases. The interval for each stratum is approximately
+5.2 percent. It is not 5 percent. At 770 cases with a split, the strata stay too
+small to publish. Treat them as an indication only.
+
+**Method 3. Judge triage.** A model selects the cases that go to a person. It
+does not give the published number. A judge has the same failures as the system
+that it tests. Therefore it is weakest where the evaluation is most important.
+
+**What replay cannot do.** Replay scores decisions against a history that the
+system did not change. If an agent gives a different answer, the conversation
+takes a different path. The historical record is then not a valid comparison.
+Replay is correct for routing. Replay is not correct for a conversation with
+more than one turn.
+
+Use approval-edit distance as the online measurement. This value shows how much
+a person changed a draft before the person sent it. It is available from the
+first day of Phase 2. It needs no labels. It has no counterfactual problem.
+
+**Sensitivity.** To find a change of 5 percent in containment you need
+approximately 470 cases. To find a change of 2 percent you need approximately
+3 000 cases. Test-bed volume cannot supply these numbers online.
+
+The public repository contains synthetic fixtures only. See DEC-18.
+
+### 4.11 Offline jobs
+
+**`taxonomy-induction`**. Obeys DEC-02, DEC-10.
+
+1. Make embeddings for the history.
+2. Make clusters.
+3. Let a model give a name to each cluster.
+4. Let a person curate the list to a maximum of 25 intents.
+5. Keep an `other` group and examine it.
+
+The limit of 25 comes from the Zipf result in paragraph 3.3. Above 25 intents,
+the rare intents never collect sufficient examples. More intents give an
+appearance of accuracy and nothing more.
+
+**`calibration`**. Obeys DEC-13, DEC-31.
+
+This job fits the global agreement threshold on the fit half of the gold set. It
+operates each month. It does not operate for each ticket.
+
+TypeScript has no mature library for isotonic regression or HDBSCAN. This is
+acceptable. These are offline jobs. You can write them in a different language.
+
+---
+
+## 5. Cold start
+
+DEC-20 gives two phases. There is no separate shadow phase. The write limit
+already sends each customer reply to a person. Therefore a shadow phase and a
+gated live phase are almost the same system.
+
+### Phase 1. Replay
+
+1. Run the induction job on the history.
+2. Curate the taxonomy to 25 intents.
+3. Set a risk tier for each intent.
+4. Label 770 stratified tickets.
+5. Fit the threshold on 385 of them.
+6. Keep 385 for the reports.
+7. Run action match to get a baseline.
+
+This phase has no risk to a customer. It gives each number that the live system
+needs.
+
+**NOTE: This is the largest single cost in the plan. Each later result depends**
+**on it. If a person does not label the cases carefully, each published number has no value.**
+
+### Phase 2. Live with gates
+
+1. The system does internal writes automatically.
+2. Each customer reply goes to the draft state.
+3. Measure the approval-edit distance.
+
+The approval-edit distance is the most useful early signal. It shows how far the
+draft was from a reply that a person can send.
+
+The criteria to leave Phase 2 are not in V1. They need a decision that this
+document does not make.
+
+---
+
+## 6. Known limits
+
+A reference architecture that hides its failures is worse than no reference
+architecture. These are the limits.
+
+**Delivery guarantees belong to the action.** With an adapter that supports
+idempotency keys, an effect occurs one time. With an adapter that does not,
+actions where a duplicate is worse operate at-most-once and escalate. No
+configuration gives exactly-once delivery to a system with no idempotency
+support.
+
+**Partitions exchange one failure for another.** Partitions remove concurrent
+runs on one ticket. They add head-of-line delay in each partition. They also add
+a rebalance period where two consumers can overlap. The fencing epoch covers the
+rebalance period. V1 does not correct the head-of-line delay. It will appear as
+latency on busy partitions.
+
+**Fencing needs the target to agree.** The ledger applies the epoch check
+because the system owns the ledger. External adapters do not know about epochs.
+A stopped run cannot damage the ledger. It can still reach an external system.
+The write limit contains this risk. The fencing does not.
+
+**The groundedness check is a model call.** It can be wrong. It decreases
+confident errors. It does not remove them. The write limit makes V1 safe. The
+check does not. If DEC-12 changes, this component is not sufficient alone.
+
+**Replay cannot measure a counterfactual.** It is correct for routing only. See
+paragraph 4.10.
+
+**Action match scores routing only.** It controls merges. It does not measure
+answer quality. Do not use it as a quality measurement.
+
+**The model data position is configurable.** See DEC-17 and DEC-19. The adopter
+is the data controller. One exception applies. The prompt-log path is off by
+default and needs an explicit override. If you make it active, you give irrevocable commercial
+rights to the inputs and the outputs. The discount is 1 percent.
+
+**Article 50(2) for text is not verified.** See paragraph 4.9.
+
+**Feedback clusters are manual in V1.** At test-bed volume, automatic clusters
+of a few hundred tickets each month give noise. The interval is wider than the
+signal.
+
+---
+
+## 7. Open items for V2
+
+1. The criteria to leave Phase 2.
+2. Compensation for actions that you cannot reverse.
+3. Conversation state for more than one turn.
+4. Automatic feedback clusters when the volume is sufficient.
+5. A threshold for each intent above approximately 8 000 labelled tickets.
+6. A schema migration procedure for adopters.
+7. A correction for head-of-line delay in a partition.
+
+---
+
+## Appendix. Technical names
+
+Each name below has one meaning in this document. Use no other word for the
+same thing.
+
+| Name | Meaning in this document |
+|---|---|
+| action class | A group of actions that share one delivery rule |
+| adapter | A component that connects the system to one external system |
+| agreement | The fraction of classifier samples that give the same label |
+| coverage | The result of the groundedness check |
+| disposition | An observable result of how a person handled a ticket |
+| fencing epoch | A number that increases and that makes an old write invalid |
+| gate | A test that a run must pass before it continues |
+| gold set | The labelled cases that fit the threshold and give the reports |
+| groundedness | The fraction of claims that the retrieved text supports |
+| idempotency key | A value that lets a target system find a repeated request |
+| intent | One category in the taxonomy |
+| ledger | The Postgres tables that hold all state |
+| outbox | The table that holds actions before the relay sends them |
+| partition | A group of tickets that one consumer owns |
+| relay | The process that sends the outbox records |
+| risk tier | The cost of an error for one intent. A person sets it |
+| routing | The choice of which queue or component receives a ticket |
+| run | One pass of the coordinator over one ticket |
+| taxonomy | The curated list of a maximum of 25 intents |
