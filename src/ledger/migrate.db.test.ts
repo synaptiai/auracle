@@ -4,21 +4,26 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Client } from 'pg';
+import { Pool } from 'pg';
+import type { PoolClient } from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
 import { discoverMigrations, migrate } from './migrate.js';
 
-let client: Client;
+let pool: Pool;
+// A real PoolClient, so the single-connection type path migrate() requires
+// is exercised exactly as adopters will drive it.
+let client: PoolClient;
 
 beforeAll(async () => {
-  client = new Client({ connectionString: dbUrl() });
-  await client.connect();
+  pool = new Pool({ connectionString: dbUrl(), max: 2 });
+  client = await pool.connect();
 });
 
 afterAll(async () => {
-  await client.end();
+  client.release();
+  await pool.end();
 });
 
 beforeEach(async () => {
@@ -63,6 +68,7 @@ describe('migrate', () => {
       'SELECT version FROM schema_version ORDER BY version',
     );
     expect(rows.map((row) => row.version)).toEqual([10]);
+    await rm(dir, { recursive: true, force: true });
   });
 
   it('rolls back a failed migration and records nothing for it', async () => {
@@ -86,6 +92,7 @@ describe('migrate', () => {
       "SELECT 1 FROM information_schema.tables WHERE table_name = 'bad'",
     );
     expect(bad.rowCount).toBe(0);
+    await rm(dir, { recursive: true, force: true });
   });
 });
 

@@ -62,13 +62,17 @@ export async function discoverMigrations(
 /**
  * Applies every not-yet-recorded migration in version order.
  *
+ * Requires a single dedicated connection (a PoolClient from pool.connect(),
+ * never a Pool): BEGIN, the migration SQL and COMMIT must land on one
+ * session, and a multi-client Pool would scatter them across connections.
+ *
  * Each migration runs in one transaction together with its schema_version
  * insert, so a crash or failure leaves no half-applied file and no false
  * record. A file whose version is below the highest recorded version is
  * refused: applying it out of order could break later migrations.
  */
 export async function migrate(
-  client: PoolClient | Pool,
+  client: PoolClient,
   dbDir: string = defaultDbDir,
 ): Promise<MigrateResult> {
   await client.query(VERSION_TABLE_SQL);
@@ -121,12 +125,19 @@ async function main(): Promise<void> {
 
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   try {
-    const result = await migrate(pool);
-    for (const file of result.applied) {
-      console.log(`applied ${file.filename}`);
-    }
-    for (const file of result.skipped) {
-      console.log(`skipped ${file.filename} (already applied)`);
+    // One dedicated connection: the transactional guarantee in migrate()
+    // requires every statement on a single session.
+    const client = await pool.connect();
+    try {
+      const result = await migrate(client);
+      for (const file of result.applied) {
+        console.log(`applied ${file.filename}`);
+      }
+      for (const file of result.skipped) {
+        console.log(`skipped ${file.filename} (already applied)`);
+      }
+    } finally {
+      client.release();
     }
   } finally {
     await pool.end();
