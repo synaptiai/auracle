@@ -1,5 +1,5 @@
 -- Ledger schema v1 — docs/v1-architecture.md section 4.2.
--- Plain SQL applied by src/ledger/apply.ts. No migration framework (V2 open item 7).
+-- Plain SQL applied by src/ledger/migrate.ts, which records each version in schema_version (V2 open item 6).
 -- Every statement uses IF NOT EXISTS, so re-applying this file against an
 -- applied ledger is a no-op.
 

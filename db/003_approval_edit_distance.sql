@@ -3,8 +3,8 @@
 -- sending it. The approval entrypoint records the value on the run row, so
 -- a daily sample can be computed from ledger data alone.
 --
--- Plain SQL applied by src/ledger/apply.ts. No migration framework
--- (V2 open item 7). IF NOT EXISTS keeps this file idempotent.
+-- Plain SQL applied by src/ledger/migrate.ts, which records each version
+-- in schema_version (V2 open item 6). IF NOT EXISTS keeps this file idempotent.
 
 ALTER TABLE run ADD COLUMN IF NOT EXISTS approval_edit_distance double precision;
 

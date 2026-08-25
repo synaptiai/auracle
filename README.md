@@ -68,11 +68,11 @@ docker compose up -d
 export DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle
 npm install
 npm run build
-npm run db:apply
+npm run db:migrate
 ```
 
 Compose starts Postgres 16 with pgvector on host port 5433.
-`npm run db:apply` creates the ledger schema in that database.
+`npm run db:migrate` applies every pending migration under `db/` to that database and records each version in `schema_version`.
 Use this database for the daemons and the CLI tools below.
 Without an explicit `DATABASE_URL`, they fall back to the compose address (src/db/config.ts).
 
