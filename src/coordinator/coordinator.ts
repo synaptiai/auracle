@@ -89,6 +89,12 @@ export interface CoordinatorDeps {
   egress: EgressAdapter;
   /** DEC-26: pinned versions carried on every model call and every write. */
   pins: PinnedVersions;
+  /**
+   * Model pin for the retrieval embedding, separate from pins.modelVer:
+   * stealth chat models do not embed, so the query vector may come from a
+   * different model. Falls back to pins.modelVer when absent.
+   */
+  embedModelVer?: string;
   limits: RunLimits;
   /** DEC-27: partition count N. */
   partitionCount: number;
@@ -301,9 +307,11 @@ export async function coordinateTicket(
   if (retrieveLimit !== null) return stopEscalated(retrieveLimit);
 
   await journalStart('retrieve');
+  const embedModelVer = deps.embedModelVer ?? deps.pins.modelVer;
   const embedded = await meter.provider.embed({
     input: [input.ticketText],
     ...deps.pins,
+    modelVer: embedModelVer,
   });
   const queryVector = embedded.vectors[0];
   if (queryVector === undefined) {
@@ -318,6 +326,9 @@ export async function coordinateTicket(
   progress.stepsUsed++;
   await journalFinish('retrieve', 'done', {
     docIds: docs.map((doc) => doc.docId),
+    // DEC-26 truthfulness: the step's model_ver column carries the chat pin;
+    // the embedding pin is recorded here.
+    embed_model_ver: embedModelVer,
   });
   const retrieved = await transitionOrStop('retrieved');
   if (retrieved !== null) return retrieved;

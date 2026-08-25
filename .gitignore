@@ -1,3 +1,6 @@
 node_modules/
 dist/
 .DS_Store
+
+# Secrets: OPENROUTER_API_KEY etc. Never commit.
+.env

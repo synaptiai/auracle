@@ -16,6 +16,7 @@
 
 import { writeFile } from 'node:fs/promises';
 
+import { loadDotEnv } from '../config/env.js';
 import { loadGoldSet } from '../fixtures/load.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { INTENT_CAP, induceTaxonomy } from './taxonomy-induction.js';
@@ -26,6 +27,7 @@ const DEFAULT_CHAT_MODEL = 'openai/gpt-4o-mini';
 const DEFAULT_EMBED_MODEL = 'openai/text-embedding-3-small';
 
 async function main(): Promise<void> {
+  loadDotEnv();
   const apiKey = process.env['OPENROUTER_API_KEY'];
   if (!apiKey) {
     console.error('OPENROUTER_API_KEY is not set.');

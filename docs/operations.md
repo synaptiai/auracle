@@ -22,6 +22,21 @@ stays free for another local stack. `npm run db:migrate` applies every pending
 migration under `db/` to that database. The test suite starts its own throwaway
 database and does not touch this one.
 
+## Configuration files
+
+Each CLI and daemon loads a `.env` file at startup, when one exists in the
+working directory. Node reads it natively, so no extra dependency exists. A
+variable set in the shell always wins over the same variable in `.env`.
+`OPENROUTER_API_KEY` normally lives in `.env`. Never commit that file.
+
+Example `.env`:
+
+```sh
+DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle
+OPENROUTER_API_KEY=<your-key>
+```
+
+
 Check the setup:
 
 ```sh
@@ -111,6 +126,33 @@ A run that reaches a limit goes to `escalated` and keeps its partial work.
 This is not an error.
 The limit makes a high cost visible in operations, not a surprise in the invoice.
 
+The consumer reads this configuration:
+
+| Variable | Meaning | Default |
+|----------|---------|---------|
+| `CONSUMER_PARTITIONS` | Comma-separated partitions this process owns. Required. | none |
+| `CONSUMER_INTERVAL_MS` | Milliseconds between scans. | 5000 |
+| `TICKET_DEADLINE_MS` | Per-ticket clock budget (DEC-25). | 60000 |
+| `PARTITION_COUNT` | Partition count for hashing (DEC-27). | 8 |
+| `MODEL_VER` | Chat model pin. Overridable at any time. | `stealth/ox-alpha` |
+| `EMBED_MODEL_VER` | Embedding model pin for retrieval. Stealth chat models do not embed, so this pin is separate. | `openai/text-embedding-3-small` |
+| `PROMPT_VER` | Prompt version pin (DEC-26). | `consumer-prompt-v1` |
+| `ACTION_CLASS` | Action class each run executes. | `route_ticket` |
+| `ACTION_DELIVERY` | Delivery rule: `at_most_once` or `at_least_once`. | `at_most_once` |
+| `ACTION_IS_CUSTOMER_VISIBLE` | `true` gates every action as a customer reply (DEC-12). | `false` |
+| `DISCLOSURE_TEXT` | Disclosure on gated replies (DEC-14). Required when `ACTION_IS_CUSTOMER_VISIBLE=true`. Startup fails fast without it. | see DEC-14 text |
+
+A reply-generating profile for dogfood looks like this:
+
+```sh
+export ACTION_CLASS=customer_reply
+export ACTION_IS_CUSTOMER_VISIBLE=true
+export DISCLOSURE_TEXT='This reply was drafted by an automated assistant and reviewed by a person.'
+```
+
+Each customer-visible action then parks as a draft and waits in the approval
+workflow (section 3).
+
 ### Relay daemon
 
 ```sh
@@ -134,9 +176,15 @@ So the relay sets the record to `delivery_unknown` and moves the run to the
 approval path (DEC-30).
 Escalation is the only action that does not pick a failure for you.
 
-Optional settings: `RELAY_ADAPTER` (default `helpdesk`) and
-`RELAY_INTERVAL_MS` (default 5000). The process drains the in-flight record on
-SIGTERM or SIGINT before it exits.
+The process drains the in-flight record on SIGTERM or SIGINT before it exits.
+
+| Variable | Meaning | Default |
+|----------|---------|---------|
+| `RELAY_ADAPTER` | Egress adapter name. | `helpdesk` |
+| `RELAY_INTERVAL_MS` | Milliseconds between scans. | 5000 |
+
+The relay reads no action configuration. Every record carries its own delivery
+rule in `outbox.delivery`, and the relay reads that rule per record (DEC-29).
 
 ### Ingress drivers
 

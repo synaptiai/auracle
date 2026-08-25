@@ -9,6 +9,7 @@
  */
 import { Pool } from 'pg';
 
+import { loadDotEnv } from '../config/env.js';
 import { approveRun } from './approve.js';
 import { dbUrl } from '../db/config.js';
 
@@ -19,6 +20,7 @@ function runIdFrom(argv: readonly string[]): string | null {
 }
 
 async function main(): Promise<void> {
+  loadDotEnv();
   const runId = runIdFrom(process.argv.slice(2));
   if (runId === null) {
     console.error('usage: npm run approve -- --run <run-id>');

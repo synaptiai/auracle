@@ -9,7 +9,19 @@
 // - TICKET_DEADLINE_MS    per-ticket clock budget in milliseconds (DEC-25,
 //                         default: 60000)
 // - OPENROUTER_API_KEY    provider credential
+// - MODEL_VER             chat model pin (default: stealth/ox-alpha)
+// - EMBED_MODEL_VER       embedding model pin for retrieval (stealth chat
+//                         models do not embed; default: openai/text-embedding-3-small)
+// - PROMPT_VER            prompt version pin (default: consumer-prompt-v1)
+// - ACTION_CLASS          action class each run executes (default: route_ticket)
+// - ACTION_DELIVERY       delivery rule: at_most_once | at_least_once
+// - ACTION_IS_CUSTOMER_VISIBLE  'true' gates every action (DEC-12, default false)
+// - DISCLOSURE_TEXT       DEC-14 disclosure; required when customer-visible,
+//                         startup fails fast without it
 // - DATABASE_URL          ledger connection (see src/db/config.ts)
+//
+// All of the above may live in a ./.env file: every entrypoint loads it at
+// startup when present. An explicit shell env always wins over .env.
 //
 // Startup performs the deployment-time rebalance step (claimPartition): each
 // claimed partition has its per-ticket fences bumped, so an old owner still
@@ -20,6 +32,8 @@ import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
+import { actionProfileFromEnv } from '../config/action-profile.js';
+import { loadDotEnv } from '../config/env.js';
 import { dbUrl } from '../db/config.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import type { AdapterCapabilities } from '../policy/policy.js';
@@ -33,10 +47,6 @@ const CAPABILITIES: AdapterCapabilities = {
   supportsStructuredFields: true,
   supportsThreading: true,
 };
-
-/** DEC-14: disclosure attached to every gated reply. */
-const DISCLOSURE =
-  'This reply was drafted by an automated assistant and reviewed by a person.';
 
 function parsePartitions(raw: string | undefined): number[] {
   const parts = (raw ?? '')
@@ -65,11 +75,13 @@ function intFromEnv(name: string, fallback: number): number {
 }
 
 async function main(): Promise<void> {
+  loadDotEnv();
   const apiKey = process.env['OPENROUTER_API_KEY'];
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is not set.');
   const partitions = parsePartitions(process.env['CONSUMER_PARTITIONS']);
   const intervalMs = intFromEnv('CONSUMER_INTERVAL_MS', 5000);
   const ticketDeadlineMs = intFromEnv('TICKET_DEADLINE_MS', 60_000);
+  const profile = actionProfileFromEnv();
 
   // fixtures/taxonomy.json is curated by a person (section 4.11 step 4).
   const taxonomyUrl = path.resolve(
@@ -96,8 +108,13 @@ async function main(): Promise<void> {
     egress: new HelpdeskAdapter(),
     pins: {
       promptVer: process.env['PROMPT_VER'] ?? 'consumer-prompt-v1',
-      modelVer: process.env['MODEL_VER'] ?? 'openrouter/auto',
+      // stealth/ox-alpha is the user-approved starting chat model. Override
+      // with MODEL_VER.
+      modelVer: process.env['MODEL_VER'] ?? 'stealth/ox-alpha',
     },
+    // Embeddings are a separate pin: stealth chat models do not embed, so the
+    // retrieval query embeds through its own model (EMBED_MODEL_VER).
+    embedModelVer: process.env['EMBED_MODEL_VER'] ?? 'openai/text-embedding-3-small',
     // Rolling per-ticket clock: the getter re-reads at each check, so a
     // long-lived daemon does not escalate everything once a fixed deadline
     // passes (DEC-25).
@@ -124,11 +141,11 @@ async function main(): Promise<void> {
     partitions,
     intervalMs,
     action: {
-      actionClass: 'route_ticket',
+      actionClass: profile.actionClass,
       actionPayload: { queue: 'triaged' },
-      delivery: 'at_most_once',
-      isCustomerVisible: false,
-      disclosure: DISCLOSURE,
+      delivery: profile.delivery,
+      isCustomerVisible: profile.isCustomerVisible,
+      disclosure: profile.disclosure,
     },
   });
 

@@ -10,6 +10,7 @@
 
 import { classifyTicket } from '../classifier/classifier.js';
 import type { ClassifierTaxonomy } from '../classifier/classifier.js';
+import { loadDotEnv } from '../config/env.js';
 import { FIT_COUNT, loadGoldHalf, loadTaxonomy } from '../fixtures/load.js';
 import type { GoldFile } from '../fixtures/load.js';
 import type { ModelProvider } from '../models/provider.js';
@@ -136,6 +137,7 @@ function normalize(text: string): string {
 // Needs OPENROUTER_API_KEY and CALIBRATION_MODEL_VER in the environment;
 // CALIBRATION_TARGET_PRECISION overrides the default precision floor.
 async function main(): Promise<void> {
+  loadDotEnv();
   const apiKey = process.env['OPENROUTER_API_KEY'];
   if (!apiKey) {
     console.error('OPENROUTER_API_KEY is not set.');
