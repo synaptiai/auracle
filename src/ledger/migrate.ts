@@ -9,6 +9,8 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { loadDotEnv } from '../config/env.js';
 import { Pool } from 'pg';
 import type { PoolClient } from 'pg';
 const defaultDbDir = path.resolve(
@@ -116,6 +118,7 @@ export async function migrate(
 }
 
 async function main(): Promise<void> {
+  loadDotEnv();
   const databaseUrl = process.env['DATABASE_URL'];
   if (!databaseUrl) {
     console.error('DATABASE_URL is not set.');
