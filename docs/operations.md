@@ -47,15 +47,22 @@ npm run consumer
 
 The consumer runs the coordinator state machine. It polls the `intake` table
 for tickets in its own partitions. A ticket enters a partition through
-`hash(ticket_id)` at enqueue time (DEC-27). One consumer owns each partition
-across the whole deployment. Two consumers on one partition is a configuration
-error.
+`hash(ticket_id)` at enqueue time (DEC-27). Every run on one ticket then lands
+on the same consumer, so two runs never process one ticket at once. One consumer
+owns each partition across the whole deployment. Two consumers on one partition
+is a configuration error.
 
-At startup the consumer claims its partitions and bumps the fencing epoch. An
-old owner that still runs fails its next write with a stale epoch (DEC-28).
+At startup the consumer claims its partitions and bumps the fencing epoch.
+A rebalance can leave two owners for a short time.
+The epoch is a number that increases on each claim.
+The ledger refuses any write with an older epoch than the highest one it has seen (DEC-28).
+An old owner that still runs therefore fails its next write instead of corrupting the state.
+
 Optional settings: `CONSUMER_INTERVAL_MS` (default 5000) and
-`TICKET_DEADLINE_MS` (default 60000). A run that reaches a limit goes to
-`escalated` and keeps its partial work. This is not an error.
+`TICKET_DEADLINE_MS` (default 60000).
+A run that reaches a limit goes to `escalated` and keeps its partial work.
+This is not an error.
+The limit makes a high cost visible in operations, not a surprise in the invoice.
 
 ### Relay daemon
 
@@ -65,11 +72,21 @@ npm run relay
 
 This command runs `dist/relay/main.js`. The relay scans the `outbox` table for
 records with the `pending` status. It sends first and sets the status to `sent`
-second (section 4.4). Each record carries its own delivery rule. The relay
-reads the rule per record and reads no global setting (DEC-29).
+second (section 4.4). A crash between the status write and the send hides an
+undelivered action.
 
-The relay does not retry when the delivery state stays unknown. It sets the
-record to `delivery_unknown` and moves the run to the approval path (DEC-30).
+Each record carries its own delivery rule.
+The relay reads the rule per record and reads no global setting (DEC-29).
+The safer rule changes with the action: a duplicate refund costs money, while a
+repeated ticket close costs nothing.
+
+The relay does not retry when the delivery state stays unknown.
+A network failure can leave the outcome unreadable, and a retry could pay a
+second refund.
+So the relay sets the record to `delivery_unknown` and moves the run to the
+approval path (DEC-30).
+Escalation is the only action that does not pick a failure for you.
+
 Optional settings: `RELAY_ADAPTER` (default `helpdesk`) and
 `RELAY_INTERVAL_MS` (default 5000). The process drains the in-flight record on
 SIGTERM or SIGINT before it exits.
@@ -84,23 +101,30 @@ ticket up from there.
 
 ## 3. The approval workflow
 
-Customer replies never leave the system automatically (DEC-12). The flow has
-these steps:
+Customer replies never leave the system automatically (DEC-12).
+A sent reply is irreversible: the customer reads it and acts on it.
+So a person reads every reply before it goes out.
+The flow has these steps:
 
 1. The policy engine sends each customer-visible action to the gated path.
 2. The coordinator parks the reply in the draft state of the helpdesk adapter
-   (DEC-11).
+   (DEC-11). Reviewers act in the helpdesk they already use, with no new tool.
 3. The run waits in the `awaiting_approval` state.
 4. A person reviews the draft in the helpdesk.
 5. A person approves with `npm run approve -- --run <run-id>`.
 6. The approval writes a record to the outbox. The idempotency key comes from
-   the action semantics (DEC-24).
+   the action semantics (DEC-24). Two runs of one action then produce the same
+   key, so a retry cannot deliver the reply twice.
 7. The relay picks up the record and delivers the reply through the adapter.
 
-Each customer reply carries a non-empty `disclosure` field (DEC-14). The
-bridge refuses a reply without it. The approval also records the
-approval-edit distance on the run. The CLI prints the outcome as JSON on
-stdout. It exits non-zero when the run was not approved.
+Each customer reply carries a non-empty `disclosure` field (DEC-14).
+The disclosure tells the customer that a machine produced the text.
+The bridge refuses a reply without it.
+
+The approval also records the approval-edit distance on the run.
+This value shows how much the person changed the draft before sending it.
+The CLI prints the outcome as JSON on stdout.
+It exits non-zero when the run was not approved.
 
 ## 4. Offline jobs
 
@@ -115,16 +139,24 @@ The offline jobs run on demand. They read the synthetic fixture corpus only
 | `node dist/jobs/run-taxonomy-induction.js [output.json]` | Clusters the history and names each cluster. Writes a candidate list for a person. |
 
 The split discipline holds (DEC-31). Calibration reads only the fit half. The
-gold report reads only the report half. Each job imports exactly one half, so
-a leak needs a code change and cannot happen by accident. Never fit and
-publish on the same cases.
+gold report reads only the report half. A threshold picked on the report cases
+inflates every published number. Each job imports exactly one half, so a leak
+needs a code change and cannot happen by accident. Never fit and publish on
+the same cases.
 
 Calibration needs `OPENROUTER_API_KEY`. It classifies each fit-half ticket
 through the classifier port. Replay needs no network access. The induction job
-also needs the key. It accepts optional `CHAT_MODEL_VER` and
-`EMBED_MODEL_VER` values. Its output is a candidate list only. A person
-curates the list to a maximum of 25 intents and sets a risk tier for each
-intent (DEC-13).
+also needs the key. It accepts optional `CHAT_MODEL_VER` and `EMBED_MODEL_VER`
+values.
+
+The induction output is a candidate list only.
+A person curates the list to a maximum of 25 intents and sets a risk tier for
+each intent (DEC-13).
+Rare intents never collect enough labelled examples, so more intents add no
+accuracy.
+Confidence measures how sure the classifier is.
+It does not measure what a mistake costs.
+So a person assigns the tier from the cost of an error, not from a score.
 
 Rerun `npm run gold-report` after a change to a gate or to the model. Rerun it
 only when the change should move a published number.
@@ -154,7 +186,8 @@ The bands define three actions:
 
 Two ledger tables answer this question. The `step_journal` table holds one row
 per step of a run. Each row has the status, the result JSON and the prompt and
-model versions (DEC-26):
+model versions (DEC-26). The pinned versions let you reproduce later exactly
+which prompt and model produced each step:
 
 ```sh
 psql "$DATABASE_URL" -c \
@@ -177,22 +210,31 @@ psql "$DATABASE_URL" -c \
 ```
 
 A status of `delivery_unknown` means the relay could not confirm the delivery.
-Do not resend the action by hand. The run waits in the approval path (DEC-30).
+Do not resend the action by hand.
+The first copy may have arrived, so a resend can act twice.
+The run waits in the approval path (DEC-30).
 A state of `escalated` means the run reached a limit on cost, steps or clock
 time. The journal shows the partial work.
 
 ## 6. The phase model
 
-DEC-20 gives two phases. There is no separate shadow phase. The policy engine
-already sends each customer reply to the gated path.
+DEC-20 gives two phases.
+There is no separate shadow phase.
+A gated live phase already shows every reply to a person before it ships.
+A shadow phase would add cost and no new signal, so the design skips it.
+The policy engine sends each customer reply to the gated path.
 
-**Phase 1. Replay.** No ticket reaches a live customer. You prepare everything
-the live system needs. Induce the taxonomy and curate it to a maximum of 25
-intents. Set a risk tier for each intent. Label 770 stratified tickets and fit
-the threshold on 385 of them. Keep the other 385 for the reports.
+**Phase 1. Replay.** No ticket reaches a live customer, and you prepare
+everything the live system needs.
+Induce the taxonomy and curate it to a maximum of 25 intents.
+Set a risk tier for each intent.
+Label 770 stratified tickets.
+Fit the threshold on 385 of them and keep the rest for the reports.
 
-Then run action match for a baseline (DEC-32). Careful labelling decides the
-value of every later number.
+Then run action match for a baseline (DEC-32).
+Action match compares each routing decision with the disposition people
+actually recorded.
+Careful labelling decides the value of every later number.
 
 **Phase 2. Live with gates.** The system does internal writes automatically.
 Each customer reply parks as a draft and waits for approval. You measure the
