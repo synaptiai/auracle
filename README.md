@@ -32,6 +32,20 @@ One ticket moves through these steps.
 
 You need Node 22 or later and Docker.
 
+### Tests
+
+```sh
+npm install
+npm test
+```
+
+`npm test` provisions its own Postgres for each run.
+A Testcontainers helper starts one throwaway pgvector Postgres per run (src/test-support/global-setup.ts) and removes it at the end.
+Tests need no `docker compose up` and no `DATABASE_URL`.
+If you export `DATABASE_URL`, the tests target that database and skip the container.
+
+### Dev database
+
 ```sh
 docker compose up -d
 export DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle
@@ -42,18 +56,22 @@ npm run db:apply
 
 Compose starts Postgres 16 with pgvector on host port 5433.
 `npm run db:apply` creates the ledger schema in that database.
+Use this database for the daemons and the CLI tools below.
+Without an explicit `DATABASE_URL`, they fall back to the compose address (src/db/config.ts).
 
 | Command | Task |
 |---------|------|
 | `npm run calibrate` | Fits the agreement threshold on the fit half of the gold set. Writes a versioned artifact. |
 | `npm run replay` | Runs the action-match replay over the fixture corpus. Uses the offline stub model. Needs no network and no database. |
 | `npm run gold-report` | Scores the report half of the gold set. Writes `gold-report/v1.json`. |
-| `node dist/relay/main.js` | Starts the outbox relay daemon. Configure `RELAY_ADAPTER` and `RELAY_INTERVAL_MS` if needed. |
+| `npm run relay` | Starts the outbox relay daemon. Configure `RELAY_ADAPTER` and `RELAY_INTERVAL_MS` if needed. |
+| `npm run consumer` | Starts the partition consumer daemon. Set `CONSUMER_PARTITIONS` (for example `0,1`). Configure `CONSUMER_INTERVAL_MS` and `TICKET_DEADLINE_MS` if needed. |
 | `npm run approve -- --run <run-id>` | Approves one gated customer reply through the approval bridge. |
 
 Notes on the consumers:
 
-- The relay daemon is the outbox consumer. It reads the delivery rule from each record (DEC-29).
+- The relay daemon and the partition consumer read work from the transactional outbox.
+- Each action class declares its delivery rule (DEC-29). The daemons send according to that rule.
 - The queue partitions by `ticket_id`, and one consumer owns each partition (DEC-27).
 - The webhook server and the IMAP poller are library drivers in V1. They expose no CLI.
 
