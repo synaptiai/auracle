@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "intent_cap": 25,
+  "intents": [
+    {
+      "id": "refund-request",
+      "label": "Refund request",
+      "risk_tier": "high"
+    },
+    {
+      "id": "billing-dispute",
+      "label": "Billing dispute",
+      "risk_tier": "high"
+    },
+    {
+      "id": "cancel-subscription",
+      "label": "Cancel subscription",
+      "risk_tier": "high"
+    },
+    {
+      "id": "data-deletion-request",
+      "label": "Data deletion request",
+      "risk_tier": "high"
+    },
+    {
+      "id": "chargeback-notice",
+      "label": "Chargeback notice",
+      "risk_tier": "high"
+    },
+    {
+      "id": "payment-failure",
+      "label": "Payment failure",
+      "risk_tier": "medium"
+    },
+    {
+      "id": "plan-change-question",
+      "label": "Plan change question",
+      "risk_tier": "medium"
+    },
+    {
+      "id": "invoice-copy-request",
+      "label": "Invoice copy request",
+      "risk_tier": "medium"
+    },
+    {
+      "id": "account-recovery",
+      "label": "Account recovery",
+      "risk_tier": "medium"
+    },
+    {
+      "id": "login-trouble",
+      "label": "Login trouble",
+      "risk_tier": "medium"
+    },
+    {
+      "id": "sync-error-report",
+      "label": "Sync error report",
+      "risk_tier": "medium"
+    },
+    {
+      "id": "export-broken",
+      "label": "Export broken",
+      "risk_tier": "medium"
+    },
+    {
+      "id": "integration-failure",
+      "label": "Integration failure",
+      "risk_tier": "medium"
+    },
+    {
+      "id": "feature-request",
+      "label": "Feature request",
+      "risk_tier": "low"
+    },
+    {
+      "id": "how-to-question",
+      "label": "How-to question",
+      "risk_tier": "low"
+    },
+    {
+      "id": "pricing-question",
+      "label": "Pricing question",
+      "risk_tier": "low"
+    },
+    {
+      "id": "documentation-gap",
+      "label": "Documentation gap",
+      "risk_tier": "low"
+    },
+    {
+      "id": "feedback-positive",
+      "label": "Positive feedback",
+      "risk_tier": "low"
+    },
+    {
+      "id": "bug-minor-report",
+      "label": "Minor bug report",
+      "risk_tier": "low"
+    },
+    {
+      "id": "onboarding-help",
+      "label": "Onboarding help",
+      "risk_tier": "low"
+    },
+    {
+      "id": "notification-settings-help",
+      "label": "Notification settings help",
+      "risk_tier": "low"
+    },
+    {
+      "id": "mobile-app-question",
+      "label": "Mobile app question",
+      "risk_tier": "low"
+    },
+    {
+      "id": "api-usage-question",
+      "label": "API usage question",
+      "risk_tier": "low"
+    },
+    {
+      "id": "status-inquiry",
+      "label": "Service status inquiry",
+      "risk_tier": "low"
+    },
+    {
+      "id": "other",
+      "label": "Other",
+      "risk_tier": "medium"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+name: Guardrails
+
+on:
+  pull_request:
+
+jobs:
+  validators:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Synthetic fixture rule (DEC-18)
+        run: |
+          files=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.sha }} -- fixtures/)
+          if [ -n "$files" ]; then
+            python3 .claude/hooks/fixtures_pii_guard.py $files
+          else
+            echo "no fixture changes"
+          fi
+
+      - name: DEC citation on register changes (section 2)
+        run: |
+          python3 .claude/hooks/commit_dec_citation.py \
+            --range=${{ github.event.pull_request.base.sha }}...${{ github.sha }}
+
+      # The test-edit-lock and live-database rules have no pull-request
+      # surface. They block inside a session only. REVIEW.md records this.
+      # The commit-msg hook covers the citation rule locally. See
+      # hooks/commit-msg for install instructions.

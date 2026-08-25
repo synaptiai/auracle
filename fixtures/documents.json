@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "doc_id": "DOC-SYN-001",
+      "kind": "document",
+      "title": "Billing cycles and invoices explained",
+      "body": "This article explains renewal dates, proration and where the finance archive lists every past invoice copy.",
+      "url": "https://help.example.com/articles/billing-cycles",
+      "owner": "support-docs-team",
+      "review_by": "2026-03-01",
+      "linked_intents": [
+        "invoice-copy-request",
+        "billing-dispute"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-002",
+      "kind": "document",
+      "title": "Requesting a refund",
+      "body": "This article lists the refund windows per plan and the steps that the billing queue follows for each case.",
+      "url": "https://help.example.com/articles/refunds",
+      "owner": "support-docs-team",
+      "review_by": "2026-02-15",
+      "linked_intents": [
+        "refund-request",
+        "chargeback-notice"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-003",
+      "kind": "document",
+      "title": "Closing a subscription",
+      "body": "This article describes period-end closure, what happens to stored records and how reactivation works.",
+      "url": "https://help.example.com/articles/cancellation",
+      "owner": "support-docs-team",
+      "review_by": "2026-04-01",
+      "linked_intents": [
+        "cancel-subscription"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-004",
+      "kind": "document",
+      "title": "Data deletion requests",
+      "body": "This article walks through the deletion policy, the verification step and the erase window per region.",
+      "url": "https://help.example.com/articles/data-deletion",
+      "owner": "support-ops-team",
+      "review_by": "2026-01-31",
+      "linked_intents": [
+        "data-deletion-request"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-005",
+      "kind": "document",
+      "title": "Fixing sync errors in the desktop client",
+      "body": "This article covers pause states, error codes such as E-412 and the reconnect procedure for stalled clients.",
+      "url": "https://help.example.com/articles/sync-errors",
+      "owner": "platform-docs-team",
+      "review_by": "2026-03-15",
+      "linked_intents": [
+        "sync-error-report"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-006",
+      "kind": "document",
+      "title": "Recovering access to an account",
+      "body": "This article explains the recovery flow when the second factor and the backup codes are both unavailable.",
+      "url": "https://help.example.com/articles/account-recovery",
+      "owner": "support-ops-team",
+      "review_by": "2026-02-28",
+      "linked_intents": [
+        "account-recovery",
+        "login-trouble"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-007",
+      "kind": "document",
+      "title": "Export formats and limits",
+      "body": "This article lists the export formats, the empty-archive causes and the retry rule for partial exports.",
+      "url": "https://help.example.com/articles/exports",
+      "owner": "platform-docs-team",
+      "review_by": "2026-05-01",
+      "linked_intents": [
+        "export-broken"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-008",
+      "kind": "document",
+      "title": "List endpoints and cursor pagination",
+      "body": "This article shows the cursor parameter, the page size default and the header that reports the next cursor.",
+      "url": "https://help.example.com/articles/api-pagination",
+      "owner": "platform-docs-team",
+      "review_by": "2026-04-15",
+      "linked_intents": [
+        "api-usage-question",
+        "integration-failure"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-101",
+      "kind": "canonical_resolution",
+      "title": "Resolved: duplicate charge refunded",
+      "body": "Outcome: the billing queue verified the double charge, refunded the duplicate and confirmed the correct renewal date.",
+      "url": "https://help.example.com/resolutions/duplicate-charge",
+      "owner": "support-docs-team",
+      "review_by": "2026-03-01",
+      "linked_intents": [
+        "refund-request",
+        "billing-dispute"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-102",
+      "kind": "canonical_resolution",
+      "title": "Resolved: password reset delivered",
+      "body": "Outcome: the accounts queue cleared the blocked send, issued a fresh reset message and confirmed sign-in.",
+      "url": "https://help.example.com/resolutions/reset-delivered",
+      "owner": "support-ops-team",
+      "review_by": "2026-02-15",
+      "linked_intents": [
+        "login-trouble"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-103",
+      "kind": "canonical_resolution",
+      "title": "Resolved: subscription closed at period end",
+      "body": "Outcome: the billing queue scheduled closure for the period end and sent the confirmation with the final invoice.",
+      "url": "https://help.example.com/resolutions/period-end-close",
+      "owner": "support-docs-team",
+      "review_by": "2026-04-01",
+      "linked_intents": [
+        "cancel-subscription"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-104",
+      "kind": "canonical_resolution",
+      "title": "Resolved: calendar relinked permanently",
+      "body": "Outcome: the technical queue rotated the stale token, updated the integration scope and stopped the daily drop.",
+      "url": "https://help.example.com/resolutions/calendar-relink",
+      "owner": "platform-docs-team",
+      "review_by": "2026-03-15",
+      "linked_intents": [
+        "integration-failure"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-105",
+      "kind": "canonical_resolution",
+      "title": "Resolved: digest schedule corrected",
+      "body": "Outcome: the accounts queue matched the timezone offset, rescheduled the digest and verified the delivery slot.",
+      "url": "https://help.example.com/resolutions/digest-schedule",
+      "owner": "support-ops-team",
+      "review_by": "2026-05-01",
+      "linked_intents": [
+        "notification-settings-help"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-106",
+      "kind": "canonical_resolution",
+      "title": "Resolved: incident confirmed and tracked",
+      "body": "Outcome: the technical queue matched the slowdown to the active incident and attached the ticket to its tracker.",
+      "url": "https://help.example.com/resolutions/incident-link",
+      "owner": "platform-docs-team",
+      "review_by": "2026-01-31",
+      "linked_intents": [
+        "status-inquiry"
+      ]
+    }
+  ]
+}

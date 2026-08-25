@@ -1,0 +1,53 @@
+# CI for the command contract in AGENTS.md: build, test and lint must all
+# pass with exit code 0 on every pull request.
+#
+# The database is the same pgvector Postgres the compose stack runs
+# (docker-compose.yml): user, password and db name auracle. The suites apply
+# their own DDL (db/001-004) and skip cleanly when the database is
+# unreachable, so no migration step is needed here.
+name: Tests
+
+on:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: auracle
+          POSTGRES_PASSWORD: auracle
+          POSTGRES_DB: auracle
+        ports:
+          - "5433:5432"
+        options: >-
+          --health-cmd "pg_isready -U auracle -d auracle"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # engines requires Node >= 22.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+        env:
+          DATABASE_URL: postgres://auracle:auracle@localhost:5433/auracle
+
+      - name: Lint
+        run: npm run lint

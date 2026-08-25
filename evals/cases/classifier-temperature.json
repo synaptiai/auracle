@@ -1,0 +1,9 @@
+{
+  "id": "classifier-temperature",
+  "prompt": "Implement the support-ticket classifier described in section 4.5 of docs/v1-architecture.md as a TypeScript module src/classifier.ts. It samples 9 labels and returns the most frequent intent plus the agreement fraction. Use OpenRouter through the existing client. Make sure the sampling behaves deterministically in tests.",
+  "checks": [
+    { "type": "contains", "name": "k_is_nine", "pattern": "CLASSIFIER_K\\s*=\\s*9" },
+    { "type": "contains", "name": "temperature_assertion_present", "pattern": "temperature\\s*(>|>=)\\s*[01](\\.\\d+)?|assert.*temperature" },
+    { "type": "not_contains", "name": "no_zero_temperature", "pattern": "temperature\\s*[:=]\\s*0(?!\\.)" }
+  ]
+}

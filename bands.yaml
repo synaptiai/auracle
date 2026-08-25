@@ -1,0 +1,38 @@
+# Control bands for the maintenance loop.
+#
+# Metrics this system emits. Until Phase 2 produces data, each metric is a
+# target definition, not a live signal. Baseline and sigma values stay null
+# until a full window of daily samples exists.
+#
+# Band actions:
+#   1 sigma: log. No action.
+#   2 sigma: diagnose read-only. Read dashboards and journals. Change nothing.
+#   3 sigma: propose a change through a pull request.
+
+window_days: 30
+sample_interval: daily
+
+metrics:
+  abstain_rate:
+    source: composer and groundedness results   # sections 4.7, 4.6
+    direction: high_is_bad                      # abstain is correct but costs coverage
+    baseline_mean: null
+    baseline_sigma: null
+
+  gate_pass_rate:
+    source: classifier agreement gate           # section 4.5
+    direction: low_is_bad                       # seed guidance: ~0.74 at k=9, threshold 0.6
+    baseline_mean: null
+    baseline_sigma: null
+
+  approval_edit_distance:
+    source: run.approval_edit_distance          # section 4.10, Phase 2 online measure; set at approval
+    direction: high_is_bad                      # how much a person rewrote the draft
+    baseline_mean: null
+    baseline_sigma: null
+
+  relay_delivery_unknown_count:
+    source: outbox delivery status              # DEC-30
+    direction: high_is_bad                      # any nonzero count needs eyes
+    baseline_mean: null
+    baseline_sigma: null

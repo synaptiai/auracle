@@ -1,0 +1,109 @@
+{
+  "artifact": "gold-report",
+  "version": 1,
+  "generated_at": "2026-08-25T08:00:18.505Z",
+  "method": "human-review",
+  "gold_source": "synthetic",
+  "split_used": "report",
+  "report_tickets": 385,
+  "prompt_ver": "classify-p1",
+  "model_ver": "replay-stub",
+  "gate_agreement": 0.6,
+  "action_match": {
+    "rate": 0.7974025974025974,
+    "successes": 307,
+    "total": 385,
+    "interval": {
+      "confidence": 0.95,
+      "lower": 0.7544065175481389,
+      "upper": 0.834522452872164
+    }
+  },
+  "containment": {
+    "rate": 0.8,
+    "successes": 308,
+    "total": 385,
+    "interval": {
+      "confidence": 0.95,
+      "lower": 0.7571681619359494,
+      "upper": 0.8369042929421728
+    }
+  },
+  "strata": [
+    {
+      "risk_tier": "low",
+      "tickets": 169,
+      "action_match": {
+        "rate": 0.9526627218934911,
+        "successes": 161,
+        "total": 169,
+        "interval": {
+          "confidence": 0.95,
+          "lower": 0.9093831862366594,
+          "upper": 0.9758210989153325
+        }
+      },
+      "containment": {
+        "rate": 1,
+        "successes": 169,
+        "total": 169,
+        "interval": {
+          "confidence": 0.95,
+          "lower": 0.9777746679129847,
+          "upper": 1
+        }
+      },
+      "publishable": false
+    },
+    {
+      "risk_tier": "medium",
+      "tickets": 139,
+      "action_match": {
+        "rate": 0.8129496402877698,
+        "successes": 113,
+        "total": 139,
+        "interval": {
+          "confidence": 0.95,
+          "lower": 0.7400332409380675,
+          "upper": 0.8690336274506772
+        }
+      },
+      "containment": {
+        "rate": 1,
+        "successes": 139,
+        "total": 139,
+        "interval": {
+          "confidence": 0.95,
+          "lower": 0.9731068357015575,
+          "upper": 1
+        }
+      },
+      "publishable": false
+    },
+    {
+      "risk_tier": "high",
+      "tickets": 77,
+      "action_match": {
+        "rate": 0.42857142857142855,
+        "successes": 33,
+        "total": 77,
+        "interval": {
+          "confidence": 0.95,
+          "lower": 0.32403652422604634,
+          "upper": 0.5398946793857298
+        }
+      },
+      "containment": {
+        "rate": 0,
+        "successes": 0,
+        "total": 77,
+        "interval": {
+          "confidence": 0.95,
+          "lower": 0,
+          "upper": 0.04751842528243408
+        }
+      },
+      "publishable": false
+    }
+  ]
+}

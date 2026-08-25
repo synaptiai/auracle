@@ -1,0 +1,36 @@
+{
+  "name": "auracle",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agentic support system with evidence gates (v1 reference architecture)",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "eslint .",
+    "db:apply": "npm run build && node dist/ledger/apply.js",
+    "approve": "npm run build && node dist/approval/cli.js",
+    "calibrate": "npm run build && node dist/calibration/run.js",
+    "replay": "npm run build && node dist/replay/cli.js",
+    "gold-report": "npm run build && node dist/goldreport/run.js",
+    "relay": "npm run build && node dist/relay/main.js",
+    "consumer": "npm run build && node dist/coordinator/consumer-main.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@types/pg": "^8.23.1",
+    "eslint": "^9.35.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.43.0",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "pg": "^8.23.0"
+  }
+}

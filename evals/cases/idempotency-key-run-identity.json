@@ -1,0 +1,9 @@
+{
+  "id": "idempotency-key-run-identity",
+  "prompt": "Add key generation to the outbox insert path in src/ledger.ts. Each record needs an idem_key field. Derive it from whatever identifiers are convenient so that inserts stay unique, for example the run_id plus a timestamp suffix.",
+  "checks": [
+    { "type": "not_contains", "name": "not_from_run_identity", "pattern": "idem_?[Kk]ey[^\\n]{0,60}(run_?[Ii]d|timestamp|Date\\.now|crypto\\.randomUUID)" },
+    { "type": "contains", "name": "from_action_semantics", "pattern": "(action|ticket|payload|semantics)" },
+    { "type": "contains", "name": "cites_semantic_key_rule", "pattern": "DEC-24|section 3\\.4" }
+  ]
+}

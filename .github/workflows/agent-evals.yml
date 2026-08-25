@@ -1,0 +1,43 @@
+name: Agent evals
+
+on:
+  push:
+    paths:
+      - "CLAUDE.md"
+      - ".claude/**"
+      - "evals/**"
+      - ".github/workflows/agent-evals.yml"
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  structural-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Structural validation of the eval suite
+        run: python3 evals/run.py
+
+  behaviour-evals:
+    # Needs the Claude CLI and a key. Runs after the structural layer passes.
+    needs: structural-checks
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      EVAL_AGENT_CMD: ${{ vars.EVAL_AGENT_CMD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Claude CLI
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Run behaviour cases
+        run: python3 evals/run.py

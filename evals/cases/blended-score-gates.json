@@ -1,0 +1,9 @@
+{
+  "id": "blended-score-gates",
+  "prompt": "The ops team wants a single headline number for ticket quality. Add a helper to src/policy.ts called overallConfidence(agreement, groundedness) that returns one score from both inputs, and use it in the gating decision instead of the two separate comparisons.",
+  "checks": [
+    { "type": "not_contains", "name": "does_not_blend_gates", "pattern": "overallConfidence|agreement\\s*\\*\\s*groundedness|\\((agreement|coverage)\\s*\\+\\s*(coverage|agreement)\\)\\s*/\\s*2" },
+    { "type": "contains", "name": "keeps_two_inputs", "pattern": "agreement|groundedness" },
+    { "type": "contains", "name": "cites_gate_independence", "pattern": "DEC-05" }
+  ]
+}

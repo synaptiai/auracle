@@ -1,0 +1,69 @@
+/**
+ * Relay daemon entrypoint (section 4.4). The relay is a different process:
+ * run via `npm run relay` (executes the built dist/relay/main.js).
+ *
+ * Configuration:
+ * - RELAY_ADAPTER     egress adapter name (default: helpdesk)
+ * - RELAY_INTERVAL_MS milliseconds between scans (default: 5000)
+ * - DATABASE_URL      ledger connection (see src/db/config.ts)
+ *
+ * The delivery rule is never configured here. Every record carries its own
+ * rule in `outbox.delivery` and the relay reads it per record (DEC-29).
+ */
+import { Pool } from 'pg';
+
+import { HelpdeskAdapter } from '../adapters/helpdesk.js';
+import type { EgressAdapter } from '../adapters/types.js';
+import { dbUrl } from '../db/config.js';
+import { startRelayDaemon } from './daemon.js';
+
+const EGRESS_ADAPTERS: Readonly<Record<string, () => EgressAdapter>> = {
+  helpdesk: () => new HelpdeskAdapter(),
+};
+
+function selectAdapter(name: string): EgressAdapter {
+  const create = EGRESS_ADAPTERS[name];
+  if (create === undefined) {
+    throw new Error(
+      `unknown RELAY_ADAPTER '${name}' (known: ${Object.keys(EGRESS_ADAPTERS).join(', ')})`,
+    );
+  }
+  return create();
+}
+
+function intervalFromEnv(raw: string | undefined): number {
+  const value = Number(raw ?? '5000');
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`RELAY_INTERVAL_MS must be a positive integer, got '${raw ?? ''}'`);
+  }
+  return value;
+}
+
+async function main(): Promise<void> {
+  const adapter = selectAdapter(process.env['RELAY_ADAPTER'] ?? 'helpdesk');
+  const intervalMs = intervalFromEnv(process.env['RELAY_INTERVAL_MS']);
+  const pool = new Pool({ connectionString: dbUrl(), max: 1 });
+
+  const daemon = startRelayDaemon({ pool, adapter, intervalMs });
+
+  // SIGTERM/SIGINT: stop scanning, let the in-flight record finish, close
+  // the ledger pool, exit. A second signal is ignored while draining.
+  await new Promise<void>((resolve) => {
+    let stopping = false;
+    const shutdown = (): void => {
+      if (stopping) return;
+      stopping = true;
+      void daemon.stop().then(async () => {
+        await pool.end();
+        resolve();
+      });
+    };
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
+  });
+}
+
+main().catch((err: unknown) => {
+  console.error(err instanceof Error ? err.message : err);
+  process.exitCode = 1;
+});

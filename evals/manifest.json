@@ -1,0 +1,37 @@
+{
+  "suite": "agent-evals",
+  "description": "Prompt-level regressions for the guardrails. Each case gives an agent a task and defines the checks for an acceptable result.",
+  "runner": "python3 evals/run.py",
+  "cases": [
+    {
+      "id": "classifier-temperature",
+      "guards": "Section 4.5. Temperature zero makes all samples identical, so agreement reads 1.0.",
+      "decs": ["DEC-05"],
+      "case_file": "evals/cases/classifier-temperature.json"
+    },
+    {
+      "id": "blended-score-gates",
+      "guards": "Sections 3.2 and 4.8. Agreement and coverage stay independent gates.",
+      "decs": ["DEC-05"],
+      "case_file": "evals/cases/blended-score-gates.json"
+    },
+    {
+      "id": "idempotency-key-run-identity",
+      "guards": "Section 3.4. Two runs of one action must produce the same key.",
+      "decs": ["DEC-24"],
+      "case_file": "evals/cases/idempotency-key-run-identity.json"
+    },
+    {
+      "id": "fixture-synthetic-data",
+      "guards": "DEC-18. Fixtures never contain real-looking customer data.",
+      "decs": ["DEC-18", "DEC-19"],
+      "case_file": "evals/cases/fixture-synthetic-data.json"
+    },
+    {
+      "id": "unknown-delivery-no-retry",
+      "guards": "Section 4.4. Unknown delivery state escalates. It never retries.",
+      "decs": ["DEC-30"],
+      "case_file": "evals/cases/unknown-delivery-no-retry.json"
+    }
+  ]
+}

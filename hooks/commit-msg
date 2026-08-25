@@ -1,0 +1,4 @@
+#!/bin/sh
+# DEC-citation rule for commits that change the design register.
+# Install: cp hooks/commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
+python3 "$(git rev-parse --show-toplevel)/.claude/hooks/commit_dec_citation.py" --commit-msg "$1"

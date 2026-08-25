@@ -1,0 +1,5397 @@
+{
+  "split": "fit",
+  "source": "synthetic",
+  "count": 385,
+  "tickets": [
+    {
+      "ticket_id": "SYN-000001",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 43
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded."
+    },
+    {
+      "ticket_id": "SYN-000002",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 143
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded."
+    },
+    {
+      "ticket_id": "SYN-000003",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 95
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded."
+    },
+    {
+      "ticket_id": "SYN-000004",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 62
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded."
+    },
+    {
+      "ticket_id": "SYN-000005",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 93
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded."
+    },
+    {
+      "ticket_id": "SYN-000006",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 85
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000007",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 69
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded."
+    },
+    {
+      "ticket_id": "SYN-000008",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 132
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded."
+    },
+    {
+      "ticket_id": "SYN-000009",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 42
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000010",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 40
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded."
+    },
+    {
+      "ticket_id": "SYN-000011",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 67
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded."
+    },
+    {
+      "ticket_id": "SYN-000012",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 55
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000013",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 17
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded."
+    },
+    {
+      "ticket_id": "SYN-000014",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 61
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000015",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 11
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded."
+    },
+    {
+      "ticket_id": "SYN-000016",
+      "source": "synthetic",
+      "intent": "refund-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 11
+      },
+      "subject": "Charged twice this month",
+      "body": "I see two charges for one subscription month and I want the duplicate refunded."
+    },
+    {
+      "ticket_id": "SYN-000032",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 153
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page."
+    },
+    {
+      "ticket_id": "SYN-000033",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 87
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000034",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 56
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000035",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 44
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page."
+    },
+    {
+      "ticket_id": "SYN-000036",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 47
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page."
+    },
+    {
+      "ticket_id": "SYN-000037",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 71
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page."
+    },
+    {
+      "ticket_id": "SYN-000038",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 145
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page. This started today."
+    },
+    {
+      "ticket_id": "SYN-000039",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 24
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page."
+    },
+    {
+      "ticket_id": "SYN-000040",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 86
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page."
+    },
+    {
+      "ticket_id": "SYN-000041",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 82
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000042",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 44
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page."
+    },
+    {
+      "ticket_id": "SYN-000043",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 145
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page."
+    },
+    {
+      "ticket_id": "SYN-000044",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 25
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page."
+    },
+    {
+      "ticket_id": "SYN-000045",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 79
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page."
+    },
+    {
+      "ticket_id": "SYN-000046",
+      "source": "synthetic",
+      "intent": "billing-dispute",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 55
+      },
+      "subject": "Invoice total does not match the plan",
+      "body": "The invoice total is higher than the plan price shown on the pricing page."
+    },
+    {
+      "ticket_id": "SYN-000063",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 25
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends. This started today."
+    },
+    {
+      "ticket_id": "SYN-000064",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 76
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends."
+    },
+    {
+      "ticket_id": "SYN-000065",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 24
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000066",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 132
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends."
+    },
+    {
+      "ticket_id": "SYN-000067",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 36
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends."
+    },
+    {
+      "ticket_id": "SYN-000068",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 32
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000069",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 34
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends."
+    },
+    {
+      "ticket_id": "SYN-000070",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 161
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends."
+    },
+    {
+      "ticket_id": "SYN-000071",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 27
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends."
+    },
+    {
+      "ticket_id": "SYN-000072",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 140
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends."
+    },
+    {
+      "ticket_id": "SYN-000073",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 89
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends. This started today."
+    },
+    {
+      "ticket_id": "SYN-000074",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 68
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends."
+    },
+    {
+      "ticket_id": "SYN-000075",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 54
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000076",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 106
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000077",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 135
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends."
+    },
+    {
+      "ticket_id": "SYN-000078",
+      "source": "synthetic",
+      "intent": "cancel-subscription",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 180
+      },
+      "subject": "Close the subscription at period end",
+      "body": "Please close the workspace subscription when the current period ends. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000094",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 25
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy."
+    },
+    {
+      "ticket_id": "SYN-000095",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 129
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy. This started today."
+    },
+    {
+      "ticket_id": "SYN-000096",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 55
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy."
+    },
+    {
+      "ticket_id": "SYN-000097",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 84
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy."
+    },
+    {
+      "ticket_id": "SYN-000098",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 179
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy."
+    },
+    {
+      "ticket_id": "SYN-000099",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 72
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000100",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 69
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000101",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 37
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy."
+    },
+    {
+      "ticket_id": "SYN-000102",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 160
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000103",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 57
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy."
+    },
+    {
+      "ticket_id": "SYN-000104",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 128
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000105",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 35
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000106",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 53
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy."
+    },
+    {
+      "ticket_id": "SYN-000107",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 19
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy."
+    },
+    {
+      "ticket_id": "SYN-000108",
+      "source": "synthetic",
+      "intent": "data-deletion-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 88
+      },
+      "subject": "Remove all stored data",
+      "body": "I want every record tied to the workspace erased under the deletion policy."
+    },
+    {
+      "ticket_id": "SYN-000125",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 127
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response."
+    },
+    {
+      "ticket_id": "SYN-000126",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 52
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response."
+    },
+    {
+      "ticket_id": "SYN-000127",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 81
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000128",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 152
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000129",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 33
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response."
+    },
+    {
+      "ticket_id": "SYN-000130",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 19
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response. This started today."
+    },
+    {
+      "ticket_id": "SYN-000131",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 133
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response."
+    },
+    {
+      "ticket_id": "SYN-000132",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 96
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response."
+    },
+    {
+      "ticket_id": "SYN-000133",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 74
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response."
+    },
+    {
+      "ticket_id": "SYN-000134",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 74
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response."
+    },
+    {
+      "ticket_id": "SYN-000135",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 37
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response."
+    },
+    {
+      "ticket_id": "SYN-000136",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 68
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response."
+    },
+    {
+      "ticket_id": "SYN-000137",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 37
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response."
+    },
+    {
+      "ticket_id": "SYN-000138",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 30
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response."
+    },
+    {
+      "ticket_id": "SYN-000139",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": true,
+        "first_reply_minutes": 101
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response."
+    },
+    {
+      "ticket_id": "SYN-000140",
+      "source": "synthetic",
+      "intent": "chargeback-notice",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 43
+      },
+      "subject": "Bank opened a dispute",
+      "body": "The bank started a dispute for last month and the case needs your response."
+    },
+    {
+      "ticket_id": "SYN-000156",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 325
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000157",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 335
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000158",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 417
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else."
+    },
+    {
+      "ticket_id": "SYN-000159",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 95
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else."
+    },
+    {
+      "ticket_id": "SYN-000160",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 404
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000161",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 61
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else."
+    },
+    {
+      "ticket_id": "SYN-000162",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 406
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000163",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 225
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else."
+    },
+    {
+      "ticket_id": "SYN-000164",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 331
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000165",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 455
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000166",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 150
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else."
+    },
+    {
+      "ticket_id": "SYN-000167",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 118
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else."
+    },
+    {
+      "ticket_id": "SYN-000168",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 13
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else."
+    },
+    {
+      "ticket_id": "SYN-000169",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 267
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else."
+    },
+    {
+      "ticket_id": "SYN-000170",
+      "source": "synthetic",
+      "intent": "payment-failure",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 274
+      },
+      "subject": "Card declined without reason",
+      "body": "Renewal failed with a decline message although the card works everywhere else."
+    },
+    {
+      "ticket_id": "SYN-000187",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 207
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date?"
+    },
+    {
+      "ticket_id": "SYN-000188",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 13
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date?"
+    },
+    {
+      "ticket_id": "SYN-000189",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 102
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date?"
+    },
+    {
+      "ticket_id": "SYN-000190",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 233
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date? This started today."
+    },
+    {
+      "ticket_id": "SYN-000191",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 362
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date?"
+    },
+    {
+      "ticket_id": "SYN-000192",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 269
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date?"
+    },
+    {
+      "ticket_id": "SYN-000193",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 271
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date?"
+    },
+    {
+      "ticket_id": "SYN-000194",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 80
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date?"
+    },
+    {
+      "ticket_id": "SYN-000195",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 278
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date?"
+    },
+    {
+      "ticket_id": "SYN-000196",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 187
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date?"
+    },
+    {
+      "ticket_id": "SYN-000197",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 71
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date?"
+    },
+    {
+      "ticket_id": "SYN-000198",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 450
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date? This started today."
+    },
+    {
+      "ticket_id": "SYN-000199",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 384
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date? This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000200",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 68
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date?"
+    },
+    {
+      "ticket_id": "SYN-000201",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 89
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date? This started today."
+    },
+    {
+      "ticket_id": "SYN-000202",
+      "source": "synthetic",
+      "intent": "plan-change-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 85
+      },
+      "subject": "Switch to the annual plan",
+      "body": "How do I move the workspace to annual billing before the next renewal date?"
+    },
+    {
+      "ticket_id": "SYN-000218",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 439
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive."
+    },
+    {
+      "ticket_id": "SYN-000219",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 257
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive. This started today."
+    },
+    {
+      "ticket_id": "SYN-000220",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-INVOICE-RESEND",
+        "refund_issued": false,
+        "first_reply_minutes": 387
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive."
+    },
+    {
+      "ticket_id": "SYN-000221",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-INVOICE-RESEND",
+        "refund_issued": false,
+        "first_reply_minutes": 407
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000222",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-INVOICE-RESEND",
+        "refund_issued": false,
+        "first_reply_minutes": 463
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000223",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-INVOICE-RESEND",
+        "refund_issued": false,
+        "first_reply_minutes": 133
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive."
+    },
+    {
+      "ticket_id": "SYN-000224",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-INVOICE-RESEND",
+        "refund_issued": false,
+        "first_reply_minutes": 134
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000225",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 250
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive."
+    },
+    {
+      "ticket_id": "SYN-000226",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-INVOICE-RESEND",
+        "refund_issued": false,
+        "first_reply_minutes": 294
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive."
+    },
+    {
+      "ticket_id": "SYN-000227",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 359
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive. This started today."
+    },
+    {
+      "ticket_id": "SYN-000228",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": "MACRO-INVOICE-RESEND",
+        "refund_issued": false,
+        "first_reply_minutes": 14
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive."
+    },
+    {
+      "ticket_id": "SYN-000229",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-INVOICE-RESEND",
+        "refund_issued": false,
+        "first_reply_minutes": 376
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive."
+    },
+    {
+      "ticket_id": "SYN-000230",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-INVOICE-RESEND",
+        "refund_issued": false,
+        "first_reply_minutes": 467
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive."
+    },
+    {
+      "ticket_id": "SYN-000231",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-INVOICE-RESEND",
+        "refund_issued": false,
+        "first_reply_minutes": 440
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive."
+    },
+    {
+      "ticket_id": "SYN-000232",
+      "source": "synthetic",
+      "intent": "invoice-copy-request",
+      "queue": "billing",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-INVOICE-RESEND",
+        "refund_issued": false,
+        "first_reply_minutes": 306
+      },
+      "subject": "Need a past invoice again",
+      "body": "Send a fresh copy of the invoice from three periods ago for the finance archive. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000249",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 59
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000250",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 440
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method."
+    },
+    {
+      "ticket_id": "SYN-000251",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 336
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000252",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 123
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method."
+    },
+    {
+      "ticket_id": "SYN-000253",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 19
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000254",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 82
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method."
+    },
+    {
+      "ticket_id": "SYN-000255",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 87
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method. This started today."
+    },
+    {
+      "ticket_id": "SYN-000256",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 30
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method."
+    },
+    {
+      "ticket_id": "SYN-000257",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 89
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method."
+    },
+    {
+      "ticket_id": "SYN-000258",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 147
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method."
+    },
+    {
+      "ticket_id": "SYN-000259",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 258
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method."
+    },
+    {
+      "ticket_id": "SYN-000260",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 357
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method. This started today."
+    },
+    {
+      "ticket_id": "SYN-000261",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 11
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method."
+    },
+    {
+      "ticket_id": "SYN-000262",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 10
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method."
+    },
+    {
+      "ticket_id": "SYN-000263",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 65
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method."
+    },
+    {
+      "ticket_id": "SYN-000264",
+      "source": "synthetic",
+      "intent": "account-recovery",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 73
+      },
+      "subject": "Locked out after losing the second factor",
+      "body": "The backup codes are gone and the sign-in page rejects every method. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000280",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-PASSWORD-RESET",
+        "refund_issued": false,
+        "first_reply_minutes": 194
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000281",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": "MACRO-PASSWORD-RESET",
+        "refund_issued": false,
+        "first_reply_minutes": 88
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000282",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-PASSWORD-RESET",
+        "refund_issued": false,
+        "first_reply_minutes": 217
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000283",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 21
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000284",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-PASSWORD-RESET",
+        "refund_issued": false,
+        "first_reply_minutes": 436
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000285",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-PASSWORD-RESET",
+        "refund_issued": false,
+        "first_reply_minutes": 90
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000286",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 149
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing."
+    },
+    {
+      "ticket_id": "SYN-000287",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": "MACRO-PASSWORD-RESET",
+        "refund_issued": false,
+        "first_reply_minutes": 80
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing."
+    },
+    {
+      "ticket_id": "SYN-000288",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 116
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000289",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": "MACRO-PASSWORD-RESET",
+        "refund_issued": false,
+        "first_reply_minutes": 46
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing."
+    },
+    {
+      "ticket_id": "SYN-000290",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 67
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing."
+    },
+    {
+      "ticket_id": "SYN-000291",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-PASSWORD-RESET",
+        "refund_issued": false,
+        "first_reply_minutes": 126
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing."
+    },
+    {
+      "ticket_id": "SYN-000292",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-PASSWORD-RESET",
+        "refund_issued": false,
+        "first_reply_minutes": 470
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing."
+    },
+    {
+      "ticket_id": "SYN-000293",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-PASSWORD-RESET",
+        "refund_issued": false,
+        "first_reply_minutes": 290
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000294",
+      "source": "synthetic",
+      "intent": "login-trouble",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-PASSWORD-RESET",
+        "refund_issued": false,
+        "first_reply_minutes": 163
+      },
+      "subject": "Password reset mail never arrives",
+      "body": "The reset message does not reach any folder and sign-in keeps failing."
+    },
+    {
+      "ticket_id": "SYN-000311",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 206
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412."
+    },
+    {
+      "ticket_id": "SYN-000312",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 59
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412."
+    },
+    {
+      "ticket_id": "SYN-000313",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 332
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000314",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 160
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412."
+    },
+    {
+      "ticket_id": "SYN-000315",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 149
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000316",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 300
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000317",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 335
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412."
+    },
+    {
+      "ticket_id": "SYN-000318",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 101
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412."
+    },
+    {
+      "ticket_id": "SYN-000319",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 339
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412."
+    },
+    {
+      "ticket_id": "SYN-000320",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 421
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412. This started today."
+    },
+    {
+      "ticket_id": "SYN-000321",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 48
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412."
+    },
+    {
+      "ticket_id": "SYN-000322",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 122
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000323",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 141
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412. This started today."
+    },
+    {
+      "ticket_id": "SYN-000324",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 199
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000325",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 252
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412. This started today."
+    },
+    {
+      "ticket_id": "SYN-000326",
+      "source": "synthetic",
+      "intent": "sync-error-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 223
+      },
+      "subject": "Desktop client stops syncing",
+      "body": "The desktop client pauses sync every few minutes and shows error E-412. This started today."
+    },
+    {
+      "ticket_id": "SYN-000342",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 72
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records."
+    },
+    {
+      "ticket_id": "SYN-000343",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 288
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records."
+    },
+    {
+      "ticket_id": "SYN-000344",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 252
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records."
+    },
+    {
+      "ticket_id": "SYN-000345",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 462
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000346",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 53
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000347",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 461
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records."
+    },
+    {
+      "ticket_id": "SYN-000348",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 225
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records."
+    },
+    {
+      "ticket_id": "SYN-000349",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 401
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records."
+    },
+    {
+      "ticket_id": "SYN-000350",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "technical",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 27
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000351",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 324
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records."
+    },
+    {
+      "ticket_id": "SYN-000352",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 408
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records."
+    },
+    {
+      "ticket_id": "SYN-000353",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "technical",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 86
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000354",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 188
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000355",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 309
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records."
+    },
+    {
+      "ticket_id": "SYN-000356",
+      "source": "synthetic",
+      "intent": "export-broken",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 246
+      },
+      "subject": "Export produces an empty archive",
+      "body": "The full export finishes in seconds and the archive contains no records. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000373",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 32
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking. This started today."
+    },
+    {
+      "ticket_id": "SYN-000374",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 72
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000375",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 474
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000376",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 362
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking."
+    },
+    {
+      "ticket_id": "SYN-000377",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 191
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking."
+    },
+    {
+      "ticket_id": "SYN-000378",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 82
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking."
+    },
+    {
+      "ticket_id": "SYN-000379",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 397
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking."
+    },
+    {
+      "ticket_id": "SYN-000380",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 82
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking."
+    },
+    {
+      "ticket_id": "SYN-000381",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 174
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking."
+    },
+    {
+      "ticket_id": "SYN-000382",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 345
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000383",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 151
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000384",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 182
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking."
+    },
+    {
+      "ticket_id": "SYN-000385",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 25
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking."
+    },
+    {
+      "ticket_id": "SYN-000386",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 28
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking. This started today."
+    },
+    {
+      "ticket_id": "SYN-000387",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 216
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking. This started today."
+    },
+    {
+      "ticket_id": "SYN-000388",
+      "source": "synthetic",
+      "intent": "integration-failure",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 61
+      },
+      "subject": "Calendar link drops daily",
+      "body": "The calendar connection disconnects once a day and needs manual relinking."
+    },
+    {
+      "ticket_id": "SYN-000404",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 131
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning."
+    },
+    {
+      "ticket_id": "SYN-000405",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 87
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning."
+    },
+    {
+      "ticket_id": "SYN-000406",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 247
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning. This started today."
+    },
+    {
+      "ticket_id": "SYN-000407",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 108
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning."
+    },
+    {
+      "ticket_id": "SYN-000408",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 450
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning."
+    },
+    {
+      "ticket_id": "SYN-000409",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 469
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning."
+    },
+    {
+      "ticket_id": "SYN-000410",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 288
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning."
+    },
+    {
+      "ticket_id": "SYN-000411",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 376
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning."
+    },
+    {
+      "ticket_id": "SYN-000412",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 121
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning."
+    },
+    {
+      "ticket_id": "SYN-000413",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 428
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning."
+    },
+    {
+      "ticket_id": "SYN-000414",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 427
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning."
+    },
+    {
+      "ticket_id": "SYN-000415",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 210
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning."
+    },
+    {
+      "ticket_id": "SYN-000416",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 378
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning. This started today."
+    },
+    {
+      "ticket_id": "SYN-000417",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 74
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning."
+    },
+    {
+      "ticket_id": "SYN-000418",
+      "source": "synthetic",
+      "intent": "feature-request",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 459
+      },
+      "subject": "Request for saved filter views",
+      "body": "Saved filter views would remove the same setup steps every morning."
+    },
+    {
+      "ticket_id": "SYN-000435",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-KB-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 409
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans?"
+    },
+    {
+      "ticket_id": "SYN-000436",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-KB-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 59
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans? No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000437",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 162
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans?"
+    },
+    {
+      "ticket_id": "SYN-000438",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 375
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans?"
+    },
+    {
+      "ticket_id": "SYN-000439",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-KB-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 367
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans? The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000440",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-KB-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 130
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans?"
+    },
+    {
+      "ticket_id": "SYN-000441",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 107
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans? The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000442",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-KB-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 263
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans?"
+    },
+    {
+      "ticket_id": "SYN-000443",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 90
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans?"
+    },
+    {
+      "ticket_id": "SYN-000444",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-KB-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 245
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans?"
+    },
+    {
+      "ticket_id": "SYN-000445",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 174
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans?"
+    },
+    {
+      "ticket_id": "SYN-000446",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 388
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans?"
+    },
+    {
+      "ticket_id": "SYN-000447",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 285
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans?"
+    },
+    {
+      "ticket_id": "SYN-000448",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-KB-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 152
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans? This started today."
+    },
+    {
+      "ticket_id": "SYN-000449",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-KB-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 272
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans? No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000450",
+      "source": "synthetic",
+      "intent": "how-to-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-KB-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 435
+      },
+      "subject": "Assign tasks to several people",
+      "body": "Can one task carry more than one assignee in the current plans? No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000466",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 357
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period? No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000467",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 82
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period?"
+    },
+    {
+      "ticket_id": "SYN-000468",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 105
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period?"
+    },
+    {
+      "ticket_id": "SYN-000469",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 217
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period? This started today."
+    },
+    {
+      "ticket_id": "SYN-000470",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 474
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period? This started today."
+    },
+    {
+      "ticket_id": "SYN-000471",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 208
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period?"
+    },
+    {
+      "ticket_id": "SYN-000472",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 457
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period?"
+    },
+    {
+      "ticket_id": "SYN-000473",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 243
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period? No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000474",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 289
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period? The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000475",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 395
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period?"
+    },
+    {
+      "ticket_id": "SYN-000476",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 274
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period? No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000477",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 253
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period?"
+    },
+    {
+      "ticket_id": "SYN-000478",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 463
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period?"
+    },
+    {
+      "ticket_id": "SYN-000479",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 129
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period?"
+    },
+    {
+      "ticket_id": "SYN-000480",
+      "source": "synthetic",
+      "intent": "pricing-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 163
+      },
+      "subject": "Seats above the plan limit",
+      "body": "What happens to billing when the seat count passes the plan limit mid-period? This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000497",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 94
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000498",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 324
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload."
+    },
+    {
+      "ticket_id": "SYN-000499",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 69
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload. This started today."
+    },
+    {
+      "ticket_id": "SYN-000500",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 183
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload."
+    },
+    {
+      "ticket_id": "SYN-000501",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 276
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload."
+    },
+    {
+      "ticket_id": "SYN-000502",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 410
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload."
+    },
+    {
+      "ticket_id": "SYN-000503",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 346
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload."
+    },
+    {
+      "ticket_id": "SYN-000504",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 286
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload."
+    },
+    {
+      "ticket_id": "SYN-000505",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 474
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000506",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 411
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload. This started today."
+    },
+    {
+      "ticket_id": "SYN-000507",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 340
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000508",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 275
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload."
+    },
+    {
+      "ticket_id": "SYN-000509",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 288
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload."
+    },
+    {
+      "ticket_id": "SYN-000510",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 412
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload."
+    },
+    {
+      "ticket_id": "SYN-000511",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 471
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload."
+    },
+    {
+      "ticket_id": "SYN-000512",
+      "source": "synthetic",
+      "intent": "documentation-gap",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 471
+      },
+      "subject": "Docs miss the bulk import steps",
+      "body": "The import guide skips the field mapping screen that appears after upload."
+    },
+    {
+      "ticket_id": "SYN-000528",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 328
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000529",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 315
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session."
+    },
+    {
+      "ticket_id": "SYN-000530",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 327
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000531",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 464
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session."
+    },
+    {
+      "ticket_id": "SYN-000532",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 184
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session."
+    },
+    {
+      "ticket_id": "SYN-000533",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 91
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000534",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 249
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session."
+    },
+    {
+      "ticket_id": "SYN-000535",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 466
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session."
+    },
+    {
+      "ticket_id": "SYN-000536",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 346
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session."
+    },
+    {
+      "ticket_id": "SYN-000537",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 253
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000538",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 200
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session."
+    },
+    {
+      "ticket_id": "SYN-000539",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 371
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000540",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 361
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session."
+    },
+    {
+      "ticket_id": "SYN-000541",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 79
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session."
+    },
+    {
+      "ticket_id": "SYN-000542",
+      "source": "synthetic",
+      "intent": "feedback-positive",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 78
+      },
+      "subject": "Reports page saves hours",
+      "body": "The weekly summary gives the numbers that used to need a spreadsheet session."
+    },
+    {
+      "ticket_id": "SYN-000559",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 245
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load."
+    },
+    {
+      "ticket_id": "SYN-000560",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 322
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load."
+    },
+    {
+      "ticket_id": "SYN-000561",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 331
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000562",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 265
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load."
+    },
+    {
+      "ticket_id": "SYN-000563",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 192
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load."
+    },
+    {
+      "ticket_id": "SYN-000564",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 423
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load."
+    },
+    {
+      "ticket_id": "SYN-000565",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 440
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000566",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 293
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000567",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 198
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load."
+    },
+    {
+      "ticket_id": "SYN-000568",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 67
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000569",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 212
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load. This started today."
+    },
+    {
+      "ticket_id": "SYN-000570",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 314
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load."
+    },
+    {
+      "ticket_id": "SYN-000571",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 217
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load."
+    },
+    {
+      "ticket_id": "SYN-000572",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 186
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000573",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 215
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load."
+    },
+    {
+      "ticket_id": "SYN-000574",
+      "source": "synthetic",
+      "intent": "bug-minor-report",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 468
+      },
+      "subject": "Typo on the settings page",
+      "body": "The settings header spells the word notifications wrong on every load."
+    },
+    {
+      "ticket_id": "SYN-000590",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 283
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported."
+    },
+    {
+      "ticket_id": "SYN-000591",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 179
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000592",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 242
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported."
+    },
+    {
+      "ticket_id": "SYN-000593",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 321
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000594",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 354
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported."
+    },
+    {
+      "ticket_id": "SYN-000595",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 214
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported."
+    },
+    {
+      "ticket_id": "SYN-000596",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 200
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000597",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 208
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported."
+    },
+    {
+      "ticket_id": "SYN-000598",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 159
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported."
+    },
+    {
+      "ticket_id": "SYN-000599",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 148
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000600",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 229
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported."
+    },
+    {
+      "ticket_id": "SYN-000601",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 362
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000602",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 172
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported."
+    },
+    {
+      "ticket_id": "SYN-000603",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 295
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported."
+    },
+    {
+      "ticket_id": "SYN-000604",
+      "source": "synthetic",
+      "intent": "onboarding-help",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 90
+      },
+      "subject": "First workspace setup stuck",
+      "body": "The setup checklist stays on step two although the sample project imported."
+    },
+    {
+      "ticket_id": "SYN-000621",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 59
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000622",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 271
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored."
+    },
+    {
+      "ticket_id": "SYN-000623",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 280
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored."
+    },
+    {
+      "ticket_id": "SYN-000624",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 274
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored."
+    },
+    {
+      "ticket_id": "SYN-000625",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 380
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000626",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 122
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000627",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 86
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored."
+    },
+    {
+      "ticket_id": "SYN-000628",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 418
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000629",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 406
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000630",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 44
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000631",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 206
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored."
+    },
+    {
+      "ticket_id": "SYN-000632",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 396
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000633",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 108
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000634",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 163
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000635",
+      "source": "synthetic",
+      "intent": "notification-settings-help",
+      "queue": "accounts",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 328
+      },
+      "subject": "Digest arrives at night",
+      "body": "The digest lands at midnight local time and the schedule control looks ignored."
+    },
+    {
+      "ticket_id": "SYN-000651",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 262
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards?"
+    },
+    {
+      "ticket_id": "SYN-000652",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 28
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards?"
+    },
+    {
+      "ticket_id": "SYN-000653",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 84
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards?"
+    },
+    {
+      "ticket_id": "SYN-000654",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 119
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards?"
+    },
+    {
+      "ticket_id": "SYN-000655",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 346
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards? This started today."
+    },
+    {
+      "ticket_id": "SYN-000656",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 190
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards?"
+    },
+    {
+      "ticket_id": "SYN-000657",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 404
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards?"
+    },
+    {
+      "ticket_id": "SYN-000658",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 323
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards? This started today."
+    },
+    {
+      "ticket_id": "SYN-000659",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 180
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards? This started today."
+    },
+    {
+      "ticket_id": "SYN-000660",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 474
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards? This started today."
+    },
+    {
+      "ticket_id": "SYN-000661",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 365
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards?"
+    },
+    {
+      "ticket_id": "SYN-000662",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 309
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards?"
+    },
+    {
+      "ticket_id": "SYN-000663",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 307
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards?"
+    },
+    {
+      "ticket_id": "SYN-000664",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 158
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards? The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000665",
+      "source": "synthetic",
+      "intent": "mobile-app-question",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 315
+      },
+      "subject": "Offline edits on mobile",
+      "body": "Do edits made offline in the mobile app merge without conflicts afterwards?"
+    },
+    {
+      "ticket_id": "SYN-000681",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-API-DOCS-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 229
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter."
+    },
+    {
+      "ticket_id": "SYN-000682",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 53
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter."
+    },
+    {
+      "ticket_id": "SYN-000683",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 225
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000684",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-API-DOCS-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 166
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000685",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-API-DOCS-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 220
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter."
+    },
+    {
+      "ticket_id": "SYN-000686",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 384
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000687",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-API-DOCS-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 365
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000688",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 133
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000689",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-API-DOCS-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 192
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter."
+    },
+    {
+      "ticket_id": "SYN-000690",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 418
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter."
+    },
+    {
+      "ticket_id": "SYN-000691",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": "MACRO-API-DOCS-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 31
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000692",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 430
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter."
+    },
+    {
+      "ticket_id": "SYN-000693",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-API-DOCS-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 93
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter. No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000694",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": "MACRO-API-DOCS-LINK",
+        "refund_issued": false,
+        "first_reply_minutes": 368
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000695",
+      "source": "synthetic",
+      "intent": "api-usage-question",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 321
+      },
+      "subject": "Pagination stops at one page",
+      "body": "The list endpoint returns the first page and ignores the cursor parameter. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000711",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 225
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page? No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000712",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 119
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page? The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000713",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 466
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page?"
+    },
+    {
+      "ticket_id": "SYN-000714",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 242
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page?"
+    },
+    {
+      "ticket_id": "SYN-000715",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 365
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page?"
+    },
+    {
+      "ticket_id": "SYN-000716",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 265
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page? The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000717",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 452
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page?"
+    },
+    {
+      "ticket_id": "SYN-000718",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 451
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page?"
+    },
+    {
+      "ticket_id": "SYN-000719",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 415
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page? No settings change helps so far."
+    },
+    {
+      "ticket_id": "SYN-000720",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 243
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page?"
+    },
+    {
+      "ticket_id": "SYN-000721",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 174
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page? This started today."
+    },
+    {
+      "ticket_id": "SYN-000722",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 46
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page?"
+    },
+    {
+      "ticket_id": "SYN-000723",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 23
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page?"
+    },
+    {
+      "ticket_id": "SYN-000724",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 397
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page?"
+    },
+    {
+      "ticket_id": "SYN-000725",
+      "source": "synthetic",
+      "intent": "status-inquiry",
+      "queue": "technical",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 96
+      },
+      "subject": "Slow responses this morning",
+      "body": "Responses lag since the morning window. Is there an incident on the status page? This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000741",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 69
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000742",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 72
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear."
+    },
+    {
+      "ticket_id": "SYN-000743",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 434
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear. This started today."
+    },
+    {
+      "ticket_id": "SYN-000744",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 409
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear."
+    },
+    {
+      "ticket_id": "SYN-000745",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 129
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000746",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 179
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear."
+    },
+    {
+      "ticket_id": "SYN-000747",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 69
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000748",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 360
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear."
+    },
+    {
+      "ticket_id": "SYN-000749",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 54
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000750",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": true,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 77
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear."
+    },
+    {
+      "ticket_id": "SYN-000751",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 52
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear. This happens every time."
+    },
+    {
+      "ticket_id": "SYN-000752",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 57
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear. This started today."
+    },
+    {
+      "ticket_id": "SYN-000753",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 350
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear. This started today."
+    },
+    {
+      "ticket_id": "SYN-000754",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 224
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear. The steps repeat on a clean install."
+    },
+    {
+      "ticket_id": "SYN-000755",
+      "source": "synthetic",
+      "intent": "other",
+      "queue": "general",
+      "disposition": {
+        "escalated": false,
+        "macro_applied": null,
+        "refund_issued": false,
+        "first_reply_minutes": 318
+      },
+      "subject": "Question about the team plan trial",
+      "body": "The trial banner disappeared early and the remaining days are unclear."
+    }
+  ]
+}
