@@ -1,5 +1,5 @@
 -- Document index schema — docs/v1-architecture.md section 4.6.
--- Plain SQL applied by src/ledger/apply.ts. No migration framework (V2 open item 7).
+-- Plain SQL applied by src/ledger/migrate.ts, which records each version in schema_version (V2 open item 6).
 -- Every statement is idempotent, so re-applying this file against an applied
 -- ledger is a no-op.
 

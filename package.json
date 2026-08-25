@@ -12,9 +12,10 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "lint": "eslint .",
-    "db:apply": "npm run build && node dist/ledger/apply.js",
+    "db:migrate": "npm run build && node dist/ledger/migrate.js",
     "approve": "npm run build && node dist/approval/cli.js",
     "calibrate": "npm run build && node dist/calibration/run.js",
     "replay": "npm run build && node dist/replay/cli.js",

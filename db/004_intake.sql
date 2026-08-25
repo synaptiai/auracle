@@ -2,7 +2,7 @@
 -- (section 4.3, DEC-27). The architecture doc says "read the next ticket from
 -- its partition" without naming a source; this table is that source and is an
 -- implementation detail, not a decision.
--- Plain SQL applied by src/ledger/apply.ts. No migration framework (V2 open item 7).
+-- Plain SQL applied by src/ledger/migrate.ts, which records each version in schema_version (V2 open item 6).
 -- Every statement uses IF NOT EXISTS, so re-applying against an applied ledger
 -- is a no-op.
 
