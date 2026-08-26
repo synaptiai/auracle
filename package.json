@@ -22,7 +22,8 @@
     "replay": "npm run build && node dist/replay/cli.js",
     "gold-report": "npm run build && node dist/goldreport/run.js",
     "relay": "npm run build && node dist/relay/main.js",
-    "consumer": "npm run build && node dist/coordinator/consumer-main.js"
+    "consumer": "npm run build && node dist/coordinator/consumer-main.js",
+    "load-docs": "npm run build && node dist/kb/cli.js"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^12.1.0",
