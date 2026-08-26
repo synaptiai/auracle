@@ -13,10 +13,13 @@
 // The history is the synthetic fixture corpus (DEC-18) by default. Set
 // CORPUS_PATH to a file written by `npm run export-corpus` to run the same
 // job over real mailbox history instead; that file is gitignored and never
-// committed (DEC-18). The artifact it writes is a candidate list for a
-// person to curate; nothing at runtime reads it.
+// committed (DEC-18). In corpus mode the output default also lands under
+// the gitignored corpus/ directory: the artifact is real-derived data. The
+// artifact it writes is a candidate list for a person to curate; nothing
+// at runtime reads it.
 
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 import { loadDotEnv } from '../config/env.js';
 import { CORPUS_SOURCE, loadCorpusFile } from '../corpus/corpus.js';
@@ -37,11 +40,15 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const outputPath = process.argv[2] ?? 'taxonomy-candidates.json';
-
   // DEC-02: raw ticket history with no tags. Intent labels are ignored here
   // on purpose; only subject and body feed the job.
   const corpusPath = process.env['CORPUS_PATH'];
+  // Corpus mode never defaults into the repo root: labels and sample ids
+  // derive from real customer text, and only /corpus/ is gitignored
+  // (DEC-18). Synthetic mode keeps the old default.
+  const outputPath =
+    process.argv[2] ??
+    (corpusPath !== undefined ? 'corpus/taxonomy-candidates-real.json' : 'taxonomy-candidates.json');
   let items: HistoryItem[];
   if (corpusPath !== undefined) {
     items = loadCorpusFile(corpusPath).tickets.map((ticket) => ({
@@ -79,12 +86,16 @@ async function main(): Promise<void> {
     ...(corpusPath !== undefined ? { source: CORPUS_SOURCE } : {}),
   });
 
+  await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, `${JSON.stringify(taxonomy, null, 2)}\n`, 'utf8');
   console.log(
     `wrote ${outputPath}: ${taxonomy.candidates.length} named candidates ` +
       `(cap ${INTENT_CAP - 1}) + other group of ${taxonomy.other.size}, ` +
       `${taxonomy.cost_cents} cents`,
   );
+  if (corpusPath !== undefined) {
+    console.log('this artifact holds real-derived data. It is gitignored and must stay that way (DEC-18).');
+  }
 }
 
 main().catch((err: unknown) => {
