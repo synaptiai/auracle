@@ -208,6 +208,41 @@ describe('HelpdeskAdapter.performAction', () => {
     expect(adapter.getTicket('HD-1002')?.status).toBe('closed');
   });
 
+  it('records a compensate action without changing the ticket fields (V2)', async () => {
+    const adapter = newAdapter();
+    const before = adapter.getTicket('HD-1001');
+
+    const { externalId } = await adapter.performAction(
+      'compensate',
+      { ticketExternalId: 'HD-1001', reason: 'refund sent to the wrong account' },
+      'compensate:HD-1001:k1',
+    );
+    // A replayed compensation returns the first delivery: never pays twice.
+    const resent = await adapter.performAction(
+      'compensate',
+      { ticketExternalId: 'HD-1001', reason: 'refund sent to the wrong account' },
+      'compensate:HD-1001:k1',
+    );
+
+    expect(externalId).toMatch(/^hd-act-/);
+    expect(resent.externalId).toBe(externalId);
+    expect(adapter.listDeliveries()).toHaveLength(1);
+    await expect(adapter.readBack({ idemKey: 'compensate:HD-1001:k1' })).resolves.toEqual({
+      state: 'delivered',
+      externalId,
+    });
+    expect(adapter.getTicket('HD-1001')).toEqual(before);
+  });
+
+  it('refuses a compensate payload with no reason', async () => {
+    const adapter = newAdapter();
+
+    await expect(
+      adapter.performAction('compensate', { ticketExternalId: 'HD-1001' }, 'compensate:HD-1001:k2'),
+    ).rejects.toThrow(/'reason' must be a non-empty string/);
+    expect(adapter.listDeliveries()).toHaveLength(0);
+  });
+
   it('returns the first delivery for a repeated idempotency key and applies once (DEC-24)', async () => {
     const adapter = newAdapter();
     const payload = { ticketExternalId: 'HD-1001', queue: 'billing' };

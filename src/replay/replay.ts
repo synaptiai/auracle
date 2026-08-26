@@ -55,7 +55,7 @@ const FULL_CAPABILITIES: AdapterCapabilities = {
 };
 
 /** Routing writes the queue field on the ticket; the write is never customer-visible. */
-const ROUTING_ACTION = { isWrite: true, isCustomerVisible: false } as const;
+const ROUTING_ACTION = { isWrite: true, isCustomerVisible: false, isIrreversible: false } as const;
 
 /** Queue used when a predicted intent has no fitted route. */
 export const FALLBACK_QUEUE = 'general';

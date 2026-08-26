@@ -22,7 +22,7 @@ import { deriveIdemKey } from '../ledger/keys.js';
 import { FakeProvider } from '../models/fake.js';
 import type { FakeStep } from '../models/fake.js';
 import type { AdapterCapabilities } from '../policy/policy.js';
-import { CUSTOMER_REPLY_ACTION_CLASS } from '../relay/relay.js';
+import { COMPENSATION_ACTION_CLASS, CUSTOMER_REPLY_ACTION_CLASS } from '../relay/relay.js';
 import { indexDocument } from '../retriever/retriever.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
@@ -310,7 +310,8 @@ describe.skipIf(!dbUp)('section 4.3 run coordinator', () => {
 
     // The draft sits in the target system with disclosure and provenance
     // attached (DEC-14, DEC-33), still in draft state.
-    const draft = helpdesk.getDraft(result.draftExternalId);
+    expect(result.draftExternalId).not.toBeNull();
+    const draft = helpdesk.getDraft(result.draftExternalId!);
     expect(draft).toMatchObject({
       ticketExternalId: ticketId,
       status: 'draft',
@@ -335,7 +336,7 @@ describe.skipIf(!dbUp)('section 4.3 run coordinator', () => {
     // approve entrypoint needs later.
     const steps = await journalRows(result.runId);
     expect(steps.find((s) => s.step_id === 'park')?.result).toMatchObject({
-      draftExternalId: result.draftExternalId,
+      draftExternalId: result.draftExternalId!,
       actionClass: CUSTOMER_REPLY_ACTION_CLASS,
       delivery: 'at_least_once',
     });
@@ -482,6 +483,77 @@ describe.skipIf(!dbUp)('section 4.3 run coordinator', () => {
     if (result.outcome === 'stale_epoch') expect(result.highestAcceptedEpoch).toBe(100n);
     const runs = await pool.query('SELECT 1 FROM run WHERE ticket_id = $1', [ticketId]);
     expect(runs.rows).toHaveLength(0);
+  });
+
+  describe('V2 compensation of an irreversible action', () => {
+    /** A sent refund was wrong; the system proposes compensating it. */
+    function compensationInput(ticketId: string, epoch: bigint): CoordinateInput {
+      return {
+        ...autoInput(ticketId, epoch),
+        actionClass: COMPENSATION_ACTION_CLASS,
+        actionPayload: { reason: 'refund sent to the wrong account' },
+        delivery: 'at_most_once',
+        isCustomerVisible: false,
+      };
+    }
+
+    it('parks in the ledger only and stops at awaiting_approval', async () => {
+      const ticketId = 'T-' + randomUUID().slice(0, 8);
+      const helpdesk = helpdeskWith(ticketId);
+
+      const result = await coordinateTicket(
+        makeDeps(happyScript(), undefined, helpdesk),
+        compensationInput(ticketId, 1n),
+      );
+
+      expect(result.outcome).toBe('awaiting_approval');
+      if (result.outcome !== 'awaiting_approval') return;
+      expect(await runState(result.runId)).toBe('awaiting_approval');
+      // No adapter call happened: a compensation has no customer-visible
+      // draft to park (DEC-11), so there is no handle to return.
+      expect(result.draftExternalId).toBeNull();
+      expect(helpdesk.listDeliveries()).toHaveLength(0);
+
+      // No relayable record exists while the run waits; approval inserts it.
+      const outboxCount = await pool.query(
+        'SELECT count(*)::int AS n FROM outbox WHERE run_id = $1',
+        [result.runId],
+      );
+      expect(outboxCount.rows[0]?.n).toBe(0);
+
+      // The gate gated on irreversibility, not on evidence or risk tier:
+      // both gates passed and the tier is low.
+      const steps = await journalRows(result.runId);
+      expect(steps.find((s) => s.step_id === 'gate')?.result).toMatchObject({
+        decision: 'gated',
+        groundedness: 1,
+      });
+      // The park step carries everything approveRun needs: semantics,
+      // declared rule, rationale body and the action payload verbatim.
+      expect(steps.find((s) => s.step_id === 'park')?.result).toMatchObject({
+        actionClass: COMPENSATION_ACTION_CLASS,
+        delivery: 'at_most_once',
+        body: expect.stringContaining('account settings'),
+        payload: { reason: 'refund sent to the wrong account' },
+      });
+    });
+
+    it('refuses a compensation that declares any other delivery rule (DEC-29)', async () => {
+      const ticketId = 'T-' + randomUUID().slice(0, 8);
+
+      await expect(
+        coordinateTicket(makeDeps(happyScript()), {
+          ...compensationInput(ticketId, 1n),
+          delivery: 'at_least_once',
+        }),
+      ).rejects.toThrow(/declares delivery 'at_most_once'/);
+
+      // The refusal happens before any state change.
+      const runs = await pool.query('SELECT count(*)::int AS n FROM run WHERE ticket_id = $1', [
+        ticketId,
+      ]);
+      expect(runs.rows[0]?.n).toBe(0);
+    });
   });
 
   afterAll(async () => {

@@ -139,7 +139,11 @@ export class HelpdeskAdapter implements EgressAdapter {
    * their effect on the ticket record:
    *
    * - `close_ticket`   -> status becomes 'closed'
-   * - `route_ticket`   -> queue becomes payload.queue (non-empty string)
+   *   `route_ticket`   -> queue becomes payload.queue (non-empty string)
+   *   `compensate`     -> records the compensating action (V2); ticket
+   *                       fields stay untouched, payload.reason must be a
+   *                       non-empty string naming why the prior write was
+   *                       wrong
    *
    * Any other class throws instead of faking an effect (DEC-06). The key
    * comes from the action semantics (DEC-24), so a repeat call returns the
@@ -184,10 +188,24 @@ export class HelpdeskAdapter implements EgressAdapter {
         updated = { ...ticket, queue };
         break;
       }
+      case 'compensate': {
+        // V2: compensation of an irreversible action. The helpdesk API
+        // records the compensating credit against the ticket; no ticket
+        // field changes. The idempotency key above already dedupes, so a
+        // replayed compensation never pays twice.
+        const reason = payload['reason'];
+        if (typeof reason !== 'string' || reason.length === 0) {
+          throw new TypeError(
+            "helpdesk action payload field 'reason' must be a non-empty string",
+          );
+        }
+        updated = { ...ticket };
+        break;
+      }
       default:
         throw new AdapterCapabilityError(
           `helpdesk adapter cannot perform action class '${actionClass}'; `
-            + 'it implements only close_ticket and route_ticket',
+            + 'it implements only close_ticket, route_ticket and compensate',
         );
     }
     this.tickets.set(ticketExternalId, updated);

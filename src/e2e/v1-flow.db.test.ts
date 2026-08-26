@@ -545,7 +545,7 @@ describe.skipIf(!dbUp)('V1 flow end to end', () => {
     const helpdesk = helpdeskWith(ticketId);
     const result = await coordinateTicket(makeDeps(happyScript(), { egress: helpdesk }), replyInput(ticketId, 1n));
     if (result.outcome !== 'awaiting_approval') throw new Error(`unexpected ${result.outcome}`);
-    const parkedBody = helpdesk.getDraft(result.draftExternalId)!.body;
+    const parkedBody = helpdesk.getDraft(result.draftExternalId!)!.body;
 
     await approveRun(pool, result.runId, { finalBody: parkedBody });
     expect((await runRow(result.runId))?.approval_edit_distance).toBe(0);

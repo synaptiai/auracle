@@ -26,6 +26,12 @@ export interface AdapterCapabilities {
 export interface ActionClass {
   isWrite: boolean;
   isCustomerVisible: boolean;
+  /**
+   * V2: the write cannot be undone once delivered (a sent refund). DEC-03
+   * limits autonomy to reversible writes, so such an action never takes
+   * the automatic path, whatever the gates read.
+   */
+  isIrreversible: boolean;
 }
 
 export interface PolicyInput {
@@ -57,6 +63,10 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   if (!input.capabilities.supportsIdempotencyKey && input.action.isWrite) return 'gated';
   // DEC-12: customer replies always need approval.
   if (input.action.isCustomerVisible) return 'gated';
+  // DEC-03 (V2): an irreversible write never reaches the automatic path,
+  // whatever the gates read — compensation of a sent refund gates like a
+  // customer reply does.
+  if (input.action.isWrite && input.action.isIrreversible) return 'gated';
   // DEC-03/DEC-13: a high-risk intent never reaches the automatic path,
   // regardless of the gate values.
   if (input.riskTier === 'high') return 'gated';
