@@ -81,6 +81,7 @@ Without an explicit `DATABASE_URL`, they fall back to the compose address (src/d
 | `npm run calibrate` | Fits the agreement threshold on the fit half of the gold set. Writes a versioned artifact. |
 | `npm run replay` | Runs the action-match replay over the fixture corpus. Uses the offline stub model. Needs no network and no database. |
 | `npm run gold-report` | Scores the report half of the gold set. Writes `gold-report/v1.json`. |
+| `npm run triage` | Selects cases for human review with the offline judge. Writes `triage/v1.json`. |
 | `npm run relay` | Starts the outbox relay daemon. Configure `RELAY_ADAPTER` and `RELAY_INTERVAL_MS` if needed. |
 | `npm run consumer` | Starts the partition consumer daemon. Set `CONSUMER_PARTITIONS` (for example `0,1`). Configure `CONSUMER_INTERVAL_MS` and `TICKET_DEADLINE_MS` if needed. |
 | `npm run approve -- --run <run-id>` | Approves one gated customer reply through the approval bridge. |
@@ -145,3 +146,17 @@ Action match scores the routing decision against observable dispositions (DEC-32
 A disposition records what actually happened, for example a refund or an escalation.
 An intent label records only a prediction, so it cannot grade the system honestly.
 It does not measure answer quality.
+
+## Judge triage is a selection tool, not a score
+
+`npm run triage` runs replay method 3 (section 4.10, DEC-09).
+A judge model selects the cases that go to a person for review.
+It writes each selection and its reason to `triage/v1.json`.
+It never gives a published number.
+A judge shares the failures of the system it tests.
+It is weakest where the evaluation matters most, so its output is a review queue only.
+The numbers for the README come from `npm run gold-report` alone.
+
+On the synthetic 770-case gold set this job is a demonstration, not a tool.
+It earns its keep when real volume exists to triage.
+Inject live cases through `runTriageJob`; each case records its origin.
