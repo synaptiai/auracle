@@ -112,10 +112,11 @@ function makeDeps(
   script: FakeStep[],
   limits?: Partial<CoordinatorDeps['limits']>,
   egress: EgressAdapter = new HelpdeskAdapter(),
+  provider: ModelProvider = new FakeProvider(script),
 ): CoordinatorDeps {
   return {
     pool,
-    provider: new FakeProvider(script),
+    provider,
     taxonomy: {
       intents: [
         { id: 'password_reset', label: 'Password reset', risk_tier: 'low' },
@@ -261,6 +262,39 @@ describe.skipIf(!dbUp)('section 4.3 run coordinator', () => {
       [ticketId],
     );
     expect(fence.rows[0]?.epoch).toBe('1');
+  });
+
+  it('pins the retrieval embedding to deps.embedModelVer, not the chat pin', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const provider = new FakeProvider(happyScript());
+    const deps: CoordinatorDeps = {
+      ...makeDeps([], undefined, undefined, provider),
+      embedModelVer: 'embed-test-model',
+    };
+
+    const result = await coordinateTicket(deps, autoInput(ticketId, 1n));
+    expect(result.outcome).toBe('resolved');
+
+    const embedCalls = provider.calls.filter((c) => c.kind === 'embed');
+    expect(embedCalls).toHaveLength(1);
+    expect(embedCalls[0]?.modelVer).toBe('embed-test-model');
+    // Chat calls keep the chat pin; only the embed call moves.
+    const chatCall = provider.calls.find((c) => c.kind === 'chat');
+    expect(chatCall?.modelVer).toBe(PINS.modelVer);
+  });
+
+  it('journals the embedding pin on the retrieve step (DEC-26)', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const deps = makeDeps(happyScript());
+
+    const result = await coordinateTicket(deps, autoInput(ticketId, 1n));
+    expect(result.outcome).toBe('resolved');
+
+    const retrieve = (await journalRows(result.runId)).find(
+      (s) => s.step_id === 'retrieve',
+    );
+    // Fallback path: no embedModelVer given, so the chat pin is journaled.
+    expect(retrieve?.result).toMatchObject({ embed_model_ver: PINS.modelVer });
   });
 
   it('parks a customer reply and lands the run in awaiting_approval (DEC-12)', async () => {

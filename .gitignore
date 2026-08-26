@@ -2,3 +2,6 @@ node_modules/
 dist/
 .DS_Store
 /corpus/
+
+# Secrets: OPENROUTER_API_KEY etc. Never commit.
+.env

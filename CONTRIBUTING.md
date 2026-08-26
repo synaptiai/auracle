@@ -45,6 +45,7 @@ Reviewers read it first.
 ## 4. Fixtures stay synthetic
 
 This repository ships synthetic fixtures only (DEC-18).
+Invented values are what let this repository stay public.
 Never commit real emails, phone numbers, names or account identifiers.
 Read `fixtures/README.md` before you touch anything under `fixtures/`.
 
@@ -52,6 +53,9 @@ Respect the fit/report split discipline (DEC-31).
 You fit thresholds on the fit half of the gold set only.
 You report published numbers from the report half only.
 One case never serves both tasks.
+Selecting a threshold on the same cases that you later report on inflates the result.
+The split keeps the published numbers honest at the cost of a wider interval.
+
 `scripts/generate-fixtures.mjs` regenerates the corpus deterministically.
 A committed fixture file must match the generator output byte for byte.
 
@@ -98,10 +102,15 @@ Run them yourself before a reviewer does.
 The full procedure lives in `REVIEW.md`.
 
 1. **Bugs.** Correctness against the claimed behaviour. Check outbox inserts,
-   epochs and idempotency keys against section 3.4. Check liveness and the
-   relay order: the relay sends first and sets the status second.
+   epochs and idempotency keys against section 3.4. The epoch makes a write from
+   a stale owner fail instead of corrupt the state. The idempotency key makes a
+   retry of one action land once on the target system. Check liveness and the
+   relay order: the relay sends first and sets the status second. If it set the
+   status first, a crash before the send would lose an action that looks sent.
 2. **Security.** Data exposure and injection surface. No real customer data, no
-   secrets, adapter payloads inside the capability manifest (DEC-06).
+   secrets, adapter payloads inside the capability manifest (DEC-06). Each
+   adapter declares the actions and payload fields that it supports. A payload
+   outside the declaration means the adapter acts beyond its promise.
 3. **Compliance.** The change against `docs/v1-architecture.md`. Every
    behaviour change cites a DEC or states that it is an implementation detail.
 

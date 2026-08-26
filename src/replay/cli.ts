@@ -9,12 +9,14 @@
  */
 
 import { loadGoldSet, loadTaxonomy } from '../fixtures/load.js';
+import { loadDotEnv } from '../config/env.js';
 import { ReplayStubProvider } from './fake-model.js';
 import { runReplay } from './replay.js';
 
 const PINS = { promptVer: 'classify-p1', modelVer: 'replay-stub' };
 
 async function main(): Promise<void> {
+  loadDotEnv();
   const taxonomy = loadTaxonomy();
   const gold = loadGoldSet();
   const report = await runReplay({

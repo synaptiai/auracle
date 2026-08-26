@@ -18,7 +18,8 @@
 
 import { writeFile } from 'node:fs/promises';
 
-import { loadCorpusFile } from '../corpus/corpus.js';
+import { loadDotEnv } from '../config/env.js';
+import { CORPUS_SOURCE, loadCorpusFile } from '../corpus/corpus.js';
 import { loadGoldSet } from '../fixtures/load.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { INTENT_CAP, induceTaxonomy } from './taxonomy-induction.js';
@@ -29,6 +30,7 @@ const DEFAULT_CHAT_MODEL = 'openai/gpt-4o-mini';
 const DEFAULT_EMBED_MODEL = 'openai/text-embedding-3-small';
 
 async function main(): Promise<void> {
+  loadDotEnv();
   const apiKey = process.env['OPENROUTER_API_KEY'];
   if (!apiKey) {
     console.error('OPENROUTER_API_KEY is not set.');
@@ -67,14 +69,14 @@ async function main(): Promise<void> {
   const embedModelVer = process.env['EMBED_MODEL_VER'] ?? DEFAULT_EMBED_MODEL;
 
   console.log(
-    `embedding ${items.length} fixture tickets and clustering (cap ${INTENT_CAP} intents)...`,
+    `embedding ${items.length} history tickets and clustering (cap ${INTENT_CAP} intents)...`,
   );
   const taxonomy = await induceTaxonomy(provider, {
     items,
     promptVer: PROMPT_VER,
     chatModelVer,
     embedModelVer,
-    ...(corpusPath !== undefined ? { source: 'imap' } : {}),
+    ...(corpusPath !== undefined ? { source: CORPUS_SOURCE } : {}),
   });
 
   await writeFile(outputPath, `${JSON.stringify(taxonomy, null, 2)}\n`, 'utf8');

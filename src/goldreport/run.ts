@@ -14,6 +14,7 @@
 // model change that should move a published number.
 
 import { classifyTicket } from '../classifier/classifier.js';
+import { loadDotEnv } from '../config/env.js';
 import { REPORT_COUNT, loadGoldHalf, loadTaxonomy } from '../fixtures/load.js';
 import type { GoldFile } from '../fixtures/load.js';
 import type { ModelProvider } from '../models/provider.js';
@@ -189,6 +190,7 @@ function assertReportHalf(half: GoldFile): void {
 // committed fixture corpus with the offline stub model. No network, no
 // database, no API key: deterministic and byte-for-byte reproducible (DEC-18).
 async function main(): Promise<void> {
+  loadDotEnv();
   const { ReplayStubProvider } = await import('../replay/fake-model.js');
   const { artifact } = await runGoldReportJob({
     provider: new ReplayStubProvider(),

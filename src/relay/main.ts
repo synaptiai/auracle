@@ -7,6 +7,9 @@
  * - RELAY_INTERVAL_MS milliseconds between scans (default: 5000)
  * - DATABASE_URL      ledger connection (see src/db/config.ts)
  *
+ * All values may live in a ./.env file: this entrypoint loads it at startup
+ * when present. An explicit shell env always wins over .env.
+ *
  * The delivery rule is never configured here. Every record carries its own
  * rule in `outbox.delivery` and the relay reads it per record (DEC-29).
  */
@@ -14,6 +17,7 @@ import { Pool } from 'pg';
 
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import type { EgressAdapter } from '../adapters/types.js';
+import { loadDotEnv } from '../config/env.js';
 import { dbUrl } from '../db/config.js';
 import { startRelayDaemon } from './daemon.js';
 
@@ -40,6 +44,7 @@ function intervalFromEnv(raw: string | undefined): number {
 }
 
 async function main(): Promise<void> {
+  loadDotEnv();
   const adapter = selectAdapter(process.env['RELAY_ADAPTER'] ?? 'helpdesk');
   const intervalMs = intervalFromEnv(process.env['RELAY_INTERVAL_MS']);
   const pool = new Pool({ connectionString: dbUrl(), max: 1 });
