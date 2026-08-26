@@ -16,6 +16,7 @@
     "test": "vitest run",
     "lint": "eslint .",
     "db:migrate": "npm run build && node dist/ledger/migrate.js",
+    "escalations": "npm run build && node dist/escalations/cli.js",
     "approve": "npm run build && node dist/approval/cli.js",
     "calibrate": "npm run build && node dist/calibration/run.js",
     "replay": "npm run build && node dist/replay/cli.js",
