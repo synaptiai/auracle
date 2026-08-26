@@ -12,7 +12,7 @@
 // Untagged history (DEC-02): the mailbox carries no intent labels and no
 // outcome truth. Each exported ticket holds `intent: 'unlabeled'` and a
 // placeholder disposition. A person fills both during the labeling step of
-// the curation loop (docs/operations.md, section 4).
+// the curation loop (docs/operations.md, "The real-corpus curation loop").
 
 import { readFileSync } from 'node:fs';
 
