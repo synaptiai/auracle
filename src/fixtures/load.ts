@@ -145,27 +145,39 @@ export function loadGoldSet(): { fit: GoldFile; report: GoldFile } {
   return { fit, report };
 }
 
+/**
+ * Field-level checks shared by the synthetic gold set and any file that
+ * reuses the GoldFile schema (for example the real-corpus exporter in
+ * src/corpus). Source and id-prefix rules are NOT checked here: each
+ * consumer keeps its own. The synthetic loaders below keep their DEC-18
+ * guards; the corpus loader asserts source 'imap'.
+ */
+export function validateTicketFields(ticket: Record<string, unknown>): void {
+  const id = typeof ticket['ticket_id'] === 'string' ? ticket['ticket_id'] : '<missing>';
+  assert(typeof ticket['intent'] === 'string', `ticket ${id} has no intent`);
+  assert(typeof ticket['queue'] === 'string' && ticket['queue'].length > 0, `ticket ${id} has no queue`);
+  assert(typeof ticket['subject'] === 'string' && ticket['subject'].length > 0, `ticket ${id} has no subject`);
+  assert(typeof ticket['body'] === 'string' && ticket['body'].length > 0, `ticket ${id} has no body`);
+  const disposition = ticket['disposition'];
+  assert(isRecord(disposition), `ticket ${id} has no disposition object`);
+  assert(typeof disposition['escalated'] === 'boolean', `disposition.escalated is not boolean on ${id}`);
+  assert(
+    disposition['macro_applied'] === null || typeof disposition['macro_applied'] === 'string',
+    `disposition.macro_applied is neither null nor string on ${id}`,
+  );
+  assert(typeof disposition['refund_issued'] === 'boolean', `disposition.refund_issued is not boolean on ${id}`);
+  const minutes = disposition['first_reply_minutes'];
+  assert(
+    typeof minutes === 'number' && Number.isInteger(minutes) && minutes >= 0,
+    `disposition.first_reply_minutes is not a non-negative integer on ${id}`,
+  );
+}
+
 function validateTicket(value: unknown): void {
   assert(isRecord(value), 'ticket is not an object');
   assert(typeof value['ticket_id'] === 'string' && value['ticket_id'].startsWith('SYN-'), 'ticket_id must start with SYN-');
   assert(value['source'] === 'synthetic', `ticket ${String(value['ticket_id'])} is not marked synthetic`);
-  assert(typeof value['intent'] === 'string', `ticket ${String(value['ticket_id'])} has no intent`);
-  assert(typeof value['queue'] === 'string' && value['queue'].length > 0, `ticket ${String(value['ticket_id'])} has no queue`);
-  assert(typeof value['subject'] === 'string' && value['subject'].length > 0, `ticket ${String(value['ticket_id'])} has no subject`);
-  assert(typeof value['body'] === 'string' && value['body'].length > 0, `ticket ${String(value['ticket_id'])} has no body`);
-  const disposition = value['disposition'];
-  assert(isRecord(disposition), `ticket ${String(value['ticket_id'])} has no disposition object`);
-  assert(typeof disposition['escalated'] === 'boolean', `disposition.escalated is not boolean on ${String(value['ticket_id'])}`);
-  assert(
-    disposition['macro_applied'] === null || typeof disposition['macro_applied'] === 'string',
-    `disposition.macro_applied is neither null nor string on ${String(value['ticket_id'])}`,
-  );
-  assert(typeof disposition['refund_issued'] === 'boolean', `disposition.refund_issued is not boolean on ${String(value['ticket_id'])}`);
-  const minutes = disposition['first_reply_minutes'];
-  assert(
-    typeof minutes === 'number' && Number.isInteger(minutes) && minutes >= 0,
-    `disposition.first_reply_minutes is not a non-negative integer on ${String(value['ticket_id'])}`,
-  );
+  validateTicketFields(value);
 }
 
 /** Load and validate the retrieval corpus of documents and canonical resolutions. */

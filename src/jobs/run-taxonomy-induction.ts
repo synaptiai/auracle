@@ -10,12 +10,15 @@
 //   EMBED_MODEL_VER      embedding model id (default: openai/text-embedding-3-small)
 //   OPENROUTER_BASE_URL  optional override of the API base URL
 //
-// The history is the synthetic fixture corpus (DEC-18). The artifact it
-// writes is a candidate list for a person to curate; nothing at runtime
-// reads it.
+// The history is the synthetic fixture corpus (DEC-18) by default. Set
+// CORPUS_PATH to a file written by `npm run export-corpus` to run the same
+// job over real mailbox history instead; that file is gitignored and never
+// committed (DEC-18). The artifact it writes is a candidate list for a
+// person to curate; nothing at runtime reads it.
 
 import { writeFile } from 'node:fs/promises';
 
+import { loadCorpusFile } from '../corpus/corpus.js';
 import { loadGoldSet } from '../fixtures/load.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { INTENT_CAP, induceTaxonomy } from './taxonomy-induction.js';
@@ -34,15 +37,24 @@ async function main(): Promise<void> {
   }
   const outputPath = process.argv[2] ?? 'taxonomy-candidates.json';
 
-  // DEC-02: raw ticket history with no tags. The gold-set intent labels are
-  // ignored here on purpose; only subject and body feed the job.
-  const { fit, report } = loadGoldSet();
-  const items: HistoryItem[] = [...fit.tickets, ...report.tickets].map(
-    (ticket) => ({
+  // DEC-02: raw ticket history with no tags. Intent labels are ignored here
+  // on purpose; only subject and body feed the job.
+  const corpusPath = process.env['CORPUS_PATH'];
+  let items: HistoryItem[];
+  if (corpusPath !== undefined) {
+    items = loadCorpusFile(corpusPath).tickets.map((ticket) => ({
       id: ticket.ticket_id,
       text: `${ticket.subject}\n${ticket.body}`,
-    }),
-  );
+    }));
+    console.log(`history source: ${corpusPath} (${items.length} real threads, gitignored)`);
+  } else {
+    const { fit, report } = loadGoldSet();
+    items = [...fit.tickets, ...report.tickets].map((ticket) => ({
+      id: ticket.ticket_id,
+      text: `${ticket.subject}\n${ticket.body}`,
+    }));
+    console.log('history source: synthetic fixture gold set');
+  }
 
   const provider = new OpenRouterProvider({
     apiKey,
@@ -62,6 +74,7 @@ async function main(): Promise<void> {
     promptVer: PROMPT_VER,
     chatModelVer,
     embedModelVer,
+    ...(corpusPath !== undefined ? { source: 'imap' } : {}),
   });
 
   await writeFile(outputPath, `${JSON.stringify(taxonomy, null, 2)}\n`, 'utf8');
