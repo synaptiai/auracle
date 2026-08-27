@@ -19,7 +19,7 @@ function baseInput(overrides: Partial<PolicyInput> = {}): PolicyInput {
     agreement: 0.9,
     groundedness: 0.95,
     capabilities: FULL_CAPABILITIES,
-    action: { isWrite: false, isCustomerVisible: false },
+    action: { isWrite: false, isCustomerVisible: false, isIrreversible: false },
     ...overrides,
   };
 }
@@ -31,7 +31,7 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
 
   it('returns auto for a reversible write on a fully capable adapter (DEC-03, DEC-12)', () => {
     const decision = evaluatePolicy(
-      baseInput({ action: { isWrite: true, isCustomerVisible: false } }),
+      baseInput({ action: { isWrite: true, isCustomerVisible: false, isIrreversible: false } }),
     );
     expect(decision).toBe('auto');
   });
@@ -41,7 +41,7 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
       const decision = evaluatePolicy(
         baseInput({
           capabilities: { ...FULL_CAPABILITIES, supportsIdempotencyKey: false },
-          action: { isWrite: true, isCustomerVisible: false },
+          action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
         }),
       );
       expect(decision).toBe('gated');
@@ -63,7 +63,7 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
           agreement: 0.1,
           groundedness: 0.1,
           capabilities: { ...FULL_CAPABILITIES, supportsIdempotencyKey: false },
-          action: { isWrite: true, isCustomerVisible: true },
+          action: { isWrite: true, isCustomerVisible: true, isIrreversible: false },
         }),
       );
       expect(decision).toBe('gated');
@@ -73,7 +73,7 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
   describe('rule 2: customer-visible actions always gate (DEC-12)', () => {
     it('gates a customer-visible reply with perfect evidence', () => {
       const decision = evaluatePolicy(
-        baseInput({ action: { isWrite: false, isCustomerVisible: true } }),
+        baseInput({ action: { isWrite: false, isCustomerVisible: true, isIrreversible: false } }),
       );
       expect(decision).toBe('gated');
     });
@@ -83,14 +83,57 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
         baseInput({
           agreement: 0.1,
           groundedness: 0.1,
-          action: { isWrite: false, isCustomerVisible: true },
+          action: { isWrite: false, isCustomerVisible: true, isIrreversible: false },
         }),
       );
       expect(decision).toBe('gated');
     });
   });
 
-  describe('rule 3: high risk tier gates (DEC-13)', () => {
+  describe('rule 3: an irreversible write always gates (DEC-03, V2)', () => {
+    it('gates an irreversible write with perfect evidence', () => {
+      const decision = evaluatePolicy(
+        baseInput({
+          action: { isWrite: true, isCustomerVisible: false, isIrreversible: true },
+        }),
+      );
+      expect(decision).toBe('gated');
+    });
+
+    it('gates regardless of risk tier and both evidence gates', () => {
+      const decision = evaluatePolicy(
+        baseInput({
+          riskTier: 'low',
+          agreement: 1.0,
+          groundedness: 1.0,
+          action: { isWrite: true, isCustomerVisible: false, isIrreversible: true },
+        }),
+      );
+      expect(decision).toBe('gated');
+    });
+
+    it('never escalates on the evidence gates: gating wins first', () => {
+      const decision = evaluatePolicy(
+        baseInput({
+          agreement: 0.1,
+          groundedness: 0.1,
+          action: { isWrite: true, isCustomerVisible: false, isIrreversible: true },
+        }),
+      );
+      expect(decision).toBe('gated');
+    });
+
+    it('does not gate a reversible write with the same evidence', () => {
+      const decision = evaluatePolicy(
+        baseInput({
+          action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
+        }),
+      );
+      expect(decision).toBe('auto');
+    });
+  });
+
+  describe('rule 4: high risk tier gates (DEC-13)', () => {
     it('gates a high-risk intent with perfect evidence', () => {
       const decision = evaluatePolicy(baseInput({ riskTier: 'high' }));
       expect(decision).toBe('gated');
@@ -102,7 +145,7 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
           riskTier: 'high',
           agreement: 1.0,
           groundedness: 1.0,
-          action: { isWrite: true, isCustomerVisible: false },
+          action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
         }),
       );
       expect(decision).toBe('gated');
@@ -122,7 +165,7 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
     });
   });
 
-  describe('rule 4: agreement below GATE_AGREEMENT escalates (DEC-05, section 4.5)', () => {
+  describe('rule 5: agreement below GATE_AGREEMENT escalates (DEC-05, section 4.5)', () => {
     it('escalates when agreement is below the threshold', () => {
       const decision = evaluatePolicy(baseInput({ agreement: GATE_AGREEMENT - 0.01 }));
       expect(decision).toBe('escalate');
@@ -134,7 +177,7 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
     });
   });
 
-  describe('rules 5 and 6: groundedness thresholds (DEC-05, section 4.7)', () => {
+  describe('rules 6 and 7: groundedness thresholds (DEC-05, section 4.7)', () => {
     it('escalates below 0.70 even with full agreement', () => {
       const decision = evaluatePolicy(baseInput({ groundedness: 0.69 }));
       expect(decision).toBe('escalate');
@@ -171,7 +214,7 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
           agreement: 0.2,
           groundedness: 0.2,
           capabilities: { ...FULL_CAPABILITIES, supportsIdempotencyKey: false },
-          action: { isWrite: true, isCustomerVisible: false },
+          action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
         }),
       );
       expect(decision).toBe('gated');

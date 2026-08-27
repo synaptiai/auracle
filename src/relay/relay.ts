@@ -110,6 +110,15 @@ export interface RelayResult {
  */
 export const CUSTOMER_REPLY_ACTION_CLASS = 'customer_reply';
 
+/**
+ * V2: compensation of an irreversible action (a sent refund). It rides
+ * `performAction` like every other internal write, but it always gates —
+ * a person approves each one — and its delivery rule is `at_most_once`
+ * (DEC-29): a duplicate refund costs money, so an uncertain send escalates
+ * (DEC-30) instead of retrying.
+ */
+export const COMPENSATION_ACTION_CLASS = 'compensate';
+
 /** One pending outbox row as a scan reads it from the ledger. */
 export interface PendingOutboxRow {
   run_id: string;

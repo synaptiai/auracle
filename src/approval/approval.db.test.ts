@@ -21,7 +21,7 @@ import { FakeProvider } from '../models/fake.js';
 import type { FakeStep } from '../models/fake.js';
 import type { AdapterCapabilities } from '../policy/policy.js';
 // The relay routes this one action class through the draft path.
-import { CUSTOMER_REPLY_ACTION_CLASS } from '../relay/relay.js';
+import { COMPENSATION_ACTION_CLASS, CUSTOMER_REPLY_ACTION_CLASS } from '../relay/relay.js';
 import { relayPending } from '../relay/relay.js';
 import { indexDocument } from '../retriever/retriever.js';
 
@@ -135,7 +135,7 @@ async function parkReply(ticketId: string): Promise<{
   if (result.outcome !== 'awaiting_approval') {
     throw new Error(`expected awaiting_approval, got ${result.outcome}`);
   }
-  return { runId: result.runId, draftExternalId: result.draftExternalId, helpdesk };
+  return { runId: result.runId, draftExternalId: result.draftExternalId!, helpdesk };
 }
 
 async function runState(runId: string): Promise<string | undefined> {
@@ -144,14 +144,14 @@ async function runState(runId: string): Promise<string | undefined> {
 }
 
 async function outboxRows(runId: string): Promise<
-  { idem_key: string; epoch: string; delivery: string; status: string; payload: unknown }[]
+  { idem_key: string; epoch: string; action_class: string; delivery: string; status: string; payload: unknown }[]
 > {
   const rows = await pool.query(
-    `SELECT idem_key, epoch::text AS epoch, delivery, status, payload
+    `SELECT idem_key, epoch::text AS epoch, action_class, delivery, status, payload
      FROM outbox WHERE run_id = $1`,
     [runId],
   );
-  return rows.rows as { idem_key: string; epoch: string; delivery: string; status: string; payload: unknown }[];
+  return rows.rows as { idem_key: string; epoch: string; action_class: string; delivery: string; status: string; payload: unknown }[];
 }
 
 describe.skipIf(!dbUp)('approval completion path (DEC-12 end to end)', () => {
@@ -229,6 +229,58 @@ describe.skipIf(!dbUp)('approval completion path (DEC-12 end to end)', () => {
 
   it('reports unknown_run for an id that never existed', async () => {
     expect(await approveRun(pool, randomUUID())).toEqual({ outcome: 'unknown_run' });
+  });
+
+  it('runs compensation: ledger-only park -> approve -> performAction end to end', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const helpdesk = helpdeskWith(ticketId);
+    const result = await coordinateTicket(makeDeps(helpdesk), {
+      ticketId,
+      ticketText: TICKET_TEXT,
+      epoch: 1n,
+      actionClass: COMPENSATION_ACTION_CLASS,
+      actionPayload: { reason: 'refund sent to the wrong account' },
+      // DEC-29: the class declares at_most_once; the coordinator refuses
+      // anything else.
+      delivery: 'at_most_once',
+      isCustomerVisible: false,
+      disclosure: DISCLOSURE,
+    });
+    if (result.outcome !== 'awaiting_approval') {
+      throw new Error(`unexpected ${result.outcome}`);
+    }
+    const runId = result.runId;
+
+    const approval = await approveRun(pool, runId);
+    expect(approval.outcome).toBe('approved');
+
+    const idemKey = deriveIdemKey({
+      actionClass: COMPENSATION_ACTION_CLASS,
+      ticketId,
+      payload: { reason: 'refund sent to the wrong account' },
+    });
+    expect(await runState(runId)).toBe('resolved');
+    const rows = await outboxRows(runId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      idem_key: idemKey,
+      action_class: COMPENSATION_ACTION_CLASS,
+      delivery: 'at_most_once', // DEC-29: declared by the action class
+      status: 'pending',
+      payload: { reason: 'refund sent to the wrong account' },
+    });
+
+    // The relay routes the non-reply class through performAction; the
+    // adapter records the compensating credit against the ticket.
+    expect(await relayPending(pool, helpdesk)).toEqual([
+      { idemKey, outcome: 'sent' },
+    ]);
+    expect(helpdesk.listDeliveries()).toHaveLength(1);
+
+    // A repeat pass sends nothing more (DEC-24): a replayed compensation
+    // never pays twice.
+    expect(await relayPending(pool, helpdesk)).toEqual([]);
+    expect(helpdesk.listDeliveries()).toHaveLength(1);
   });
 
   it('refuses to approve a run that never reached awaiting_approval', async () => {

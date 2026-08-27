@@ -34,6 +34,7 @@ import { deriveIdemKey } from '../ledger/keys.js';
 import type { ModelProvider, PinnedVersions } from '../models/provider.js';
 import { evaluatePolicy } from '../policy/policy.js';
 import type { AdapterCapabilities, RiskTier } from '../policy/policy.js';
+import { COMPENSATION_ACTION_CLASS } from '../relay/relay.js';
 import { hybridSearch } from '../retriever/retriever.js';
 import type { RetrievedDoc } from '../retriever/types.js';
 
@@ -133,7 +134,7 @@ export type EscalationReason =
 
 export type CoordinateOutcome =
   | { runId: string; outcome: 'resolved' }
-  | { runId: string; outcome: 'awaiting_approval'; draftExternalId: string }
+  | { runId: string; outcome: 'awaiting_approval'; draftExternalId: string | null }
   | { runId: string; outcome: 'escalated'; reason: EscalationReason }
   | { runId: string; outcome: 'superseded' }
   | { runId: string; outcome: 'stale_epoch'; highestAcceptedEpoch: bigint };
@@ -192,6 +193,18 @@ export async function coordinateTicket(
   deps: CoordinatorDeps,
   input: CoordinateInput,
 ): Promise<CoordinateOutcome> {
+  // DEC-29: the action class declares its delivery rule. Compensation
+  // declares `at_most_once` — a duplicate refund costs money — so any
+  // other rule is a caller defect, refused before any state change.
+  if (
+    input.actionClass === COMPENSATION_ACTION_CLASS
+    && input.delivery !== 'at_most_once'
+  ) {
+    throw new Error(
+      `action class '${COMPENSATION_ACTION_CLASS}' declares delivery 'at_most_once', got '${input.delivery}'`,
+    );
+  }
+
   const runId = randomUUID();
   const progress: Progress = { costCents: 0, stepsUsed: 0 };
   const meter = meterProvider(deps.provider);
@@ -378,7 +391,14 @@ export async function coordinateTicket(
     agreement: classification.agreement,
     groundedness: grounded.groundedness,
     capabilities: deps.capabilities,
-    action: { isWrite: true, isCustomerVisible: input.isCustomerVisible },
+    action: {
+      isWrite: true,
+      isCustomerVisible: input.isCustomerVisible,
+      // V2: compensation of an irreversible action always gates (DEC-03),
+      // whatever the gates read. Derived from the class, so a caller
+      // cannot mark a compensation reversible.
+      isIrreversible: input.actionClass === COMPENSATION_ACTION_CLASS,
+    },
   });
   progress.stepsUsed++;
   await journalFinish('gate', 'done', {
@@ -392,13 +412,34 @@ export async function coordinateTicket(
     return stopEscalated('policy_escalated');
   }
   if (decision === 'gated') {
+    await journalStart('park');
+
+    if (!input.isCustomerVisible) {
+      // V2: compensation of an irreversible action (DEC-03). No adapter
+      // call: a compensation has no customer-visible draft to park in the
+      // helpdesk (DEC-11), and approval queues a `performAction` record,
+      // not a `sendDraft` one. The composed text is the rationale a
+      // person reads when approving; it also keeps the edit-distance
+      // measurement (section 4.10) available. The action payload goes
+      // into the journal verbatim: approveRun copies it onto the outbox.
+      progress.stepsUsed++;
+      await journalFinish('park', 'done', {
+        actionClass: input.actionClass,
+        delivery: input.delivery,
+        body: composed.draft,
+        payload: input.actionPayload,
+      });
+      const awaiting = await transitionOrStop('awaiting_approval');
+      if (awaiting !== null) return awaiting;
+      return { runId, outcome: 'awaiting_approval', draftExternalId: null };
+    }
+
     // The approval path, including every customer reply (DEC-12). The bridge
     // parks the draft inside the target system (DEC-11) with the disclosure
     // and machine-readable provenance attached (DEC-14, DEC-33); a refusal
     // throws before any adapter call. The parked handle goes into the
     // journal, then the run stops at 'awaiting_approval'. No outbox record
     // yet: the approve entrypoint inserts it after a person approves.
-    await journalStart('park');
     const parked = await parkGatedReply(deps.egress, {
       ticketExternalId: input.ticketId,
       body: composed.draft,

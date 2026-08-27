@@ -76,7 +76,7 @@ const FULL_CAPABILITIES: AdapterCapabilities = {
 };
 
 /** Routing writes the queue field on the ticket; the write is never customer-visible. */
-const ROUTING_ACTION: ActionClass = { isWrite: true, isCustomerVisible: false };
+const ROUTING_ACTION: ActionClass = { isWrite: true, isCustomerVisible: false, isIrreversible: false };
 
 /**
  * Run one gold report pass over the report half only.
