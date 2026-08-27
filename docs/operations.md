@@ -189,9 +189,8 @@ npm run relay
 ```
 
 This command runs `dist/relay/main.js`. The relay scans the `outbox` table for
-records with the `pending` status. It sends first and sets the status to `sent`
-second (section 4.4). A crash between the status write and the send hides an
-undelivered action.
+records with the `pending` status. It sends first and sets the status to `sent` second (section 4.4). A crash
+between the send and the status write can send an action twice.
 
 Each record carries its own delivery rule.
 The relay reads the rule per record and reads no global setting (DEC-29).
