@@ -22,6 +22,30 @@ function collector(): { received: NormalizedEvent[]; onEvent: (event: Normalized
 }
 
 describe('imap ingress driver', () => {
+  it('processes a pre-fetched batch without fetching again', async () => {
+    const { received, onEvent } = collector();
+    let fetchCalls = 0;
+    const poller = new ImapPoller({
+      fetchMessages: async () => {
+        fetchCalls++;
+        return [];
+      },
+      onEvent,
+      onError: () => {},
+    });
+
+    // The daemon feeds one already-fetched batch through the shell so its
+    // mark-seen bookkeeping and the intake batch cannot diverge.
+    const result = await poller.pollOnce([
+      { sourceId: 'uid-1', rfc5322Text: SIMPLE_TEXT_EMAIL },
+    ]);
+
+    expect(result.normalizedCount).toBe(1);
+    expect(result.failures).toHaveLength(0);
+    expect(fetchCalls).toBe(0);
+    expect(received[0]?.ticket.ticketId).toBe('order-4471-damaged@example.test');
+  });
+
   it('hands each fetched message to the intake seam normalized', async () => {
     const { received, onEvent } = collector();
     const poller = new ImapPoller({

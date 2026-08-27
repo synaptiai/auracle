@@ -17,14 +17,19 @@ export interface IntakeTicket {
   ticketText: string;
 }
 
-/** Adds a ticket to the intake queue under its DEC-27 partition. */
+/**
+ * Adds a ticket to the intake queue under its DEC-27 partition. Idempotent
+ * on ticket_id: an at-least-once source (e.g. the IMAP daemon redelivering
+ * mail that was never marked seen) may enqueue the same ticket twice while
+ * the first copy still waits in the queue; the second insert does nothing.
+ */
 export async function enqueueTicket(
   pool: Pool,
   ticket: IntakeTicket,
   partitionCount: number,
 ): Promise<void> {
   await pool.query(
-    'INSERT INTO intake (ticket_id, partition, ticket_text) VALUES ($1, $2, $3)',
+    'INSERT INTO intake (ticket_id, partition, ticket_text) VALUES ($1, $2, $3) ON CONFLICT (ticket_id) DO NOTHING',
     [ticket.ticketId, partitionOf(ticket.ticketId, partitionCount), ticket.ticketText],
   );
 }

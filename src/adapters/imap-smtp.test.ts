@@ -12,7 +12,14 @@ import {
   THREAD_REPLY_EMAIL,
   THREAD_ROOT_EMAIL,
 } from './fixtures.js';
-import { ImapSmtpAdapter, IMAP_SMTP_CAPABILITIES, SmtpEgressAdapter, deriveTicketId } from './imap-smtp.js';
+import {
+  ImapSmtpAdapter,
+  IMAP_SMTP_CAPABILITIES,
+  SmtpEgressAdapter,
+  buildDraftMessage,
+  deriveTicketId,
+  imapSmtpConfigFromEnv,
+} from './imap-smtp.js';
 import { AdapterCapabilityError } from './types.js';
 
 const adapter = new ImapSmtpAdapter();
@@ -24,12 +31,14 @@ function normalize(raw: string, sourceId = 'imap-uid-1') {
 describe('ImapSmtpAdapter capabilities', () => {
   it('declares the honest manifest (DEC-06)', () => {
     // Inbound mail carries no idempotency key and SMTP accepts none.
-    // SMTP has no draft state and no delivery read-back. Email is free
-    // text. Threading headers are real.
+    // Replies park in the Drafts mailbox, so draft state is real. There
+    // is no delivery read-back: Sent-folder presence after an SMTP
+    // failure is a weak signal (DEC-30). Email is free text. Threading
+    // headers are real.
     expect(IMAP_SMTP_CAPABILITIES).toStrictEqual({
       supportsIdempotencyKey: false,
       supportsReadBack: false,
-      supportsDraftState: false,
+      supportsDraftState: true,
       supportsStructuredFields: false,
       supportsThreading: true,
     });
@@ -38,26 +47,15 @@ describe('ImapSmtpAdapter capabilities', () => {
 });
 
 describe('SmtpEgressAdapter declares what it cannot do (DEC-06)', () => {
-  const egress = new SmtpEgressAdapter();
+  const egress = new SmtpEgressAdapter({
+    imap: { host: 'imap.example.test', port: 143, secure: false, user: 'u', pass: 'p' },
+    smtp: { host: 'smtp.example.test', port: 25, secure: false },
+    fromAddress: 'support@acme.example',
+    draftsMailbox: 'Drafts',
+  });
 
   it('carries the same honest manifest as the ingress adapter', () => {
     expect(egress.capabilities).toBe(IMAP_SMTP_CAPABILITIES);
-  });
-
-  it('refuses to park or send drafts instead of faking draft state', async () => {
-    await expect(egress.createDraft({
-      ticketExternalId: 'T-1',
-      body: 'text',
-      disclosure: 'disclosure',
-      provenance: {
-        generatedBy: 'auracle',
-        modelId: 'm',
-        promptVer: 'p',
-        generatedAt: '2026-01-01T00:00:00.000Z',
-      },
-    })).rejects.toThrow(AdapterCapabilityError);
-
-    await expect(egress.sendDraft('draft-1', 'key')).rejects.toThrow(AdapterCapabilityError);
   });
 
   it('refuses automatic internal writes instead of faking one', async () => {
@@ -68,6 +66,143 @@ describe('SmtpEgressAdapter declares what it cannot do (DEC-06)', () => {
 
   it('refuses read-back so the relay escalates instead of guessing (DEC-30)', async () => {
     await expect(egress.readBack({ idemKey: 'key' })).rejects.toThrow(AdapterCapabilityError);
+  });
+});
+
+describe('draft message construction', () => {
+  const provenance = {
+    generatedBy: 'auracle',
+    modelId: 'm',
+    promptVer: 'p',
+    generatedAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  function reply(overrides: Partial<Parameters<typeof buildDraftMessage>[0]> = {}) {
+    return {
+      fromAddress: 'support@acme.example',
+      toAddress: 'dana.doe@example.test',
+      subject: 'Re: Order 4471 arrived damaged',
+      inReplyTo: 'order-4471-damaged@example.test',
+      references: ['thread-root@acme.example'],
+      body: 'We are sorry. Here is what to do.',
+      disclosure: 'Drafted by an automated assistant.',
+      provenance,
+      ...overrides,
+    };
+  }
+
+  it('builds ASCII headers, threading headers and a base64 UTF-8 body', () => {
+    const raw = buildDraftMessage(reply()).toString('utf8');
+    const lines = raw.split('\r\n');
+
+    expect(lines[0]).toBe('From: support@acme.example');
+    expect(lines[1]).toBe('To: dana.doe@example.test');
+    expect(lines[2]).toBe('Subject: Re: Order 4471 arrived damaged');
+    expect(lines[3]).toMatch(/^Message-ID: <[0-9a-f-]+@acme\.example>$/);
+    expect(lines).toContain('In-Reply-To: <order-4471-damaged@example.test>');
+    expect(lines).toContain('References: <thread-root@acme.example>');
+    expect(lines).toContain('Content-Type: text/plain; charset=utf-8');
+    expect(lines).toContain('Content-Transfer-Encoding: base64');
+
+    // The base64 body decodes back to the exact reply text.
+    const separator = lines.indexOf('');
+    const encoded = lines.slice(separator + 1).join('');
+    expect(Buffer.from(encoded, 'base64').toString('utf8')).toBe(
+      'We are sorry. Here is what to do.',
+    );
+  });
+
+  it('carries disclosure and provenance as X-Auracle headers (DEC-33)', () => {
+    const raw = buildDraftMessage(reply()).toString('utf8');
+
+    expect(raw).toContain('X-Auracle-Disclosure: Drafted by an automated assistant.');
+    expect(raw).toContain('X-Auracle-Generated-By: auracle');
+    expect(raw).toContain('X-Auracle-Model: m');
+    expect(raw).toContain('X-Auracle-Prompt-Version: p');
+    expect(raw).toContain('X-Auracle-Generated-At: 2026-01-01T00:00:00.000Z');
+  });
+
+  it('encodes non-ASCII subjects as RFC 2047 words and drops them otherwise', () => {
+    const ascii = buildDraftMessage(reply({ subject: 'Re: plain' })).toString();
+    expect(ascii).toContain('Subject: Re: plain\r\n');
+
+    const unicode = buildDraftMessage(reply({ subject: 'Re: Café order missing' }));
+    const match = /=\?UTF-8\?B\?(.+?)\?=/.exec(unicode.toString());
+    expect(match).not.toBeNull();
+    expect(Buffer.from(match![1]!, 'base64').toString('utf8')).toBe(
+      'Re: Café order missing',
+    );
+  });
+
+  it('strips CR/LF from header values so a value cannot smuggle headers', () => {
+    const hostile = buildDraftMessage(
+      reply({
+        toAddress: 'dana.doe@example.test\r\nBcc: attacker@evil.example',
+        disclosure: 'fine\r\nX-Evil: yes',
+      }),
+    ).toString();
+
+    // Newlines collapse to spaces: every injected header becomes part of
+    // the same physical line.
+    expect(hostile).not.toMatch(/\r\n(Bcc|X-Evil):/);
+    expect(hostile).toContain('To: dana.doe@example.test Bcc: attacker@evil.example');
+    expect(hostile).toContain('X-Auracle-Disclosure: fine X-Evil: yes');
+  });
+
+  it('omits optional headers when no thread or metadata is present', () => {
+    const raw = buildDraftMessage(
+      reply({ inReplyTo: null, references: [], disclosure: undefined, provenance: undefined }),
+    ).toString('utf8');
+
+    expect(raw).not.toContain('In-Reply-To:');
+    expect(raw).not.toContain('References:');
+    expect(raw).not.toContain('X-Auracle-');
+  });
+
+  it('refuses empty core fields instead of building an unsendable message', () => {
+    expect(() => buildDraftMessage(reply({ fromAddress: '' }))).toThrow('fromAddress');
+    expect(() => buildDraftMessage(reply({ toAddress: '  ' }))).toThrow('toAddress');
+    expect(() => buildDraftMessage(reply({ body: '' }))).toThrow('body');
+  });
+});
+
+describe('imapSmtpConfigFromEnv', () => {
+  function env(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
+    return {
+      IMAP_HOST: 'imap.example.test',
+      IMAP_PORT: '143',
+      IMAP_USER: 'support@acme.example',
+      IMAP_PASS: 'pass',
+      SMTP_HOST: 'smtp.example.test',
+      SMTP_PORT: '587',
+      EMAIL_FROM_ADDRESS: 'support@acme.example',
+      ...overrides,
+    };
+  }
+
+  it('reads required vars and applies documented defaults', () => {
+    expect(imapSmtpConfigFromEnv(env())).toEqual({
+      imap: { host: 'imap.example.test', port: 143, secure: false, user: 'support@acme.example', pass: 'pass' },
+      smtp: { host: 'smtp.example.test', port: 587, secure: true },
+      fromAddress: 'support@acme.example',
+      draftsMailbox: 'Drafts',
+    });
+  });
+
+  it('honors the optional overrides', () => {
+    const config = imapSmtpConfigFromEnv(env({
+      IMAP_SECURE: 'true',
+      SMTP_SECURE: 'false',
+      IMAP_DRAFTS_MAILBOX: 'INBOX/Drafts',
+    }));
+    expect(config.imap.secure).toBe(true);
+    expect(config.smtp.secure).toBe(false);
+    expect(config.draftsMailbox).toBe('INBOX/Drafts');
+  });
+
+  it('throws naming the first missing variable', () => {
+    const partial = env({ SMTP_HOST: undefined });
+    expect(() => imapSmtpConfigFromEnv(partial)).toThrow('SMTP_HOST');
   });
 });
 
@@ -203,5 +338,30 @@ describe('ticket identity from threading headers', () => {
       'root@example.test',
     );
     expect(deriveTicketId(null, 'source-a')).toBe(deriveTicketId(null, 'source-a'));
+  });
+
+  it('refuses ids over 200 characters instead of truncating them', () => {
+    // A truncated id could collide with another thread sharing the prefix
+    // and never round-trips in the egress thread lookup, so derivation
+    // refuses loudly rather than producing an unanswerable ticket.
+    const overLong = 'a'.repeat(201) + '@example.test';
+    expect(() => deriveTicketId(overLong, 'src')).toThrow(
+      /exceeds the 200-character limit/,
+    );
+
+    const raw = [
+      'From: x@example.test',
+      'To: support@acme.example',
+      'Subject: pathological id',
+      `Message-ID: <${overLong}>`,
+      '',
+      'Body.',
+    ].join('\r\n');
+    expect(() => normalize(raw)).toThrow(/exceeds the 200-character limit/);
+  });
+
+  it('accepts a message id of exactly 200 characters', () => {
+    const exact = 'b'.repeat(200);
+    expect(deriveTicketId(exact, 'src')).toBe(exact);
   });
 });

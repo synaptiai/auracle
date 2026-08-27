@@ -180,11 +180,36 @@ The process drains the in-flight record on SIGTERM or SIGINT before it exits.
 
 | Variable | Meaning | Default |
 |----------|---------|---------|
-| `RELAY_ADAPTER` | Egress adapter name. | `helpdesk` |
+| `RELAY_ADAPTER` | Egress adapter name: `helpdesk` or `imap-smtp`. | `helpdesk` |
 | `RELAY_INTERVAL_MS` | Milliseconds between scans. | 5000 |
 
 The relay reads no action configuration. Every record carries its own delivery
 rule in `outbox.delivery`, and the relay reads that rule per record (DEC-29).
+
+#### The `imap-smtp` egress adapter
+
+The `imap-smtp` adapter sends mail through one IMAP/SMTP account.
+It parks each gated reply as a draft in the Drafts mailbox and sends it over
+SMTP after approval.
+SMTP accepts no idempotency key, so every customer reply gates through
+approval (DEC-06, DEC-12).
+Sent-folder presence after an SMTP failure is a weak signal, so the adapter
+declares no read-back and the relay escalates on unknown state (DEC-30).
+
+Set these variables when `RELAY_ADAPTER=imap-smtp`:
+
+| Variable | Meaning | Default |
+|----------|---------|---------|
+| `IMAP_HOST` | IMAP server host. Required. | none |
+| `IMAP_PORT` | IMAP server port. Required. | none |
+| `IMAP_USER` | IMAP login. Required. | none |
+| `IMAP_PASS` | IMAP password. Required. | none |
+| `IMAP_SECURE` | Use implicit TLS on connect. | `false` |
+| `IMAP_DRAFTS_MAILBOX` | Mailbox for parked replies. | `Drafts` |
+| `SMTP_HOST` | SMTP server host. Required. | none |
+| `SMTP_PORT` | SMTP server port. Required. | none |
+| `SMTP_SECURE` | Use implicit TLS on connect. | `true` |
+| `EMAIL_FROM_ADDRESS` | Address the replies are sent from. Required. | none |
 
 ### Ingress drivers
 

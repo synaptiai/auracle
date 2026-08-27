@@ -61,13 +61,16 @@ export class ImapPoller {
 
   /**
    * Polls once. Fetch errors propagate to the caller; per-message failures
-   * are isolated into `PollResult.failures`.
+   * are isolated into `PollResult.failures`. Pass a pre-fetched batch to
+   * feed the shell exactly one fetch (the IMAP daemon does this, so its
+   * mark-seen bookkeeping and the intake batch cannot diverge); omit it to
+   * fetch through the injected seam as before.
    */
-  async pollOnce(): Promise<PollResult> {
-    const messages = await this.deps.fetchMessages();
+  async pollOnce(messages?: readonly ImapInboundMessage[]): Promise<PollResult> {
+    const batch = messages ?? (await this.deps.fetchMessages());
     let normalizedCount = 0;
     const failures: { sourceId: string; error: unknown }[] = [];
-    for (const message of messages) {
+    for (const message of batch) {
       try {
         const event = (this.deps.adapter ?? new ImapSmtpAdapter()).normalize({
           sourceId: message.sourceId,

@@ -3,7 +3,8 @@
  * run via `npm run relay` (executes the built dist/relay/main.js).
  *
  * Configuration:
- * - RELAY_ADAPTER     egress adapter name (default: helpdesk)
+ * - RELAY_ADAPTER     egress adapter name (default: helpdesk; known values:
+ *                     helpdesk, imap-smtp)
  * - RELAY_INTERVAL_MS milliseconds between scans (default: 5000)
  * - DATABASE_URL      ledger connection (see src/db/config.ts)
  *
@@ -16,6 +17,7 @@
 import { Pool } from 'pg';
 
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
+import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.js';
 import type { EgressAdapter } from '../adapters/types.js';
 import { loadDotEnv } from '../config/env.js';
 import { dbUrl } from '../db/config.js';
@@ -23,6 +25,7 @@ import { startRelayDaemon } from './daemon.js';
 
 const EGRESS_ADAPTERS: Readonly<Record<string, () => EgressAdapter>> = {
   helpdesk: () => new HelpdeskAdapter(),
+  'imap-smtp': () => new SmtpEgressAdapter(imapSmtpConfigFromEnv()),
 };
 
 function selectAdapter(name: string): EgressAdapter {
