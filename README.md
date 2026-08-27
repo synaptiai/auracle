@@ -153,6 +153,7 @@ It does not measure answer quality.
 A judge model selects the cases that go to a person for review.
 It writes each selection and its reason to `triage/v1.json`.
 It never gives a published number.
+
 A judge shares the failures of the system it tests.
 It is weakest where the evaluation matters most, so its output is a review queue only.
 The numbers for the README come from `npm run gold-report` alone.
