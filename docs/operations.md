@@ -24,10 +24,14 @@ database and does not touch this one.
 
 ## Configuration files
 
-Every CLI and daemon except `npm run escalations` loads a `.env` file at
-startup, when one exists in the working directory. Node reads it natively, so no extra dependency exists. A
-variable set in the shell always wins over the same variable in `.env`.
-`OPENROUTER_API_KEY` normally lives in `.env`. Never commit that file.
+Every CLI and daemon loads a `.env` file at startup, when one exists in
+the working directory. Node reads it natively, so no extra dependency
+exists. A variable set in the shell always wins over the same variable in
+`.env`. `OPENROUTER_API_KEY` normally lives in `.env`. Never commit that
+file.
+
+Three commands read no `.env` file: `npm run escalations`, `npm run triage`
+and `npm run export-corpus`.
 
 Example `.env`:
 
@@ -35,7 +39,6 @@ Example `.env`:
 DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle
 OPENROUTER_API_KEY=<your-key>
 ```
-
 
 Check the setup:
 
