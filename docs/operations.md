@@ -153,7 +153,7 @@ export DISCLOSURE_TEXT='This reply was drafted by an automated assistant and rev
 ```
 
 Each customer-visible action then parks as a draft and waits in the approval
-workflow (section 3).
+workflow (section 4).
 
 ### Relay daemon
 
