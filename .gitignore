@@ -5,3 +5,7 @@ dist/
 
 # Secrets: OPENROUTER_API_KEY etc. Never commit.
 .env
+
+# Run artifacts on disk, never commit (same rule as triage/v1.json).
+/gold-report/
+/triage/
