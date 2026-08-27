@@ -37,6 +37,8 @@ export interface InductionInput {
   minClusterSize?: number;
   /** Seed for the deterministic k-means init. Default 42. */
   seed?: number;
+  /** Provenance recorded on the artifact. Default 'synthetic'. */
+  source?: string;
 }
 
 /** One named candidate for the person to curate. */
@@ -226,7 +228,7 @@ export async function induceTaxonomy(
 
   return {
     version: 1,
-    source: 'synthetic',
+    source: input.source ?? 'synthetic',
     prompt_ver: input.promptVer,
     chat_model_ver: input.chatModelVer,
     embed_model_ver: input.embedModelVer,

@@ -256,7 +256,73 @@ So a person assigns the tier from the cost of an error, not from a score.
 Rerun `npm run gold-report` after a change to a gate or to the model. Rerun it
 only when the change should move a published number.
 
-## 6. Observability
+## 6. The real-corpus curation loop
+
+The fixture corpus carries the offline jobs until phase 1 starts on real
+data. This section moves real mailbox history through the same jobs. Every
+file in this loop holds real customer text (DEC-18). The exporter writes to
+`corpus/`, and that directory is gitignored. Never move a corpus file into
+the repository.
+
+### Step 1: Export the mailbox (machine)
+
+Set `CORPUS_FETCH_CMD` to a mailbox reader command. It prints one JSON
+object per line. Each object holds a `sourceId` and the full RFC 5322 text
+in `rfc5322Text`. Emit inbound customer messages only. Agent replies merge
+into thread bodies and skew the induction. Then run:
+
+```sh
+CORPUS_FETCH_CMD='node fetch-mailbox.mjs' npm run export-corpus
+```
+
+The command feeds every message through the IMAP poller path. It merges each
+thread into one ticket, marks it `intent: 'unlabeled'` and writes
+`corpus/history-<date>.json`. A message that fails normalization is excluded
+and reported.
+
+### Step 2: Run induction on the corpus (machine)
+
+```sh
+CORPUS_PATH=corpus/history-2026-01-31.json \
+OPENROUTER_API_KEY=<your-key> \
+node dist/jobs/run-taxonomy-induction.js corpus/taxonomy-candidates-real.json
+```
+
+The job embeds each thread and clusters the embeddings. A model gives each
+cluster a name. Its output is a candidate list only.
+
+### Step 3: Review the candidate clusters (human)
+
+Open the candidate file. Read the sample threads of each cluster. Decide for
+each cluster: keep, merge with another cluster, or fold into `other`. Examine
+the `other` group before you decide. A thread that fits no cluster goes there.
+
+### Step 4: Curate the taxonomy (human)
+
+Name each kept intent. Set a risk tier of `low`, `medium` or `high` for each
+intent (DEC-13). Keep the total at or below 25 intents including `other`
+(DEC-10). Write the result as a `taxonomy.json` beside the corpus file.
+
+### Step 5: Label the stratified sample (human)
+
+Draw a stratified sample over the risk tiers. For each sampled thread,
+record the intent from the curated taxonomy. Record also the queue that
+handled the thread. Then record the `escalated`, `macro_applied`,
+`refund_issued` and `first_reply_minutes` values.
+
+These labels replace the placeholders that the exporter wrote. Split the
+labeled sample into fit and report halves of equal size (DEC-31).
+
+### Step 6: Calibrate on the fit half (deferred)
+
+Calibration on a real labeled fit half does not work yet. The calibration
+job accepts a synthetic fit half of 385 tickets only (DEC-18). Real-half
+calibration needs a provenance-aware change to that job. That change is
+follow-up work outside this loop. Until then the operator keeps the labeled
+halves under `corpus/` and never commits them.
+
+
+## 7. Observability
 
 ### Control bands
 
@@ -311,7 +377,7 @@ The run waits in the approval path (DEC-30).
 A state of `escalated` means the run reached a limit on cost, steps or clock
 time. The journal shows the partial work.
 
-## 7. The phase model
+## 8. The phase model
 
 DEC-20 gives two phases.
 There is no separate shadow phase.
