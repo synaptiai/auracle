@@ -217,10 +217,32 @@ Set these variables when `RELAY_ADAPTER=imap-smtp`:
 ### Ingress drivers
 
 Ingress turns an inbound event into a ticket and a message. Three adapters
-exist: IMAP with SMTP, a webhook and a helpdesk adapter. In V1 the webhook
-server and the IMAP poller are library drivers. They expose no CLI. A driver
-calls `enqueueTicket` on the intake table. The partition consumer picks the
-ticket up from there.
+exist: IMAP with SMTP, a webhook and a helpdesk adapter. Each ingress driver
+runs as its own daemon. A driver calls `enqueueTicket` on the intake table.
+The partition consumer picks the ticket up from there.
+
+Start the webhook server:
+
+```sh
+npm run webhook
+```
+
+It listens on `WEBHOOK_PORT` (default 8080). It enqueues into
+`PARTITION_COUNT` partitions (default 8). Set the count to the number of
+partitions your consumers own.
+
+Start the IMAP poller:
+
+```sh
+npm run imap
+```
+
+The poller requires `IMAP_HOST`, `IMAP_USER` and `IMAP_PASS`.
+Optional settings: `IMAP_PORT` (default 993), `IMAP_SECURE` (default `true`)
+and `IMAP_INTERVAL_MS` (default 60000).
+These ingress defaults differ from the egress `imap-smtp` table in section 3.
+That egress adapter defaults `IMAP_SECURE` to `false`.
+The variable names overlap, but the two configs stay separate.
 
 ## 4. The approval workflow
 
@@ -249,16 +271,24 @@ This value shows how much the person changed the draft before sending it.
 The CLI prints the outcome as JSON on stdout.
 It exits non-zero when the run was not approved.
 
+Use `npm run escalations` to see every run that waits for a person.
+It prints a JSON array by default. The flag `--pretty` prints a table.
+Filter with `--since 24h` or `--state awaiting_approval`.
+The command runs SELECT statements only, so it is safe on a live database.
+
 ## 5. Offline jobs
 
-The offline jobs run on demand. They read the synthetic fixture corpus only
-(DEC-18).
+The offline jobs run on demand. The evaluation jobs read the synthetic fixture
+corpus only (DEC-18). The knowledge-base loader reads a directory of markdown
+that you pass.
 
 | Command | Task |
 |---------|------|
 | `npm run calibrate` | Fits the global agreement threshold on the fit half of the gold set. Writes a versioned artifact. |
 | `npm run replay` | Runs the action-match replay over the fixture corpus. Uses the offline stub model. Needs no network and no database. Prints the report as JSON. |
 | `npm run gold-report` | Scores the report half of the gold set. Writes `gold-report/vN.json`. |
+| `npm run triage` | Selects cases for human review with the offline judge. Writes `triage/vN.json`. |
+| `npm run load-docs -- <dir>` | Embeds each markdown file into the `document` table for retrieval. Needs `OPENROUTER_API_KEY`. |
 | `node dist/jobs/run-taxonomy-induction.js [output.json]` | Clusters the history and names each cluster. Writes a candidate list for a person. |
 
 The split discipline holds (DEC-31). Calibration reads only the fit half. The

@@ -84,7 +84,11 @@ Without an explicit `DATABASE_URL`, they fall back to the compose address (src/d
 | `npm run triage` | Selects cases for human review with the offline judge. Writes `triage/v1.json`. |
 | `npm run relay` | Starts the outbox relay daemon. Configure `RELAY_ADAPTER` and `RELAY_INTERVAL_MS` if needed. |
 | `npm run consumer` | Starts the partition consumer daemon. Set `CONSUMER_PARTITIONS` (for example `0,1`). Configure `CONSUMER_INTERVAL_MS` and `TICKET_DEADLINE_MS` if needed. |
+| `npm run webhook` | Starts the webhook ingress server. Set `WEBHOOK_PORT` (default 8080) and `PARTITION_COUNT` (default 8). |
+| `npm run imap` | Starts the IMAP ingress poller. Set `IMAP_HOST`, `IMAP_USER` and `IMAP_PASS`. |
+| `npm run load-docs -- <dir>` | Embeds each markdown file in the directory into the `document` table. Needs `OPENROUTER_API_KEY`. |
 | `npm run approve -- --run <run-id>` | Approves one gated customer reply through the approval bridge. |
+| `npm run escalations` | Lists the runs that need a person now, with the reason. The command only reads the ledger. |
 
 Notes on the consumers:
 
@@ -94,7 +98,7 @@ Notes on the consumers:
   An abandoned ticket close costs nothing, so that class retries freely.
 - The queue partitions by `ticket_id`, and one consumer owns each partition (DEC-27).
   All work on one ticket then lands on one consumer, so two runs never race on one ticket.
-- The webhook server and the IMAP poller are library drivers in V1. They expose no CLI.
+- The webhook server and the IMAP poller run as their own daemons: `npm run webhook` and `npm run imap`.
 
 ## Compliance position
 
