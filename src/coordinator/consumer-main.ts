@@ -18,6 +18,12 @@
 // - ACTION_IS_CUSTOMER_VISIBLE  'true' gates every action (DEC-12, default false)
 // - DISCLOSURE_TEXT       DEC-14 disclosure; required when customer-visible,
 //                         startup fails fast without it
+// - EGRESS_ADAPTER        egress adapter that parks gated replies (default:
+//                         helpdesk; known values: helpdesk, imap-smtp). The
+//                         policy engine reads the capabilities of the selected
+//                         adapter, so gating follows the real manifest
+//                         (DEC-03, DEC-06: smtp accepts no idempotency key,
+//                         therefore every write gates).
 // - DATABASE_URL          ledger connection (see src/db/config.ts)
 //
 // All of the above may live in a ./.env file: every entrypoint loads it at
@@ -32,21 +38,29 @@ import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
+import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.js';
+import type { EgressAdapter } from '../adapters/types.js';
 import { actionProfileFromEnv } from '../config/action-profile.js';
 import { loadDotEnv } from '../config/env.js';
 import { dbUrl } from '../db/config.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
-import type { AdapterCapabilities } from '../policy/policy.js';
 import { claimPartition, startConsumer } from './consumer.js';
 import type { CoordinatorDeps } from './coordinator.js';
 
-const CAPABILITIES: AdapterCapabilities = {
-  supportsIdempotencyKey: true,
-  supportsReadBack: true,
-  supportsDraftState: true,
-  supportsStructuredFields: true,
-  supportsThreading: true,
+const EGRESS_ADAPTERS: Readonly<Record<string, () => EgressAdapter>> = {
+  helpdesk: () => new HelpdeskAdapter(),
+  'imap-smtp': () => new SmtpEgressAdapter(imapSmtpConfigFromEnv()),
 };
+
+function selectEgressAdapter(name: string): EgressAdapter {
+  const create = EGRESS_ADAPTERS[name];
+  if (create === undefined) {
+    throw new Error(
+      `unknown EGRESS_ADAPTER '${name}' (known: ${Object.keys(EGRESS_ADAPTERS).join(', ')})`,
+    );
+  }
+  return create();
+}
 
 function parsePartitions(raw: string | undefined): number[] {
   const parts = (raw ?? '')
@@ -82,6 +96,7 @@ async function main(): Promise<void> {
   const intervalMs = intFromEnv('CONSUMER_INTERVAL_MS', 5000);
   const ticketDeadlineMs = intFromEnv('TICKET_DEADLINE_MS', 60_000);
   const profile = actionProfileFromEnv();
+  const egress = selectEgressAdapter(process.env['EGRESS_ADAPTER'] ?? 'helpdesk');
 
   // fixtures/taxonomy.json is curated by a person (section 4.11 step 4).
   const taxonomyUrl = path.resolve(
@@ -104,8 +119,8 @@ async function main(): Promise<void> {
     pool,
     provider: new OpenRouterProvider({ apiKey }),
     taxonomy,
-    capabilities: CAPABILITIES,
-    egress: new HelpdeskAdapter(),
+    capabilities: egress.capabilities,
+    egress,
     pins: {
       promptVer: process.env['PROMPT_VER'] ?? 'consumer-prompt-v1',
       // stealth/ox-alpha is the user-approved starting chat model. Override

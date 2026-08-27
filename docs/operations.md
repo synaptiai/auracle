@@ -101,6 +101,29 @@ those files as no-ops and records their versions. No manual step exists.
 The system runs as separate processes. Each process reads `DATABASE_URL`.
 Start each process in its own terminal.
 
+### Start order
+
+Bring the internal deployment up in this order. Each step needs the one
+before it.
+
+```sh
+docker compose up -d                    # 1. Postgres with pgvector
+npm run db:migrate                      # 2. ledger schema
+npm run load-docs -- <dir-of-markdown>  # 3. knowledge base for retrieval
+npm run consumer                        # 4. runs the state machine
+npm run relay                           # 5. delivers approved actions
+npm run imap                            # 6. polls the support mailbox
+npm run webhook                         # 7. listens for webhook events
+```
+
+Steps 1 and 2 prepare the database. Step 3 fills the knowledge base before
+the first run retrieves from it. Steps 4 and 5 process what ingress creates.
+Steps 6 and 7 turn the deployment towards the customers.
+
+Export the variables from the subsections below before you start. The
+consumer needs `CONSUMER_PARTITIONS` and `OPENROUTER_API_KEY`. Use the
+reply-generating profile below when you dogfood the approval workflow.
+
 ### Partition consumer
 
 ```sh
@@ -143,6 +166,7 @@ The consumer reads this configuration:
 | `ACTION_DELIVERY` | Delivery rule: `at_most_once` or `at_least_once`. | `at_most_once` |
 | `ACTION_IS_CUSTOMER_VISIBLE` | `true` gates every action as a customer reply (DEC-12). | `false` |
 | `DISCLOSURE_TEXT` | Disclosure on gated replies (DEC-14). Required when `ACTION_IS_CUSTOMER_VISIBLE=true`. Startup fails fast without it. | see DEC-14 text |
+| `EGRESS_ADAPTER` | Egress adapter that parks gated replies: `helpdesk` or `imap-smtp`. The policy engine reads the selected adapter's capabilities. | `helpdesk` |
 
 A reply-generating profile for dogfood looks like this:
 
@@ -252,10 +276,11 @@ So a person reads every reply before it goes out.
 The flow has these steps:
 
 1. The policy engine sends each customer-visible action to the gated path.
-2. The coordinator parks the reply in the draft state of the helpdesk adapter
-   (DEC-11). Reviewers act in the helpdesk they already use, with no new tool.
+2. The coordinator parks the reply in the draft state of its egress adapter
+   (DEC-11). With the helpdesk adapter, reviewers act in the helpdesk they
+   already use. With the mail adapter, reviewers act in the Drafts mailbox.
 3. The run waits in the `awaiting_approval` state.
-4. A person reviews the draft in the helpdesk.
+4. A person reviews the draft in the helpdesk or in the Drafts mailbox.
 5. A person approves with `npm run approve -- --run <run-id>`.
 6. The approval writes a record to the outbox. The idempotency key comes from
    the action semantics (DEC-24). Two runs of one action then produce the same
@@ -268,6 +293,7 @@ The bridge refuses a reply without it.
 
 The approval also records the approval-edit distance on the run.
 This value shows how much the person changed the draft before sending it.
+
 Add `--read-back` to measure the real edit.
 The CLI then fetches the current draft body from the adapter before the approval commits.
 It reads the adapter named by `APPROVE_ADAPTER`.
@@ -280,7 +306,36 @@ Reconcile the draft by hand, then approve again.
 The CLI prints the outcome as JSON on stdout.
 It exits non-zero when the run was not approved.
 
-Use `npm run escalations` to see every run that waits for a person.
+### The email flow end to end
+
+The approval flow runs over a real mailbox when both daemons use the
+`imap-smtp` adapter. Set `EGRESS_ADAPTER=imap-smtp` before you start the
+consumer. Set `RELAY_ADAPTER=imap-smtp` before you start the relay. The
+mailbox then keeps the draft state, so it survives across processes. The
+flow has these steps:
+
+1. A customer mail arrives. The IMAP poller turns it into a ticket.
+2. The consumer runs the ticket. Its egress adapter parks the reply as a
+   draft in the Drafts mailbox.
+3. You open the draft in your mail client and edit it there.
+4. You approve with read-back over the mail account:
+
+```sh
+APPROVE_ADAPTER=imap-smtp npm run approve -- --run <run-id> --read-back
+```
+
+5. The CLI reads the edited draft back from the Drafts mailbox.
+6. The approval records the true edit distance on the run.
+7. The relay sends the approved draft over SMTP. The customer receives it.
+
+The default `helpdesk` adapter parks drafts in memory instead. Read-back
+across processes therefore works only over the mail account. Keep the three
+adapter variables aligned when you use the mail flow.
+
+### The escalations command
+
+Make `npm run escalations` the first command of your workday.
+It shows every run that waits for a person.
 It prints a JSON array by default. The flag `--pretty` prints a table.
 Filter with `--since 24h` or `--state awaiting_approval`.
 The command runs SELECT statements only, so it is safe on a live database.
@@ -299,6 +354,14 @@ that you pass.
 | `npm run triage` | Selects cases for human review with the offline judge. Writes `triage/vN.json`. |
 | `npm run load-docs -- <dir>` | Embeds each markdown file into the `document` table for retrieval. Needs `OPENROUTER_API_KEY`. |
 | `node dist/jobs/run-taxonomy-induction.js [output.json]` | Clusters the history and names each cluster. Writes a candidate list for a person. |
+
+The loader onboards the knowledge base for the deployment. It embeds each
+markdown file in the directory you pass. It needs `OPENROUTER_API_KEY`.
+Set `EMBED_MODEL_VER` to pin the embedding model. A model outside the price
+table needs `EMBEDDINGS_USD_PER_MTOK`, or the loader refuses to run.
+
+Exit code 1 means at least one file failed validation. Fix the file and run
+the loader again.
 
 The split discipline holds (DEC-31). Calibration reads only the fit half. The
 gold report reads only the report half. A threshold picked on the report cases
