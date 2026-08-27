@@ -22,6 +22,7 @@
     "replay": "npm run build && node dist/replay/cli.js",
     "gold-report": "npm run build && node dist/goldreport/run.js",
     "export-corpus": "npm run build && node dist/corpus/export-main.js",
+    "triage": "npm run build && node dist/triage/run.js",
     "relay": "npm run build && node dist/relay/main.js",
     "consumer": "npm run build && node dist/coordinator/consumer-main.js",
     "load-docs": "npm run build && node dist/kb/cli.js"
