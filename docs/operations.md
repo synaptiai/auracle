@@ -58,7 +58,9 @@ The runner creates a `schema_version` table. It records the version number and
 file name of every applied migration. On each run it applies the files that the
 table does not list yet. Each file runs in one transaction together with its
 record insert. A failure or a crash leaves no half-applied file and no false
-record. The runner refuses a file whose version sits below the highest recorded
+record.
+
+The runner refuses a file whose version sits below the highest recorded
 version. An out-of-order apply can break later migrations.
 
 Rules for a new migration:
@@ -193,8 +195,9 @@ It parks each gated reply as a draft in the Drafts mailbox and sends it over
 SMTP after approval.
 SMTP accepts no idempotency key, so every customer reply gates through
 approval (DEC-06, DEC-12).
-Sent-folder presence after an SMTP failure is a weak signal, so the adapter
-declares no read-back and the relay escalates on unknown state (DEC-30).
+Sent-folder presence after an SMTP failure is a weak signal.
+The adapter therefore declares no read-back, and the relay escalates on unknown
+state (DEC-30).
 
 Set these variables when `RELAY_ADAPTER=imap-smtp`:
 
