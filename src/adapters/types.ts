@@ -183,6 +183,21 @@ export interface EgressAdapter {
 }
 
 /**
+ * Narrow read port for the approval path (section 4.10). An adapter whose
+ * capabilities include `supportsDraftState` implements it against the same
+ * draft state `createDraft` parks in (DEC-11). The approval entrypoint uses
+ * it to measure what a person actually edited before approving.
+ */
+export interface DraftReadBack {
+  /**
+   * Read one parked draft's current body. Null means the target system
+   * holds no such draft: it was deleted or never parked. The caller must
+   * treat null as a refusal, never as an empty body.
+   */
+  readDraft(draftExternalId: string): Promise<{ readonly body: string } | null>;
+}
+
+/**
  * Thrown when an adapter is asked to do what its declared capabilities say
  * it cannot (DEC-06). The throw states the limit; it never stands in for a
  * delivery.

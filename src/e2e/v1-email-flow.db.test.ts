@@ -23,6 +23,7 @@ import { createTransport } from 'nodemailer';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { approveRun } from '../approval/approve.js';
+import { approvalEditDistance } from '../approval/edit_distance.js';
 import { SmtpEgressAdapter } from '../adapters/imap-smtp.js';
 import { normalizeMime } from '../adapters/mime.js';
 import type { AdapterCapabilities, EgressAdapter } from '../adapters/types.js';
@@ -342,6 +343,74 @@ describe.skipIf(!dbUp || !greenmail)('email duplex flow end to end', () => {
     // A repeat scan finds nothing pending and never re-sends (DEC-24).
     expect(await relayPending(pool, egress)).toEqual([]);
   }, 120_000);
+
+  it('records an edit distance of exactly 0 for an unedited email draft', async () => {
+    await seedInboundThread();
+    const { runId, egress } = await parkReply();
+
+    // The person approves without editing. Read-back fetches the parked
+    // body through the real Drafts mailbox, and the distance is 0.
+    const approval = await approveRun(pool, runId, { readDraft: egress });
+    expect(approval).toMatchObject({ outcome: 'approved' });
+    const rows = await pool.query<{ approval_edit_distance: number | null }>(
+      'SELECT approval_edit_distance FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(rows.rows[0]!.approval_edit_distance).toBe(0);
+
+    // Round-trip fidelity: MIME normalization trims the body, so a parked
+    // body with a trailing newline does not come back byte-identical. The
+    // metric tokenizes, whitespace never becomes a token, and an unedited
+    // draft still measures exactly 0.
+    const trailingBody = 'We are sorry about the broken tiles.\n';
+    const parked = await egress.createDraft({
+      ticketExternalId: TICKET_ID,
+      body: trailingBody,
+      disclosure: DISCLOSURE,
+      provenance: {
+        generatedBy: 'auracle',
+        modelId: PINS.modelVer,
+        promptVer: PINS.promptVer,
+        generatedAt: new Date().toISOString(),
+      },
+    });
+    const readBack = await egress.readDraft(parked.draftExternalId);
+    expect(readBack).not.toBeNull();
+    expect(readBack!.body).not.toBe(trailingBody);
+    expect(approvalEditDistance(trailingBody, readBack!.body)).toBe(0);
+  }, 120_000);
+
+  it('refuses the approval when read-back finds the draft deleted', async () => {
+    await seedInboundThread();
+    const { runId, draftExternalId, egress } = await parkReply();
+
+    // The operator deleted the draft in the mail client.
+    const client = new ImapFlow({
+      host: greenmail!.getHost(),
+      port: greenmail!.getMappedPort(3143),
+      secure: false,
+      auth: { user: SUPPORT_USER, pass: 'synthetic-password' },
+      logger: false,
+    });
+    try {
+      await client.connect();
+      await client.mailboxOpen('Drafts');
+      expect(await client.messageDelete(draftExternalId, { uid: true })).toBe(true);
+    } finally {
+      await client.logout().catch(() => client.close());
+    }
+
+    // Approving a missing draft would fabricate the distance, so the
+    // call refuses and commits nothing.
+    const refusal = await approveRun(pool, runId, { readDraft: egress });
+    expect(refusal).toEqual({ outcome: 'draft_missing', draftExternalId });
+    const rows = await pool.query<{ state: string; approval_edit_distance: number | null }>(
+      'SELECT state, approval_edit_distance FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(rows.rows[0]).toEqual({ state: 'awaiting_approval', approval_edit_distance: null });
+    expect(await outboxStatuses()).toEqual([]);
+  }, 120_000);
 });
 
 async function outboxStatuses(): Promise<string[]> {
@@ -349,4 +418,39 @@ async function outboxStatuses(): Promise<string[]> {
     'SELECT status FROM outbox ORDER BY idem_key',
   );
   return rows.rows.map((row) => row.status);
+}
+
+/** Lands the customer thread in the support INBOX, as ingress would. */
+async function seedInboundThread(): Promise<void> {
+  const baseline = (await fetchInbox(SUPPORT_USER)).length;
+  const inbound = createTransport({
+    host: greenmail!.getHost(),
+    port: greenmail!.getMappedPort(3025),
+    secure: false,
+  });
+  await inbound.sendMail({
+    from: `Dana Doe <${CUSTOMER_ADDRESS}>`,
+    to: SUPPORT_USER,
+    subject: 'Order 4471 arrived damaged',
+    text: TICKET_TEXT,
+    messageId: `<${TICKET_ID}>`,
+  });
+  await waitFor(
+    async () => (await fetchInbox(SUPPORT_USER)).length > baseline,
+    'inbound thread delivery',
+  );
+}
+
+/** Parks one gated reply in the Drafts mailbox through the coordinator. */
+async function parkReply(): Promise<{
+  runId: string;
+  draftExternalId: string;
+  egress: SmtpEgressAdapter;
+}> {
+  const egress = egressAdapter();
+  const result = await coordinateTicket(makeDeps(egress), replyInput(1n));
+  if (result.outcome !== 'awaiting_approval') {
+    throw new Error(`expected awaiting_approval, got ${result.outcome}`);
+  }
+  return { runId: result.runId, draftExternalId: result.draftExternalId!, egress };
 }

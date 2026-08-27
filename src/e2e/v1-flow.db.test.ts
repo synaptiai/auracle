@@ -24,6 +24,7 @@ import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { approveRun } from '../approval/approve.js';
+import { approvalEditDistance } from '../approval/edit_distance.js';
 import { coordinateTicket } from '../coordinator/coordinator.js';
 import type { CoordinateInput, CoordinatorDeps } from '../coordinator/coordinator.js';
 import type {
@@ -549,6 +550,49 @@ describe.skipIf(!dbUp)('V1 flow end to end', () => {
 
     await approveRun(pool, result.runId, { finalBody: parkedBody });
     expect((await runRow(result.runId))?.approval_edit_distance).toBe(0);
+  });
+
+  it('(b) approving with read-back records the true distance and sends the edited draft', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const helpdesk = helpdeskWith(ticketId);
+    const result = await coordinateTicket(makeDeps(happyScript(), { egress: helpdesk }), replyInput(ticketId, 1n));
+    if (result.outcome !== 'awaiting_approval') throw new Error(`unexpected ${result.outcome}`);
+    const { runId, draftExternalId } = result;
+    const parkedBody = helpdesk.getDraft(draftExternalId)!.body;
+
+    // A person edits the parked draft in the helpdesk, then approves with
+    // read-back: the CLI fetches the current body from the adapter, so the
+    // distance measures the parked body against the real edit.
+    const editedBody = parkedBody + ' The link stays valid for one hour.';
+    await helpdesk.editDraft(draftExternalId, editedBody);
+
+    const approval = await approveRun(pool, runId, { readDraft: helpdesk });
+    expect(approval.outcome).toBe('approved');
+    const after = await runRow(runId);
+    expect(after?.state).toBe('resolved');
+    expect(after?.approval_edit_distance).toBe(approvalEditDistance(parkedBody, editedBody));
+
+    // The relay sends through the same adapter, so the customer receives
+    // the edited body the metric measured.
+    expect(await relayPending(pool, helpdesk)).toHaveLength(1);
+    expect(helpdesk.getDraft(draftExternalId)?.body).toBe(editedBody);
+    expect(helpdesk.getDraft(draftExternalId)?.status).toBe('sent');
+  });
+
+  it('(b) read-back finds no draft and refuses the approval', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const helpdesk = helpdeskWith(ticketId);
+    const result = await coordinateTicket(makeDeps(happyScript(), { egress: helpdesk }), replyInput(ticketId, 1n));
+    if (result.outcome !== 'awaiting_approval') throw new Error(`unexpected ${result.outcome}`);
+    const { runId, draftExternalId } = result;
+
+    // The draft is gone from the target system. Approving would fabricate
+    // the distance, so the call refuses and commits nothing.
+    const refusal = await approveRun(pool, runId, { readDraft: new HelpdeskAdapter() });
+    expect(refusal).toEqual({ outcome: 'draft_missing', draftExternalId });
+    expect((await runRow(runId))?.state).toBe('awaiting_approval');
+    expect((await runRow(runId))?.approval_edit_distance).toBeNull();
+    expect(await outboxRows(runId)).toEqual([]);
   });
 
   it('(c) DEC-30: a send with unknown delivery state escalates and never retries', async () => {

@@ -36,6 +36,7 @@ import { normalizeMime } from './mime.js';
 import type {
   AdapterCapabilities,
   DeliveryState,
+  DraftReadBack,
   DraftReply,
   EgressAdapter,
   IngressAdapter,
@@ -168,7 +169,7 @@ export function imapSmtpConfigFromEnv(
   const required = (name: string): string => {
     const value = env[name];
     if (value === undefined || value === '') {
-      throw new Error(`missing required env var ${name} for RELAY_ADAPTER=imap-smtp`);
+      throw new Error(`missing required env var ${name} for the imap-smtp adapter`);
     }
     return value;
   };
@@ -369,8 +370,11 @@ async function ensureMailbox(client: ImapFlow, path: string): Promise<void> {
  * - `readBack` throws: Sent-folder presence after an SMTP failure is a
  *   weak signal, so delivery state stays unknown and the relay escalates
  *   (DEC-30).
+ * - `readDraft` reads one parked draft's current body from Drafts for the
+ *   approval path (section 4.10). It reads draft state, not delivery
+ *   state, so it never conflicts with the DEC-30 limit above.
  */
-export class SmtpEgressAdapter implements EgressAdapter {
+export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
   readonly name = 'imap-smtp';
 
   readonly capabilities: AdapterCapabilities = IMAP_SMTP_CAPABILITIES;
@@ -453,6 +457,27 @@ export class SmtpEgressAdapter implements EgressAdapter {
       const externalId: string =
         parsed.messageId ?? info.messageId ?? draftExternalId;
       return { externalId };
+    });
+  }
+
+  /**
+   * Read one parked draft's current body from the Drafts mailbox for the
+   * approval path (section 4.10). Null means no such draft sits there:
+   * someone deleted it, so the approval refuses instead of fabricating
+   * the edit distance. This reads draft state only; delivery read-back
+   * stays forbidden (DEC-30), which is why `readBack` still throws.
+   */
+  async readDraft(draftExternalId: string): Promise<{ readonly body: string } | null> {
+    requireNonEmpty('draftExternalId', draftExternalId);
+
+    return this.withImap(async (client) => {
+      await client.mailboxOpen(this.config.draftsMailbox);
+      const fetched = await client.fetchOne(draftExternalId, { source: true }, { uid: true });
+      const source = fetched !== false ? fetched.source : undefined;
+      if (source === undefined || source === null) {
+        return null;
+      }
+      return { body: normalizeMime(source.toString()).bodyText };
     });
   }
 

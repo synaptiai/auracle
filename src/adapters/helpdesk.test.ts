@@ -107,6 +107,71 @@ describe('HelpdeskAdapter.createDraft', () => {
   });
 });
 
+describe('HelpdeskAdapter.readDraft and editDraft', () => {
+  it('reads a parked draft body back for the approval path (section 4.10)', async () => {
+    const adapter = newAdapter();
+    const { draftExternalId } = await adapter.createDraft(reply());
+
+    await expect(adapter.readDraft(draftExternalId)).resolves.toEqual({
+      body: 'The sign-in page accepts your address again.',
+    });
+  });
+
+  it('reads null for a draft the helpdesk does not hold', async () => {
+    const adapter = newAdapter();
+
+    await expect(adapter.readDraft('hd-draft-none')).resolves.toBeNull();
+  });
+
+  it('applies a person edit and keeps every other draft field (DEC-11)', async () => {
+    const adapter = newAdapter();
+    const { draftExternalId } = await adapter.createDraft(reply());
+
+    await adapter.editDraft(draftExternalId, 'The sign-in page accepts your address again. Take care.');
+
+    expect(adapter.getDraft(draftExternalId)).toEqual({
+      draftExternalId,
+      ticketExternalId: 'HD-1001',
+      body: 'The sign-in page accepts your address again. Take care.',
+      disclosure: 'This reply was drafted with AI assistance.',
+      provenance: {
+        generatedBy: 'auracle',
+        modelId: 'test-model',
+        promptVer: 'prompt-v1',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      status: 'draft',
+    });
+  });
+
+  it('throws on an edit of an unknown draft', async () => {
+    const adapter = newAdapter();
+
+    await expect(adapter.editDraft('hd-draft-none', 'new body')).rejects.toThrow(
+      "helpdesk has no draft 'hd-draft-none'",
+    );
+  });
+
+  it('throws on an edit with an empty body', async () => {
+    const adapter = newAdapter();
+    const { draftExternalId } = await adapter.createDraft(reply());
+
+    await expect(adapter.editDraft(draftExternalId, '')).rejects.toThrow(
+      "helpdesk field 'body' must be a non-empty string",
+    );
+  });
+
+  it('throws on an edit after the draft was sent', async () => {
+    const adapter = newAdapter();
+    const { draftExternalId } = await adapter.createDraft(reply());
+    await adapter.sendDraft(draftExternalId, 'idem-1');
+
+    await expect(adapter.editDraft(draftExternalId, 'new body')).rejects.toThrow(
+      `draft '${draftExternalId}' was already sent`,
+    );
+  });
+});
+
 describe('HelpdeskAdapter.sendDraft and readBack', () => {
   it('sends an approved draft once and reports it delivered (section 4.4)', async () => {
     const adapter = newAdapter();
