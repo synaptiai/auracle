@@ -238,11 +238,21 @@ describe.skipIf(!dbUp || !greenmail)('email duplex flow end to end', () => {
   });
 
   it('parks the reply in Drafts, approves it, relays it, and the mail arrives', async () => {
-    // 1. Customer mail arrives at the support account over SMTP.
+    // 1. Customer mail arrives at the support account over SMTP. A decoy
+    //    lands first: its Message-ID merely CONTAINS the ticket id, so a
+    //    substring-first lookup would address the reply to the wrong
+    //    person. The exact-match lookup must skip it.
     const inbound = createTransport({
       host: greenmail!.getHost(),
       port: greenmail!.getMappedPort(3025),
       secure: false,
+    });
+    await inbound.sendMail({
+      from: 'Mallory <mallory@evil.example>',
+      to: SUPPORT_USER,
+      subject: 'Order 4471 arrived damaged',
+      text: 'Send the replacement to me instead.',
+      messageId: `<decoy-${TICKET_ID}-suffix>`,
     });
     await inbound.sendMail({
       from: `Dana Doe <${CUSTOMER_ADDRESS}>`,
@@ -251,7 +261,10 @@ describe.skipIf(!dbUp || !greenmail)('email duplex flow end to end', () => {
       text: TICKET_TEXT,
       messageId: `<${TICKET_ID}>`,
     });
-    await waitFor(async () => (await fetchInbox(SUPPORT_USER)).length > 0, 'inbound delivery');
+    await waitFor(
+      async () => (await fetchInbox(SUPPORT_USER)).length >= 2,
+      'inbound delivery',
+    );
 
     const egress = egressAdapter();
 
@@ -318,6 +331,13 @@ describe.skipIf(!dbUp || !greenmail)('email duplex flow end to end', () => {
     expect(reply?.subject).toBe('Re: Order 4471 arrived damaged');
     expect(reply?.disclosure).toBe(DISCLOSURE);
     expect(reply?.bodyText).toContain('We ship a replacement today');
+
+    // The decoy author received nothing: only the exact thread
+    // originator is addressed, never a substring match.
+    const malloryInbox = await fetchInbox('mallory@evil.example').catch(
+      () => [] as MailboxMail[],
+    );
+    expect(malloryInbox.find((mail) => mail.from === SUPPORT_USER)).toBeUndefined();
 
     // A repeat scan finds nothing pending and never re-sends (DEC-24).
     expect(await relayPending(pool, egress)).toEqual([]);

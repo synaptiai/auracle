@@ -97,8 +97,11 @@ describe('draft message construction', () => {
 
     expect(lines[0]).toBe('From: support@acme.example');
     expect(lines[1]).toBe('To: dana.doe@example.test');
-    expect(lines[2]).toBe('Subject: Re: Order 4471 arrived damaged');
-    expect(lines[3]).toMatch(/^Message-ID: <[0-9a-f-]+@acme\.example>$/);
+    // RFC 5322 section 3.6: every message carries a Date. nodemailer sends
+    // raw content verbatim, so the draft itself must carry one.
+    expect(lines[2]).toMatch(/^Date: [A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/);
+    expect(lines[3]).toBe('Subject: Re: Order 4471 arrived damaged');
+    expect(lines[4]).toMatch(/^Message-ID: <[0-9a-f-]+@acme\.example>$/);
     expect(lines).toContain('In-Reply-To: <order-4471-damaged@example.test>');
     expect(lines).toContain('References: <thread-root@acme.example>');
     expect(lines).toContain('Content-Type: text/plain; charset=utf-8');
@@ -131,6 +134,22 @@ describe('draft message construction', () => {
     expect(match).not.toBeNull();
     expect(Buffer.from(match![1]!, 'base64').toString('utf8')).toBe(
       'Re: Café order missing',
+    );
+  });
+
+  it('encodes a non-ASCII disclosure as an RFC 2047 word, ASCII verbatim', () => {
+    const ascii = buildDraftMessage(reply({ disclosure: 'Drafted by an automated assistant.' }));
+    expect(ascii.toString()).toContain(
+      'X-Auracle-Disclosure: Drafted by an automated assistant.',
+    );
+
+    const unicode = buildDraftMessage(
+      reply({ disclosure: 'Automatisch verfasst und von einer Person geprüft.' }),
+    ).toString();
+    const match = /X-Auracle-Disclosure: =\?UTF-8\?B\?(.+?)\?=\r?\n/.exec(unicode);
+    expect(match).not.toBeNull();
+    expect(Buffer.from(match![1]!, 'base64').toString('utf8')).toBe(
+      'Automatisch verfasst und von einer Person geprüft.',
     );
   });
 

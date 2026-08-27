@@ -217,9 +217,9 @@ function headerLine(name: string, rawValue: string): string {
   return `${name}: ${value}`;
 }
 
-/** RFC 2047 base64 encoding for subjects that are not plain ASCII. */
-function encodeSubject(subject: string): string {
-  const safe = subject.replace(/[\r\n]+/g, ' ').trim();
+/** RFC 2047 base64 encoding for non-ASCII unstructured header values. */
+function encodeHeaderValue(value: string): string {
+  const safe = value.replace(/[\r\n]+/g, ' ').trim();
   if (/^[\x20-\x7e]*$/.test(safe)) return safe;
   return `=?UTF-8?B?${Buffer.from(safe, 'utf8').toString('base64')}?=`;
 }
@@ -259,7 +259,11 @@ export function buildDraftMessage(reply: OutgoingReply): Buffer {
   const lines = [
     headerLine('From', reply.fromAddress),
     headerLine('To', reply.toAddress),
-    `Subject: ${encodeSubject(reply.subject)}`,
+    // RFC 5322 section 3.6: every message carries a Date. Park time is
+    // composition time, and nodemailer sends raw content verbatim, so
+    // nothing else would add one.
+    `Date: ${new Date().toUTCString()}`,
+    `Subject: ${encodeHeaderValue(reply.subject)}`,
     `Message-ID: <${randomUUID()}@${domain}>`,
   ];
   if (reply.inReplyTo !== null && reply.inReplyTo !== '') {
@@ -277,7 +281,9 @@ export function buildDraftMessage(reply: OutgoingReply): Buffer {
     );
   }
   if (reply.disclosure !== undefined && reply.disclosure.trim() !== '') {
-    lines.push(headerLine('X-Auracle-Disclosure', reply.disclosure));
+    // Operators write the disclosure and it may be non-ASCII, so it takes
+    // the same RFC 2047 encoding as the subject; ASCII stays byte-identical.
+    lines.push(`X-Auracle-Disclosure: ${encodeHeaderValue(reply.disclosure)}`);
   }
   lines.push(
     'MIME-Version: 1.0',
@@ -300,8 +306,12 @@ interface ThreadOriginator {
 /**
  * Finds the customer side of a thread inside INBOX. The adapter derives
  * ticket ids from message ids (deriveTicketId), so the id reverses into a
- * mailbox lookup: search for the message whose Message-ID matches the
- * ticket id and answer its author.
+ * mailbox lookup: search for the message whose Message-ID is exactly the
+ * ticket id and answer its author. SEARCH HEADER matches substrings
+ * (RFC 3501) and servers deviate on ordering, so every candidate is
+ * verified against the parsed Message-ID and a non-exact match is
+ * skipped: a mis-addressed reply is the worst failure mode of an email
+ * egress, so the lookup fails closed.
  */
 async function findThreadOriginator(
   client: ImapFlow,
@@ -314,27 +324,26 @@ async function findThreadOriginator(
   }
   await client.mailboxOpen('INBOX');
   const matches = await client.search({ header: { 'message-id': ticketId } }, { uid: true });
-  const uid = matches !== false ? matches[0] : undefined;
-  if (uid === undefined) {
-    throw new Error(
-      `no message in INBOX carries message-id '${ticketId}', so the reply cannot be addressed`,
-    );
+  const candidates = matches !== false ? matches : [];
+  for (const uid of candidates) {
+    const fetched = await client.fetchOne(String(uid), { source: true }, { uid: true });
+    const source = fetched !== false ? fetched.source : undefined;
+    if (!source) continue;
+    const parsed = normalizeMime(source.toString());
+    if (parsed.messageId !== ticketId) continue; // substring hit, not this thread
+    if (parsed.fromAddress === null) {
+      throw new Error(`message '${ticketId}' has no From address to reply to`);
+    }
+    return {
+      fromAddress: parsed.fromAddress,
+      subject: parsed.subject ?? '',
+      messageId: parsed.messageId,
+      references: parsed.references,
+    };
   }
-  const fetched = await client.fetchOne(String(uid), { source: true }, { uid: true });
-  const source = fetched !== false ? fetched.source : undefined;
-  if (!source) {
-    throw new Error(`message '${ticketId}' disappeared between search and fetch`);
-  }
-  const parsed = normalizeMime(source.toString());
-  if (parsed.fromAddress === null) {
-    throw new Error(`message '${ticketId}' has no From address to reply to`);
-  }
-  return {
-    fromAddress: parsed.fromAddress,
-    subject: parsed.subject ?? '',
-    messageId: parsed.messageId ?? ticketId,
-    references: parsed.references,
-  };
+  throw new Error(
+    `no message in INBOX carries message-id '${ticketId}', so the reply cannot be addressed`,
+  );
 }
 
 /** Creates the drafts mailbox when it does not exist yet; a no-op when it does. */
@@ -438,7 +447,12 @@ export class SmtpEgressAdapter implements EgressAdapter {
         .messageFlagsAdd(draftExternalId, ['\\Seen'], { uid: true })
         .catch(() => false);
 
-      return { externalId: info.messageId };
+      // Nodemailer generates no messageId for raw sends, so the external
+      // id is the draft's own Message-ID (always set by buildDraftMessage);
+      // the chain ends in a non-empty draftExternalId, never undefined.
+      const externalId: string =
+        parsed.messageId ?? info.messageId ?? draftExternalId;
+      return { externalId };
     });
   }
 
