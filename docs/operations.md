@@ -223,7 +223,9 @@ Sent-folder presence after an SMTP failure is a weak signal.
 The adapter therefore declares no read-back, and the relay escalates on unknown
 state (DEC-30).
 
-Set these variables when `RELAY_ADAPTER=imap-smtp`:
+Set these variables when a process uses the `imap-smtp` adapter.
+The selectors are `RELAY_ADAPTER`, `EGRESS_ADAPTER` and `APPROVE_ADAPTER`.
+Every process that selects the adapter reads the same variables:
 
 | Variable | Meaning | Default |
 |----------|---------|---------|
@@ -359,6 +361,23 @@ The loader onboards the knowledge base for the deployment. It embeds each
 markdown file in the directory you pass. It needs `OPENROUTER_API_KEY`.
 Set `EMBED_MODEL_VER` to pin the embedding model. A model outside the price
 table needs `EMBEDDINGS_USD_PER_MTOK`, or the loader refuses to run.
+
+Each file needs a frontmatter block at the top. The loader rejects unknown
+fields. These fields are required:
+
+```yaml
+---
+doc_id: refund-policy-v1
+kind: document
+title: Refund policy
+owner: support-ops
+review_by: 2026-06-01
+---
+```
+
+`doc_id` holds no whitespace and stays unique in one run. `kind` is
+`document` or `resolution`. `review_by` is an ISO date. The loader skips
+every file that does not end in `.md`.
 
 Exit code 1 means at least one file failed validation. Fix the file and run
 the loader again.

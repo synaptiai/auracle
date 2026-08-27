@@ -169,7 +169,7 @@ export function imapSmtpConfigFromEnv(
   const required = (name: string): string => {
     const value = env[name];
     if (value === undefined || value === '') {
-      throw new Error(`missing required env var ${name} for RELAY_ADAPTER=imap-smtp`);
+      throw new Error(`missing required env var ${name} for the imap-smtp adapter`);
     }
     return value;
   };
