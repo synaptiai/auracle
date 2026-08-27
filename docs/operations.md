@@ -24,8 +24,8 @@ database and does not touch this one.
 
 ## Configuration files
 
-Each CLI and daemon loads a `.env` file at startup, when one exists in the
-working directory. Node reads it natively, so no extra dependency exists. A
+Every CLI and daemon except `npm run escalations` loads a `.env` file at
+startup, when one exists in the working directory. Node reads it natively, so no extra dependency exists. A
 variable set in the shell always wins over the same variable in `.env`.
 `OPENROUTER_API_KEY` normally lives in `.env`. Never commit that file.
 
@@ -165,7 +165,7 @@ The consumer reads this configuration:
 | `ACTION_CLASS` | Action class each run executes. | `route_ticket` |
 | `ACTION_DELIVERY` | Delivery rule: `at_most_once` or `at_least_once`. | `at_most_once` |
 | `ACTION_IS_CUSTOMER_VISIBLE` | `true` gates every action as a customer reply (DEC-12). | `false` |
-| `DISCLOSURE_TEXT` | Disclosure on gated replies (DEC-14). Required when `ACTION_IS_CUSTOMER_VISIBLE=true`. Startup fails fast without it. | see DEC-14 text |
+| `DISCLOSURE_TEXT` | Disclosure on gated replies (DEC-14). Required when `ACTION_IS_CUSTOMER_VISIBLE=true`. Startup fails fast without it. | `This reply was drafted by an automated assistant and reviewed by a person.` |
 | `EGRESS_ADAPTER` | Egress adapter that parks gated replies: `helpdesk` or `imap-smtp`. The policy engine reads the selected adapter's capabilities. | `helpdesk` |
 
 A reply-generating profile for dogfood looks like this:
@@ -340,7 +340,10 @@ Make `npm run escalations` the first command of your workday.
 It shows every run that waits for a person.
 It prints a JSON array by default. The flag `--pretty` prints a table.
 Filter with `--since 24h` or `--state awaiting_approval`.
+
 The command runs SELECT statements only, so it is safe on a live database.
+The command reads no `.env` file, so export `DATABASE_URL` in the shell
+when the target differs from the compose default.
 
 ## 5. Offline jobs
 
