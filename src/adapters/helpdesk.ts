@@ -22,6 +22,7 @@
 import type {
   AdapterCapabilities,
   DeliveryState,
+  DraftReadBack,
   DraftReply,
   EgressAdapter,
   ReplyProvenance,
@@ -52,7 +53,7 @@ interface StoredDelivery {
   readonly externalId: string;
 }
 
-export class HelpdeskAdapter implements EgressAdapter {
+export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
   readonly name = 'helpdesk';
 
   readonly capabilities: AdapterCapabilities = Object.freeze({
@@ -229,6 +230,37 @@ export class HelpdeskAdapter implements EgressAdapter {
   /** Read one draft back, as the operator UI renders it before approval. */
   getDraft(draftExternalId: string): HelpdeskDraftRecord | undefined {
     return this.drafts.get(draftExternalId);
+  }
+
+  /**
+   * Read one parked draft's current body for the approval path
+   * (section 4.10). Null means no such draft sits in the helpdesk. The
+   * approval then refuses instead of recording a fabricated distance.
+   */
+  async readDraft(draftExternalId: string): Promise<{ readonly body: string } | null> {
+    requireNonEmpty(draftExternalId, 'draftExternalId');
+    const draft = this.drafts.get(draftExternalId);
+    return draft === undefined ? null : { body: draft.body };
+  }
+
+  /**
+   * Apply a person's edit to one parked draft, as the helpdesk UI does
+   * (DEC-11: the person reviews in the helpdesk they already use). The
+   * edit keeps disclosure, provenance and status. Unknown drafts, empty
+   * bodies and already-sent drafts refuse: an edit after the send would
+   * never reach the customer.
+   */
+  async editDraft(draftExternalId: string, body: string): Promise<void> {
+    requireNonEmpty(draftExternalId, 'draftExternalId');
+    requireNonEmpty(body, 'body');
+    const draft = this.drafts.get(draftExternalId);
+    if (!draft) {
+      throw new Error(`helpdesk has no draft '${draftExternalId}'`);
+    }
+    if (draft.status === 'sent') {
+      throw new Error(`draft '${draftExternalId}' was already sent; edits cannot reach the customer`);
+    }
+    this.drafts.set(draftExternalId, { ...draft, body });
   }
 
   /** Read one ticket's current fixture state, for tests and observability. */

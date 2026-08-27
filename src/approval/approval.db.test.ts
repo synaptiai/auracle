@@ -26,6 +26,7 @@ import { relayPending } from '../relay/relay.js';
 import { indexDocument } from '../retriever/retriever.js';
 
 import { approveRun } from './approve.js';
+import { approvalEditDistance } from './edit_distance.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
@@ -225,6 +226,91 @@ describe.skipIf(!dbUp)('approval completion path (DEC-12 end to end)', () => {
       state: 'resolved',
     });
     expect(await outboxRows(runId)).toHaveLength(1);
+  });
+
+  it('reads the edited draft back and records the true distance (section 4.10)', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const { runId, draftExternalId, helpdesk } = await parkReply(ticketId);
+    const parkedBody = helpdesk.getDraft(draftExternalId)!.body;
+
+    // A person edits the draft in the helpdesk, then approves with
+    // read-back: the distance must measure the parked body against the
+    // edited body, not against a hand-copied string.
+    const editedBody = parkedBody + ' The link stays valid for one hour.';
+    await helpdesk.editDraft(draftExternalId, editedBody);
+
+    const approval = await approveRun(pool, runId, { readDraft: helpdesk });
+    expect(approval.outcome).toBe('approved');
+    expect(await runState(runId)).toBe('resolved');
+
+    const rows = await pool.query(
+      'SELECT approval_edit_distance FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(rows.rows[0]!.approval_edit_distance).toBe(
+      approvalEditDistance(parkedBody, editedBody),
+    );
+  });
+
+  it('records a distance of exactly 0 when read-back finds no edit', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const { runId, helpdesk } = await parkReply(ticketId);
+
+    const approval = await approveRun(pool, runId, { readDraft: helpdesk });
+    expect(approval.outcome).toBe('approved');
+
+    const rows = await pool.query(
+      'SELECT approval_edit_distance FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(rows.rows[0]!.approval_edit_distance).toBe(0);
+  });
+
+  it('refuses the approval when read-back finds no draft, and nothing commits', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const { runId, draftExternalId } = await parkReply(ticketId);
+
+    // A fresh adapter holds no parked draft: read-back cannot find what
+    // the person would have edited. Approving anyway would fabricate the
+    // distance, so the call refuses before any write.
+    const refusal = await approveRun(pool, runId, { readDraft: new HelpdeskAdapter() });
+    expect(refusal).toEqual({ outcome: 'draft_missing', draftExternalId });
+    expect(await runState(runId)).toBe('awaiting_approval');
+    expect(await outboxRows(runId)).toEqual([]);
+    const rows = await pool.query(
+      'SELECT approval_edit_distance FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(rows.rows[0]!.approval_edit_distance).toBeNull();
+
+    // The refusal blocks nothing: the operator reconciles by hand and the
+    // manual approval path still works.
+    expect(await approveRun(pool, runId)).toMatchObject({ outcome: 'approved' });
+  });
+
+  it('lets an explicit final body win over read-back', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const { runId, draftExternalId, helpdesk } = await parkReply(ticketId);
+    const parkedBody = helpdesk.getDraft(draftExternalId)!.body;
+
+    // The adapter holds an edit, but the caller captured an explicit body;
+    // the explicit capture is authoritative.
+    await helpdesk.editDraft(draftExternalId, parkedBody + ' Edited in the helpdesk.');
+    const explicitBody = parkedBody + ' Captured explicitly.';
+
+    const approval = await approveRun(pool, runId, {
+      finalBody: explicitBody,
+      readDraft: helpdesk,
+    });
+    expect(approval.outcome).toBe('approved');
+
+    const rows = await pool.query(
+      'SELECT approval_edit_distance FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(rows.rows[0]!.approval_edit_distance).toBe(
+      approvalEditDistance(parkedBody, explicitBody),
+    );
   });
 
   it('reports unknown_run for an id that never existed', async () => {

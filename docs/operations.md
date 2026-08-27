@@ -268,6 +268,15 @@ The bridge refuses a reply without it.
 
 The approval also records the approval-edit distance on the run.
 This value shows how much the person changed the draft before sending it.
+Add `--read-back` to measure the real edit.
+The CLI then fetches the current draft body from the adapter before the approval commits.
+It reads the adapter named by `APPROVE_ADAPTER`.
+Known values are `helpdesk` and `imap-smtp`.
+The default is `helpdesk`.
+
+Read-back refuses the approval when the adapter holds no draft.
+Approving a missing draft would fabricate the metric.
+Reconcile the draft by hand, then approve again.
 The CLI prints the outcome as JSON on stdout.
 It exits non-zero when the run was not approved.
 
