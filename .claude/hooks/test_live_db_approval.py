@@ -32,6 +32,21 @@ CASES = [
      "DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle npm run db:migrate"),
     ("client inside the compose container", ALLOW, "docker exec db psql -U auracle"),
     ("migration with no local target", BLOCK, "npm run db:migrate"),
+    # The default keeps a body in scope. Only a known data consumer drops it.
+    ("unknown command keeps its body in scope", BLOCK,
+     "somenewtool run <<'EOF'\npsql -h prod.example.com\nEOF"),
+    ("fish heredoc that hides a client call", BLOCK,
+     "fish <<'EOF'\npsql -h prod.example.com\nEOF"),
+    ("ssh heredoc that hides a client call", BLOCK,
+     "ssh host <<'EOF'\npsql -c 'select 1'\nEOF"),
+    ("sudo heredoc that hides a dump", BLOCK,
+     "sudo -s <<'EOF'\npg_dump app > d.sql\nEOF"),
+    ("data consumer next to an interpreter keeps its body", BLOCK,
+     "git commit -F - <<'MSG' && bash\npsql -h prod.example.com\nMSG"),
+    ("cat to a file is inert", ALLOW,
+     "cat > notes.md <<'EOF'\nRun psql against production only by hand.\nEOF"),
+    ("gh issue body is inert", ALLOW,
+     "gh issue create --body-file - <<'EOF'\nThe db:migrate step fails.\nEOF"),
 ]
 
 

@@ -14,11 +14,15 @@ a command that targets a live host.
 
 ## Proposed outcome
 
-The guard strips a heredoc body before it matches either pattern.
-A body stays in scope when the line that opens it runs an interpreter,
-because `bash <<EOF ... psql ... EOF` does execute the body.
+A heredoc body leaves the scan only when the line that opens it hands the
+body to a data consumer, for example `git commit -F -` or `cat >`.
+Every other opener keeps its body, because it may execute it.
 Prose that names a database command no longer blocks a commit.
 A command aimed at a live database still blocks.
+
+The two tests read different text. The database-command test reads the body
+that an interpreter would run. The local-target test reads no body at all.
+A body may therefore incriminate a command. It may never exempt one.
 
 ## Affected users and systems
 
@@ -40,5 +44,8 @@ implementation detail of the guard.
 
 ## Open questions
 
-The interpreter list is a fixed set of names. A shell invoked under a name
-outside that list would have its body skipped. No case for that exists today.
+None. An earlier draft skipped a body unless the opening line named a known
+interpreter, so an unlisted shell kept its body out of the scan. The rule now
+inverts: a body leaves the scan only when the opening line hands it to a known
+data consumer. An unknown command keeps its body, so the fixed lists no longer
+decide the safe case.
