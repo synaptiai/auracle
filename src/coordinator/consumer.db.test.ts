@@ -41,6 +41,7 @@ const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../
 const LEDGER_DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
 const DOCUMENTS_DDL = readFileSync(path.join(dbDir, '002_documents.sql'), 'utf8');
 const INTAKE_DDL = readFileSync(path.join(dbDir, '004_intake.sql'), 'utf8');
+const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 const CAPABILITIES: AdapterCapabilities = {
   supportsIdempotencyKey: true,
@@ -198,6 +199,7 @@ describe.skipIf(!dbUp)('section 4.3 partition consumer', () => {
     await pool.query(LEDGER_DDL);
     await pool.query(DOCUMENTS_DDL);
     await pool.query(INTAKE_DDL);
+    await pool.query(TIMING_DDL);
     await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, document, intake');
     await indexDocument(
       pool,
@@ -263,6 +265,37 @@ describe.skipIf(!dbUp)('section 4.3 partition consumer', () => {
       // Attribution: the run carries the owning consumer's pinned prompt.
       expect(run.prompt_ver).toBe(ticket.partition <= 1 ? 'owner-a' : 'owner-b');
     }
+  });
+
+  it('carries the intake arrival time onto the run row (V2 open item 7)', async () => {
+    const ticket = ticketIdInPartition(0);
+    await enqueueTicket(pool, { ticketId: ticket, ticketText: TICKET_TEXT }, PARTITION_COUNT);
+
+    const results = await processQueuedTickets(
+      makeDeps(happyScript(), 'timing-owner'),
+      optionsFor([0]),
+    );
+    expect(results.map((r) => r.outcome)).toEqual(['resolved']);
+
+    // The ack deleted the intake row; the arrival time survives on the run.
+    const intakeRows = await pool.query(
+      'SELECT 1 FROM intake WHERE ticket_id = $1',
+      [ticket],
+    );
+    expect(intakeRows.rows).toHaveLength(0);
+    const rows = await pool.query(
+      'SELECT enqueued_at, created_at, finished_at FROM run WHERE ticket_id = $1',
+      [ticket],
+    );
+    expect(rows.rows).toHaveLength(1);
+    const enqueuedAt = rows.rows[0]!.enqueued_at as Date;
+    const createdAt = rows.rows[0]!.created_at as Date;
+    const finishedAt = rows.rows[0]!.finished_at as Date;
+    // All three stamps come from one Postgres clock, so they order
+    // themselves: arrival, then pickup, then the terminal finish. The host
+    // clock is not comparable here — the test container may lag it.
+    expect(createdAt.getTime()).toBeGreaterThanOrEqual(enqueuedAt.getTime());
+    expect(finishedAt.getTime()).toBeGreaterThanOrEqual(createdAt.getTime());
   });
 
   it('keeps epochs monotonically increasing per ticket across repeated processing (DEC-28)', async () => {

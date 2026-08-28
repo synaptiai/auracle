@@ -27,6 +27,7 @@ try {
 const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
 const LEDGER_DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
 const EDIT_DDL = readFileSync(path.join(dbDir, '003_approval_edit_distance.sql'), 'utf8');
+const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 async function seedRun(): Promise<string> {
   const run: FencedRunInput = {
@@ -56,6 +57,7 @@ describe.skipIf(!dbUp)('section 4.10 approval-edit distance recording', () => {
   beforeEach(async () => {
     await pool.query(LEDGER_DDL);
     await pool.query(EDIT_DDL);
+    await pool.query(TIMING_DDL);
     await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
   });
 

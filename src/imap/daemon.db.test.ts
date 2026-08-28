@@ -34,12 +34,14 @@ const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../
 const LEDGER_DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
 const DOCUMENTS_DDL = readFileSync(path.join(dbDir, '002_documents.sql'), 'utf8');
 const INTAKE_DDL = readFileSync(path.join(dbDir, '004_intake.sql'), 'utf8');
+const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 describe.skipIf(!dbUp)('imap daemon intake', () => {
   beforeEach(async () => {
     await pool.query(LEDGER_DDL);
     await pool.query(DOCUMENTS_DDL);
     await pool.query(INTAKE_DDL);
+    await pool.query(TIMING_DDL);
     await pool.query('DELETE FROM intake');
   });
 

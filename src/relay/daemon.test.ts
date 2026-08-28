@@ -30,6 +30,7 @@ try {
 
 const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
 const DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
+const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 /** Egress fake whose send and read-back behaviour a test scripts per case. */
 class ScriptedEgress implements EgressAdapter {
@@ -147,6 +148,7 @@ describe.skipIf(!dbUp)('relay daemon loop', () => {
 
   beforeEach(async () => {
     await pool.query(DDL);
+    await pool.query(TIMING_DDL);
     await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
   });
 

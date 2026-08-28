@@ -215,12 +215,14 @@ const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../
 const LEDGER_DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
 const DOCUMENTS_DDL = readFileSync(path.join(dbDir, '002_documents.sql'), 'utf8');
 const EDIT_DISTANCE_DDL = readFileSync(path.join(dbDir, '003_approval_edit_distance.sql'), 'utf8');
+const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 describe.skipIf(!dbUp || !greenmail)('email duplex flow end to end', () => {
   beforeEach(async () => {
     await pool.query(LEDGER_DDL);
     await pool.query(DOCUMENTS_DDL);
     await pool.query(EDIT_DISTANCE_DDL);
+    await pool.query(TIMING_DDL);
     await pool.query(
       'TRUNCATE run, ticket_epoch, step_journal, outbox, document',
     );

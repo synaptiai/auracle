@@ -22,6 +22,7 @@ try {
 // Schema source of truth: db/001_ledger.sql from the DDL card.
 async function applySchema(): Promise<void> {
   await pool.query(readFileSync('db/001_ledger.sql', 'utf8'));
+  await pool.query(readFileSync('db/005_run_timing.sql', 'utf8'));
 }
 
 function makeRun(epoch: bigint, state = 'queued'): FencedRunInput {

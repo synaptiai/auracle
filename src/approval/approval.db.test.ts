@@ -40,6 +40,7 @@ try {
 const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
 const LEDGER_DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
 const DOCUMENTS_DDL = readFileSync(path.join(dbDir, '002_documents.sql'), 'utf8');
+const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 const PINS = { promptVer: 'approval-test-prompt', modelVer: 'approval-test-model' };
 const CAPABILITIES: AdapterCapabilities = {
@@ -159,6 +160,7 @@ describe.skipIf(!dbUp)('approval completion path (DEC-12 end to end)', () => {
   beforeEach(async () => {
     await pool.query(LEDGER_DDL);
     await pool.query(DOCUMENTS_DDL);
+    await pool.query(TIMING_DDL);
     await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, document');
     await indexDocument(
       pool,

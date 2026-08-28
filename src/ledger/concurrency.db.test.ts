@@ -25,6 +25,7 @@ try {
 
 const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
 const DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
+const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 interface RefundAction {
   amountCents: number;
@@ -84,6 +85,7 @@ async function seedEpoch(ticketId: string, epoch: bigint): Promise<void> {
 describe.skipIf(!dbUp)('section 3.4 concurrency rules', () => {
   beforeEach(async () => {
     await pool.query(DDL);
+    await pool.query(TIMING_DDL);
     await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
   });
 

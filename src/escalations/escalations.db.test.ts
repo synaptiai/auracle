@@ -27,6 +27,7 @@ try {
 const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
 const LEDGER_DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
 const INTAKE_DDL = readFileSync(path.join(dbDir, '004_intake.sql'), 'utf8');
+const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 async function seedRun(state: string): Promise<FencedRunInput> {
   const run: FencedRunInput = {
@@ -55,6 +56,7 @@ describe.skipIf(!dbUp)('escalations CLI queries', () => {
   beforeEach(async () => {
     await pool.query(LEDGER_DDL);
     await pool.query(INTAKE_DDL);
+    await pool.query(TIMING_DDL);
     await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake');
   });
 

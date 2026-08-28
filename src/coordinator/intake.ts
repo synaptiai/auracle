@@ -39,6 +39,8 @@ export interface PolledTicket {
   ticketId: string;
   partition: number;
   ticketText: string;
+  /** V2 open item 7: arrival time, carried to the run row at pickup. */
+  enqueuedAt: Date;
 }
 
 /**
@@ -53,7 +55,7 @@ export async function pollPartition(
 ): Promise<PolledTicket[]> {
   if (partitions.length === 0) return [];
   const rows = await pool.query(
-    `SELECT ticket_id, partition, ticket_text
+    `SELECT ticket_id, partition, ticket_text, enqueued_at
      FROM intake
      WHERE partition = ANY ($1)
      ORDER BY enqueued_at, ticket_id
@@ -64,6 +66,7 @@ export async function pollPartition(
     ticketId: row['ticket_id'] as string,
     partition: row['partition'] as number,
     ticketText: row['ticket_text'] as string,
+    enqueuedAt: row['enqueued_at'] as Date,
   }));
 }
 

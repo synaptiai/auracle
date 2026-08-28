@@ -139,6 +139,9 @@ export async function processQueuedTickets(
         ticketId: polled.ticketId,
         ticketText: polled.ticketText,
         epoch: await nextEpoch(deps.pool, polled.ticketId),
+        // V2 open item 7: the arrival time rides from intake to the run row,
+        // so queue wait survives the ack that follows.
+        enqueuedAt: polled.enqueuedAt,
         ...options.action,
       };
       const outcome = await coordinateTicket(deps, input);

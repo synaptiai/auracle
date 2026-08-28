@@ -123,6 +123,12 @@ export interface CoordinateInput {
    * before it enters the target system's draft state.
    */
   disclosure: string;
+  /**
+   * V2 open item 7: arrival time from the intake row. The ledger copies it
+   * onto the run row, so queue wait stays readable after the ack deletes
+   * the intake row. Absent for callers with no queue.
+   */
+  enqueuedAt?: Date;
 }
 
 export type EscalationReason =
@@ -223,6 +229,7 @@ export async function coordinateTicket(
       promptVer: deps.pins.promptVer,
       modelVer: deps.pins.modelVer,
       deadlineAt: deps.limits.deadlineAt,
+      ...(input.enqueuedAt === undefined ? {} : { enqueuedAt: input.enqueuedAt }),
     },
     null,
   );

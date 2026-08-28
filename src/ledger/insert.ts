@@ -9,6 +9,12 @@ export interface FencedRunInput {
   epoch: bigint;
   /** The state to commit when the insert succeeds (for example 'queued'). */
   state: string;
+  /**
+   * V2 open item 7: the arrival time from the intake row, copied onto the
+   * run row so queue wait survives the ack. Absent for callers with no
+   * queue (replay, tests); the column then stays null.
+   */
+  enqueuedAt?: Date;
   promptVer: string;
   modelVer: string;
   costCents?: number;
@@ -23,6 +29,19 @@ export interface FencedOutboxInput {
   delivery: 'at_least_once' | 'at_most_once';
   payload: unknown;
 }
+
+/**
+ * V2 open item 7: states a run never leaves. The ledger stamps finished_at
+ * when a write lands the run in one of these, in the same transaction.
+ * Mirrors TerminalRunState in the coordinator; the ledger cannot import
+ * upward, and these names are ledger data, not coordinator types.
+ */
+const TERMINAL_RUN_STATES: ReadonlySet<string> = new Set([
+  'resolved',
+  'escalated',
+  'superseded',
+  'abandoned',
+]);
 
 /**
  * The three outcomes of the atomic fenced write (section 4.2):
@@ -82,8 +101,9 @@ export async function fencedInsert(
       await client.query(
         `INSERT INTO run (
            run_id, ticket_id, partition, epoch, state,
-           prompt_ver, model_ver, cost_cents, steps_used, deadline_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+           prompt_ver, model_ver, cost_cents, steps_used, deadline_at,
+           enqueued_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           run.runId,
           run.ticketId,
@@ -95,6 +115,7 @@ export async function fencedInsert(
           run.costCents ?? 0,
           run.stepsUsed ?? 0,
           run.deadlineAt.toISOString(),
+          run.enqueuedAt ?? null,
         ],
       );
 
@@ -120,10 +141,11 @@ export async function fencedInsert(
       );
 
       // Section 4.2 rule 2: zero rows is a distinct result. A run that lost
-      // the outbox insert must never reach 'queued' (liveness).
+      // the outbox insert must never reach 'queued' (liveness). It is also
+      // terminal, so the timing column is stamped in the same commit.
       if ((inserted.rowCount ?? 0) === 0) {
         await client.query(
-          "UPDATE run SET state = 'superseded' WHERE run_id = $1",
+          "UPDATE run SET state = 'superseded', finished_at = now() WHERE run_id = $1",
           [run.runId],
         );
         await client.query('COMMIT');
@@ -218,10 +240,19 @@ export async function fencedTransition(
         return { outcome: 'stale_epoch', highestAcceptedEpoch: highest };
       }
 
-      await client.query(
-        'UPDATE run SET state = $2, cost_cents = $3, steps_used = $4 WHERE run_id = $1',
-        [t.runId, t.state, t.costCents, t.stepsUsed],
-      );
+      // V2 open item 7: a terminal state never changes again, so its commit
+      // also stamps the finish time. One transaction, one truth.
+      if (TERMINAL_RUN_STATES.has(t.state)) {
+        await client.query(
+          'UPDATE run SET state = $2, cost_cents = $3, steps_used = $4, finished_at = now() WHERE run_id = $1',
+          [t.runId, t.state, t.costCents, t.stepsUsed],
+        );
+      } else {
+        await client.query(
+          'UPDATE run SET state = $2, cost_cents = $3, steps_used = $4 WHERE run_id = $1',
+          [t.runId, t.state, t.costCents, t.stepsUsed],
+        );
+      }
 
       if (t.outbox !== undefined) {
         const inserted = await client.query(
@@ -241,7 +272,7 @@ export async function fencedTransition(
         );
         if ((inserted.rowCount ?? 0) === 0) {
           await client.query(
-            "UPDATE run SET state = 'superseded' WHERE run_id = $1",
+            "UPDATE run SET state = 'superseded', finished_at = now() WHERE run_id = $1",
             [t.runId],
           );
           await client.query('COMMIT');

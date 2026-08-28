@@ -63,6 +63,7 @@ const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../
 const LEDGER_DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
 const DOCUMENTS_DDL = readFileSync(path.join(dbDir, '002_documents.sql'), 'utf8');
 const EDIT_DISTANCE_DDL = readFileSync(path.join(dbDir, '003_approval_edit_distance.sql'), 'utf8');
+const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 const PINS = { promptVer: 'e2e-flow-prompt', modelVer: 'e2e-flow-model' };
 const CAPABILITIES = {
@@ -316,6 +317,7 @@ describe.skipIf(!dbUp)('V1 flow end to end', () => {
     await pool.query(LEDGER_DDL);
     await pool.query(DOCUMENTS_DDL);
     await pool.query(EDIT_DISTANCE_DDL);
+    await pool.query(TIMING_DDL);
     await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, document');
     await indexFixtureDoc();
   });
