@@ -28,7 +28,11 @@ jobs:
           python3 .claude/hooks/commit_dec_citation.py \
             --range=${{ github.event.pull_request.base.sha }}...${{ github.sha }}
 
-      # The test-edit-lock and live-database rules have no pull-request
-      # surface. They block inside a session only. REVIEW.md records this.
+      - name: Live-database guard cases (DEC-17, DEC-19)
+        run: python3 .claude/hooks/test_live_db_approval.py
+
+      # The test-edit-lock and live-database rules still block inside a
+      # session only. The step above tests the live-database logic; it does
+      # not enforce the rule on a pull request. REVIEW.md records this.
       # The commit-msg hook covers the citation rule locally. See
       # hooks/commit-msg for install instructions.
