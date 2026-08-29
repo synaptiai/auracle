@@ -306,6 +306,202 @@ const DOCUMENTS = [
 // ---------------------------------------------------------------------------
 
 mkdirSync(join(FIXTURES, 'gold'), { recursive: true });
+
+// ---------------------------------------------------------------------------
+// Per-claim ground truth for the groundedness fit (section 4.7, DEC-07).
+//
+// Every draw below happens AFTER every ticket draw above, so the shared
+// mulberry32 stream reaches this point in the same state it always did and
+// the committed corpus stays byte for byte identical. Verified by running the
+// generator with a probe consuming 5000 trailing draws.
+//
+// A supported claim restates what its document says. An unsupported claim
+// comes in one of three grades, because a fit that holds only on the easy
+// grade has measured nothing about the hard one:
+//
+//   off_topic       the claim belongs to another document entirely
+//   absent          plausible for this document, and it says nothing of it
+//   unstated_detail a specific the document gestures at and never states
+//
+// The last grade is the one that matters. A judge that cannot separate it
+// cannot protect the automatic path, and the fitting job refuses rather than
+// publishing a threshold that only the easy grades support.
+// ---------------------------------------------------------------------------
+
+const CLAIM_GRADES = ['off_topic', 'absent', 'unstated_detail'];
+
+const CLAIMS = {
+  'DOC-SYN-001': {
+    supported: 'The article explains renewal dates and proration.',
+    supported_b: 'The article covers where past invoice copies are listed.',
+    absent: 'Invoices are emailed to every account owner each month.',
+    unstated_detail: 'The finance archive keeps invoice copies for seven years.',
+  },
+  'DOC-SYN-002': {
+    supported: 'The article lists the refund windows for each plan.',
+    supported_b: 'The article covers the steps the billing queue follows.',
+    absent: 'A refund is approved automatically when the plan is annual.',
+    unstated_detail: 'The refund window is longer on an annual plan.',
+  },
+  'DOC-SYN-003': {
+    supported: 'The article describes what happens at period-end closure.',
+    supported_b: 'The article covers how reactivation works.',
+    absent: 'A closed subscription is announced to every collaborator.',
+    unstated_detail: 'Stored records are removed fourteen days after closure.',
+  },
+  'DOC-SYN-004': {
+    supported: 'The article covers how a deletion request is handled.',
+    supported_b: 'The article covers the erase window per region.',
+    absent: 'A deletion request is refused while an invoice is unpaid.',
+    unstated_detail: 'A deletion request completes within thirty days.',
+  },
+  'DOC-SYN-005': {
+    supported: 'The article covers pause states and error codes such as E-412.',
+    supported_b: 'The article covers the reconnect procedure for stalled clients.',
+    absent: 'Sync errors are reported to the status page automatically.',
+    unstated_detail: 'The reconnect procedure takes two steps.',
+  },
+  'DOC-SYN-006': {
+    supported: 'The article explains the recovery flow.',
+    supported_b: 'The article covers the case where the backup codes are unavailable too.',
+    absent: 'Account recovery requires a photograph of an identity document.',
+    unstated_detail: 'A backup code expires after ten minutes.',
+  },
+  'DOC-SYN-007': {
+    supported: 'The article lists the export formats and the empty-archive causes.',
+    supported_b: 'The article covers the retry rule for partial exports.',
+    absent: 'An export can be scheduled to repeat every week.',
+    unstated_detail: 'The retry rule allows three attempts per export.',
+  },
+  'DOC-SYN-008': {
+    supported: 'The article shows the cursor parameter and the page size default.',
+    supported_b: 'The article covers the header that reports the next cursor.',
+    absent: 'The list endpoints accept a filter for each custom field.',
+    unstated_detail: 'A cursor stays valid for one hour.',
+  },
+  'RES-SYN-101': {
+    supported: 'The case records a duplicate charge that was refunded.',
+    supported_b: 'The case records the correct renewal date being confirmed.',
+    absent: 'The customer was offered a discount on the next renewal.',
+    unstated_detail: 'The refund reached the customer in three working days.',
+  },
+  'RES-SYN-102': {
+    supported: 'The case records a fresh reset message that was issued.',
+    supported_b: 'The case records a blocked send that was cleared.',
+    absent: 'The customer changed the address on the account afterwards.',
+    unstated_detail: 'The reset message arrived within two minutes.',
+  },
+  'RES-SYN-103': {
+    supported: 'The case records closure scheduled for the period end.',
+    supported_b: 'The case records a confirmation sent with the final invoice.',
+    absent: 'The customer exported the account data before closure.',
+    unstated_detail: 'The subscription closed on the last day of the month.',
+  },
+  'RES-SYN-104': {
+    supported: 'The case records a stale token that was rotated.',
+    supported_b: 'The case records the daily drop being stopped.',
+    absent: 'The customer connected a second calendar at the same time.',
+    unstated_detail: 'The integration scope now includes write access.',
+  },
+  'RES-SYN-105': {
+    supported: 'The case records a digest schedule that was corrected.',
+    supported_b: 'The case records the delivery slot being verified.',
+    absent: 'The customer turned every other notification off.',
+    unstated_detail: 'The digest now arrives at eight in the morning.',
+  },
+  'RES-SYN-106': {
+    supported: 'The case records a slowdown matched to the active incident.',
+    supported_b: 'The case records the ticket attached to its tracker.',
+    absent: 'The incident was caused by a change to the search index.',
+    unstated_detail: 'The incident lasted forty minutes.',
+  },
+};
+
+const CLAIM_DOC_IDS = Object.keys(CLAIMS);
+
+/** Documents an intent can cite. Falls back to the whole corpus. */
+function docsForIntent(intentId) {
+  const linked = DOCUMENTS.filter((d) => d.linked_intents.includes(intentId)).map((d) => d.doc_id);
+  return linked.length > 0 ? linked : CLAIM_DOC_IDS;
+}
+
+/**
+ * One draft's claims: two to four supported, and zero to two unsupported.
+ *
+ * The shapes vary so measured coverage takes many values. With a fixed shape
+ * the fit could only ever choose between a handful of candidates, and the
+ * section 4.7 seeds of 0.70 and 0.80 fall between two of them, so the
+ * granularity would decide the answer before the judge said anything.
+ */
+function makeClaims(intentId) {
+  const docs = docsForIntent(intentId);
+  const claims = [];
+
+  // Without replacement. Picking with it repeated a claim verbatim inside one
+  // draft, which bills the same question to the model twice and weights it
+  // twice in the coverage denominator the fit rests on.
+  //
+  // The intent's own documents are drawn first and exhausted before the rest
+  // of the corpus is touched. An earlier version concatenated the two and drew
+  // at a uniform index, which gives array position no priority at all. On the
+  // corpus as it stands that sends on-topic citation to one in four and grows
+  // the judge's context by a quarter, so the thresholds would be fitted against
+  // a different task.
+  const own = docs.flatMap((id) => ['supported', 'supported_b'].map((v) => [id, v]));
+  const rest = CLAIM_DOC_IDS.filter((id) => !docs.includes(id)).flatMap((id) =>
+    ['supported', 'supported_b'].map((v) => [id, v]),
+  );
+  const drawPair = () => {
+    const from = own.length > 0 ? own : rest;
+    return from.splice(Math.floor(rng() * from.length), 1)[0];
+  };
+
+  const supportedCount = Math.min(between(2, 4), own.length + rest.length);
+  const supportedPairs = [];
+  for (let i = 0; i < supportedCount; i++) supportedPairs.push(drawPair());
+  const supportedDocs = supportedPairs.map(([id]) => id);
+
+  // Unsupported claims cite a document the draft already reasons about, drawn
+  // from the intent's own set so the negative is on topic too.
+  const unsupportedCount = chance(0.5) ? between(1, 2) : 0;
+  const unsupportedDocs = [];
+  for (let i = 0; i < unsupportedCount; i++) unsupportedDocs.push(pick(docs));
+
+  const cited = new Set([...supportedDocs, ...unsupportedDocs]);
+  const borrowed = new Set();
+
+  for (const [docId, variant] of supportedPairs) {
+    claims.push({ text: CLAIMS[docId][variant], doc_id: docId, supported: true, grade: null });
+  }
+
+  for (const docId of unsupportedDocs) {
+    const grade = pick(CLAIM_GRADES);
+    let text;
+    if (grade === 'off_topic') {
+      // Not a document the draft cites, and not one already borrowed: two
+      // off_topic claims could otherwise borrow the same stranger and repeat
+      // its text inside one draft.
+      const strangers = CLAIM_DOC_IDS.filter((id) => !cited.has(id) && !borrowed.has(id));
+      if (strangers.length === 0) continue;
+      const from = pick(strangers);
+      borrowed.add(from);
+      text = CLAIMS[from].supported;
+    } else {
+      text = CLAIMS[docId][grade];
+    }
+    // A repeat bills the same question twice and weights it twice in the
+    // coverage denominator, so the last guard is on the text itself: two
+    // unsupported claims can otherwise draw one document and one grade.
+    if (claims.some((c) => c.text === text)) continue;
+    claims.push({ text, doc_id: docId, supported: false, grade });
+  }
+  return claims;
+}
+
+for (const ticket of [...fitTickets, ...reportTickets]) {
+  ticket.claims = makeClaims(ticket.intent);
+}
+
 writeJson(join(FIXTURES, 'taxonomy.json'), {
   version: 1,
   intent_cap: 25,

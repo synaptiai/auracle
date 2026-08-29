@@ -19,6 +19,10 @@ dist/
 # be adopted by every checkout and would move each adopter's gates to numbers
 # fitted on somebody else's corpus. Run `pnpm run calibrate` to make your own.
 /calibration/
+
+# Groundedness fits are run output too, and a committed one would move every
+# adopter's second gate to a number fitted on somebody else's corpus.
+/groundedness/
 .creatumo/MEMORY.md
 
 # Agent session transcripts. Never commit.

@@ -46,6 +46,26 @@ export interface Disposition {
   first_reply_minutes: number;
 }
 
+/** DEC-07: one claim of a draft, and whether the cited document truly supports it. */
+export interface GoldClaim {
+  text: string;
+  /** The document this claim is tested against. */
+  doc_id: string;
+  /** Ground truth, not a judge's verdict. */
+  supported: boolean;
+  /**
+   * How hard the claim is to refuse, or null when it is supported.
+   *
+   * A fit that holds only on the easy grade has measured nothing about the
+   * hard one, so the grade travels with the claim and the fitting job
+   * reports coverage for each.
+   */
+  grade: ClaimGrade | null;
+}
+
+export const CLAIM_GRADES = ['off_topic', 'absent', 'unstated_detail'] as const;
+export type ClaimGrade = (typeof CLAIM_GRADES)[number];
+
 export interface GoldTicket {
   ticket_id: string;
   source: string;
@@ -71,6 +91,12 @@ export interface GoldTicket {
    * turn number of its own, it hangs off the turn it answered.
    */
   agent_reply?: string;
+  /**
+   * DEC-07: per-claim ground truth for the groundedness fit. Every synthetic
+   * case carries it; a real-corpus record does not, because nobody has
+   * labelled its claims.
+   */
+  claims?: GoldClaim[];
 }
 
 /**
@@ -275,12 +301,56 @@ export function loadGoldSet(): { fit: GoldFile; report: GoldFile } {
  * consumer keeps its own. The synthetic loaders below keep their DEC-18
  * guards; the corpus loader asserts source 'imap'.
  */
+/**
+ * A case's per-claim ground truth (DEC-07).
+ *
+ * Optional, because a real-corpus record carries none. When present every
+ * claim is checked: a supported claim names no grade, an unsupported one
+ * names a known grade, and every claim cites a document. A draft with no
+ * claim would give the fit a coverage of nothing over nothing.
+ */
+function validateClaims(ticket: Record<string, unknown>, id: string): void {
+  const claims = ticket['claims'];
+  if (claims === undefined) return;
+  assert(Array.isArray(claims), `ticket ${id} has a claims field that is not an array`);
+  assert(claims.length > 0, `ticket ${id} carries an empty claims array`);
+  for (const [i, raw] of claims.entries()) {
+    assert(
+      typeof raw === 'object' && raw !== null && !Array.isArray(raw),
+      `ticket ${id} claim ${i} is not an object`,
+    );
+    const claim = raw as Record<string, unknown>;
+    assert(
+      typeof claim['text'] === 'string' && claim['text'].length > 0,
+      `ticket ${id} claim ${i} has no text`,
+    );
+    assert(
+      typeof claim['doc_id'] === 'string' && claim['doc_id'].length > 0,
+      `ticket ${id} claim ${i} cites no document`,
+    );
+    assert(
+      typeof claim['supported'] === 'boolean',
+      `ticket ${id} claim ${i} has no boolean supported flag`,
+    );
+    if (claim['supported'] === true) {
+      assert(claim['grade'] === null, `ticket ${id} claim ${i} is supported and names a grade`);
+    } else {
+      assert(
+        typeof claim['grade'] === 'string'
+          && (CLAIM_GRADES as readonly string[]).includes(claim['grade']),
+        `ticket ${id} claim ${i} is unsupported and names no known grade`,
+      );
+    }
+  }
+}
+
 export function validateTicketFields(ticket: Record<string, unknown>): void {
   const id = typeof ticket['ticket_id'] === 'string' ? ticket['ticket_id'] : '<missing>';
   assert(typeof ticket['intent'] === 'string', `ticket ${id} has no intent`);
   assert(typeof ticket['queue'] === 'string' && ticket['queue'].length > 0, `ticket ${id} has no queue`);
   assert(typeof ticket['subject'] === 'string' && ticket['subject'].length > 0, `ticket ${id} has no subject`);
   assert(typeof ticket['body'] === 'string' && ticket['body'].length > 0, `ticket ${id} has no body`);
+  validateClaims(ticket, id);
   const disposition = ticket['disposition'];
   assert(isRecord(disposition), `ticket ${id} has no disposition object`);
   assert(typeof disposition['escalated'] === 'boolean', `disposition.escalated is not boolean on ${id}`);

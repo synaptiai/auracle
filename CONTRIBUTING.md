@@ -63,6 +63,11 @@ function. A process resolves its numbers once at startup and passes them down.
 A job that publishes a number records where that number came from. A seed and
 a fit produce different results, so a reader must be able to tell them apart.
 
+A fitting job refuses more readily than it emits. A threshold fitted on classes
+that do not separate is a number any candidate satisfies. Publishing one
+replaces an honest caveat with false authority, which is worse than having no
+number at all.
+
 `scripts/generate-fixtures.mjs` regenerates the corpus deterministically.
 A committed fixture file must match the generator output byte for byte.
 

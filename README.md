@@ -88,6 +88,7 @@ allow the compose address for a local run.
 | Command | Task |
 |---------|------|
 | `pnpm run calibrate` | Fits the agreement threshold on the fit half of the gold set. Writes a versioned artifact that the daemons then adopt. |
+| `pnpm run fit-groundedness` | Fits the two coverage thresholds on the fit half. Refuses when the measured classes do not separate. |
 | `pnpm run replay` | Runs the action-match replay over the fixture corpus. Uses the offline stub model. Needs no network and no database. |
 | `pnpm run gold-report` | Scores the report half of the gold set. Writes `gold-report/vN.json`, the next version. |
 | `pnpm run triage` | Selects cases for human review with the offline judge. Writes `triage/vN.json`, the next version. |

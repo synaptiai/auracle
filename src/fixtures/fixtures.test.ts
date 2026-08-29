@@ -17,7 +17,9 @@ import {
   fixturesDir,
   goldCaseText,
   isFirstTurn,
+  CLAIM_GRADES,
   loadDocuments,
+  validateTicketFields,
   loadGoldSet,
   loadTaxonomy,
   validateGoldHalf,
@@ -342,3 +344,438 @@ function listFixtureFiles(dir: URL): { path: string; content: string }[] {
   walk(dir, '');
   return out;
 }
+
+// Per-claim ground truth for the groundedness fit (DEC-07). The loader
+// validates it, so these cases feed it corpora broken one rule at a time
+// rather than asserting what loadGoldSet already enforced.
+describe('claim ground truth', () => {
+  const claim = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    text: 'The article lists the refund windows for each plan.',
+    doc_id: 'DOC-SYN-002',
+    supported: true,
+    grade: null,
+    ...over,
+  });
+
+  function ticketWith(claims: unknown): Record<string, unknown> {
+    return {
+      ticket_id: 'SYN-TEST-1',
+      source: 'synthetic',
+      intent: 'refund-request',
+      queue: 'billing',
+      disposition: { escalated: false, macro_applied: null, refund_issued: false, first_reply_minutes: 5 },
+      subject: 'Subject',
+      body: 'Body',
+      claims,
+    };
+  }
+
+  it('accepts a case whose claims are well formed', () => {
+    expect(() =>
+      validateTicketFields(ticketWith([claim(), claim({ supported: false, grade: 'absent' })])),
+    ).not.toThrow();
+  });
+
+  it('accepts a case that carries no claims at all', () => {
+    // A real-corpus record has none, because nobody has labelled it.
+    const ticket = ticketWith(undefined);
+    delete ticket['claims'];
+
+    expect(() => validateTicketFields(ticket)).not.toThrow();
+  });
+
+  it('refuses an empty claims array', () => {
+    // Coverage would be nothing over nothing.
+    expect(() => validateTicketFields(ticketWith([]))).toThrow(/empty claims array/);
+  });
+
+  it('refuses a supported claim that names a grade', () => {
+    expect(() =>
+      validateTicketFields(ticketWith([claim({ grade: 'absent' })])),
+    ).toThrow(/supported and names a grade/);
+  });
+
+  it('refuses an unsupported claim that names no grade', () => {
+    // The grade is what makes a per-grade report possible, so a fit cannot
+    // hide behind the easy negatives.
+    expect(() =>
+      validateTicketFields(ticketWith([claim({ supported: false, grade: null })])),
+    ).toThrow(/names no known grade/);
+  });
+
+  it('refuses an unknown grade', () => {
+    expect(() =>
+      validateTicketFields(ticketWith([claim({ supported: false, grade: 'tricky' })])),
+    ).toThrow(/names no known grade/);
+  });
+
+  it('refuses a claim that cites no document', () => {
+    expect(() => validateTicketFields(ticketWith([claim({ doc_id: '' })]))).toThrow(/cites no document/);
+  });
+
+  it('gives the committed corpus both classes and all three grades', () => {
+    // A fit needs both classes present. A corpus of grounded drafts alone
+    // would make the job refuse, correctly, and prove nothing.
+    const gold = loadGoldSet();
+    const claims = gold.fit.tickets.flatMap((t) => t.claims ?? []);
+    const grounded = gold.fit.tickets.filter((t) => (t.claims ?? []).every((c) => c.supported));
+
+    expect(claims.length).toBeGreaterThan(0);
+    expect(grounded.length).toBeGreaterThan(0);
+    expect(grounded.length).toBeLessThan(gold.fit.tickets.length);
+    expect(new Set(claims.filter((c) => !c.supported).map((c) => c.grade))).toEqual(
+      new Set(['off_topic', 'absent', 'unstated_detail']),
+    );
+  });
+
+  it('every claim cites a document that exists in the corpus', () => {
+    const docIds = new Set(loadDocuments().map((d) => d.doc_id));
+    const gold = loadGoldSet();
+    const cited = new Set(
+      [...gold.fit.tickets, ...gold.report.tickets].flatMap((t) => (t.claims ?? []).map((c) => c.doc_id)),
+    );
+
+    for (const id of cited) expect(docIds).toContain(id);
+  });
+});
+
+// The invariant the corpus rests on, held by a case rather than by a commit
+// message. A review reverted the generator line that enforces it, regenerated,
+// and every one of the 679 tests stayed green while 13 mislabelled claims
+// shipped — including CI's corpus-versus-generator diff, because the corpus
+// was regenerated too. Nothing anywhere fired.
+describe('no claim is labelled against evidence the judge can see', () => {
+  /** The text each document's supported claim asserts, from the corpus itself. */
+  function supportedTexts(): Map<string, string> {
+    const byText = new Map<string, string>();
+    const gold = loadGoldSet();
+    for (const ticket of [...gold.fit.tickets, ...gold.report.tickets]) {
+      for (const claim of ticket.claims ?? []) {
+        if (claim.supported) byText.set(claim.text, claim.doc_id);
+      }
+    }
+    return byText;
+  }
+
+  it.each(CLAIM_GRADES)(
+    'never gives a %s claim text a document the draft cites already supports',
+    (grade) => {
+      // Every grade, not off_topic alone. The gate is given every document any
+      // claim cites, so text whose own source is in that set puts the claim's
+      // evidence in front of the judge: a claim labelled unsupported is
+      // supported, and a better judge scores worse. Held per grade because an
+      // earlier version guarded one of the three while its own title claimed
+      // all of them, and 88 claims could ship mislabelled in another grade.
+      const source = supportedTexts();
+      const gold = loadGoldSet();
+      const offenders = new Set<string>();
+
+      for (const half of [gold.fit, gold.report]) {
+        for (const ticket of half.tickets) {
+          const claims = ticket.claims ?? [];
+          const retrieved = new Set(claims.map((c) => c.doc_id));
+          for (const claim of claims) {
+            if (claim.supported || claim.grade !== grade) continue;
+            const from = source.get(claim.text);
+            if (from !== undefined && retrieved.has(from)) offenders.add(ticket.ticket_id);
+          }
+        }
+      }
+
+      expect([...offenders]).toEqual([]);
+    },
+  );
+
+  it('gives every supported claim a text its own document actually states', () => {
+    // The other direction, which had no guard: a claim labelled supported
+    // whose document says nothing of it. An earlier version of this case
+    // asserted that no text appears under two documents, which the generator
+    // guarantees before a fixture is written, and that every document has at
+    // least one text, which Set.add makes unconditional. Both were tautologies
+    // and 84 mislabels passed them.
+    //
+    // The check is mechanical: a supported claim must share a distinctive
+    // term with the body of the document it cites. The judge is given the
+    // body and nothing else, so a claim built from a document's TITLE names
+    // nothing the judge can see — the defect found by hand in three separate
+    // cycles, and by this rule in two more the sweeps missed.
+    const STOPWORDS = new Set([
+      'the', 'a', 'an', 'this', 'that', 'of', 'and', 'or', 'for', 'to', 'in',
+      'on', 'with', 'per', 'each', 'every', 'article', 'case', 'records',
+      'covers', 'explains', 'lists', 'shows', 'describes', 'walks', 'through',
+      'outcome', 'what', 'where', 'how', 'it', 'its', 'is', 'are', 'was',
+      'were', 'queue', 'confirmed', 'stated', 'states',
+    ]);
+    const terms = (text: string): Set<string> =>
+      new Set(
+        text
+          .toLowerCase()
+          .split(/[^a-z0-9-]+/)
+          .filter((w) => w.length > 0 && !STOPWORDS.has(w)),
+      );
+
+    const bodies = new Map(loadDocuments().map((d) => [d.doc_id, terms(d.body)]));
+    const gold = loadGoldSet();
+    const offenders: string[] = [];
+
+    for (const half of [gold.fit, gold.report]) {
+      for (const ticket of half.tickets) {
+        for (const claim of ticket.claims ?? []) {
+          if (!claim.supported) continue;
+          const body = bodies.get(claim.doc_id);
+          if (body === undefined) continue;
+          const shared = [...terms(claim.text)].filter((w) => body.has(w));
+          if (shared.length === 0) offenders.push(`${claim.doc_id}: ${claim.text}`);
+        }
+      }
+    }
+
+    expect([...new Set(offenders)]).toEqual([]);
+  });
+
+  it('never gives a supported claim a negation or a quantity its body lacks', () => {
+    // The overlap rule above is a topicality floor, not a support test: a
+    // claim can share every term and still be false. Changing one string to
+    // "lists NO refund windows for ANY plan" shipped 93 mislabels through it.
+    //
+    // Negation and quantity are the two ways a claim built from a body's own
+    // words can contradict it, and both are mechanical. Entailment in general
+    // is not, which is why the strings are pinned below as well.
+    // Widened after a harness showed `other than`, `excludes`, `fails to`,
+    // `rarely` and the quantity words `six`, `dozen`, `half` and `twice` all
+    // passed while contradicting their body.
+    const NEGATION =
+      /\b(no|not|never|none|neither|nor|without|any|except|excludes?|excluding|omits?|fails? to|rarely|seldom|other than|unlike|instead of)\b/i;
+    const QUANTITY =
+      /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|dozen|half|twice|thirty|ninety|several|many|few|all|both)\b/gi;
+    const gold = loadGoldSet();
+    const bodies = new Map(loadDocuments().map((d) => [d.doc_id, d.body.toLowerCase()]));
+    const offenders: string[] = [];
+
+    for (const half of [gold.fit, gold.report]) {
+      for (const ticket of half.tickets) {
+        for (const claim of ticket.claims ?? []) {
+          if (!claim.supported) continue;
+          const body = bodies.get(claim.doc_id) ?? '';
+          if (NEGATION.test(claim.text) && !NEGATION.test(body)) {
+            offenders.push(`negation: ${claim.text}`);
+          }
+          // Token match, not substring: `body.includes('one')` was true for a
+          // body containing `timezone`, so a quantity of one passed unchecked
+          // on every claim citing that document.
+          const bodyTokens = new Set(body.split(/[^a-z0-9]+/).filter((w) => w.length > 0));
+          for (const number of claim.text.match(QUANTITY) ?? []) {
+            if (!bodyTokens.has(number.toLowerCase())) {
+              offenders.push(`quantity ${number}: ${claim.text}`);
+            }
+          }
+        }
+      }
+    }
+
+    expect([...new Set(offenders)]).toEqual([]);
+  });
+
+  it('pins every document body, the other half of every entailment', () => {
+    // The claim pin holds one side. Editing a body so it no longer states a
+    // claim broke nothing: the guards still passed, the snapshot was
+    // unchanged, and the corpus-versus-generator diff passed because the
+    // corpus regenerates. Support is claim against body, so both are pinned.
+    expect(loadDocuments().map((d) => `${d.doc_id}|${d.body}`).sort()).toMatchInlineSnapshot(`
+      [
+        "DOC-SYN-001|This article explains renewal dates, proration and where the finance archive lists every past invoice copy.",
+        "DOC-SYN-002|This article lists the refund windows per plan and the steps that the billing queue follows for each case.",
+        "DOC-SYN-003|This article describes period-end closure, what happens to stored records and how reactivation works.",
+        "DOC-SYN-004|This article walks through the deletion policy, the verification step and the erase window per region.",
+        "DOC-SYN-005|This article covers pause states, error codes such as E-412 and the reconnect procedure for stalled clients.",
+        "DOC-SYN-006|This article explains the recovery flow when the second factor and the backup codes are both unavailable.",
+        "DOC-SYN-007|This article lists the export formats, the empty-archive causes and the retry rule for partial exports.",
+        "DOC-SYN-008|This article shows the cursor parameter, the page size default and the header that reports the next cursor.",
+        "RES-SYN-101|Outcome: the billing queue verified the double charge, refunded the duplicate and confirmed the correct renewal date.",
+        "RES-SYN-102|Outcome: the accounts queue cleared the blocked send, issued a fresh reset message and confirmed sign-in.",
+        "RES-SYN-103|Outcome: the billing queue scheduled closure for the period end and sent the confirmation with the final invoice.",
+        "RES-SYN-104|Outcome: the technical queue rotated the stale token, updated the integration scope and stopped the daily drop.",
+        "RES-SYN-105|Outcome: the accounts queue matched the timezone offset, rescheduled the digest and verified the delivery slot.",
+        "RES-SYN-106|Outcome: the technical queue matched the slowdown to the active incident and attached the ticket to its tracker.",
+      ]
+    `);
+  });
+
+  it('pins every unsupported claim string too', () => {
+    // The third side. A claim graded absent that paraphrases its body is
+    // supported in fact, so a correct judge is scored wrong and the fit reads
+    // a depressed precision. The grade cases catch an exact collision with a
+    // supported text and nothing weaker: giving RES-SYN-106 an absent claim
+    // that restates its second clause passed all 47 cases.
+    const gold = loadGoldSet();
+    const byDoc = new Map<string, Set<string>>();
+    for (const half of [gold.fit, gold.report]) {
+      for (const ticket of half.tickets) {
+        for (const claim of ticket.claims ?? []) {
+          if (claim.supported) continue;
+          const key = `${claim.doc_id}|${claim.grade ?? ''}`;
+          byDoc.set(key, (byDoc.get(key) ?? new Set()).add(claim.text));
+        }
+      }
+    }
+    // off_topic borrows another document's text, so it is keyed by the doc it
+    // cites and its content is pinned by the supported snapshot already.
+    const graded = [...byDoc.entries()]
+      .filter(([key]) => !key.endsWith('|off_topic'))
+      .map(([key, texts]) => `${key}|${[...texts].sort().join('|')}`)
+      .sort();
+
+    expect(graded).toMatchInlineSnapshot(`
+      [
+        "DOC-SYN-001|absent|Invoices are emailed to every account owner each month.",
+        "DOC-SYN-001|unstated_detail|The finance archive keeps invoice copies for seven years.",
+        "DOC-SYN-002|absent|A refund is approved automatically when the plan is annual.",
+        "DOC-SYN-002|unstated_detail|The refund window is longer on an annual plan.",
+        "DOC-SYN-003|absent|A closed subscription is announced to every collaborator.",
+        "DOC-SYN-003|unstated_detail|Stored records are removed fourteen days after closure.",
+        "DOC-SYN-004|absent|A deletion request is refused while an invoice is unpaid.",
+        "DOC-SYN-004|unstated_detail|A deletion request completes within thirty days.",
+        "DOC-SYN-005|absent|Sync errors are reported to the status page automatically.",
+        "DOC-SYN-005|unstated_detail|The reconnect procedure takes two steps.",
+        "DOC-SYN-006|absent|Account recovery requires a photograph of an identity document.",
+        "DOC-SYN-006|unstated_detail|A backup code expires after ten minutes.",
+        "DOC-SYN-007|absent|An export can be scheduled to repeat every week.",
+        "DOC-SYN-007|unstated_detail|The retry rule allows three attempts per export.",
+        "DOC-SYN-008|absent|The list endpoints accept a filter for each custom field.",
+        "DOC-SYN-008|unstated_detail|A cursor stays valid for one hour.",
+        "RES-SYN-101|absent|The customer was offered a discount on the next renewal.",
+        "RES-SYN-101|unstated_detail|The refund reached the customer in three working days.",
+        "RES-SYN-102|absent|The customer changed the address on the account afterwards.",
+        "RES-SYN-102|unstated_detail|The reset message arrived within two minutes.",
+        "RES-SYN-103|absent|The customer exported the account data before closure.",
+        "RES-SYN-103|unstated_detail|The subscription closed on the last day of the month.",
+        "RES-SYN-104|absent|The customer connected a second calendar at the same time.",
+        "RES-SYN-104|unstated_detail|The integration scope now includes write access.",
+        "RES-SYN-105|absent|The customer turned every other notification off.",
+        "RES-SYN-105|unstated_detail|The digest now arrives at eight in the morning.",
+        "RES-SYN-106|absent|The incident was caused by a change to the search index.",
+        "RES-SYN-106|unstated_detail|The incident lasted forty minutes.",
+      ]
+    `);
+  });
+
+  it('pins every supported claim string, because entailment is a judgment', () => {
+    // No mechanical rule decides whether a body supports a sentence. Four
+    // sweeps and two rules each found something the one before missed, so the
+    // strings are pinned: changing one fails here and a person must look at
+    // the body again. The repository pins literal idempotency keys for the
+    // same reason.
+    const gold = loadGoldSet();
+    const byDoc = new Map<string, Set<string>>();
+    for (const half of [gold.fit, gold.report]) {
+      for (const ticket of half.tickets) {
+        for (const claim of ticket.claims ?? []) {
+          if (!claim.supported) continue;
+          byDoc.set(claim.doc_id, (byDoc.get(claim.doc_id) ?? new Set()).add(claim.text));
+        }
+      }
+    }
+    const shipped = [...byDoc.entries()]
+      .map(([doc, texts]) => `${doc}|${[...texts].sort().join('|')}`)
+      .sort();
+
+    expect(shipped).toMatchInlineSnapshot(`
+      [
+        "DOC-SYN-001|The article covers where past invoice copies are listed.|The article explains renewal dates and proration.",
+        "DOC-SYN-002|The article covers the steps the billing queue follows.|The article lists the refund windows for each plan.",
+        "DOC-SYN-003|The article covers how reactivation works.|The article describes what happens at period-end closure.",
+        "DOC-SYN-004|The article covers how a deletion request is handled.|The article covers the erase window per region.",
+        "DOC-SYN-005|The article covers pause states and error codes such as E-412.|The article covers the reconnect procedure for stalled clients.",
+        "DOC-SYN-006|The article covers the case where the backup codes are unavailable too.|The article explains the recovery flow.",
+        "DOC-SYN-007|The article covers the retry rule for partial exports.|The article lists the export formats and the empty-archive causes.",
+        "DOC-SYN-008|The article covers the header that reports the next cursor.|The article shows the cursor parameter and the page size default.",
+        "RES-SYN-101|The case records a duplicate charge that was refunded.|The case records the correct renewal date being confirmed.",
+        "RES-SYN-102|The case records a blocked send that was cleared.|The case records a fresh reset message that was issued.",
+        "RES-SYN-103|The case records a confirmation sent with the final invoice.|The case records closure scheduled for the period end.",
+        "RES-SYN-104|The case records a stale token that was rotated.|The case records the daily drop being stopped.",
+        "RES-SYN-105|The case records a digest schedule that was corrected.|The case records the delivery slot being verified.",
+        "RES-SYN-106|The case records a slowdown matched to the active incident.|The case records the ticket attached to its tracker.",
+      ]
+    `);
+  });
+
+  it('cites the intent\'s own documents wherever they can supply the claim', () => {
+    // The regression cycle five found and this case did not exist to catch:
+    // a one-line change to the draw order sent on-topic citation from every
+    // claim to one in four, and the judge's context grew by a quarter.
+    // Every label stayed self-consistent, so nothing failed and the
+    // generator-versus-corpus diff could not see it either.
+    const linked = new Map<string, Set<string>>();
+    for (const doc of loadDocuments()) {
+      for (const intent of doc.linked_intents) {
+        linked.set(intent, (linked.get(intent) ?? new Set()).add(doc.doc_id));
+      }
+    }
+
+    const gold = loadGoldSet();
+    let onTopic = 0;
+    let cited = 0;
+    let contexts = 0;
+    let drafts = 0;
+
+    for (const half of [gold.fit, gold.report]) {
+      for (const ticket of half.tickets) {
+        const claims = ticket.claims ?? [];
+        if (claims.length === 0) continue;
+        drafts += 1;
+        contexts += new Set(claims.map((c) => c.doc_id)).size;
+        const own = linked.get(ticket.intent);
+        if (own === undefined) continue;
+        for (const claim of claims) {
+          cited += 1;
+          if (own.has(claim.doc_id)) onTopic += 1;
+        }
+      }
+    }
+
+    // An intent links one or two documents and a draft makes up to four
+    // distinct claims, so some fill is unavoidable. Eight in ten is what the
+    // own-first draw produces; a uniform draw over this corpus gives one in
+    // four. Both figures are measured on the corpus as it stands: an earlier
+    // comment paired a rate from one corpus with a context size from another.
+    expect(onTopic / cited).toBeGreaterThan(0.75);
+    // The gate is handed every document a draft cites. A uniform draw took
+    // this to 3.40 on this corpus; drawing own documents first keeps it near
+    // the original 2.24.
+    expect(contexts / drafts).toBeLessThan(3);
+  });
+
+  it('never repeats a claim text inside one draft', () => {
+    // Documents were picked with replacement, so 853 of 2910 claim entries
+    // were verbatim repeats. Each bills the same question to the model twice
+    // and weights it twice in the coverage denominator the fit rests on.
+    const gold = loadGoldSet();
+    const offenders: string[] = [];
+
+    for (const half of [gold.fit, gold.report]) {
+      for (const ticket of half.tickets) {
+        const texts = (ticket.claims ?? []).map((c) => c.text);
+        if (new Set(texts).size !== texts.length) offenders.push(ticket.ticket_id);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('never labels a claim unsupported whose text is supported in the same draft', () => {
+    // The weaker sibling of the rule above, and the one an earlier commit
+    // measured while claiming to have measured the rule above.
+    const offenders = new Set<string>();
+    const gold = loadGoldSet();
+
+    for (const half of [gold.fit, gold.report]) {
+      for (const ticket of half.tickets) {
+        const claims = ticket.claims ?? [];
+        const supported = new Set(claims.filter((c) => c.supported).map((c) => c.text));
+        if (claims.some((c) => !c.supported && supported.has(c.text))) offenders.add(ticket.ticket_id);
+      }
+    }
+
+    expect([...offenders]).toEqual([]);
+  });
+});

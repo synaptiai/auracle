@@ -656,14 +656,41 @@ groundedness thresholds are the seed values of paragraph 4.5 and paragraph 4.7.
 No fitting run in this repository has produced an artifact. Read every gate
 number as a seed until this paragraph says otherwise.
 
+Both gates now have a job that fits them. `pnpm run calibrate` fits the
+agreement threshold and `pnpm run fit-groundedness` fits the two coverage
+thresholds. Each writes its own artifact, and nothing joins the two: DEC-05
+keeps the gates independent and the second artifact refuses to carry an
+agreement value.
+
+Two limits apply to a coverage fit on this corpus, and neither is a fault of
+the job. Both halves draw their claims from one table of 28 sentences over 14 documents.
+Every sentence the report half asks appears in the fit half. The split still
+removes a selection effect, which is what DEC-31 asks of it. The judge reads
+the whole prompt, and 83 percent of the report half's prompts are new.
+
+It gives no protection against a judge that mis-reads one sentence. That
+sentence depresses both halves alike.
+
+The two halves also hold different shares of grounded drafts. The fit half
+holds 43 percent and the report half 51 percent. Precision counts grounded
+drafts above a threshold against all drafts above it. The report half is
+therefore the easier one, and a published precision reads high. Read a number
+from this corpus with that in mind.
+
+The coverage job refuses when the measured classes do not separate. A gold set
+carries per-claim ground truth, so the job knows which drafts were truly
+grounded, and it compares that against what the gate measured. Unsupported
+claims carry a grade, and the artifact reports coverage for each. A separation
+that comes from the easy grades alone protects nothing.
+
 A fitted artifact now reaches the policy engine. Each process resolves its
 gate numbers once at startup and logs which it adopted. A run on the seeds
 logs `gate_thresholds_seeded`; a run on a fit logs `gate_thresholds_fitted`
 and the version. The gold report records the same provenance beside its gate
-value, so a published number names the gate that produced it. Only the
-agreement number has a job that fits it. The two coverage numbers stay at
-their seeds, because the gates are independent and fitting one moves neither
-value of the other (DEC-05).
+value, so a published number names the gate that produced it. The two coverage numbers stay at
+their seeds. The gates are independent, so fitting one moves neither value of
+the other (DEC-05), and no run in this repository has produced a coverage
+artifact yet.
 
 **A fitted threshold cannot move the published numbers.** The gold report runs
 against the offline stub, which answers each sample by matching a phrase. Every

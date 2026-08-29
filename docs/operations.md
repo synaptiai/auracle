@@ -368,6 +368,7 @@ that you pass.
 | Command | Task |
 |---------|------|
 | `pnpm run calibrate` | Fits the global agreement threshold on the fit half of the gold set. Writes `calibration/vN.json`, the next version. |
+| `pnpm run fit-groundedness` | Fits the two coverage thresholds on the fit half. Writes `groundedness/vN.json`. Needs `OPENROUTER_API_KEY` and `GROUNDEDNESS_MODEL_VER`. |
 | `pnpm run replay` | Runs the action-match replay over the fixture corpus. Uses the offline stub model. Needs no network and no database. Prints the report as JSON. |
 | `pnpm run gold-report` | Scores the report half of the gold set. Writes `gold-report/vN.json`, the next version. |
 | `pnpm run triage` | Selects cases for human review with the offline judge. Writes `triage/vN.json`, the next version. |
@@ -535,9 +536,40 @@ A file the loader refuses also stops `pnpm run calibrate`. The job cannot
 write its way out of the fault, so remove the file the message names. The job
 reads the directory before it samples, so a fault costs no model call.
 
-The gold report and the triage job apply the same rules to their own
-directories, and each reads its directory before its own loop. One scan and
-one pre-check serve all three.
+The gold report, the triage job and the groundedness fit apply the same rules.
+Each reads its own directory before its own loop.
+One scan and one pre-check serve them all.
+
+### When the groundedness fit refuses
+
+`pnpm run fit-groundedness` makes one model call per claim, so a full fit half
+is roughly a thousand calls. It can refuse, and a refusal is a result.
+
+The job refuses when the measured coverage of a grounded draft and an
+ungrounded one do not separate. A threshold there would be satisfied by any
+candidate, so the message names the coverage values both classes share. Read
+that as a fault in the judge or the corpus, not in the job.
+
+It also refuses when the two thresholds land on one value. Section 4.7 needs three outcomes and a
+single value gives two. Everything is escalated or everything runs
+automatically, and no draft reaches a person. That happens
+when the judge scored no draft ambiguously. Widen the corpus, or keep the
+seeds.
+
+The block value is the lowest that holds its floor, not the highest. A draft under it is escalated by the
+coverage gate. That draft never reaches a person as a draft to approve. A person still handles the escalation, and
+`pnpm run escalations` lists it.
+
+The thresholds decide the automatic path only.
+A customer reply is gated before either one is read (DEC-12). It reaches a
+person whatever its coverage. The review band is what puts an internal draft
+in front of a person. A larger blocked band leaves fewer drafts a person
+can approve. That is the opposite of what the band is for.
+
+The artifact reports coverage for each grade of unsupported claim. An
+`unstated_detail` names a specific the document gestures at and never states,
+and it is the grade that matters. A fit whose separation comes from the easy
+grades alone protects nothing, and the per-grade figures are how you see it.
 
 A job creates and reads the directory before it spends, and reads it again to
 mint the version it writes. The first step creates the directory the way the
@@ -550,7 +582,7 @@ gives one consumer a new fit while another still holds the old one, so two
 identical tickets can decide differently for a legitimate reason. The journal
 row says which numbers each run applied.
 
-`pnpm run gold-report` reads the same artifact. A clean checkout carries none,
+`pnpm run gold-report` reads the calibration artifact. A clean checkout carries none,
 so it scores through the seeds and the artifact says `gate_source: seed`. A
 machine that holds a fit publishes different rates, and its artifact names the
 version and the turn population behind them. The gate is part of the number.
