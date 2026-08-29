@@ -16,12 +16,34 @@ export interface GoldReportArtifact {
   version: number;
   /** ISO timestamp of the scoring run. */
   generated_at: string;
-  /** Section 4.10 method 2: human review quality numbers for the README. */
+  /**
+   * Section 4.10 method 2, the method that supplies the README numbers.
+   *
+   * The value names the method slot, not the scorer. It does not claim a
+   * person graded this run. Read `scored_by` for who actually did.
+   */
   method: 'human-review';
+  /**
+   * Who produced the numbers, as distinct from the method slot above.
+   *
+   * `stub` means the offline stub answered every call, so the figures
+   * exercise the pipeline and measure no answer quality. `model` means a
+   * real provider scored the run.
+   *
+   * The field exists because `method` alone misleads a reader who parses
+   * this file and never sees the README. A consumer that publishes a number
+   * must check this field first.
+   */
+  scored_by: 'stub' | 'model';
   /** DEC-18: the shipped gold set is synthetic only. */
   gold_source: 'synthetic';
   /** DEC-31: every number below comes from the report half only. */
   split_used: 'report';
+  /**
+   * DEC-39: the population scored. Replay scores first turns only, so a
+   * reader can tell what the number covers without reading the job.
+   */
+  scope: 'first_turn';
   /** Number of report-half tickets scored. */
   report_tickets: number;
   /** DEC-26 pins in force during the run. */
@@ -67,9 +89,18 @@ export function validateGoldReportArtifact(raw: unknown): GoldReportArtifact {
     'artifact.generated_at is not a valid timestamp',
   );
   assert(raw['method'] === 'human-review', "artifact.method is not 'human-review' (section 4.10)");
+  // `method` names the slot in section 4.10; this names the scorer. An
+  // artifact that omits it cannot be read as a quality claim by accident.
+  assert(
+    raw['scored_by'] === 'stub' || raw['scored_by'] === 'model',
+    "artifact.scored_by is not 'stub' or 'model' (section 4.10)",
+  );
   assert(raw['gold_source'] === 'synthetic', 'artifact.gold_source is not synthetic (DEC-18)');
   // DEC-31 as code: an artifact reporting any other split must not load.
   assert(raw['split_used'] === 'report', 'artifact.split_used is not the report half (DEC-31)');
+  // Same guard shape as split_used: an artifact claiming another population
+  // must not load, because its number would not be comparable.
+  assert(raw['scope'] === 'first_turn', "artifact.scope is not 'first_turn' (DEC-39)");
   assert(
     typeof raw['report_tickets'] === 'number' &&
       Number.isInteger(raw['report_tickets']) &&

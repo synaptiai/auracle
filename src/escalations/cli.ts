@@ -2,10 +2,10 @@
  * Escalations CLI (decision D9-A). One command answers "what needs a person
  * right now and why" without tailing daemon logs:
  *
- *   npm run escalations                     JSON array on stdout
- *   npm run escalations -- --pretty         compact table
- *   npm run escalations -- --since 24h      arrived in the last day
- *   npm run escalations -- --state awaiting_approval
+ *   pnpm run escalations                     JSON array on stdout
+ *   pnpm run escalations -- --pretty         compact table
+ *   pnpm run escalations -- --since 24h      arrived in the last day
+ *   pnpm run escalations -- --state awaiting_approval
  *
  * Filters: --since takes an ISO timestamp or a duration like `45m`, `24h`,
  * `7d`; --state takes `escalated`, `awaiting_approval` or `delivery_unknown`.
@@ -17,7 +17,7 @@
  */
 import { Pool } from 'pg';
 
-import { dbUrl } from '../db/config.js';
+import { requireDbUrl } from '../db/config.js';
 import { listEscalations, parseSince, type EscalationItem } from './query.js';
 
 function optionValue(argv: readonly string[], name: string): string | undefined {
@@ -29,7 +29,7 @@ function hasFlag(argv: readonly string[], name: string): boolean {
   return argv.includes(name);
 }
 
-const USAGE = `usage: npm run escalations [-- --pretty] [-- --since <iso|45m|24h|7d>] [-- --state <escalated|awaiting_approval|delivery_unknown>]
+const USAGE = `usage: pnpm run escalations [-- --pretty] [-- --since <iso|45m|24h|7d>] [-- --state <escalated|awaiting_approval|delivery_unknown>]
 
 --since filters on ticket arrival (intake.enqueued_at). Intake rows are
 deleted once a ticket is picked up, so items with unknown arrival always
@@ -38,14 +38,14 @@ stay listed rather than being hidden by the window.`;
 const KNOWN_STATES = new Set(['escalated', 'awaiting_approval', 'delivery_unknown']);
 
 function renderTable(items: readonly EscalationItem[]): string {
-  const header = ['RUN', 'TICKET', 'STATE', 'REASON', 'OUTBOX', 'COST¢', 'STEPS', 'DRAFT'];
+  const header = ['RUN', 'TICKET', 'STATE', 'REASON', 'OUTBOX', 'COSTµ$', 'STEPS', 'DRAFT'];
   const rows = items.map((item) => [
     item.runId.slice(0, 8),
     item.ticketId,
     item.state,
     item.reason ?? '-',
     item.outboxStatus ?? '-',
-    String(item.costCents),
+    String(item.costMicros),
     String(item.stepsUsed),
     item.draftExternalId ?? '-',
   ]);
@@ -81,7 +81,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const pool = new Pool({ connectionString: dbUrl(), max: 1 });
+  const pool = new Pool({ connectionString: requireDbUrl('the escalations CLI'), max: 1 });
   try {
     const items = await listEscalations(pool, {
       ...(since === undefined ? {} : { since }),

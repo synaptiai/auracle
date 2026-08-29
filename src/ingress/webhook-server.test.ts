@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { createHmac } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -9,7 +10,7 @@ import {
   WEBHOOK_FULL_PAYLOAD_REDELIVERY,
   WEBHOOK_MINIMAL_PAYLOAD,
 } from './fixtures.js';
-import { createWebhookServer, MAX_BODY_BYTES } from './webhook-server.js';
+import { createWebhookServer, MAX_BODY_BYTES, SIGNATURE_HEADER } from './webhook-server.js';
 
 const adapter = new WebhookAdapter();
 
@@ -23,8 +24,16 @@ afterEach(async () => {
   }
 });
 
-async function start(onEvent: (event: NormalizedEvent) => void | Promise<void>): Promise<string> {
-  server = createWebhookServer({ onEvent });
+async function start(
+  onEvent: (event: NormalizedEvent) => void | Promise<void>,
+  extra: { secret?: string; log?: (entry: Record<string, unknown>) => void } = {},
+): Promise<string> {
+  server = createWebhookServer({
+    onEvent,
+    // Quiet by default: the server logs an open-port warning at startup.
+    log: extra.log ?? ((): void => {}),
+    ...(extra.secret === undefined ? {} : { secret: extra.secret }),
+  });
   await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
   const address = server.address() as AddressInfo;
   return `http://127.0.0.1:${address.port}/webhooks/support`;
@@ -47,8 +56,14 @@ describe('webhook ingress driver', () => {
 
     expect(response.status).toBe(204);
     expect(received).toHaveLength(1);
+    // The event now carries the receipt id the server minted, so normalize
+    // with that same id rather than a literal. The id is a receipt only: it
+    // is not stable across redelivery, which is why intake prefers the
+    // message id over it (DEC-24).
+    const sourceId = received[0]!.sourceId;
+    expect(sourceId).toMatch(/^wh-/);
     expect(received[0]).toEqual(
-      adapter.normalize({ sourceId: 'irrelevant', raw: WEBHOOK_FULL_PAYLOAD }),
+      adapter.normalize({ sourceId, raw: WEBHOOK_FULL_PAYLOAD }),
     );
     expect(received[0]?.ticket).toEqual({
       ticketId: 'wh-ticket-4471',
@@ -152,5 +167,101 @@ describe('webhook ingress driver', () => {
 
     expect(response.status).toBe(204);
     expect(resolved).toBe(true);
+  });
+});
+
+// Unauthenticated, this port lets any caller enqueue a ticket, which spends
+// the adopter's model budget. The reference driver still runs open from a
+// fresh checkout, so the check exists only when a shared key is configured,
+// and the server says so at startup when one is not.
+describe('webhook signature check', () => {
+  const KEY = 'signing-key-used-only-by-this-suite';
+  // The driver signs the raw body, so the tests must sign the same bytes.
+  const FULL_BODY = JSON.stringify(WEBHOOK_FULL_PAYLOAD);
+  const MINIMAL_BODY = JSON.stringify(WEBHOOK_MINIMAL_PAYLOAD);
+
+  function sign(body: string, key = KEY): string {
+    return createHmac('sha256', key).update(body).digest('hex');
+  }
+
+  function postSigned(url: string, body: string, signature: string | null): Promise<Response> {
+    return fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(signature === null ? {} : { [SIGNATURE_HEADER]: signature }),
+      },
+      body,
+    });
+  }
+
+  it('accepts a correctly signed delivery', async () => {
+    const received: NormalizedEvent[] = [];
+    const url = await start((event) => void received.push(event), { secret: KEY });
+
+    const response = await postSigned(url, FULL_BODY, sign(FULL_BODY));
+
+    expect(response.status).toBe(204);
+    expect(received).toHaveLength(1);
+  });
+
+  it('refuses a delivery that carries no signature', async () => {
+    const received: NormalizedEvent[] = [];
+    const url = await start((event) => void received.push(event), { secret: KEY });
+
+    const response = await postSigned(url, FULL_BODY, null);
+
+    expect(response.status).toBe(401);
+    // Nothing reached the intake seam, so nothing was enqueued or spent.
+    expect(received).toHaveLength(0);
+  });
+
+  it('refuses a signature made with another key', async () => {
+    const received: NormalizedEvent[] = [];
+    const url = await start((event) => void received.push(event), { secret: KEY });
+
+    const response = await postSigned(
+      url,
+      FULL_BODY,
+      sign(FULL_BODY, 'a-different-signing-key'),
+    );
+
+    expect(response.status).toBe(401);
+    expect(received).toHaveLength(0);
+  });
+
+  it('refuses a body that was altered after signing', async () => {
+    const received: NormalizedEvent[] = [];
+    const url = await start((event) => void received.push(event), { secret: KEY });
+
+    const response = await postSigned(url, MINIMAL_BODY, sign(FULL_BODY));
+
+    expect(response.status).toBe(401);
+    expect(received).toHaveLength(0);
+  });
+
+  it('refuses a signature that is not hex of the expected length', async () => {
+    const url = await start(() => {}, { secret: KEY });
+
+    // timingSafeEqual throws on a length mismatch, so the length is checked
+    // before the compare. A throw here would answer 500, not 401.
+    for (const bogus of ['', 'zz', 'aa', 'not-hex-at-all']) {
+      expect((await postSigned(url, FULL_BODY, bogus)).status).toBe(401);
+    }
+  });
+
+  it('says at startup when it runs with no key configured', async () => {
+    const entries: Record<string, unknown>[] = [];
+    await start(() => {}, { log: (entry) => void entries.push(entry) });
+
+    expect(entries.map((e) => e['event'])).toContain('webhook_unauthenticated');
+  });
+
+  it('stays open when none is configured, so a fresh checkout runs', async () => {
+    const received: NormalizedEvent[] = [];
+    const url = await start((event) => void received.push(event));
+
+    expect((await post(url, FULL_BODY)).status).toBe(204);
+    expect(received).toHaveLength(1);
   });
 });

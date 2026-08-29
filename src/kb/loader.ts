@@ -56,8 +56,8 @@ export interface LoadReport {
   failed: number;
   /** One human-readable line per failed file, in directory order. */
   failures: string[];
-  /** DEC-25: truthful embedding cost for this run, integer cents. */
-  costCents: number;
+  /** DEC-25: truthful embedding cost for this run, integer micro-dollars. */
+  costMicros: number;
 }
 
 export function parseFrontmatter(raw: string): {
@@ -246,13 +246,13 @@ export async function documentEmbeddingColumnDim(pool: Pool): Promise<number> {
     rows = result.rows;
   } catch (err) {
     throw new Error(
-      `cannot read document.embedding dimension (run npm run db:migrate first): ` +
+      `cannot read document.embedding dimension (run pnpm run db:migrate first): ` +
         `${err instanceof Error ? err.message : String(err)}`,
     );
   }
   const row = rows[0];
   if (row === undefined || row.atttypmod === null || row.atttypmod <= 0) {
-    throw new Error('document.embedding has no pinned dimension; run npm run db:migrate');
+    throw new Error('document.embedding has no pinned dimension; run pnpm run db:migrate');
   }
   return row.atttypmod;
 }
@@ -292,7 +292,7 @@ export async function loadKbDirectory(
     skipped: dirents.length - mdFiles.length,
     failed: 0,
     failures: [],
-    costCents: 0,
+    costMicros: 0,
   };
 
   const seenIds = new Map<string, string>();
@@ -333,7 +333,7 @@ export async function loadKbDirectory(
       promptVer: PROMPT_VER,
       modelVer: embedModelVer,
     });
-    report.costCents += result.costCents;
+    report.costMicros += result.costMicros;
     if (result.vectors.length !== batch.length) {
       throw new Error(
         `provider returned ${result.vectors.length} vectors for ${batch.length} documents`,

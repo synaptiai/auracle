@@ -17,7 +17,7 @@ A customer reply is not reversible: the customer reads it and acts on it.
 So each reply waits for approval by a person (DEC-12).
 
 The design authority is `docs/v1-architecture.md`.
-That document holds decisions DEC-01 to DEC-33.
+That document holds decisions DEC-01 to DEC-39.
 This README states the compliance position per DEC-19.
 No machine check can decide who controls the data, so the documents carry that position.
 
@@ -37,7 +37,8 @@ One ticket moves through these steps.
 6. The composer writes the answer with citations or abstains (DEC-07).
    An abstain is a correct output: it beats an answer with no source.
 7. The groundedness check tests each claim against the retrieved sources (DEC-07).
-   Coverage below 0.70 blocks the reply. Coverage below 0.80 sends it to a person.
+   Coverage below 0.70 blocks an automatic write. Below 0.80 it sends that write to a person.
+   The two thresholds never decide a customer reply, because a reply already needs approval (DEC-12).
 8. The policy engine applies the gates and the risk tier of the intent.
 9. Internal writes leave through the transactional outbox and the relay sends them.
    The relay sends first and sets the status second, so a crash cannot hide a send.
@@ -52,43 +53,51 @@ You need Node 22 or later and Docker.
 ### Tests
 
 ```sh
-npm install
-npm test
+pnpm install
+pnpm test
 ```
 
-`npm test` provisions its own Postgres for each run.
+`pnpm test` provisions its own Postgres for each run.
 A Testcontainers helper starts one throwaway pgvector Postgres per run (src/test-support/global-setup.ts) and removes it at the end.
 Tests need no `docker compose up` and no `DATABASE_URL`.
 If you export `DATABASE_URL`, the tests target that database and skip the container.
+The setup probes that database before the run starts. An unreachable one fails the run.
 
 ### Dev database
 
 ```sh
 docker compose up -d
 export DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle
-npm install
-npm run build
-npm run db:migrate
+pnpm install
+pnpm run build
+pnpm run db:migrate
 ```
 
+The live-database guard blocks a bare `pnpm run db:migrate`, because the
+command names no target. Name the target on the same line inside a session:
+`DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle pnpm run db:migrate`.
+
 Compose starts Postgres 16 with pgvector on host port 5433.
-`npm run db:migrate` applies every pending migration under `db/` to that database and records each version in `schema_version`.
+`pnpm run db:migrate` applies every pending migration under `db/` to that database and records each version in `schema_version`.
 Use this database for the daemons and the CLI tools below.
-Without an explicit `DATABASE_URL`, they fall back to the compose address (src/db/config.ts).
+The daemons and the CLI tools refuse to start without `DATABASE_URL`.
+A process that guesses its database processes real traffic against the wrong
+one and reports health while it does. Set `AURACLE_ALLOW_COMPOSE_DEFAULT=1` to
+allow the compose address for a local run.
 
 | Command | Task |
 |---------|------|
-| `npm run calibrate` | Fits the agreement threshold on the fit half of the gold set. Writes a versioned artifact. |
-| `npm run replay` | Runs the action-match replay over the fixture corpus. Uses the offline stub model. Needs no network and no database. |
-| `npm run gold-report` | Scores the report half of the gold set. Writes `gold-report/v1.json`. |
-| `npm run triage` | Selects cases for human review with the offline judge. Writes `triage/v1.json`. |
-| `npm run relay` | Starts the outbox relay daemon. Configure `RELAY_ADAPTER` and `RELAY_INTERVAL_MS` if needed. |
-| `npm run consumer` | Starts the partition consumer daemon. Set `CONSUMER_PARTITIONS` (for example `0,1`). Configure `CONSUMER_INTERVAL_MS` and `TICKET_DEADLINE_MS` if needed. |
-| `npm run webhook` | Starts the webhook ingress server. Set `WEBHOOK_PORT` (default 8080) and `PARTITION_COUNT` (default 8). |
-| `npm run imap` | Starts the IMAP ingress poller. Set `IMAP_HOST`, `IMAP_USER` and `IMAP_PASS`. |
-| `npm run load-docs -- <dir>` | Embeds each markdown file in the directory into the `document` table. Needs `OPENROUTER_API_KEY`. |
-| `npm run approve -- --run <run-id>` | Approves one gated customer reply through the approval bridge. |
-| `npm run escalations` | Lists the runs that need a person now, with the reason. The command only reads the ledger. |
+| `pnpm run calibrate` | Fits the agreement threshold on the fit half of the gold set. Writes a versioned artifact. |
+| `pnpm run replay` | Runs the action-match replay over the fixture corpus. Uses the offline stub model. Needs no network and no database. |
+| `pnpm run gold-report` | Scores the report half of the gold set. Writes `gold-report/vN.json`, the next version. |
+| `pnpm run triage` | Selects cases for human review with the offline judge. Writes `triage/vN.json`, the next version. |
+| `pnpm run relay` | Starts the outbox relay daemon. Configure `RELAY_ADAPTER` and `RELAY_INTERVAL_MS` if needed. |
+| `pnpm run consumer` | Starts the partition consumer daemon. Set `CONSUMER_PARTITIONS` (for example `0,1`). Configure `CONSUMER_INTERVAL_MS` and `TICKET_DEADLINE_MS` if needed. |
+| `pnpm run webhook` | Starts the webhook ingress server. Set `WEBHOOK_PORT` (default 8080) and `PARTITION_COUNT` (default 8). |
+| `pnpm run imap` | Starts the IMAP ingress poller. Set `IMAP_HOST`, `IMAP_USER` and `IMAP_PASS`. |
+| `pnpm run load-docs -- <dir>` | Embeds each markdown file in the directory into the `document` table. Needs `OPENROUTER_API_KEY`. |
+| `pnpm run approve -- --run <run-id>` | Approves one gated customer reply through the approval bridge. |
+| `pnpm run escalations` | Lists the runs that need a person now, with the reason. The command only reads the ledger. |
 
 Notes on the consumers:
 
@@ -96,9 +105,10 @@ Notes on the consumers:
 - Each action class declares its delivery rule (DEC-29). The daemons send according to that rule.
   A refund must not repeat, so it sends at most once and escalates when unsure.
   An abandoned ticket close costs nothing, so that class retries freely.
-- The queue partitions by `ticket_id`, and one consumer owns each partition (DEC-27).
-  All work on one ticket then lands on one consumer, so two runs never race on one ticket.
-- The webhook server and the IMAP poller run as their own daemons: `npm run webhook` and `npm run imap`.
+- The queue partitions by `conversation_id`, and one consumer owns each partition
+  (DEC-27, DEC-36). All work on one conversation then lands on one consumer, so
+  two runs never race on it. A message with no conversation keys on the ticket id.
+- The webhook server and the IMAP poller run as their own daemons: `pnpm run webhook` and `pnpm run imap`.
 
 ## Compliance position
 
@@ -111,6 +121,16 @@ You are the data controller (section 6).
 **The model data guarantee is configurable (DEC-17).**
 Retention is a contract term, not a technical setting.
 You choose the data position with the provider and you document your choice.
+Set `AURACLE_ZDR_ONLY=1` to ask the provider for zero retention on every call.
+Absence means off, which DEC-17 requires: it rejects forcing the setting.
+
+**The ledger stores customer message text (DEC-17, DEC-19).**
+`turn.body_text` holds each inbound message and `turn.approved_reply_text`
+holds the reply a person approved. Both live for the life of the conversation.
+Earlier versions kept that text only until the queue row was acked.
+This repository ships no retention job and no purge job.
+You are the data controller, so you own the retention period and the erasure
+path. Plan both before you carry real traffic.
 
 **The prompt-log path is off by default (section 6).**
 It needs an explicit override.
@@ -135,15 +155,38 @@ Never commit real emails, phone numbers, names or account identifiers.
 
 ## Published numbers
 
-The published numbers live in `gold-report/v1.json`.
+The published numbers live in `gold-report/v4.json`.
+They exercise the pipeline. They do not measure answer quality.
+The artifact says so itself: `scored_by` reads `stub`.
+
+The offline stub model returns one fixed label for each ticket text.
+The classifier then agrees with itself on every sample.
+So the agreement gate never fires.
+The report also pins groundedness at 1.0, so that gate never fires either.
+
+What remains is the routing decision over synthetic tickets.
+The containment figure is the share of report tickets whose tier is not high.
+Read these numbers as a smoke test of the pipeline.
+
 The artifact scores the report half of the gold set only (DEC-31).
+It scores first turns only, and records that scope (DEC-39).
 Numbers from the fitting cases flatter the system, so reporting uses untouched cases.
 The fit half never touches a published number.
-The source corpus is fully synthetic (DEC-18).
-Run `npm run gold-report` to regenerate it.
 
-- Action match: 0.797. Interval 0.754 to 0.835.
-- Containment: 0.800. Interval 0.757 to 0.837.
+The report half holds 385 cases and 287 of them open a conversation.
+The numbers below cover those 287 cases.
+A later turn carries the disposition of the whole thread, so it grades no
+single decision.
+
+Do not read the move from `v3.json` as the effect of that filter alone.
+The corpus gained conversations, so the generator drew every value again.
+Both halves changed, and the two numbers moved for both reasons at once.
+
+The source corpus is fully synthetic (DEC-18).
+Run `pnpm run gold-report` to regenerate it.
+
+- Action match: 0.791. Interval 0.740 to 0.834. 287 cases.
+- Containment: 0.801. Interval 0.751 to 0.843. 287 cases.
 
 The artifact records an agreement gate threshold of 0.60.
 Action match scores the routing decision against observable dispositions (DEC-32).
@@ -153,14 +196,14 @@ It does not measure answer quality.
 
 ## Judge triage is a selection tool, not a score
 
-`npm run triage` runs replay method 3 (section 4.10, DEC-09).
+`pnpm run triage` runs replay method 3 (section 4.10, DEC-09).
 A judge model selects the cases that go to a person for review.
-It writes each selection and its reason to `triage/v1.json`.
+It writes each selection and its reason to a versioned artifact.
 It never gives a published number.
 
 A judge shares the failures of the system it tests.
 It is weakest where the evaluation matters most, so its output is a review queue only.
-The numbers for the README come from `npm run gold-report` alone.
+The numbers for the README come from `pnpm run gold-report` alone.
 
 On the synthetic 770-case gold set this job is a demonstration, not a tool.
 It earns its keep when real volume exists to triage.

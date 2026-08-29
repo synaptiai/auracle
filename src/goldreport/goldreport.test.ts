@@ -30,7 +30,7 @@ import {
 import type { GoldReportArtifact } from './artifact.js';
 import { runGoldReportJob } from './run.js';
 import { FakeProvider } from '../models/fake.js';
-import { loadGoldHalf } from '../fixtures/load.js';
+import { isFirstTurn, loadGoldHalf } from '../fixtures/load.js';
 import type { GoldFile, GoldTicket } from '../fixtures/load.js';
 
 function tempDirUrl(): URL {
@@ -196,6 +196,10 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
 
       expect(artifact.artifact).toBe('gold-report');
       expect(artifact.method).toBe('human-review');
+      // `method` names section 4.10's slot; `scored_by` names the scorer.
+      // This run pins modelVer 'test-stub', not the replay stub, so a real
+      // provider is what answered.
+      expect(artifact.scored_by).toBe('model');
       expect(artifact.split_used).toBe('report');
       expect(artifact.gold_source).toBe('synthetic');
       expect(artifact.report_tickets).toBe(385);
@@ -285,8 +289,10 @@ describe('gold report artifact round-trip', () => {
       version,
       generated_at: '2026-01-01T00:00:00.000Z',
       method: 'human-review',
+      scored_by: 'stub',
       gold_source: 'synthetic',
       split_used: 'report',
+      scope: 'first_turn',
       report_tickets: 385,
       prompt_ver: 'classify-p1',
       model_ver: 'test-stub',
@@ -364,6 +370,25 @@ describe('gold report artifact round-trip', () => {
     ).toThrow(/bracket/);
   });
 
+  it('refuses an artifact that claims another population (DEC-39)', () => {
+    // Same guard shape as split_used: a number covering a different
+    // population is not comparable with the published one.
+    expect(() =>
+      validateGoldReportArtifact({ ...makeArtifact(1), scope: 'all_turns' }),
+    ).toThrow(/scope/);
+  });
+
+  it('refuses an artifact that names no scorer (section 4.10)', () => {
+    // `method` is a fixed slot name, so it can never say who graded. An
+    // artifact without `scored_by` reads as a quality claim to anyone who
+    // parses the file and never sees the README.
+    const { scored_by: _dropped, ...withoutScorer } = makeArtifact(1);
+    expect(() => validateGoldReportArtifact(withoutScorer)).toThrow(/scored_by/);
+    expect(() =>
+      validateGoldReportArtifact({ ...makeArtifact(1), scored_by: 'human' }),
+    ).toThrow(/scored_by/);
+  });
+
   it('refuses a stratum that claims to be publishable (section 4.10)', () => {
     const artifact = makeArtifact(1);
     expect(() =>
@@ -372,5 +397,38 @@ describe('gold report artifact round-trip', () => {
         strata: [{ ...artifact.strata[0]!, publishable: true }],
       }),
     ).toThrow(/publishable/);
+  });
+});
+
+describe('first-turn scope (DEC-39)', () => {
+  function goldTicket(overrides: Partial<GoldTicket> = {}): GoldTicket {
+    return {
+      ticket_id: 'g-1',
+      source: 'synthetic',
+      intent: 'refund-request',
+      queue: 'billing',
+      disposition: {
+        escalated: false,
+        macro_applied: null,
+        refund_issued: true,
+        first_reply_minutes: 12,
+      },
+      subject: 'Refund',
+      body: 'Please refund me.',
+      ...overrides,
+    };
+  }
+
+  it('treats a case with no turn as a first turn', () => {
+    // Every committed fixture is one: the generator writes one subject and
+    // one body per case and records no prior turn.
+    expect(isFirstTurn(goldTicket())).toBe(true);
+    expect(isFirstTurn(goldTicket({ turn_number: 1 }))).toBe(true);
+  });
+
+  it('excludes a later turn from the scored set', () => {
+    // A later turn's disposition reflects the whole conversation, not the
+    // routing decision being scored (DEC-32).
+    expect(isFirstTurn(goldTicket({ turn_number: 2 }))).toBe(false);
   });
 });

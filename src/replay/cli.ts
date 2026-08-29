@@ -5,7 +5,7 @@
  * with the offline stub model and prints the report as JSON on stdout.
  * No network, no database: the fixture corpus is the entire input (DEC-18).
  *
- * Run via `npm run replay` (executes the built dist/replay/cli.js).
+ * Run via `pnpm run replay` (executes the built dist/replay/cli.js).
  */
 
 import { loadGoldSet, loadTaxonomy } from '../fixtures/load.js';

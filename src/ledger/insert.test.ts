@@ -12,12 +12,12 @@ import {
 
 const pool = new Pool({ connectionString: dbUrl() });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
 // Schema source of truth: db/001_ledger.sql from the DDL card.
 async function applySchema(): Promise<void> {
@@ -48,16 +48,16 @@ function makeOutbox(run: FencedRunInput, idemKey: string): FencedOutboxInput {
   };
 }
 
-describe.skipIf(!dbUp)('fencedInsert', () => {
+describe('fencedInsert', () => {
   beforeEach(async () => {
     await applySchema();
     await pool.query(
-      'TRUNCATE run, ticket_epoch, step_journal, outbox',
+      'TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn',
     );
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
+    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
   });
 
   it('commits the run state change and the outbox insert together', async () => {

@@ -27,12 +27,12 @@ import {
 
 const pool = new Pool({ connectionString: dbUrl() });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
 async function applySchema(): Promise<void> {
   await pool.query(readFileSync('db/001_ledger.sql', 'utf8'));
@@ -76,14 +76,14 @@ async function timingRow(runId: string): Promise<TimingRow> {
   return rows.rows[0] as unknown as TimingRow;
 }
 
-describe.skipIf(!dbUp)('run timing columns (V2 open item 7)', () => {
+describe('run timing columns (V2 open item 7)', () => {
   beforeEach(async () => {
     await applySchema();
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
+    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
+    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
   });
 
   it('copies the arrival time, records pickup, and stamps only terminal finishes', async () => {
@@ -96,7 +96,7 @@ describe.skipIf(!dbUp)('run timing columns (V2 open item 7)', () => {
     await fencedTransition(pool, {
       runId: run.runId,
       state: 'classified',
-      costCents: 1,
+      costMicros: 1,
       stepsUsed: 1,
     });
     let row = await timingRow(run.runId);
@@ -108,7 +108,7 @@ describe.skipIf(!dbUp)('run timing columns (V2 open item 7)', () => {
     await fencedTransition(pool, {
       runId: run.runId,
       state: 'resolved',
-      costCents: 2,
+      costMicros: 2,
       stepsUsed: 2,
     });
     row = await timingRow(run.runId);

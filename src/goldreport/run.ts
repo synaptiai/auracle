@@ -15,7 +15,7 @@
 
 import { classifyTicket } from '../classifier/classifier.js';
 import { loadDotEnv } from '../config/env.js';
-import { REPORT_COUNT, loadGoldHalf, loadTaxonomy } from '../fixtures/load.js';
+import { REPORT_COUNT, goldCaseText, isFirstTurn, loadGoldHalf, loadTaxonomy } from '../fixtures/load.js';
 import type { GoldFile } from '../fixtures/load.js';
 import type { ModelProvider } from '../models/provider.js';
 import { GATE_AGREEMENT, evaluatePolicy } from '../policy/policy.js';
@@ -75,6 +75,24 @@ const FULL_CAPABILITIES: AdapterCapabilities = {
   supportsThreading: true,
 };
 
+/** The model version the offline stub reports (src/replay/fake-model.ts). */
+const STUB_MODEL_VER = 'replay-stub';
+
+/**
+ * Names the scorer for the artifact, which `method` does not.
+ *
+ * Section 4.10 calls method 2 "human review", so `method` names a slot and
+ * cannot say who graded.
+ *
+ * Read from the provider, never from the pin. `provider` and `modelVer` are
+ * independent options, so deriving this from the requested version let a stub
+ * emit `scored_by: 'model'` — the exact false claim the field exists to stop.
+ * A provider that declares nothing is a real one; only the stub says so.
+ */
+function scorerOf(provider: ModelProvider): 'stub' | 'model' {
+  return provider.kind ?? 'model';
+}
+
 /** Routing writes the queue field on the ticket; the write is never customer-visible. */
 const ROUTING_ACTION: ActionClass = { isWrite: true, isCustomerVisible: false, isIrreversible: false };
 
@@ -87,13 +105,20 @@ const ROUTING_ACTION: ActionClass = { isWrite: true, isCustomerVisible: false, i
  * 2. the injected half must declare split 'report' and source 'synthetic'
  *    and carry exactly REPORT_COUNT tickets;
  * 3. the artifact records split_used 'report', and the loader refuses any
- *    other value.
+ *    other value;
+ * 4. DEC-39: only first turns are scored, and the artifact records that
+ *    scope so a reader knows what population the number covers.
  */
 export async function runGoldReportJob(
   options: GoldReportRunOptions,
 ): Promise<GoldReportRunResult> {
   const taxonomy = options.taxonomy ?? loadTaxonomy();
   const reportHalf = options.reportHalf ?? loadGoldHalf('report');
+  // DEC-39: replay scores first turns only. A later turn's disposition
+  // reflects the whole conversation, not the decision being scored. The
+  // committed report half holds 385 cases and 287 first turns, so `scope`
+  // and `report_tickets` below are what a reader must go by.
+  const firstTurns = reportHalf.tickets.filter(isFirstTurn);
   const promptVer = options.promptVer ?? DEFAULT_PROMPT_VER;
   const modelVer = options.modelVer;
   if (modelVer === undefined || modelVer.length === 0) {
@@ -103,10 +128,10 @@ export async function runGoldReportJob(
   assertReportHalf(reportHalf);
 
   const scores = [];
-  for (const ticket of reportHalf.tickets) {
+  for (const ticket of firstTurns) {
     const classification = await classifyTicket(options.provider, {
       taxonomy,
-      ticketText: `${ticket.subject}\n\n${ticket.body}`,
+      ticketText: goldCaseText(ticket),
       promptVer,
       modelVer,
       ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
@@ -143,9 +168,11 @@ export async function runGoldReportJob(
     version,
     generated_at: new Date().toISOString(),
     method: 'human-review',
+    scored_by: scorerOf(options.provider),
     gold_source: 'synthetic',
     split_used: 'report',
-    report_tickets: reportHalf.tickets.length,
+    scope: 'first_turn',
+    report_tickets: firstTurns.length,
     prompt_ver: promptVer,
     model_ver: modelVer,
     gate_agreement: GATE_AGREEMENT,
@@ -186,7 +213,7 @@ function assertReportHalf(half: GoldFile): void {
   }
 }
 
-// CLI entry: `npm run gold-report` executes dist/goldreport/run.js over the
+// CLI entry: `pnpm run gold-report` executes dist/goldreport/run.js over the
 // committed fixture corpus with the offline stub model. No network, no
 // database, no API key: deterministic and byte-for-byte reproducible (DEC-18).
 async function main(): Promise<void> {
@@ -195,7 +222,7 @@ async function main(): Promise<void> {
   const { artifact } = await runGoldReportJob({
     provider: new ReplayStubProvider(),
     promptVer: 'classify-p1',
-    modelVer: 'replay-stub',
+    modelVer: STUB_MODEL_VER,
   });
   console.log(JSON.stringify(artifact, null, 2));
 }

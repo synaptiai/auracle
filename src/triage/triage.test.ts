@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { StubTriageJudge } from './select.js';
+import { StubTriageJudge, caseText } from './select.js';
 import type { TriageCase, TriageJudge } from './select.js';
 import {
   loadTriageArtifact,
@@ -25,7 +25,7 @@ import {
 } from './artifact.js';
 import type { TriageArtifact } from './artifact.js';
 import { goldSetCases, runTriageJob } from './run.js';
-import { loadTaxonomy, FIT_COUNT, REPORT_COUNT } from '../fixtures/load.js';
+import { goldCaseText, loadGoldSet, loadTaxonomy, FIT_COUNT, REPORT_COUNT } from '../fixtures/load.js';
 
 function tempDirUrl(): URL {
   return pathToFileURL(mkdtempSync(join(tmpdir(), 'auracle-triage-')));
@@ -79,11 +79,76 @@ describe('stub judge selection', () => {
   });
 });
 
+describe('the judge reads a follow-up with its history (DEC-37)', () => {
+  const FOLLOW_UP = makeCase({
+    ticketId: 't-follow-up',
+    subject: 'Re: Export produces an empty archive',
+    body: 'This still happens after I followed those steps.',
+  });
+
+  it('falls back to the uncertain group when the earlier turns are missing', async () => {
+    // The subject still names the topic, so strip it too: this is the shape a
+    // judge sees when nothing carries the conversation.
+    const verdict = await stubJudge().review({ ...FOLLOW_UP, subject: 'Re: your case' });
+    expect(verdict.selected).toBe(true);
+    expect(verdict.reason).toContain('other');
+  });
+
+  it('reads the topic out of the earlier turns instead', async () => {
+    const verdict = await stubJudge().review({
+      ...FOLLOW_UP,
+      subject: 'Re: your case',
+      history: [
+        { turnNumber: 1, author: 'customer', bodyText: 'The full export finishes in seconds and the archive contains no records.' },
+        { turnNumber: 1, author: 'agent', bodyText: 'An empty archive means the export ran before indexing finished.' },
+      ],
+    });
+    expect(verdict.reason).toContain('export-broken');
+  });
+
+  it('gives a later gold case exactly the history the classifier would see', () => {
+    const { fit } = loadGoldSet();
+    const later = fit.tickets.find((t) => t.turn_number === 2);
+    if (!later) throw new Error('the fit half carries no second turn');
+    const previous = fit.tickets.find(
+      (t) => t.conversation_id === later.conversation_id && t.turn_number === 1,
+    );
+    if (!previous) throw new Error('the second turn has no first turn');
+
+    const triaged = goldSetCases().find((c) => c.ticketId === later.ticket_id);
+    if (!triaged) throw new Error(`case ${later.ticket_id} is missing from the triage source`);
+    expect(triaged.history).toEqual([
+      { turnNumber: 1, author: 'customer', bodyText: goldCaseText(previous) },
+      { turnNumber: 1, author: 'agent', bodyText: previous.agent_reply },
+    ]);
+    // And the judge reads that history, not the bare follow-up.
+    expect(caseText(triaged)).toContain(`[turn 1] agent: ${previous.agent_reply}`);
+
+    // Every first turn carries an empty history, so no case invents one.
+    const openers = goldSetCases().filter((c) => (c.history?.length ?? 0) === 0);
+    expect(openers.length).toBe(
+      [...fit.tickets, ...loadGoldSet().report.tickets].filter((t) => t.turn_number === 1).length,
+    );
+  });
+});
+
 describe('triage run', () => {
   it('reviews every case and records only selections with provenance', async () => {
     const dir = tempDirUrl();
     try {
-      const cases = [makeCase(), makeCase({ ticketId: 't-2', subject: 'There is a typo here' })];
+      // The stub judge reads the body, not the subject, and selects only a
+      // high-tier intent or 'other'. An earlier version of this case
+      // overrode the subject alone, so both bodies still said 'export',
+      // both resolved to a medium intent, nothing was selected, and every
+      // assertion below sat inside a loop over an empty list.
+      const cases = [
+        makeCase(),
+        makeCase({
+          ticketId: 't-2',
+          subject: 'I want my money back',
+          body: 'Please issue a refund for last month.',
+        }),
+      ];
       const { artifact } = await runTriageJob({
         judge: stubJudge(),
         cases,
@@ -91,10 +156,13 @@ describe('triage run', () => {
       });
 
       expect(artifact.cases_reviewed).toBe(cases.length);
-      expect(artifact.cases_selected).toBe(artifact.selections.length);
+      // Exactly one case is high-tier, so the judge selects one. Without
+      // this the loop below proves nothing.
+      expect(artifact.selections).toHaveLength(1);
+      expect(artifact.selections[0]!.ticket_id).toBe('t-2');
       for (const selection of artifact.selections) {
         expect(selectionsAreFromCases(selection, cases)).toBe(true);
-        expect(selection.origin).toBeDefined();
+        expect(selection.origin).toBe('report');
         expect(selection.reason.length).toBeGreaterThan(0);
       }
     } finally {
@@ -189,7 +257,7 @@ describe('selection-only discipline (DEC-09)', () => {
 
   it('rejects a metric field inside a selection', () => {
     const tampered = baseArtifact() as unknown as { selections: Record<string, unknown>[] };
-    tampered.selections[0]['confidence'] = 0.95;
+    tampered.selections[0]!['confidence'] = 0.95;
     expect(() => validateTriageArtifact(tampered)).toThrow('unexpected field');
   });
 
@@ -218,7 +286,7 @@ describe('selection-only discipline (DEC-09)', () => {
 
   it('rejects an empty reason on a selection', () => {
     const tampered = baseArtifact() as unknown as { selections: Record<string, unknown>[] };
-    tampered.selections[0]['reason'] = '';
+    tampered.selections[0]!['reason'] = '';
     expect(() => validateTriageArtifact(tampered)).toThrow('no reason');
   });
 });

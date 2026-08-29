@@ -5,6 +5,8 @@
 // `enqueueTicket` (section 4.1 → section 4.3).
 import type { Pool } from 'pg';
 
+import { createHash } from 'node:crypto';
+
 import type { NormalizedEvent } from '../adapters/types.js';
 import { enqueueTicket } from '../coordinator/intake.js';
 import type { IntakeTicket } from '../coordinator/intake.js';
@@ -18,10 +20,50 @@ import type { IntakeHandler } from '../ingress/types.js';
  * subject is preferred (it is the current turn's subject); the ticket
  * subject backs it up when the source leaves the message subject empty.
  */
+/**
+ * A stable stand-in identity for a message the source did not name.
+ *
+ * Content, never delivery: the same message redelivered under a new UID must
+ * hash the same, or it takes a second turn and DEC-38 derives a second key
+ * for one request.
+ */
+function contentMessageId(message: NormalizedEvent['message']): string {
+  const digest = createHash('sha256')
+    .update(
+      [
+        message.fromAddress ?? '',
+        message.sentAt ?? '',
+        message.subject ?? '',
+        message.bodyText,
+      ].join('\u0000'),
+    )
+    .digest('hex');
+  return `no-id-${digest.slice(0, 32)}`;
+}
+
 export function toIntakeTicket(event: NormalizedEvent): IntakeTicket {
   const subject = event.message.subject ?? event.ticket.subject;
   return {
     ticketId: event.ticket.ticketId,
+    // The source's own message identity, so a repeat deduplicates and a new
+    // message enqueues (DEC-24).
+    //
+    // The fallback used to be the adapter's delivery id, which for mail is
+    // the IMAP UID. That was argued safe on the grounds that the idempotency
+    // key stops a duplicate effect anyway. DEC-38 ended that: the key now
+    // folds in the turn, a re-enqueued message takes a fresh turn number, and
+    // a different key means the outbox insert succeeds instead of landing
+    // superseded — so the action runs twice. A UIDVALIDITY change or a
+    // mailbox move is enough to fire it.
+    //
+    // So the fallback is derived from the message itself, which survives a
+    // redelivery under a new delivery id.
+    messageId: event.message.messageId ?? contentMessageId(event.message),
+    linkage: event.linkage,
+    // DEC-35: conversation membership is checked against the sender, so this
+    // must survive the seam. The message names it when the source does; the
+    // ticket's own customer address stands in otherwise.
+    customerAddress: event.message.fromAddress ?? event.ticket.customerAddress,
     ticketText:
       subject.length > 0 ? `${subject}\n\n${event.message.bodyText}` : event.message.bodyText,
   };
@@ -29,8 +71,8 @@ export function toIntakeTicket(event: NormalizedEvent): IntakeTicket {
 
 /**
  * The persistence half: builds the `IntakeHandler` a driver receives.
- * Each event is enqueued under its DEC-27 partition so a consumer can pick
- * it up by polling that partition alone.
+ * Each event is enqueued under its DEC-36 partition, which follows the
+ * conversation, so a consumer picks it up by polling that partition alone.
  */
 export function intakeEnqueuer(pool: Pool, partitionCount: number): IntakeHandler {
   return async (event) => {

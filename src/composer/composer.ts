@@ -6,6 +6,9 @@
 // the least expensive way to find a gap in the knowledge.
 
 import type { ChatMessage, ModelProvider } from '../models/provider.js';
+
+import type { ConversationTurn } from '../coordinator/coordinator.js';
+import { renderHistory } from '../coordinator/history.js';
 import type { RetrievedDoc } from '../retriever/types.js';
 
 /** One claim in the draft and the retrieved span that supports it. */
@@ -19,6 +22,12 @@ export interface ComposerInput {
   question: string;
   /** Retrieved spans, best first (section 4.6). */
   docs: RetrievedDoc[];
+  /**
+   * DEC-37: earlier turns of this conversation, oldest first. Empty on a
+   * first turn. The answer may refer to them, but every claim still cites a
+   * retrieved document: history can never be a citation.
+   */
+  history?: readonly ConversationTurn[];
 }
 
 export interface ComposerDeps {
@@ -42,8 +51,8 @@ export interface ComposerResult {
    * need a review before a knowledge gap can close.
    */
   staleDocuments: RetrievedDoc[];
-  /** DEC-25: integer cents for the run limits. Zero on a fast-path abstain. */
-  costCents: number;
+  /** DEC-25: integer micro-dollars for the run limits. Zero on a fast-path abstain. */
+  costMicros: number;
   /** DEC-26: what the server reports it served. Null on a fast-path abstain. */
   servedModelVer: string | null;
 }
@@ -77,7 +86,7 @@ export async function composeAnswer(
       draft: null,
       claims: [],
       staleDocuments,
-      costCents: 0,
+      costMicros: 0,
       servedModelVer: null,
     };
   }
@@ -102,7 +111,7 @@ export async function composeAnswer(
       draft: null,
       claims: [],
       staleDocuments,
-      costCents: completion.costCents,
+      costMicros: completion.costMicros,
       servedModelVer: completion.servedModelVer,
     };
   }
@@ -112,7 +121,7 @@ export async function composeAnswer(
     draft: parsed.claims.map((claim) => claim.text).join(' '),
     claims: parsed.claims,
     staleDocuments,
-    costCents: completion.costCents,
+    costMicros: completion.costMicros,
     servedModelVer: completion.servedModelVer,
   };
 }
@@ -121,7 +130,13 @@ function renderUserPrompt(input: ComposerInput): string {
   const docs = input.docs
     .map((doc) => `[doc:${doc.docId}] ${doc.title}\n${doc.body}`)
     .join('\n\n');
-  return `Ticket:\n${input.question}\n\nDocuments:\n${docs}`;
+  // History sits before the documents and is never cited: the parser accepts
+  // a claim only when it names a retrieved doc id, so an answer resting on
+  // history alone cannot pass.
+  const rendered = renderHistory(input.history ?? []);
+  const conversation =
+    rendered.length > 0 ? `Earlier turns:\n${rendered}\n\n` : '';
+  return `${conversation}Ticket:\n${input.question}\n\nDocuments:\n${docs}`;
 }
 
 type Parsed =

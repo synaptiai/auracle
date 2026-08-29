@@ -29,8 +29,6 @@ result is a reply to the customer that a person approves.
 ### 1.2 Not in V1
 
 - Replies to customers that the system sends automatically.
-- Compensation of an action that the system cannot reverse.
-- Conversation state for more than one ticket thread.
 - Automatic clusters of feedback.
 - A different threshold for each intent.
 - Online A/B tests.
@@ -83,6 +81,12 @@ statement is an implementation detail. You can change it.
 | DEC-31 | A gold set of 770 cases. Fit on one half. Report the other half | 385 cases with a caveat |
 | DEC-32 | Action match scores the disposition, not the intent label | Silver labels from the induction job |
 | DEC-33 | Add provenance metadata to each generated text | The disclosure text alone |
+| DEC-34 | A write that the system cannot reverse always gates. A gated write with no customer draft parks in the ledger | Gate by risk tier; park it as a helpdesk draft |
+| DEC-35 | A conversation is a ledger entity. Runs reference it. No component holds conversation state outside the ledger | An in-memory session cache; adapter-side threads only |
+| DEC-36 | The partition key is the conversation id. A V1-era run and a replay run keep the ticket id | Cross-partition locks; one global conversation queue |
+| DEC-37 | Conversation history enters the classifier and composer prompts. The gates read retrieved documents alone | History in the composer only; history as retrieved documents |
+| DEC-38 | The idempotency key derives from action semantics plus the turn that requests the action | The conversation id alone; the run id, which DEC-24 forbids |
+| DEC-39 | Replay scores first turns only. Multi-turn quality uses online metrics and a human-labelled cohort | Simulated customers; a judge scoring later turns |
 
 ---
 
@@ -144,7 +148,9 @@ DEC-29 and DEC-30 exist because of this result.
 
 Vendors advertise 67 to 86 percent resolution. Production reports show 42 to 50
 percent. One independent test of 500 tickets gave 38 percent. B2B systems give
-17 to 25 points less than the vendor numbers. Plan for 35 to 45 percent in V1.
+17 to 25 points less than the vendor numbers.
+
+Plan for 35 to 45 percent in V1.
 Measure resolution. Do not measure deflection.
 
 ---
@@ -175,8 +181,10 @@ this. The intent does not change this. Autonomy decreases to agree with the guar
  The system declares this decrease. An
 operator does not find it in production.
 
-Supply three reference adapters: IMAP and SMTP, a webhook, and one real
+Supply three reference adapters: IMAP and SMTP, a webhook, and one
 helpdesk. Three adapters are sufficient to show that the contract is general.
+The helpdesk adapter is fixture-backed. It holds its state in memory and
+reaches no network, so the repository ships no credentials (DEC-18).
 
 ### 4.2 Ledger
 
@@ -193,7 +201,7 @@ CREATE TABLE run (
   state        text    NOT NULL,
   prompt_ver   text    NOT NULL,
   model_ver    text    NOT NULL,
-  cost_cents   integer NOT NULL DEFAULT 0,
+  cost_micros  integer NOT NULL DEFAULT 0,
   steps_used   integer NOT NULL DEFAULT 0,
   deadline_at  timestamptz NOT NULL
 );
@@ -205,7 +213,7 @@ CREATE TABLE ticket_epoch (          -- the highest epoch that was accepted
 
 CREATE TABLE step_journal (
   run_id uuid, step_id text, status text, result jsonb,
-  prompt_ver text, model_ver text, cost_cents integer,
+  prompt_ver text, model_ver text, cost_micros integer,
   PRIMARY KEY (run_id, step_id)
 );
 
@@ -267,8 +275,13 @@ The coordinator does these tasks:
 There is no lease. The partition gives exclusive access in normal operation. The
 fencing epoch gives safety during a rebalance.
 
-**Limits.** DEC-25 sets a limit on the cost in cents, on the number of steps and
-on the clock time. If the run reaches a limit, this is not an error. The run
+**Limits.** DEC-25 sets a limit on the cost, on the number of steps and on
+the clock time. The ledger holds cost in micro-dollars, which are millionths
+of a US dollar. A model call costs a fraction of a cent.
+Cents rounded almost every call to zero.
+The limit then compared a sum of zeros.
+
+If the run reaches a limit, this is not an error. The run
 goes to `escalated` and keeps its partial work. A high cost then becomes visible
 in operations. It does not become a surprise in the invoice.
 
@@ -316,8 +329,8 @@ const CLASSIFIER_K   = 9;
 const GATE_AGREEMENT = 0.6;   // the seed value. Calibrate it per DEC-13
 ```
 
-The simulation gives this guidance. At k=9 and a threshold of 0.6, the precision
-is 0.985 and 74 percent of the tickets pass. At k=5 and a threshold of 0.8, the
+The simulation gives this guidance. At k=9 and a threshold of 0.6, the precision is 0.985.
+74 percent of the tickets pass. At k=5 and a threshold of 0.8, the
 precision is 0.970 and 54 percent pass. More samples with a lower threshold is
 better on both measurements.
 
@@ -326,9 +339,8 @@ better on both measurements.
 **1.0. The gate then passes each ticket and reports full confidence. Make this**
 **an assertion in the code. Do not make it a comment.**
 
-**Cost.** The classifier is not inexpensive against the answer step. Nine copies
-of a taxonomy of 1 200 tokens make the classifier 2.5 times the cost of the
-answer step. The classifier is 57 percent of the model cost for each ticket.
+**Cost.** The classifier is not inexpensive against the answer step. A taxonomy of 1 200 tokens goes into the prompt nine times.
+That makes the classifier 2.5 times the cost of the answer step. The classifier is 57 percent of the model cost for each ticket.
 
 A prompt cache decreases the cost to approximately the cost of the answer step.
 The cache does not decrease it below that cost. At test-bed volume the cache
@@ -386,9 +398,17 @@ knowledge.
 
 **`groundedness`**. Obeys DEC-07.
 
-This component divides the draft into single claims. It tests each claim against
-the retrieved text. If a claim adds information that the text does not contain,
-the response is not grounded.
+This component tests each claim against the retrieved text. If a claim adds
+information that the text does not contain, the response is not grounded.
+
+The claims come from the composer. The composer already proved that each one
+cites a retrieved span, so it owns the claim boundaries. This component does
+not derive them again.
+
+An earlier build split the draft with a second model call. That made the
+denominator of the fraction a model's choice. A split that returned one line
+scored 1.0 and passed both thresholds. The composer's partition removes that
+failure and costs one model call less.
 
 Use two thresholds:
 
@@ -397,8 +417,8 @@ Use two thresholds:
 | Below 0.80 | Send to a person for review |
 | Below 0.70 | Block. Do not send |
 
-This component operates on the automatic path only. Therefore the cost occurs
-where it prevents damage.
+The two thresholds decide the automatic path only. A customer reply is
+gated by DEC-12 before the policy engine reads either one.
 
 This component is the second gate. It is independent of the first gate by
 design. It is the only defence against a confident error, because agreement
@@ -417,6 +437,7 @@ Output: `auto`, `gated` or `escalate`.
 ```
 if (!capabilities.supportsIdempotencyKey && action.isWrite) return 'gated';
 if (action.isCustomerVisible)                                return 'gated';
+if (action.isWrite && action.isIrreversible)                 return 'gated';
 if (intent.riskTier === 'high')                              return 'gated';
 if (agreement    < GATE_AGREEMENT)                           return 'escalate';
 if (groundedness < 0.70)                                     return 'escalate';
@@ -432,17 +453,27 @@ It does not measure the cost of an error. These are different quantities.
 
 ### 4.9 Approval bridge
 
-**`approval`**. Obeys DEC-11, DEC-14, DEC-33.
+**`approval`**. Obeys DEC-11, DEC-14, DEC-24, DEC-33.
 
-The bridge writes each gated action into the draft state of the adapter.
+The bridge writes each gated customer reply into the draft state of the adapter.
+A gated write with no customer draft parks in the ledger alone (DEC-34).
+It makes no adapter call, so no unsent draft is left behind after approval.
 Adopters do not install a new interface. This is the purpose of DEC-11.
 
-Each customer reply must have two items:
+Each customer reply must have three items:
 
 1. A `disclosure` field that is not empty.
 2. Provenance metadata that a machine can read.
+3. An idempotency key for the park, derived under DEC-24.
 
-The bridge refuses to send a reply that does not have both items.
+The bridge refuses to send a reply that does not have all three items.
+
+**Why the park needs a key.** The adapter creates the draft before the ledger
+can record its handle. A crash between the two used to leave a draft that no
+row named. The next run then parked a second one. The customer then saw two
+replies. The key travels with the reply, so the adapter recognises the repeat
+and returns the first draft. The mail adapter carries the key in a header,
+because a mailbox gives an appended message no other stable handle.
 
 **Two different obligations.** EU AI Act Article 50(1) applies now.
 Article 50(2) applies from 2 December 2026. The grace period of four months
@@ -497,10 +528,11 @@ effect.
 
 The cost is a wider interval, approximately 3 percent at p=0.9.
 
-The strata need care. At 385 cases and three risk tiers, each stratum has
-approximately 128 cases. The interval for each stratum is approximately
-5.2 percent. It is not 5 percent. At 770 cases with a split, the strata stay too
-small to publish. Treat them as an indication only.
+The strata need care. DEC-39 scores first turns only, so the report half of
+385 cases yields 287 scored cases. The three risk tiers hold 128, 102 and 57 of
+them. The widest stratum interval is above 11 percent. It was never 5 percent,
+and the split makes it worse. Treat the strata as an indication only and read
+the counts from the artifact, not from this paragraph.
 
 **Method 3. Judge triage.** A model selects the cases that go to a person. It
 does not give the published number. A judge has the same failures as the system
@@ -619,6 +651,21 @@ is the data controller. One exception applies. The prompt-log path is off by
 default and needs an explicit override. If you make it active, you give irrevocable commercial
 rights to the inputs and the outputs. The discount is 1 percent.
 
+**No threshold has a fit yet.** The agreement threshold and the two
+groundedness thresholds are the seed values of paragraph 4.5 and paragraph 4.7.
+No fitting run has produced an artifact, and no artifact reaches the policy
+engine. Read every gate number as a seed until this paragraph says otherwise.
+
+The gold set now holds later turns, so the calibration job fits on prompts that
+carry history, per DEC-37. Its artifact records the turn population as `scope`.
+The replay and the gold report still score first turns only, per DEC-39.
+
+Two caveats stand on the synthetic corpus. An invented agent reply names the
+topic of its own thread, so a follow-up turn is easier to label than a real one.
+A follow-up body is also drawn from five fixed strings, so later turns repeat
+each other. Treat a multi-turn number from synthetic data as an upper bound,
+and re-fit on real labelled history before you publish one.
+
 **Article 50(2) for text is not verified.** See paragraph 4.9.
 
 **Feedback clusters are manual in V1.** At test-bed volume, automatic clusters
@@ -630,12 +677,49 @@ signal.
 ## 7. Open items for V2
 
 1. The criteria to leave Phase 2.
-2. Compensation for actions that you cannot reverse.
-3. Conversation state for more than one turn.
+2. Compensation for actions that you cannot reverse. **Closed.** See DEC-34.
+3. Conversation state for more than one turn. **Closed.** See DEC-35 to DEC-39.
 4. Automatic feedback clusters when the volume is sufficient.
 5. A threshold for each intent above approximately 8 000 labelled tickets.
-6. A schema migration procedure for adopters.
-7. A correction for head-of-line delay in a partition.
+6. A schema migration procedure for adopters. **Closed.** See below.
+7. A correction for head-of-line delay in a partition. **Closed.** See below.
+
+Four items now close. The numbers stay, because other documents cite them.
+
+Item 3 was conversation state. DEC-35 to DEC-39 ratify it, and `db/008` and
+`db/009` carry the ledger entities.
+
+Item 2 was compensation. DEC-34 ratifies it, and `src/policy/policy.ts` gates
+every irreversible write.
+
+Item 6 was a schema migration procedure for adopters.
+`src/ledger/migrate.ts` applies each file under `db/` and records the version
+in `schema_version`.
+
+Item 7 was a correction for head-of-line delay in a
+partition. `db/005_run_timing.sql` adds the columns the latency report reads.
+
+### 7.1 Where the V2 design documents live
+
+Each open item above has a design document under `.creatumo/design/`. The
+register stays the only authority. A document becomes a decision only when a
+row enters the table in section 2.
+
+| Item | Document | Status |
+|---|---|---|
+| 1. Phase 2 exit criteria | `899a1565-de05-44ce-8693-ed6dd4cb97e3.md` | proposed, blocked |
+| 2. Compensation | `649c439e-afec-4bba-90d7-c14f78fd372d.md` | accepted, ratified as DEC-34 |
+| 3. Conversation state | `8bd63fe0-8567-44f9-b6cf-ae3d83918381.md` | ratified as DEC-35 to DEC-39, renumbered from its DEC-34 to DEC-38 |
+| 5. A threshold for each intent | `434db94d-bbba-4977-805a-e9d83cb0b6c5.md` | blocked on the trigger |
+| 7. Head-of-line delay | `99dc14d7-da9d-4a92-a9dc-d7c0685c6992.md` | proposed, shipped as an implementation detail |
+| (none) | `bbc657f2-8083-47be-84e9-672825e2158d.md` online A/B tests | proposed, blocked |
+| (none) | `af2c0364-dc11-4547-a0b0-90f51592ae2b.md` ledger implementation | V1 background |
+
+A DEC number inside one of those documents is provisional. The register
+assigns the real number at ratification. So two documents may propose the
+same number, and neither holds it until a row exists in section 2.
+
+---
 
 ---
 
@@ -649,6 +733,7 @@ same thing.
 | action class | A group of actions that share one delivery rule |
 | adapter | A component that connects the system to one external system |
 | agreement | The fraction of classifier samples that give the same label |
+| compensation | A second action that repairs a write the system cannot reverse |
 | coverage | The result of the groundedness check |
 | disposition | An observable result of how a person handled a ticket |
 | fencing epoch | A number that increases and that makes an old write invalid |

@@ -2,7 +2,7 @@
  * Approval CLI (DEC-11, DEC-12). The entrypoint an operator, or the
  * adopter's helpdesk webhook, calls after a person approves a parked draft:
  *
- *   npm run approve -- --run <run-id> [--read-back]
+ *   pnpm run approve -- --run <run-id> [--read-back]
  *
  * `--read-back` fetches the parked draft's current body from the adapter
  * before the approval commits, so the approval-edit distance measures what
@@ -22,7 +22,7 @@ import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.js';
 import type { DraftReadBack } from '../adapters/types.js';
 import { loadDotEnv } from '../config/env.js';
-import { dbUrl } from '../db/config.js';
+import { requireDbUrl } from '../db/config.js';
 import { approveRun } from './approve.js';
 
 const READ_BACK_ADAPTERS: Readonly<Record<string, () => DraftReadBack>> = {
@@ -55,7 +55,7 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const runId = runIdFrom(argv);
   if (runId === null) {
-    console.error('usage: npm run approve -- --run <run-id> [--read-back]');
+    console.error('usage: pnpm run approve -- --run <run-id> [--read-back]');
     process.exitCode = 1;
     return;
   }
@@ -65,7 +65,7 @@ async function main(): Promise<void> {
     ? selectReadBackAdapter(process.env['APPROVE_ADAPTER'] ?? 'helpdesk')
     : undefined;
 
-  const pool = new Pool({ connectionString: dbUrl(), max: 1 });
+  const pool = new Pool({ connectionString: requireDbUrl('the approval CLI'), max: 1 });
   try {
     const result = await approveRun(pool, runId, readDraft === undefined ? {} : { readDraft });
     console.log(JSON.stringify(result, null, 2));

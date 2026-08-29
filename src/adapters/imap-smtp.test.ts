@@ -18,9 +18,11 @@ import {
   SmtpEgressAdapter,
   buildDraftMessage,
   deriveTicketId,
+  findThreadOriginator,
   imapSmtpConfigFromEnv,
 } from './imap-smtp.js';
-import { AdapterCapabilityError } from './types.js';
+import type { ThreadLookupClient } from './imap-smtp.js';
+import { AdapterCapabilityError, PermanentEgressError } from './types.js';
 
 const adapter = new ImapSmtpAdapter();
 
@@ -77,7 +79,14 @@ describe('draft message construction', () => {
     generatedAt: '2026-01-01T00:00:00.000Z',
   };
 
-  function reply(overrides: Partial<Parameters<typeof buildDraftMessage>[0]> = {}) {
+  type Outgoing = Parameters<typeof buildDraftMessage>[0];
+  // exactOptionalPropertyTypes forbids an explicit undefined on an optional
+  // property, but several cases prove the builder omits a header when the
+  // value is absent. The overrides accept undefined; the result is pinned
+  // back to the builder's own parameter type.
+  type ReplyOverrides = { [K in keyof Outgoing]?: Outgoing[K] | undefined };
+
+  function reply(overrides: ReplyOverrides = {}): Outgoing {
     return {
       fromAddress: 'support@acme.example',
       toAddress: 'dana.doe@example.test',
@@ -88,7 +97,7 @@ describe('draft message construction', () => {
       disclosure: 'Drafted by an automated assistant.',
       provenance,
       ...overrides,
-    };
+    } as Outgoing;
   }
 
   it('builds ASCII headers, threading headers and a base64 UTF-8 body', () => {
@@ -135,6 +144,18 @@ describe('draft message construction', () => {
     expect(Buffer.from(match![1]!, 'base64').toString('utf8')).toBe(
       'Re: Café order missing',
     );
+  });
+
+  it('writes the park key as a header so a retry can find the draft (DEC-24)', async () => {
+    // IMAP gives an appended message no primary key. The header is the only
+    // handle that survives a crash between the append and the ledger write.
+    const raw = buildDraftMessage(reply({ idemKey: 'park:T-9:abc' })).toString();
+    expect(raw).toContain('X-Auracle-Idem-Key: park:T-9:abc');
+  });
+
+  it('omits the header when no park key is given', async () => {
+    const raw = buildDraftMessage(reply({ idemKey: undefined })).toString();
+    expect(raw).not.toContain('X-Auracle-Idem-Key');
   });
 
   it('encodes a non-ASCII disclosure as an RFC 2047 word, ASCII verbatim', () => {
@@ -321,6 +342,47 @@ describe('MIME normalization into Ticket/Message', () => {
   });
 });
 
+describe('conversation linkage (DEC-35)', () => {
+  function mail(headers: string): string {
+    return (
+      `${headers}\r\n`
+      + 'From: dana.doe@example.test\r\n'
+      + 'To: support@acme.example\r\n'
+      + 'Subject: Re: broken tiles\r\n'
+      + '\r\n'
+      + 'Still broken.\r\n'
+    );
+  }
+
+  it('offers the reply chain, thread root first', () => {
+    const event = normalize(
+      mail(
+        'Message-ID: <m3@example.test>\r\n'
+        + 'References: <root@example.test> <m2@example.test>\r\n'
+        + 'In-Reply-To: <m2@example.test>',
+      ),
+    );
+
+    // Root first, so the ledger meets the oldest recorded turn first.
+    expect(event.linkage?.priorMessageIds[0]).toBe('root@example.test');
+    expect(event.linkage?.priorMessageIds).toContain('m2@example.test');
+  });
+
+  it('offers nothing for a mail that opens a thread', () => {
+    const event = normalize(mail('Message-ID: <first@example.test>'));
+
+    // Null means no evidence beyond the ticket, not a new conversation: the
+    // ticket id still groups the thread.
+    expect(event.linkage).toBeNull();
+  });
+
+  it('carries the delivery id, so a mail with no Message-ID still has one', () => {
+    const event = normalize(mail('Subject: no id of its own'), 'imap-uid-77');
+
+    expect(event.sourceId).toBe('imap-uid-77');
+  });
+});
+
 describe('ticket identity from threading headers', () => {
   it('keys root and replies onto the same ticket id', () => {
     const root = normalize(THREAD_ROOT_EMAIL);
@@ -384,3 +446,93 @@ describe('ticket identity from threading headers', () => {
     expect(deriveTicketId(exact, 'src')).toBe(exact);
   });
 });
+
+// findThreadOriginator resolves the recipient of every parked reply, so which
+// error it raises decides whether a ticket retries or escalates. imapflow
+// answers `false` — it does not throw — when a server refuses a command or the
+// connection drops mid-flight, and reading that as an empty result makes a
+// transient fault indistinguishable from a thread root that is really gone.
+describe('findThreadOriginator separates a refused search from an empty one', () => {
+  const TICKET_ID = 'thread-root@acme.example';
+  const UID = 7;
+
+  /** The three imapflow calls the lookup makes, each independently faultable. */
+  function client(behaviour: {
+    search?: number[] | false;
+    fetchOne?: string | false;
+  }): ThreadLookupClient {
+    return {
+      mailboxOpen: async () => ({}),
+      search: async () => behaviour.search ?? [],
+      fetchOne: async () =>
+        behaviour.fetchOne === false
+          ? false
+          : { seq: UID, uid: UID, source: Buffer.from(behaviour.fetchOne ?? THREAD_ROOT_EMAIL) },
+    };
+  }
+
+  it('answers the thread author when the search finds the root', async () => {
+    const thread = await findThreadOriginator(client({ search: [UID] }), TICKET_ID);
+
+    expect(thread.fromAddress).toBe('dana.doe@example.test');
+    expect(thread.messageId).toBe(TICKET_ID);
+  });
+
+  it('raises a retryable error when the server refuses the SEARCH', async () => {
+    // A PermanentEgressError here escalates the ticket on the first fault and
+    // skips the intake attempt ceiling, so one window of IMAP faults would
+    // escalate every ticket parking during it.
+    const error = await findThreadOriginator(client({ search: false }), TICKET_ID).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(PermanentEgressError);
+    expect((error as Error).message).toMatch(/refused the header SEARCH/);
+  });
+
+  it('raises a retryable error when the server refuses the FETCH', async () => {
+    // The UID came back from the SEARCH the server just answered, so nothing
+    // about this mailbox says the thread root is missing.
+    const error = await findThreadOriginator(
+      client({ search: [UID], fetchOne: false }),
+      TICKET_ID,
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(PermanentEgressError);
+    expect((error as Error).message).toMatch(new RegExp(`refused the FETCH of uid ${UID}`));
+  });
+
+  it('escalates when the search genuinely finds nothing', async () => {
+    // Archived, moved or deleted: a later scan does not find it either, so a
+    // person has to reconcile it and a retry only spends the budget.
+    await expect(findThreadOriginator(client({ search: [] }), TICKET_ID)).rejects.toThrow(
+      PermanentEgressError,
+    );
+  });
+
+  it('escalates a ticket id that was never a message id', async () => {
+    // A content digest never reverses into an addressable Message-ID.
+    await expect(findThreadOriginator(client({}), 'no-id-abc123')).rejects.toThrow(
+      PermanentEgressError,
+    );
+  });
+
+  it('escalates when the thread root carries no From address', async () => {
+    await expect(
+      findThreadOriginator(
+        client({ search: [UID], fetchOne: NO_FROM_THREAD_ROOT }),
+        TICKET_ID,
+      ),
+    ).rejects.toThrow(PermanentEgressError);
+  });
+});
+
+const NO_FROM_THREAD_ROOT = [
+  'To: support@acme.example',
+  'Subject: Order 4471 arrived damaged',
+  `Message-ID: <thread-root@acme.example>`,
+  '',
+  'The box arrived with a crushed corner.',
+].join('\r\n');

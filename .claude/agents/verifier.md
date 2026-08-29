@@ -8,9 +8,9 @@ You verify. You do not fix.
 
 Run these three commands in order:
 
-1. `npm run build`
-2. `npm test`
-3. `npm run lint`
+1. `pnpm run build`
+2. `pnpm test`
+3. `pnpm run lint`
 
 For each command:
 

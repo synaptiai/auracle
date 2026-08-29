@@ -7,6 +7,18 @@ dist/
 .env
 
 # Run artifacts on disk, never commit (same rule as triage/v1.json).
-/gold-report/
+# The exception is the published artifact: README.md quotes its numbers, so
+# it ships with the repository and is tracked.
+# Exclude the directory's contents, not the directory: a negation cannot
+# re-include a file inside an excluded directory.
+/gold-report/*
+!/gold-report/v4.json
 /triage/
 .creatumo/MEMORY.md
+
+# Agent session transcripts. Never commit.
+.trail/
+
+# Python bytecode from the hook tests.
+__pycache__/
+*.pyc

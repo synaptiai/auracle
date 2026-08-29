@@ -5,19 +5,26 @@
 // The report half is never read here: this module imports loadGoldHalf, not
 // loadGoldSet, so a report-half leak needs a code change, not an accident.
 //
+// Every turn counts here. DEC-39 narrows the replay and the gold report to
+// first turns because both score against a conversation-level disposition.
+// This job scores a prediction against the case's own intent label, which a
+// later turn carries, and section 6 requires the threshold to be re-fitted on
+// multi-turn data. Each later turn is classified with the history the runtime
+// would send (DEC-37), and the artifact records the population as `scope`.
+//
 // Offline and on demand. The monthly cadence in section 4.11 is operational,
 // not code.
 
 import { classifyTicket } from '../classifier/classifier.js';
 import type { ClassifierTaxonomy } from '../classifier/classifier.js';
-import { loadDotEnv } from '../config/env.js';
-import { FIT_COUNT, loadGoldHalf, loadTaxonomy } from '../fixtures/load.js';
+import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
+import { FIT_COUNT, conversationHistories, goldCaseText, isFirstTurn, loadGoldHalf, loadTaxonomy } from '../fixtures/load.js';
 import type { GoldFile } from '../fixtures/load.js';
 import type { ModelProvider } from '../models/provider.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { pathToFileURL } from 'node:url';
 import { nextVersion, validateCalibrationArtifact, writeCalibrationArtifact, defaultCalibrationDir } from './artifact.js';
-import type { CalibrationArtifact } from './artifact.js';
+import type { CalibrationArtifact, CalibrationScope } from './artifact.js';
 import { fitAgreementThreshold } from './calibrate.js';
 
 export interface CalibrationRunOptions {
@@ -67,11 +74,16 @@ export async function runCalibrationJob(
 
   assertFitHalf(fitHalf);
 
+  // DEC-37: a later turn's prompt carries the turns before it. Fitting on the
+  // bare message would fit a threshold for a prompt the runtime never sends.
+  const histories = conversationHistories(fitHalf.tickets);
+
   const samples: { agreement: number; correct: boolean }[] = [];
   for (const ticket of fitHalf.tickets) {
     const result = await classifyTicket(options.provider, {
       taxonomy,
-      ticketText: `${ticket.subject}\n\n${ticket.body}`,
+      ticketText: goldCaseText(ticket),
+      history: histories.get(ticket.ticket_id) ?? [],
       promptVer,
       modelVer,
       ...(options.temperature === undefined
@@ -94,6 +106,7 @@ export async function runCalibrationJob(
     fitted_at: new Date().toISOString(),
     gold_source: 'synthetic',
     split_used: 'fit',
+    scope: scopeOf(fitHalf),
     fit_tickets: fitHalf.tickets.length,
     prompt_ver: promptVer,
     model_ver: modelVer,
@@ -105,6 +118,16 @@ export async function runCalibrationJob(
   });
   await writeCalibrationArtifact(artifact, dir);
   return { artifact };
+}
+
+/**
+ * Names the turn population this fit consumed.
+ *
+ * Derived from the half, never declared: the value then cannot drift from
+ * the data a threshold was actually fitted on.
+ */
+function scopeOf(half: GoldFile): CalibrationScope {
+  return half.tickets.every(isFirstTurn) ? 'first_turn' : 'all_turns';
 }
 
 function assertFitHalf(half: GoldFile): void {
@@ -133,7 +156,7 @@ function normalize(text: string): string {
   return text.trim().toLowerCase();
 }
 
-// CLI entry: `npm run calibrate` executes dist/calibration/run.js.
+// CLI entry: `pnpm run calibrate` executes dist/calibration/run.js.
 // Needs OPENROUTER_API_KEY and CALIBRATION_MODEL_VER in the environment;
 // CALIBRATION_TARGET_PRECISION overrides the default precision floor.
 async function main(): Promise<void> {
@@ -160,7 +183,7 @@ async function main(): Promise<void> {
   }
 
   const { artifact } = await runCalibrationJob({
-    provider: new OpenRouterProvider({ apiKey }),
+    provider: new OpenRouterProvider({ apiKey, ...dataGuaranteeOption() }),
     modelVer,
     ...(targetPrecision === undefined ? {} : { targetPrecision }),
   });

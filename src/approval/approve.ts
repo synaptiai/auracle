@@ -22,9 +22,10 @@
  * is a distinct result (section 4.2 rule 2):
  * the run lands 'superseded', never resolved with a phantom record.
  */
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 import type { DraftReadBack } from '../adapters/types.js';
+import { recordApprovedReply } from '../ledger/conversation.js';
 import { fencedTransition } from '../ledger/insert.js';
 import { deriveIdemKey } from '../ledger/keys.js';
 import { recordApprovalEditDistance } from './measure.js';
@@ -75,6 +76,12 @@ interface ParkRecord {
    * payload approveRun copies onto the outbox record verbatim.
    */
   readonly payload?: Record<string, unknown>;
+  /**
+   * DEC-38: the turn that requested this action, when the run had one. A
+   * park journaled before DEC-38 has none, and its key keeps the V1 form,
+   * so an approval in flight across the upgrade still matches its record.
+   */
+  readonly turnNumber?: number;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -91,6 +98,7 @@ function parkRecordFrom(journalResult: unknown): ParkRecord {
   const delivery = r['delivery'];
   const body = r['body'];
   const payload = r['payload'];
+  const turnNumber = r['turnNumber'];
   if (
     (draftExternalId !== undefined && (typeof draftExternalId !== 'string' || draftExternalId.length === 0))
     || typeof actionClass !== 'string'
@@ -99,6 +107,8 @@ function parkRecordFrom(journalResult: unknown): ParkRecord {
     || body.length === 0
     || (delivery !== 'at_least_once' && delivery !== 'at_most_once')
     || (payload !== undefined && !isPlainObject(payload))
+    || (turnNumber !== undefined
+        && (typeof turnNumber !== 'number' || !Number.isInteger(turnNumber)))
   ) {
     throw new Error('park journal result is malformed for approval');
   }
@@ -108,6 +118,7 @@ function parkRecordFrom(journalResult: unknown): ParkRecord {
     delivery,
     body,
     ...(payload === undefined ? {} : { payload }),
+    ...(turnNumber === undefined ? {} : { turnNumber }),
   };
 }
 
@@ -146,7 +157,8 @@ export async function approveRun(
   options?: ApproveOptions,
 ): Promise<ApproveOutcome> {
   const rows = await pool.query(
-    'SELECT ticket_id, state, cost_cents, steps_used FROM run WHERE run_id = $1',
+    `SELECT ticket_id, state, cost_micros, steps_used, conversation_id
+       FROM run WHERE run_id = $1`,
     [runId],
   );
   if (rows.rows.length === 0) {
@@ -176,9 +188,17 @@ export async function approveRun(
       ? { draftExternalId: park.draftExternalId }
       : park.payload ?? throwMalformedPark(park.actionClass);
 
+  // Read before the key is derived: a turn number is only unique inside its
+  // conversation, so the key needs both (DEC-35, DEC-38).
+  const conversationId = row.conversation_id as string | null;
+
   const idemKey = deriveIdemKey({
     actionClass: park.actionClass,
     ticketId: row.ticket_id as string,
+    // DEC-38: two turns asking for the same thing are two requests, on the
+    // approval path exactly as on the automatic one.
+    ...(park.turnNumber === undefined ? {} : { turnNumber: park.turnNumber }),
+    conversationId,
     payload: outboxPayload,
   });
 
@@ -201,10 +221,43 @@ export async function approveRun(
     finalBody = read.body;
   }
 
+  // The reply the person approved is the agent's half of the conversation
+  // (DEC-37). Three conditions must hold, and each one has a reason:
+  // a ledger-only park has no customer-visible text (DEC-34), a V1-era run
+  // has no conversation, and a park from before DEC-38 carries no turn.
+  const reply =
+    park.draftExternalId !== undefined
+    && conversationId !== null
+    && park.turnNumber !== undefined
+      ? {
+          conversationId,
+          turnNumber: park.turnNumber,
+          bodyText: finalBody ?? park.body,
+        }
+      : undefined;
+
+  const afterWrite =
+    finalBody === undefined && reply === undefined
+      ? undefined
+      : async (client: PoolClient): Promise<void> => {
+          if (finalBody !== undefined) {
+            // Section 4.2 rule 1 applied to the measurement: the edit
+            // distance commits with the approval, or not at all.
+            await recordApprovalEditDistance(client, {
+              runId,
+              parkedBody: park.body,
+              finalBody,
+            });
+          }
+          if (reply !== undefined) {
+            await recordApprovedReply(client, reply);
+          }
+        };
+
   const moved = await fencedTransition(pool, {
     runId,
     state: 'resolved',
-    costCents: row.cost_cents as number,
+    costMicros: row.cost_micros as number,
     stepsUsed: row.steps_used as number,
     fromState: 'awaiting_approval',
     outbox: {
@@ -214,19 +267,7 @@ export async function approveRun(
       delivery: park.delivery,
       payload: outboxPayload,
     },
-    ...(finalBody === undefined
-      ? {}
-      : {
-          // Section 4.2 rule 1 applied to the measurement: the edit
-          // distance commits with the approval, or not at all.
-          afterWrite: async (client) => {
-            await recordApprovalEditDistance(client, {
-              runId,
-              parkedBody: park.body,
-              finalBody,
-            });
-          },
-        }),
+    ...(afterWrite === undefined ? {} : { afterWrite }),
   });
 
   switch (moved.outcome) {

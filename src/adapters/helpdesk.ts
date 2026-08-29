@@ -29,6 +29,7 @@ import type {
   Ticket,
 } from './types.js';
 import { AdapterCapabilityError } from './types.js';
+import { COMPENSATION_ACTION_CLASS } from './types.js';
 import { HELPDESK_FIXTURE_TICKETS } from './fixtures/helpdesk.js';
 
 /** One parked reply as the helpdesk holds it. */
@@ -73,6 +74,9 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
   /** Keyed by the outbox idempotency key; one entry per real send. */
   private readonly deliveries = new Map<string, StoredDelivery>();
 
+  /** Keyed by the park idempotency key; one entry per parked draft. */
+  private readonly draftsByIdemKey = new Map<string, string>();
+
   constructor(seedTickets: readonly Ticket[] = HELPDESK_FIXTURE_TICKETS) {
     this.tickets = new Map(seedTickets.map((ticket) => [ticket.ticketId, ticket]));
   }
@@ -83,8 +87,15 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
     requireNonEmpty(reply.body, 'reply.body');
     // The adapter refuses to hold a reply with no disclosure (DEC-12, DEC-14).
     requireNonEmpty(reply.disclosure, 'reply.disclosure');
+    requireNonEmpty(reply.idemKey, 'reply.idemKey');
     if (!this.tickets.has(reply.ticketExternalId)) {
       throw new Error(`helpdesk has no ticket '${reply.ticketExternalId}'`);
+    }
+
+    // A repeat park returns the first draft: the customer must never see two.
+    const parked = this.draftsByIdemKey.get(reply.idemKey);
+    if (parked !== undefined) {
+      return { draftExternalId: parked };
     }
 
     this.seq += 1;
@@ -97,6 +108,7 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
       provenance: { ...reply.provenance },
       status: 'draft',
     });
+    this.draftsByIdemKey.set(reply.idemKey, draftExternalId);
     return { draftExternalId };
   }
 
@@ -189,7 +201,7 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
         updated = { ...ticket, queue };
         break;
       }
-      case 'compensate': {
+      case COMPENSATION_ACTION_CLASS: {
         // V2: compensation of an irreversible action. The helpdesk API
         // records the compensating credit against the ticket; no ticket
         // field changes. The idempotency key above already dedupes, so a

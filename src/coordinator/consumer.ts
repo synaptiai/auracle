@@ -39,7 +39,11 @@
 import type { Pool } from 'pg';
 
 import { coordinateTicket } from './coordinator.js';
-import type { CoordinateInput, CoordinatorDeps } from './coordinator.js';
+import type {
+  ConversationTurn,
+  CoordinateInput,
+  CoordinatorDeps,
+} from './coordinator.js';
 import { ackTicket, pollPartition } from './intake.js';
 
 /**
@@ -106,14 +110,149 @@ export interface ConsumerOptions {
   readonly intervalMs: number;
   readonly action: ConsumerActionSpec;
   readonly scanBatchSize?: number;
+  /** Overrides MAX_INTAKE_ATTEMPTS. Tests set it low; operators may lower it. */
+  readonly maxIntakeAttempts?: number;
 }
 
 export type ConsumerScanOutcome =
   | { ticketId: string; outcome: Awaited<ReturnType<typeof coordinateTicket>>['outcome'] }
-  | { ticketId: string; outcome: 'error'; error: string };
+  | { ticketId: string; outcome: 'error'; error: string }
+  /** The message failed MAX_INTAKE_ATTEMPTS times and left the queue. */
+  | { ticketId: string; outcome: 'abandoned'; error: string };
+
+/**
+ * Failed attempts a queued message gets before it leaves the queue.
+ *
+ * The counter is per message and never resets, so this must be high enough
+ * that a shared outage does not empty the queue. Five consecutive scans is a
+ * few minutes of a provider being down, and every queued message fails on
+ * every one of those scans — so a low bound abandons the whole backlog for a
+ * fault that had nothing to do with any single message.
+ */
+export const MAX_INTAKE_ATTEMPTS = 50;
+
+/** Counts one failed attempt and returns the new total. */
+async function recordAttempt(pool: Pool, ticketId: string, messageId: string): Promise<number> {
+  const row = await pool.query<{ attempts: number }>(
+    `UPDATE intake SET attempts = attempts + 1
+      WHERE ticket_id = $1 AND message_id = $2
+      RETURNING attempts`,
+    [ticketId, messageId],
+  );
+  // No row means the message left the queue by another path; treat it as
+  // handled rather than inventing an attempt count for a row that is gone.
+  return row.rows[0]?.attempts ?? 0;
+}
+
+/**
+ * Takes a message out of the queue and files an escalated run for it.
+ *
+ * The run is what an operator sees: `pnpm run escalations` lists it, and the
+ * reason names the failure. Dropping the row alone would lose the message
+ * silently, which is the failure this whole path exists to prevent.
+ */
+async function abandonMessage(
+  pool: Pool,
+  attempts: number,
+  polled: {
+    ticketId: string;
+    messageId: string;
+    partition: number;
+    conversationId: string | null;
+  },
+  reason: string,
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const run = await client.query<{ run_id: string }>(
+      `INSERT INTO run (run_id, ticket_id, partition, epoch, state,
+                        prompt_ver, model_ver, deadline_at, finished_at, conversation_id)
+       VALUES (gen_random_uuid(), $1, $2, 0, 'escalated',
+               'intake', 'intake', now(), now(), $3)
+       RETURNING run_id`,
+      [polled.ticketId, polled.partition, polled.conversationId],
+    );
+    // The escalations view reads its reason from this step, so the operator
+    // sees why the message was abandoned and not merely that it vanished.
+    await client.query(
+      `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
+       VALUES ($1, 'escalate', 'done', $2::jsonb, 'intake', 'intake', 0)`,
+      [
+        run.rows[0]?.run_id,
+        JSON.stringify({ reason: `intake_abandoned after ${attempts} attempts: ${reason}` }),
+      ],
+    );
+    await client.query('DELETE FROM intake WHERE ticket_id = $1 AND message_id = $2', [
+      polled.ticketId,
+      polled.messageId,
+    ]);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The turns of one conversation before the turn being processed.
+ *
+ * Text comes from the turn itself (DEC-37). It used to come from the queue
+ * row, which the ack deletes, so every earlier turn contributed nothing and
+ * the prompts saw an empty history in every ordinary path.
+ *
+ * One turn yields the customer's message and, when a person approved one,
+ * the reply that answered it. Either may be absent: a turn recorded before
+ * db/010 holds no message text, and a turn that produced no customer reply
+ * holds none either. An absent half is skipped rather than rendered blank.
+ *
+ * History is best-effort context, never evidence, and the groundedness gate
+ * never reads it.
+ */
+export async function conversationHistory(
+  pool: Pool,
+  conversationId: string | null,
+  turnNumber: number | null,
+): Promise<readonly ConversationTurn[]> {
+  if (conversationId === null || turnNumber === null) return [];
+  const rows = await pool.query<{
+    turn_number: number;
+    body_text: string | null;
+    approved_reply_text: string | null;
+  }>(
+    `SELECT turn_number, body_text, approved_reply_text
+       FROM turn
+      WHERE conversation_id = $1
+        AND turn_number < $2
+      ORDER BY turn_number`,
+    [conversationId, turnNumber],
+  );
+
+  const history: ConversationTurn[] = [];
+  for (const row of rows.rows) {
+    // The customer speaks first within a turn, and the reply answers it.
+    if (row.body_text !== null) {
+      history.push({
+        turnNumber: row.turn_number,
+        author: 'customer',
+        bodyText: row.body_text,
+      });
+    }
+    if (row.approved_reply_text !== null) {
+      history.push({
+        turnNumber: row.turn_number,
+        author: 'agent',
+        bodyText: row.approved_reply_text,
+      });
+    }
+  }
+  return history;
 }
 
 /**
@@ -139,18 +278,48 @@ export async function processQueuedTickets(
         ticketId: polled.ticketId,
         ticketText: polled.ticketText,
         epoch: await nextEpoch(deps.pool, polled.ticketId),
-        // V2 open item 7: the arrival time rides from intake to the run row,
+        // Open item 7: the arrival time rides from intake to the run row,
         // so queue wait survives the ack that follows.
         enqueuedAt: polled.enqueuedAt,
+        // DEC-28: the run records the partition the message was filed under,
+        // never one recomputed from this process's PARTITION_COUNT.
+        partition: polled.partition,
+        // DEC-35: the conversation, its participant, and the turns before this.
+        conversationId: polled.conversationId,
+        customerAddress: polled.customerAddress,
+        // DEC-38: the turn joins the idempotency key.
+        ...(polled.turnNumber === null ? {} : { turnNumber: polled.turnNumber }),
+        history: await conversationHistory(
+          deps.pool,
+          polled.conversationId,
+          polled.turnNumber,
+        ),
         ...options.action,
       };
       const outcome = await coordinateTicket(deps, input);
       if (outcome.outcome !== 'stale_epoch') {
-        await ackTicket(deps.pool, polled.ticketId);
+        // Keyed on the message: a ticket may hold several queued messages,
+        // and acking the ticket would drop the ones not yet processed.
+        await ackTicket(deps.pool, polled.ticketId, polled.messageId);
       }
       results.push({ ticketId: polled.ticketId, outcome: outcome.outcome });
     } catch (error) {
-      // Per-ticket isolation: leave it queued for the next scan, keep going.
+      // Per-ticket isolation: the scan keeps going. But a message that always
+      // throws must not be retried forever — that spends a classifier budget
+      // every scan and files one orphan run per attempt, while the queue
+      // depth looks like an ordinary backlog. The relay already escalates a
+      // record it can never send; this gives the consumer the same floor.
+      const attempts = await recordAttempt(deps.pool, polled.ticketId, polled.messageId);
+      const ceiling = options.maxIntakeAttempts ?? MAX_INTAKE_ATTEMPTS;
+      if (attempts >= ceiling) {
+        await abandonMessage(deps.pool, attempts, polled, errorMessage(error));
+        results.push({
+          ticketId: polled.ticketId,
+          outcome: 'abandoned',
+          error: errorMessage(error),
+        });
+        continue;
+      }
       results.push({
         ticketId: polled.ticketId,
         outcome: 'error',

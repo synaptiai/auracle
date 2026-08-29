@@ -1,16 +1,14 @@
 // Integration test for the full webhook → intake path (D3-A): a POST to
 // `createWebhookServer` wired through `intakeEnqueuer` must land a row in
-// the intake table under the DEC-27 partition for its ticket id. Real
+// the intake table under the DEC-36 partition of its conversation. Real
 // Postgres, synthetic data only (DEC-18).
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { applyLedgerSchema } from '../test-support/schema.js';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { partitionOf } from '../coordinator/coordinator.js';
 import { pollPartition } from '../coordinator/intake.js';
 import { dbUrl } from '../db/config.js';
 import { WEBHOOK_FULL_PAYLOAD, WEBHOOK_MINIMAL_PAYLOAD } from '../ingress/fixtures.js';
@@ -21,17 +19,13 @@ import { intakeEnqueuer } from './adapter.js';
 const PARTITION_COUNT = 8;
 const pool = new Pool({ connectionString: dbUrl(), max: 5 });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
-const INTAKE_DDL = readFileSync(
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db/004_intake.sql'),
-  'utf8',
-);
 
 let server: Server | null = null;
 
@@ -63,10 +57,10 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe.skipIf(!dbUp)('webhook → intake path', () => {
+describe('webhook → intake path', () => {
   beforeEach(async () => {
-    await pool.query(INTAKE_DDL);
-    await pool.query('TRUNCATE intake');
+    await applyLedgerSchema(pool);
+    await pool.query('TRUNCATE intake, conversation, turn');
   });
 
   it('lands a POSTed delivery in intake under its DEC-27 partition', async () => {
@@ -79,7 +73,10 @@ describe.skipIf(!dbUp)('webhook → intake path', () => {
     expect(rows.rows).toHaveLength(1);
     const row = rows.rows[0] as Record<string, unknown>;
     expect(row['ticket_id']).toBe('wh-ticket-4471');
-    expect(row['partition']).toBe(partitionOf('wh-ticket-4471', PARTITION_COUNT));
+    // DEC-36 routes on the conversation, so the partition is not a function
+    // of the ticket id. It must be a real partition of the ring.
+    expect(row['partition']).toBeGreaterThanOrEqual(0);
+    expect(row['partition']).toBeLessThan(PARTITION_COUNT);
     expect(row['ticket_text']).toBe(
       'Order 4471 arrived damaged\n\nThe box arrived with a crushed corner. Two tiles are broken.',
     );
@@ -98,7 +95,10 @@ describe.skipIf(!dbUp)('webhook → intake path', () => {
     const row = rows.rows[0] as Record<string, unknown> | undefined;
     // Minimal payload has no subjects at either level: text is the bare body.
     expect(row?.['ticket_text']).toBe('Ticket moved to pending by billing sync.');
-    expect(row?.['partition']).toBe(partitionOf('wh-ticket-8812', PARTITION_COUNT));
+    // DEC-36 routes on the conversation, so the partition is not a function
+    // of the ticket id. It must be a real partition of the ring.
+    expect(row?.['partition']).toBeGreaterThanOrEqual(0);
+    expect(row?.['partition']).toBeLessThan(PARTITION_COUNT);
   });
 
   it('makes enqueued tickets pollable through the consumer seam', async () => {
@@ -114,7 +114,11 @@ describe.skipIf(!dbUp)('webhook → intake path', () => {
       'wh-ticket-8812',
     ]);
     for (const ticket of polled) {
-      expect(ticket.partition).toBe(partitionOf(ticket.ticketId, PARTITION_COUNT));
+      expect(ticket.partition).toBeGreaterThanOrEqual(0);
+      expect(ticket.partition).toBeLessThan(PARTITION_COUNT);
+      // Each webhook message opens its own conversation: the adapter offers
+      // no linkage, and these two payloads name different tickets.
+      expect(ticket.conversationId).not.toBeNull();
     }
   });
 

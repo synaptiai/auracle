@@ -1,3 +1,16 @@
+# Build scripts pnpm may run during install.
+#
+# pnpm blocks lifecycle scripts by default. Each package below is a real
+# transitive dependency that needs one, so removing an entry makes the
+# install skip that build:
+#
+#   esbuild        vitest's bundler
+#   protobufjs     testcontainers
+#   ssh2           testcontainers, through docker-modem
+#   cpu-features   ssh2's optional native accelerator
+#
+# There is no `packages` key on purpose: this repository is one package, not
+# a workspace. The file exists for the list above.
 allowBuilds:
   esbuild: true
   protobufjs: true

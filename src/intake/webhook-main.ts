@@ -1,4 +1,4 @@
-// Webhook ingress daemon entrypoint (D3-A). Run via `npm run webhook`
+// Webhook ingress daemon entrypoint (D3-A). Run via `pnpm run webhook`
 // (executes the built dist/intake/webhook-main.js).
 //
 // Serves the webhook driver and wires every accepted delivery into the
@@ -19,7 +19,7 @@
 // source redelivers.
 import { Pool } from 'pg';
 
-import { dbUrl } from '../db/config.js';
+import { requireDbUrl } from '../db/config.js';
 import { createWebhookServer } from '../ingress/webhook-server.js';
 import { loadDotEnv } from '../config/env.js';
 import { intakeEnqueuer } from './adapter.js';
@@ -38,8 +38,12 @@ async function main(): Promise<void> {
   const port = intFromEnv('WEBHOOK_PORT', 8080);
   const partitionCount = intFromEnv('PARTITION_COUNT', 8);
 
-  const pool = new Pool({ connectionString: dbUrl(), max: 1 });
-  const server = createWebhookServer({ onEvent: intakeEnqueuer(pool, partitionCount) });
+  const pool = new Pool({ connectionString: requireDbUrl('the webhook ingress'), max: 1 });
+  const server = createWebhookServer({
+    onEvent: intakeEnqueuer(pool, partitionCount),
+    // Absent means the driver runs open and says so at startup.
+    secret: process.env['WEBHOOK_SECRET'],
+  });
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);

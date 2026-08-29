@@ -1,6 +1,6 @@
 // CLI for the real-corpus export. Run via:
 //
-//   npm run export-corpus [-- corpus/history-2026-01-31.json]
+//   pnpm run export-corpus [-- corpus/history-2026-01-31.json]
 //
 // Environment:
 //   CORPUS_FETCH_CMD  required. A command whose stdout is one JSON object
@@ -42,7 +42,10 @@ async function main(): Promise<void> {
 
   const outputPath = process.argv[2] ?? defaultOutputPath();
 
-  console.log(`fetching mailbox through: ${fetchCmd}`);
+  // The command routinely embeds a credential (`curl -u user:pass`, an
+  // IMAP password), and this line reaches terminal scrollback and CI logs.
+  // The first token names the tool, which is all an operator needs.
+  console.log(`fetching mailbox through: ${fetchCmd.trimStart().split(/\s/)[0] ?? '(unnamed)'} [arguments hidden]`);
   const messages = await fetchMessages(fetchCmd);
   console.log(`fetched ${messages.length} messages`);
 

@@ -1,9 +1,8 @@
 // Integration suite for section 4.6 ("Retriever") against the compose
 // Postgres: hybrid retrieval over tsvector and pgvector, RRF fusion,
 // freshness (DEC-23), index contents (DEC-22) and the reranker gate (DEC-21).
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -18,15 +17,13 @@ import type { IndexedDoc, RetrievedDoc } from './types.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
-const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
-const DDL = readFileSync(path.join(dbDir, '002_documents.sql'), 'utf8');
 
 const DIM = 1536;
 
@@ -70,9 +67,9 @@ function doc(docId: string, title: string, body: string, extra?: Partial<Indexed
   };
 }
 
-describe.skipIf(!dbUp)('section 4.6 retriever', () => {
+describe('section 4.6 retriever', () => {
   beforeEach(async () => {
-    await pool.query(DDL);
+    await applyLedgerSchema(pool);
     await pool.query('TRUNCATE document');
   });
 

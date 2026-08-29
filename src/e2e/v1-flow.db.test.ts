@@ -17,9 +17,8 @@
 // Each hop asserts ledger state, outbox records, journal entries and the
 // adapter-side effects. Synthetic data only (DEC-18).
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -35,7 +34,7 @@ import type {
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { dbUrl } from '../db/config.js';
 import { deriveIdemKey } from '../ledger/keys.js';
-import { FakeProvider } from '../models/fake.js';
+import { FakeProvider, ONE_CENT_IN_MICROS } from '../models/fake.js';
 import type { FakeStep } from '../models/fake.js';
 import type {
   ChatRequest,
@@ -47,23 +46,19 @@ import type {
 } from '../models/provider.js';
 import { fencedTransition } from '../ledger/insert.js';
 import type { AdapterCapabilities as PolicyCapabilities } from '../policy/policy.js';
-import { CUSTOMER_REPLY_ACTION_CLASS, relayPending } from '../relay/relay.js';
+import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
+import { relayPending } from '../relay/relay.js';
 import { indexDocument } from '../retriever/retriever.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
-const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
-const LEDGER_DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
-const DOCUMENTS_DDL = readFileSync(path.join(dbDir, '002_documents.sql'), 'utf8');
-const EDIT_DISTANCE_DDL = readFileSync(path.join(dbDir, '003_approval_edit_distance.sql'), 'utf8');
-const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 const PINS = { promptVer: 'e2e-flow-prompt', modelVer: 'e2e-flow-model' };
 const CAPABILITIES = {
@@ -112,7 +107,6 @@ function happyScript(): FakeStep[] {
     ...Array.from({ length: 9 }, () => ({ text: 'password_reset' })),
     { vectors: [VEC] },
     { text: '[doc:d1] Open the account settings page and choose reset password.' },
-    { text: '- Open the account settings page and choose reset password.' },
     { text: 'VERDICT: SUPPORTED' },
   ];
 }
@@ -149,7 +143,7 @@ function makeDeps(script: FakeStep[], overrides: DepsOverrides = {}): Coordinato
     egress: overrides.egress ?? new HelpdeskAdapter(),
     pins: PINS,
     limits: {
-      maxCostCents: 10_000,
+      maxCostMicros: 100_000_000,
       maxSteps: 50,
       deadlineAt: new Date(Date.now() + 60_000),
     },
@@ -198,14 +192,14 @@ async function indexFixtureDoc(): Promise<void> {
 
 type RunRow = {
   state: string;
-  cost_cents: number;
+  cost_micros: number;
   steps_used: number;
   approval_edit_distance: number | null;
 };
 
 async function runRow(runId: string): Promise<RunRow | undefined> {
   const rows = await pool.query(
-    `SELECT state, cost_cents, steps_used, approval_edit_distance
+    `SELECT state, cost_micros, steps_used, approval_edit_distance
      FROM run WHERE run_id = $1`,
     [runId],
   );
@@ -312,12 +306,9 @@ class EpochBumpingProvider implements ModelProvider {
   }
 }
 
-describe.skipIf(!dbUp)('V1 flow end to end', () => {
+describe('V1 flow end to end', () => {
   beforeEach(async () => {
-    await pool.query(LEDGER_DDL);
-    await pool.query(DOCUMENTS_DDL);
-    await pool.query(EDIT_DISTANCE_DDL);
-    await pool.query(TIMING_DDL);
+    await applyLedgerSchema(pool);
     await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, document');
     await indexFixtureDoc();
   });
@@ -338,7 +329,9 @@ describe.skipIf(!dbUp)('V1 flow end to end', () => {
     // Ledger: the run resolved with full cost and step accounting.
     expect(await runRow(runId)).toMatchObject({
       state: 'resolved',
-      cost_cents: 12, // 12 chat calls at FakeProvider's 1-cent default; embed costs 0
+      // 11 chat calls at the fake's one-cent default, in micro-dollars;
+      // the embedding call costs nothing.
+      cost_micros: 11 * ONE_CENT_IN_MICROS,
       steps_used: 5,
       approval_edit_distance: null, // never approved; stays out of the daily sample
     });
@@ -409,6 +402,10 @@ describe.skipIf(!dbUp)('V1 flow end to end', () => {
     expect(result.outcome).toBe('awaiting_approval');
     if (result.outcome !== 'awaiting_approval') return;
     const { runId, draftExternalId } = result;
+    // Null only for a ledger-only park (V2 compensation); a customer reply
+    // always carries a draft handle.
+    expect(draftExternalId).not.toBeNull();
+    if (draftExternalId === null) return;
 
     // Ledger: waiting on a person; nothing relayable yet.
     expect(await runRow(runId)).toMatchObject({ state: 'awaiting_approval' });
@@ -442,6 +439,8 @@ describe.skipIf(!dbUp)('V1 flow end to end', () => {
     // records the edit distance in the same commit as the state move.
     const finalBody = draft!.body + ' Thank you.';
     const approval = await approveRun(pool, runId, { finalBody });
+    expect(approval.outcome).toBe('approved');
+    if (approval.outcome !== 'approved') return;
     expect(approval).toEqual({
       outcome: 'approved',
       idemKey: deriveIdemKey({
@@ -492,6 +491,10 @@ describe.skipIf(!dbUp)('V1 flow end to end', () => {
     const result = await coordinateTicket(makeDeps(happyScript(), { egress: helpdesk }), replyInput(ticketId, 1n));
     if (result.outcome !== 'awaiting_approval') throw new Error(`unexpected ${result.outcome}`);
     const { runId, draftExternalId } = result;
+    // Null only for a ledger-only park (V2 compensation); a customer reply
+    // always carries a draft handle.
+    expect(draftExternalId).not.toBeNull();
+    if (draftExternalId === null) return;
 
     const idemKey = deriveIdemKey({
       actionClass: CUSTOMER_REPLY_ACTION_CLASS,
@@ -502,7 +505,7 @@ describe.skipIf(!dbUp)('V1 flow end to end', () => {
       fencedTransition(pool, {
         runId,
         state: 'resolved',
-        costCents: 12,
+        costMicros: 11,
         stepsUsed: 4,
         fromState: 'awaiting_approval',
         outbox: {
@@ -560,6 +563,10 @@ describe.skipIf(!dbUp)('V1 flow end to end', () => {
     const result = await coordinateTicket(makeDeps(happyScript(), { egress: helpdesk }), replyInput(ticketId, 1n));
     if (result.outcome !== 'awaiting_approval') throw new Error(`unexpected ${result.outcome}`);
     const { runId, draftExternalId } = result;
+    // Null only for a ledger-only park (V2 compensation); a customer reply
+    // always carries a draft handle.
+    expect(draftExternalId).not.toBeNull();
+    if (draftExternalId === null) return;
     const parkedBody = helpdesk.getDraft(draftExternalId)!.body;
 
     // A person edits the parked draft in the helpdesk, then approves with
@@ -569,6 +576,8 @@ describe.skipIf(!dbUp)('V1 flow end to end', () => {
     await helpdesk.editDraft(draftExternalId, editedBody);
 
     const approval = await approveRun(pool, runId, { readDraft: helpdesk });
+    expect(approval.outcome).toBe('approved');
+    if (approval.outcome !== 'approved') return;
     expect(approval.outcome).toBe('approved');
     const after = await runRow(runId);
     expect(after?.state).toBe('resolved');
@@ -612,9 +621,12 @@ describe.skipIf(!dbUp)('V1 flow end to end', () => {
     expect(rows).toHaveLength(1);
     const idemKey = rows[0]!.idem_key;
 
-    expect(await relayPending(pool, egress)).toEqual([
+    const relayed = await relayPending(pool, egress);
+    expect(relayed.map((r) => ({ idemKey: r.idemKey, outcome: r.outcome }))).toEqual([
       { idemKey, outcome: 'delivery_unknown_escalated' },
     ]);
+    // The relay decides DEC-30, so the record names the cause it decided on.
+    expect(relayed[0]?.sendError).toBeTruthy();
     expect(egress.attempts).toBe(1);
 
     // Ledger: the record states the uncertainty, the run left 'resolved'
@@ -647,7 +659,11 @@ describe.skipIf(!dbUp)('V1 flow end to end', () => {
     // Partial work kept (section 4.3): the run stopped where it stood when
     // the fence fired — classified, one model step spent.
     const after = await runRow(result.runId);
-    expect(after).toMatchObject({ state: 'classified', cost_cents: 9, steps_used: 1 });
+    expect(after).toMatchObject({
+      state: 'classified',
+      cost_micros: 9 * ONE_CENT_IN_MICROS,
+      steps_used: 1,
+    });
     expect(await ticketEpoch(ticketId)).toBe('999');
 
     const steps = await journalRows(result.runId);

@@ -13,6 +13,9 @@ import {
 } from './loader.js';
 
 const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
+
+// Read as text, not applied: assertDdlDimensionCompat inspects the shipped
+// vector(N) declaration against the pinned embedding model.
 const DDL = readFileSync(path.join(dbDir, '002_documents.sql'), 'utf8');
 
 function frontmatterOf(body: string): string {
@@ -129,8 +132,8 @@ describe('stripMarkdown', () => {
   });
 
   it('keeps fenced code contents but drops fence markers and inline markup', () => {
-    const md = 'Run this:\n\n```bash\nnpm run load-docs -- docs/\n```\n\nThen check `status`.';
-    expect(stripMarkdown(md)).toContain('npm run load-docs -- docs/');
+    const md = 'Run this:\n\n```bash\npnpm run load-docs -- docs/\n```\n\nThen check `status`.';
+    expect(stripMarkdown(md)).toContain('pnpm run load-docs -- docs/');
     expect(stripMarkdown(md)).not.toContain('```');
     expect(stripMarkdown(md)).toContain('Then check status.');
   });

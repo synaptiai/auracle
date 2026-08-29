@@ -136,3 +136,15 @@ describe('WebhookAdapter.normalize', () => {
     ).toThrow(TypeError);
   });
 });
+
+describe('conversation linkage (DEC-35)', () => {
+  it('offers no linkage, because the contract carries no reply chain', () => {
+    const result = normalize(baseEvent());
+
+    // The adapter declares supportsThreading false, so autonomy matches the
+    // capability it really has (DEC-06). The ticket id still groups a thread.
+    expect(adapter.capabilities.supportsThreading).toBe(false);
+    expect(result.linkage).toBeNull();
+    expect(result.sourceId).toBe('wh-evt-1');
+  });
+});

@@ -88,12 +88,19 @@ DEC that motivated each attack.
 
 ## Backstop coverage
 
-| Rule | Session backstop | CI backstop |
-|---|---|---|
-| Synthetic fixtures | PII validator hook | guardrails.yml job |
-| DEC citation on register changes | commit hook | guardrails.yml job + commit-msg hook |
-| No test edits during a bug fix | test-edit-lock hook | none |
-| Live database approval | live-db validator hook | none |
+| Rule | Session backstop | CI enforces the rule | CI tests the guard |
+|---|---|---|---|
+| Synthetic fixtures | PII validator hook | yes | yes |
+| DEC citation on register changes | commit hook | yes | yes |
+| No test edits during a bug fix | test-edit-lock hook | no | no |
+| Live database approval | live-db validator hook | no | yes |
+| Simplified Technical English | none | rules 1 and 2 | yes |
+| An intent file for each change | none | no | no |
+| Fixtures match the generator | none | yes | n/a |
 
-Two rules have no CI surface because their context exists only inside a
-session. State this when it matters. Do not pretend coverage exists.
+Two columns exist because they differ. A job that runs a guard's own cases
+proves the guard works. It does not apply the rule to the pull request.
+
+Three rules are not enforced on a pull request. Two of them depend on context
+that exists only inside a session. One has no checker at all. State this
+when it matters. Do not pretend coverage exists.

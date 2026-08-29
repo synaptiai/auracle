@@ -14,14 +14,24 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Every changed text file, not an include list. Real customer data added
+      # to docs/, a test file or src/test-support/ used to be caught by
+      # neither this job nor the in-session hook.
       - name: Synthetic fixture rule (DEC-18)
         run: |
-          files=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.sha }} -- fixtures/)
+          files=$(git diff --name-only --diff-filter=d \
+            ${{ github.event.pull_request.base.sha }}...${{ github.sha }} \
+            | grep -Ev '^(pnpm-lock\.yaml|package-lock\.json)$' \
+            | grep -Ev '\.(png|jpg|jpeg|gif|svg|ico|pdf|woff2?|ttf|zip|gz)$' \
+            || true)
           if [ -n "$files" ]; then
             python3 .claude/hooks/fixtures_pii_guard.py $files
           else
-            echo "no fixture changes"
+            echo "no text files changed"
           fi
+
+      - name: Synthetic-fixture guard cases (DEC-18)
+        run: python3 .claude/hooks/test_fixtures_pii_guard.py
 
       - name: DEC citation on register changes (section 2)
         run: |
@@ -30,6 +40,21 @@ jobs:
 
       - name: Live-database guard cases (DEC-17, DEC-19)
         run: python3 .claude/hooks/test_live_db_approval.py
+
+      - name: DEC-citation guard cases (section 2)
+        run: python3 .claude/hooks/test_commit_dec_citation.py
+
+      # Rules 1 and 2 of the style convention only. Rules 3 to 5 need a
+      # reader, and no checker claims them. The file list is pinned, so a
+      # document under docs/internal/ never gates a pull request.
+      - name: Simplified Technical English (rules 1 and 2)
+        run: |
+          python3 scripts/ste-check.py \
+            README.md AGENTS.md CONTRIBUTING.md REVIEW.md \
+            docs/*.md intent/*.md fixtures/README.md
+
+      - name: STE checker cases
+        run: python3 scripts/test_ste_check.py
 
       # The test-edit-lock and live-database rules still block inside a
       # session only. The step above tests the live-database logic; it does

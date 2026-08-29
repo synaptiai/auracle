@@ -10,5 +10,8 @@ export default defineConfig({
     // Suites still truncate tables between cases within a run; running test
     // files in parallel corrupts their results.
     fileParallelism: false,
+    // The end-to-end hooks apply DDL and truncate against containers that
+    // may have just started; the 10s default is too tight on a loaded host.
+    hookTimeout: 60_000,
   },
 });

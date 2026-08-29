@@ -1,5 +1,5 @@
 // Consumer daemon entrypoint (section 4.3, DEC-27, DEC-28). Run via
-// `npm run consumer` (executes the built dist/coordinator/consumer-main.js).
+// `pnpm run consumer` (executes the built dist/coordinator/consumer-main.js).
 //
 // Configuration:
 // - CONSUMER_PARTITIONS   comma-separated partitions this process owns
@@ -41,8 +41,8 @@ import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.js';
 import type { EgressAdapter } from '../adapters/types.js';
 import { actionProfileFromEnv } from '../config/action-profile.js';
-import { loadDotEnv } from '../config/env.js';
-import { dbUrl } from '../db/config.js';
+import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
+import { requireDbUrl } from '../db/config.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { claimPartition, startConsumer } from './consumer.js';
 import type { CoordinatorDeps } from './coordinator.js';
@@ -109,7 +109,7 @@ async function main(): Promise<void> {
 
   // Deployment-time rebalance: bump every fence in the claimed partitions so
   // the previous owner's writes are refused (DEC-27 cost, DEC-28 safety).
-  const pool = new Pool({ connectionString: dbUrl(), max: 1 });
+  const pool = new Pool({ connectionString: requireDbUrl('the consumer'), max: 1 });
   let bumped = 0;
   for (const partition of partitions) {
     bumped += await claimPartition(pool, partition);
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
 
   const deps: CoordinatorDeps = {
     pool,
-    provider: new OpenRouterProvider({ apiKey }),
+    provider: new OpenRouterProvider({ apiKey, ...dataGuaranteeOption() }),
     taxonomy,
     capabilities: egress.capabilities,
     egress,
@@ -134,7 +134,9 @@ async function main(): Promise<void> {
     // long-lived daemon does not escalate everything once a fixed deadline
     // passes (DEC-25).
     limits: {
-      maxCostCents: 10_000,
+      // 100 USD in micro-dollars. The ceiling was 10 000 cents before the
+      // ledger moved to micro-dollars; the amount is unchanged.
+      maxCostMicros: 100_000_000,
       maxSteps: 50,
       get deadlineAt(): Date {
         return new Date(Date.now() + ticketDeadlineMs);

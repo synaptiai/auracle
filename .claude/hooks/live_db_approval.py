@@ -4,13 +4,73 @@ import json
 import re
 import sys
 
+# `migrate` is an ordinary English word and also appears in every path that
+# names the migration runner. It counts only as a command word: not after a
+# path separator (src/ledger/migrate.ts) and not before a file extension
+# (migrate.db.test.ts). `npm run db:migrate` still counts.
 DB_COMMAND = re.compile(
     r"\b(psql|pg_dump|pg_restore|createdb|dropdb|pscale|"
-    r"migrate|alembic|flyway)\b"
+    r"alembic|flyway)\b"
+    r"|(?<![\w/.-])migrate\b(?!\.[A-Za-z])"
+    r"|(?<=:)migrate\b(?!\.[A-Za-z])"
 )
+LOCAL_HOST = r"(?:localhost|127\.0\.0\.1|\[?::1\]?)"
+
+# A local target only counts where a host is actually named: after -h/--host,
+# or as the host part of a connection URI. Scanning the whole line let a
+# trailing comment grant the exemption.
 LOCAL_TARGET = re.compile(
-    r"(localhost|127\.0\.0\.1|::1|\-\-local|docker exec|DATABASE_URL=.*localhost)"
+    r"(?:-h\s*" + LOCAL_HOST + r"\b"
+    r"|--host(?:=|\s+)" + LOCAL_HOST + r"\b"
+    r"|://(?:[^/@\s]*@)?" + LOCAL_HOST + r"[:/\s]"
+    r"|--local\b)"
 )
+
+# An explicitly named non-local host is never exempt, whatever else the line
+# says. Checked first, so a container cannot launder a remote target.
+REMOTE_HOST = re.compile(
+    r"(?:-h\s*(?!" + LOCAL_HOST + r"\b)[A-Za-z0-9_.-]+"
+    r"|--host(?:=|\s+)(?!" + LOCAL_HOST + r"\b)[A-Za-z0-9_.-]+"
+    r"|://(?:[^/@\s]*@)?(?!" + LOCAL_HOST + r")[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+)"
+)
+
+# A container client is a local target only when the command it runs names
+# no remote host of its own.
+DOCKER_LOCAL = re.compile(r"\bdocker\s+exec\b")
+
+# Reading text that mentions a database tool is not touching a database.
+READ_ONLY = re.compile(
+    r"^\s*(?:grep|rg|ag|ack|cat|bat|head|tail|less|more|wc|nl|file|stat"
+    r"|find|fd|ls|tree|cut|sort|uniq|column"
+    r"|git\s+(?:grep|log|show|diff|status|blame|ls-files))\b"
+)
+
+
+def strip_comments(command: str) -> str:
+    """Drop trailing comments so a comment cannot grant an exemption."""
+    out = []
+    for line in command.splitlines():
+        quote = None
+        cut = len(line)
+        for i, ch in enumerate(line):
+            if quote is not None:
+                if ch == quote:
+                    quote = None
+            elif ch in "\'\"":
+                quote = ch
+            elif ch == "#" and (i == 0 or line[i - 1].isspace()):
+                cut = i
+                break
+        out.append(line[:cut])
+    return "\n".join(out)
+
+
+def is_read_only(command: str) -> bool:
+    """True when every line is a read-only text command."""
+    lines = [ln for ln in command.splitlines() if ln.strip()]
+    if not lines:
+        return False
+    return all(READ_ONLY.match(ln) for ln in lines)
 
 HEREDOC_START = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
@@ -74,10 +134,16 @@ def main() -> int:
     # A body that an interpreter runs counts against the command.
     if not DB_COMMAND.search(strip_heredoc_bodies(raw)):
         return 0
-    # No body ever grants the exemption, so this test reads the command lines
-    # alone. Otherwise `psql -h prod <<EOF ... localhost ... EOF` would pass.
-    if LOCAL_TARGET.search(strip_heredoc_bodies(raw, always=True)):
+    # Reading a file that names a database tool touches no database.
+    if is_read_only(strip_heredoc_bodies(raw, always=True)):
         return 0
+    # No body ever grants the exemption, so these tests read the command lines
+    # alone. Comments go too: a trailing comment is not a connection target.
+    lines = strip_comments(strip_heredoc_bodies(raw, always=True))
+    # An explicitly named remote host wins over every exemption below.
+    if not REMOTE_HOST.search(lines):
+        if LOCAL_TARGET.search(lines) or DOCKER_LOCAL.search(lines):
+            return 0
 
     print(
         "BLOCKED: this command may touch a live database (DEC-17, DEC-19). "

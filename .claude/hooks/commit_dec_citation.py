@@ -14,6 +14,30 @@ import sys
 
 ARCH_DOC = "docs/v1-architecture.md"
 DEC_CITE = re.compile(r"DEC-\d{2}")
+
+
+def known_decs():
+    """DEC ids the register actually defines. An unknown id is not a citation."""
+    try:
+        with open(ARCH_DOC, errors="replace") as handle:
+            return set(DEC_CITE.findall(handle.read()))
+    except OSError:
+        return set()
+
+
+def cites_a_real_dec(message):
+    """True when the message names at least one DEC the register defines.
+
+    A bare pattern match accepted DEC-99, which cites nothing. The eval suite
+    already validates its own citations against the register; this brings the
+    commit rule up to the same standard.
+    """
+    known = known_decs()
+    cited = set(DEC_CITE.findall(message))
+    if not cited:
+        return False
+    # No register on disk (a bare checkout): fall back to the pattern.
+    return bool(cited & known) if known else True
 ROUTE = (
     "Route to approval: cite the affected DEC IDs in the message. If the "
     "change contradicts a DEC, stop and raise it instead."
@@ -28,7 +52,7 @@ def commit_msg_mode(msg_file):
     if ARCH_DOC not in staged:
         sys.exit(0)
     message = open(msg_file, errors="replace").read()
-    if not DEC_CITE.search(message):
+    if not cites_a_real_dec(message):
         print(f"BLOCKED: this commit changes {ARCH_DOC} but cites no DEC ID "
               "(section 2). The register is the design authority.",
               file=sys.stderr)
@@ -37,20 +61,43 @@ def commit_msg_mode(msg_file):
     sys.exit(0)
 
 
+def commit_message(sha):
+    """Subject and body. The commit-msg hook reads the whole message, so this
+    mode must too: a DEC cited in the body is the normal case."""
+    return subprocess.run(
+        ["git", "log", "-1", "--format=%s%n%b", sha],
+        capture_output=True, text=True,
+    ).stdout
+
+
+def changed_files(sha):
+    """Files the commit contributed, merges included.
+
+    `git show --name-only` prints no file list for a merge, so a merge that
+    edited the register was never checked. `--first-parent` overcorrected:
+    it reports a merge as if it made every change on the branch, so the
+    synthetic merge commit GitHub builds for a pull request failed on a
+    citation its generated message can never carry.
+
+    `--cc` reports what a merge changed against *every* parent, which is the
+    evil merge and nothing else. A clean merge lists no file and passes. A
+    merge that edited the register on its own still lists it and is checked.
+    An ordinary commit is unaffected.
+    """
+    return subprocess.run(
+        ["git", "diff-tree", "-r", "--no-commit-id", "--name-only",
+         "--cc", sha],
+        capture_output=True, text=True,
+    ).stdout.split()
+
+
 def range_mode(rng):
     shas = subprocess.run(
         ["git", "rev-list", rng], capture_output=True, text=True,
     ).stdout.split()
     bad = []
     for sha in shas:
-        out = subprocess.run(
-            ["git", "show", "--format=%s", "--name-only", sha],
-            capture_output=True, text=True,
-        ).stdout
-        lines = [l for l in out.strip().split("\n")]
-        subject = lines[0] if lines else ""
-        files = lines[1:]
-        if ARCH_DOC in files and not DEC_CITE.search(subject):
+        if ARCH_DOC in changed_files(sha) and not cites_a_real_dec(commit_message(sha)):
             bad.append(sha[:10])
     if bad:
         print(f"BLOCKED: commits {', '.join(bad)} change {ARCH_DOC} without "
@@ -71,7 +118,7 @@ def hook_mode():
     ).stdout.split()
     if ARCH_DOC not in staged:
         sys.exit(0)
-    if not DEC_CITE.search(cmd):
+    if not cites_a_real_dec(cmd):
         print(
             f"BLOCKED: this commit changes {ARCH_DOC} but cites no DEC ID "
             "(section 2). The register is the design authority.",

@@ -6,9 +6,16 @@
 //
 // Decisions obeyed: DEC-18 (synthetic only), DEC-22 (documents + canonical
 // resolutions), DEC-23 (owner + review_by), DEC-31 (770 cases split 385/385),
-// section 4.11 (taxonomy of at most 25 intents including 'other').
+// DEC-35 (a case belongs to a conversation), DEC-39 (later turns exist and
+// are not scored), section 4.11 (taxonomy of at most 25 intents including
+// 'other').
+//
+// A case is one turn. Both halves hold 385 cases, and a conversation never
+// straddles them.
 
 import { readFileSync } from 'node:fs';
+
+import type { ConversationTurn } from '../coordinator/coordinator.js';
 
 export const FIT_COUNT = 385;
 export const REPORT_COUNT = 385;
@@ -47,6 +54,102 @@ export interface GoldTicket {
   disposition: Disposition;
   subject: string;
   body: string;
+  /**
+   * DEC-35: the conversation this case belongs to. Every synthetic fixture
+   * carries one. A real-corpus record does not, because the exporter folds a
+   * whole thread into one record and models no turns yet.
+   */
+  conversation_id?: string;
+  /** DEC-39: the turn this case records, counting from 1. */
+  turn_number?: number;
+  /**
+   * DEC-37: the agent reply that answered this turn, as the next turn's
+   * prompt sees it. Absent on the last turn of a conversation, which no
+   * recorded reply followed.
+   *
+   * This mirrors `turn.approved_reply_text` in the ledger: a reply takes no
+   * turn number of its own, it hangs off the turn it answered.
+   */
+  agent_reply?: string;
+}
+
+/**
+ * True when a case records a first turn (DEC-39).
+ *
+ * Replay scores routing against an observable disposition (DEC-32). A later
+ * turn's disposition reflects the whole conversation, not the decision the
+ * replay is scoring, so scoring it would credit or blame the wrong choice.
+ * Those cases move to the online metrics instead; none is lost.
+ *
+ * The filter binds every job that scores a disposition: the replay and the
+ * gold report. It does not bind the calibration job, which scores a
+ * prediction against the case's own intent label. A later turn carries a
+ * valid label, and section 6 requires the agreement threshold to be re-fitted
+ * on multi-turn data.
+ *
+ * An absent `turn_number` counts as a first turn. Every synthetic fixture
+ * carries one; a real-corpus record does not until the exporter models turns.
+ */
+export function isFirstTurn(ticket: GoldTicket): boolean {
+  return ticket.turn_number === undefined || ticket.turn_number === 1;
+}
+
+/**
+ * The text one case presents to a model.
+ *
+ * The runtime composes it in `src/intake/adapter.ts`, stores it in
+ * `turn.body_text`, and reads it back as history. An offline job that
+ * composed it differently would classify a prompt the runtime never sends, so
+ * this is the one definition and every job calls it.
+ */
+export function goldCaseText(ticket: GoldTicket): string {
+  return `${ticket.subject}\n\n${ticket.body}`;
+}
+
+/**
+ * Prior turns of each case's conversation, keyed by ticket id (DEC-37).
+ *
+ * The runtime builds this shape from the ledger (`conversationHistory` in
+ * src/coordinator/consumer.ts). An offline job that classifies a later turn
+ * must send the same shape, or it fits a number for a prompt the runtime
+ * never issues. One earlier turn contributes the customer's message and, when
+ * the history recorded one, the agent reply that answered it.
+ *
+ * The customer entry is the whole message, subject included, because
+ * `turn.body_text` holds `ticket.ticketText` and that is what the runtime
+ * renders. Dropping the subject here would have quietly broken that parity.
+ *
+ * A case that carries no conversation is absent from the map, and callers
+ * read an empty history for it.
+ */
+export function conversationHistories(
+  tickets: readonly GoldTicket[],
+): Map<string, ConversationTurn[]> {
+  // Narrowed once here, so the ordering and rendering below need no
+  // non-null assertion on a field the schema leaves optional.
+  const byConversation = new Map<string, { ticket: GoldTicket; turnNumber: number }[]>();
+  for (const ticket of tickets) {
+    const { conversation_id: conversationId, turn_number: turnNumber } = ticket;
+    if (conversationId === undefined || turnNumber === undefined) continue;
+    const entry = { ticket, turnNumber };
+    const existing = byConversation.get(conversationId);
+    if (existing) existing.push(entry);
+    else byConversation.set(conversationId, [entry]);
+  }
+
+  const histories = new Map<string, ConversationTurn[]>();
+  for (const turns of byConversation.values()) {
+    const ordered = [...turns].sort((a, b) => a.turnNumber - b.turnNumber);
+    const prior: ConversationTurn[] = [];
+    for (const { ticket, turnNumber } of ordered) {
+      histories.set(ticket.ticket_id, [...prior]);
+      prior.push({ turnNumber, author: 'customer', bodyText: goldCaseText(ticket) });
+      if (ticket.agent_reply !== undefined) {
+        prior.push({ turnNumber, author: 'agent', bodyText: ticket.agent_reply });
+      }
+    }
+  }
+  return histories;
 }
 
 export type GoldSplit = 'fit' | 'report';
@@ -119,7 +222,17 @@ export function loadTaxonomy(): Taxonomy {
 
 /** Load one half of the gold set. */
 export function loadGoldHalf(split: GoldSplit): GoldFile {
-  const raw = readJson(`gold/${split}.json`);
+  return validateGoldHalf(readJson(`gold/${split}.json`), split);
+}
+
+/**
+ * Validate an unknown value as one half of the gold set.
+ *
+ * Split out of `loadGoldHalf` so the rules can be tested against a malformed
+ * corpus without writing one to disk. Same shape as
+ * `validateCalibrationArtifact`: the loader is a thin read around it.
+ */
+export function validateGoldHalf(raw: unknown, split: GoldSplit): GoldFile {
   assert(isRecord(raw), `${split}.json is not an object`);
   assert(raw['split'] === split, `gold/${split}.json declares split ${String(raw['split'])}`);
   assert(raw['source'] === 'synthetic', `gold/${split}.json is not marked synthetic`);
@@ -129,6 +242,7 @@ export function loadGoldHalf(split: GoldSplit): GoldFile {
   for (const ticket of tickets) validateTicket(ticket);
   const file = raw as unknown as GoldFile;
   assert(file.count === file.tickets.length, `gold/${split}.json count does not match its tickets`);
+  assertConversations(file, split);
   return file;
 }
 
@@ -141,6 +255,15 @@ export function loadGoldSet(): { fit: GoldFile; report: GoldFile } {
   const fitIds = new Set(fit.tickets.map((t) => t.ticket_id));
   for (const ticket of report.tickets) {
     assert(!fitIds.has(ticket.ticket_id), `ticket ${ticket.ticket_id} appears in both halves`);
+  }
+  // A conversation that straddled the halves would put one thread on both
+  // sides of the split, which is the leak DEC-31 forbids.
+  const fitConversations = new Set(fit.tickets.map((t) => t.conversation_id));
+  for (const ticket of report.tickets) {
+    assert(
+      !fitConversations.has(ticket.conversation_id),
+      `conversation ${String(ticket.conversation_id)} appears in both halves (DEC-31)`,
+    );
   }
   return { fit, report };
 }
@@ -173,11 +296,103 @@ export function validateTicketFields(ticket: Record<string, unknown>): void {
   );
 }
 
+/**
+ * Synthetic-corpus checks on top of the shared field rules.
+ *
+ * The conversation fields live here, not in `validateTicketFields`, for the
+ * reason that function's own comment gives: the shared validator keeps only
+ * what every consumer shares. The real-corpus exporter models no turns yet,
+ * and a record that carried a fabricated `turn_number: 1` would state
+ * something about real history that nobody checked.
+ */
 function validateTicket(value: unknown): void {
   assert(isRecord(value), 'ticket is not an object');
   assert(typeof value['ticket_id'] === 'string' && value['ticket_id'].startsWith('SYN-'), 'ticket_id must start with SYN-');
-  assert(value['source'] === 'synthetic', `ticket ${String(value['ticket_id'])} is not marked synthetic`);
+  const id = String(value['ticket_id']);
+  assert(value['source'] === 'synthetic', `ticket ${id} is not marked synthetic`);
+  const conversationId = value['conversation_id'];
+  assert(
+    typeof conversationId === 'string' && conversationId.startsWith('CONV-SYN-'),
+    `ticket ${id} conversation_id must start with CONV-SYN- (DEC-35)`,
+  );
+  const turnNumber = value['turn_number'];
+  assert(
+    typeof turnNumber === 'number' && Number.isInteger(turnNumber) && turnNumber >= 1,
+    `ticket ${id} turn_number is not a positive integer (DEC-38)`,
+  );
+  const reply = value['agent_reply'];
+  assert(
+    reply === undefined || (typeof reply === 'string' && reply.length > 0),
+    `ticket ${id} agent_reply is present but empty`,
+  );
   validateTicketFields(value);
+}
+
+/**
+ * Checks that the cases of one half describe whole, well-formed
+ * conversations: unique ticket ids, turns numbered 1..N with no gap and no
+ * repeat, and one intent, queue and disposition per conversation.
+ *
+ * The last rule is what makes DEC-39 meaningful. A disposition belongs to the
+ * thread, so a half that gave two turns of one thread different outcomes would
+ * make "score the first turn" a different claim from case to case.
+ */
+function sameDisposition(a: Disposition, b: Disposition): boolean {
+  return (
+    a.escalated === b.escalated
+    && a.macro_applied === b.macro_applied
+    && a.refund_issued === b.refund_issued
+    && a.first_reply_minutes === b.first_reply_minutes
+  );
+}
+
+function assertConversations(file: GoldFile, split: GoldSplit): void {
+  const ids = new Set<string>();
+  const byConversation = new Map<string, GoldTicket[]>();
+  for (const ticket of file.tickets) {
+    assert(!ids.has(ticket.ticket_id), `gold/${split}.json repeats ticket ${ticket.ticket_id}`);
+    ids.add(ticket.ticket_id);
+    const conversationId = ticket.conversation_id ?? '';
+    const existing = byConversation.get(conversationId);
+    if (existing) existing.push(ticket);
+    else byConversation.set(conversationId, [ticket]);
+  }
+
+  for (const [conversationId, turns] of byConversation) {
+    const numbers = turns.map((turn) => turn.turn_number ?? 0).sort((a, b) => a - b);
+    numbers.forEach((number, index) => {
+      assert(
+        number === index + 1,
+        `conversation ${conversationId} numbers its turns ${numbers.join(',')}, expected 1..${numbers.length}`,
+      );
+    });
+    const first = turns.find((turn) => turn.turn_number === 1);
+    assert(first !== undefined, `conversation ${conversationId} has no first turn`);
+    for (const turn of turns) {
+      assert(
+        turn.intent === first.intent && turn.queue === first.queue,
+        `conversation ${conversationId} changes intent or queue between turns`,
+      );
+      assert(
+        sameDisposition(turn.disposition, first.disposition),
+        `conversation ${conversationId} changes its disposition between turns`,
+      );
+    }
+    // Exactly the turns another turn follows carry a reply. The thread ends
+    // without one, because the reply to the last turn is what a run would
+    // produce. A missing reply on an earlier turn would silently drop the
+    // agent half of the history the prompts read (DEC-37).
+    const lastNumber = Math.max(...numbers);
+    for (const turn of turns) {
+      const isLast = turn.turn_number === lastNumber;
+      assert(
+        (turn.agent_reply === undefined) === isLast,
+        isLast
+          ? `conversation ${conversationId} records a reply to its last turn`
+          : `conversation ${conversationId} turn ${String(turn.turn_number)} has a later turn but no agent_reply`,
+      );
+    }
+  }
 }
 
 /** Load and validate the retrieval corpus of documents and canonical resolutions. */

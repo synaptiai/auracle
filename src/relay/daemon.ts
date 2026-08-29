@@ -82,7 +82,17 @@ export function startRelayDaemon(options: RelayDaemonOptions): RelayDaemon {
       if (stopped) break;
       try {
         const result = await relayOne(pool, adapter, row);
-        log({ event: 'record_relayed', at: now(), idemKey: result.idemKey, outcome: result.outcome });
+        log({
+          event: 'record_relayed',
+          at: now(),
+          idemKey: result.idemKey,
+          outcome: result.outcome,
+          // The cause, when there was one. Without it a rotated SMTP
+          // credential reads as a steady stream of left_pending_retry and
+          // nothing names the authentication failure.
+          ...(result.sendError === undefined ? {} : { sendError: result.sendError }),
+          ...(result.readBackError === undefined ? {} : { readBackError: result.readBackError }),
+        });
       } catch (error) {
         // One bad record must not stop the scan. It stays pending, so a
         // later scan picks it up once whatever made it throw is fixed.

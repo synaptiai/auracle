@@ -5,7 +5,7 @@
  *   - runs parked in `escalated` or `awaiting_approval` state, joined with
  *     the `escalate` journal step (the coordinator's EscalationReason) and
  *     the `park` journal step (the gated draft, where present)
- *   - outbox records stuck in `delivery_unknown` (DEC-30: no retry, the
+ *   - outbox records stuck in `delivery_unknown` or `malformed` (DEC-30: no retry, the
  *     approval path), even when the run state read differs
  *
  * Every statement is a SELECT. The module never writes, so it is safe to
@@ -20,13 +20,13 @@ export interface EscalationItem {
   readonly state: string;
   /** Coordinator reason from the `escalate` step; null when not journaled. */
   readonly reason: string | null;
-  /** Outbox status when a record is stuck in `delivery_unknown`. */
+  /** Outbox status when a record is stuck: `delivery_unknown` or `malformed`. */
   readonly outboxStatus: string | null;
   /** Park-record fields; present only on the gated path. */
   readonly draftExternalId: string | null;
   readonly actionClass: string | null;
   readonly delivery: string | null;
-  readonly costCents: number;
+  readonly costMicros: number;
   readonly stepsUsed: number;
 }
 
@@ -41,7 +41,7 @@ const RUN_SELECT = `
   SELECT r.run_id            AS run_id,
          r.ticket_id         AS ticket_id,
          r.state             AS state,
-         r.cost_cents        AS cost_cents,
+         r.cost_micros        AS cost_micros,
          r.steps_used        AS steps_used,
          esc.result ->> 'reason'          AS reason,
          park.result ->> 'draftExternalId' AS draft_external_id,
@@ -55,7 +55,7 @@ const RUN_SELECT = `
       ON park.run_id = r.run_id AND park.step_id = 'park'
     LEFT JOIN LATERAL (
       SELECT status FROM outbox
-       WHERE run_id = r.run_id AND status = 'delivery_unknown'
+       WHERE run_id = r.run_id AND status IN ('delivery_unknown', 'malformed')
        LIMIT 1
     ) o ON TRUE
    WHERE r.state IN ('escalated', 'awaiting_approval')`;
@@ -67,7 +67,7 @@ const OUTBOX_SELECT = `
   SELECT o.run_id            AS run_id,
          r.ticket_id         AS ticket_id,
          r.state             AS state,
-         r.cost_cents        AS cost_cents,
+         r.cost_micros        AS cost_micros,
          r.steps_used        AS steps_used,
          esc.result ->> 'reason'           AS reason,
          park.result ->> 'draftExternalId' AS draft_external_id,
@@ -80,7 +80,7 @@ const OUTBOX_SELECT = `
       ON esc.run_id = r.run_id AND esc.step_id = 'escalate'
     LEFT JOIN step_journal park
       ON park.run_id = r.run_id AND park.step_id = 'park'
-   WHERE o.status = 'delivery_unknown'`;
+   WHERE o.status IN ('delivery_unknown', 'malformed')`;
 
 function toItem(row: Record<string, unknown>): EscalationItem {
   return {
@@ -92,7 +92,7 @@ function toItem(row: Record<string, unknown>): EscalationItem {
     draftExternalId: (row['draft_external_id'] as string | null) ?? null,
     actionClass: (row['action_class'] as string | null) ?? null,
     delivery: (row['delivery'] as string | null) ?? null,
-    costCents: row['cost_cents'] as number,
+    costMicros: row['cost_micros'] as number,
     stepsUsed: row['steps_used'] as number,
   };
 }
@@ -133,10 +133,15 @@ export async function listEscalations(
     // Arrival time of the ticket is the only clock the ledger keeps for a
     // run (intake.enqueued_at). Items with no intake row are kept: a
     // missing proxy timestamp must not hide an escalation.
+    //
+    // MIN, because a ticket may hold several queued messages since the key
+    // became (ticket_id, message_id). A bare scalar subquery threw as soon
+    // as a second message arrived, and the earliest arrival is the one that
+    // answers "has this ticket been waiting since the cutoff".
     params.push(cutoff.toISOString());
     where += `
        AND (NOT EXISTS (SELECT 1 FROM intake WHERE intake.ticket_id = r.ticket_id)
-            OR (SELECT enqueued_at FROM intake WHERE intake.ticket_id = r.ticket_id) >= $1::timestamptz)`;
+            OR (SELECT MIN(enqueued_at) FROM intake WHERE intake.ticket_id = r.ticket_id) >= $1::timestamptz)`;
   }
 
   const runs = await pool.query(RUN_SELECT + where + ' ORDER BY r.ticket_id', params);
@@ -160,9 +165,16 @@ export async function listEscalations(
   let items = [...byRun.values()];
   if (filters?.state !== undefined) {
     const wanted = filters.state;
+    // 'delivery_unknown' names the stuck-outbox view, not one status value.
+    // db/006 added 'malformed' and parkEscalated writes it, but nothing read
+    // it: such a run showed up with a null outbox status, indistinguishable
+    // from any other escalation, and this filter excluded it outright.
     items =
       wanted === 'delivery_unknown'
-        ? items.filter((item) => item.outboxStatus === 'delivery_unknown')
+        ? items.filter(
+            (item) =>
+              item.outboxStatus === 'delivery_unknown' || item.outboxStatus === 'malformed',
+          )
         : items.filter((item) => item.state === wanted);
   }
   return items.sort((a, b) => (a.ticketId < b.ticketId ? -1 : a.ticketId > b.ticketId ? 1 : 0));

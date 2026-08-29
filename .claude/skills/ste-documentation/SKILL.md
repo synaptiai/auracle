@@ -25,20 +25,14 @@ English. Prompts, scripts and configuration do not.
 Run this from the repository root against each changed markdown file:
 
 ```sh
-python3 - <<'EOF'
-import re, sys
-fail = False
-for path in sys.argv[1:]:
-    text = re.sub(r'```.*?```', '', open(path).read(), flags=re.S)
-    text = re.sub(r'`[^`]*`', 'x', text)
-    for s in re.split(r'(?<=[.!?])\s+', text):
-        words = len(re.findall(r"[A-Za-z0-9_-]+", s))
-        if words > 20:
-            fail = True
-            print(f"{path}: {words} words: {s[:90]}")
-sys.exit(1 if fail else 0)
-EOF
+python3 scripts/ste-check.py FILE [FILE ...]
 ```
+
+The script is the only copy of this check. `.github/workflows/guardrails.yml`
+runs it on the shipped documents, and `scripts/test_ste_check.py` holds its
+cases. It decides rules 1 and 2 only.
+
+Rules 3 to 5 need a reader. A clean exit is not coverage of those three.
 
 A non-zero exit means a sentence is above the limit. Rewrite the sentence. Do
 not split it with a semicolon. Use two sentences.

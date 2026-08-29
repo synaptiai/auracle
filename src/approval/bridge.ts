@@ -10,6 +10,8 @@
  *
  * 1. A `disclosure` field that is not empty (DEC-14).
  * 2. Machine-readable provenance metadata (DEC-33).
+ * 3. A park idempotency key that is not empty (DEC-24), so a retry after a
+ *    crash returns the first draft instead of parking a second one.
  *
  * The bridge refuses a reply that lacks either item. Refusal happens before
  * any adapter call, so a refused reply never reaches the target system.
@@ -38,6 +40,10 @@ export function validateGatedReply(reply: DraftReply): readonly string[] {
 
   if (typeof reply.disclosure !== 'string' || reply.disclosure.trim().length === 0) {
     reasons.push('disclosure must not be empty (DEC-14)');
+  }
+
+  if (typeof reply.idemKey !== 'string' || reply.idemKey.trim().length === 0) {
+    reasons.push('idemKey must not be empty (DEC-24)');
   }
 
   reasons.push(...validateProvenance(reply.provenance));

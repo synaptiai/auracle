@@ -3,9 +3,8 @@
 // recovery. Database-backed cases run against Dockerized Postgres and are
 // skipped when it is down; the scan-failure case needs no database at all.
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,16 +20,13 @@ import type { PendingOutboxRow } from './relay.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
-const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
-const DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
-const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 /** Egress fake whose send and read-back behaviour a test scripts per case. */
 class ScriptedEgress implements EgressAdapter {
@@ -143,19 +139,18 @@ async function runState(idemKey: string): Promise<string> {
   return rows.rows[0]!.state as string;
 }
 
-describe.skipIf(!dbUp)('relay daemon loop', () => {
+describe('relay daemon loop', () => {
   let daemon: RelayDaemon | null = null;
 
   beforeEach(async () => {
-    await pool.query(DDL);
-    await pool.query(TIMING_DDL);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
+    await applyLedgerSchema(pool);
+    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
   });
 
   afterEach(async () => {
     await daemon?.stop();
     daemon = null;
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
+    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
   });
 
   it('a poisoned record escalates alone and the scan still relays the next one', async () => {
@@ -339,6 +334,11 @@ describe('relay daemon scan-level resilience', () => {
       createDraft: async () => ({ draftExternalId: 'd' }),
       sendDraft: async () => ({ externalId: 'e' }),
       readBack: async () => ({ state: 'not_found' }),
+      // Never called here, but present so the fake satisfies the whole
+      // port: a missing method should be a type error, not a surprise.
+      performAction: async () => {
+        throw new Error('performAction is not part of this scenario');
+      },
     };
 
     const logs: RelayLogEntry[] = [];

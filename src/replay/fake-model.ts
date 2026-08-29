@@ -62,6 +62,8 @@ export function predictIntent(text: string): string {
 
 /** Stand-in provider: same answer on every sample, no network, no state. */
 export class ReplayStubProvider implements ModelProvider {
+  /** This is the offline stand-in; no published number may claim otherwise. */
+  readonly kind = 'stub' as const;
   readonly chatCalls: ChatRequest[] = [];
 
   async complete(
@@ -78,7 +80,7 @@ export class ReplayStubProvider implements ModelProvider {
     this.chatCalls.push(record);
     return {
       text: predictIntent(userMessage?.content ?? ''),
-      costCents: 0,
+      costMicros: 0,
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       servedModelVer: call.modelVer,
     };

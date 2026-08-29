@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { FakeProvider } from '../models/fake.js';
+import { FakeProvider, ONE_CENT_IN_MICROS } from '../models/fake.js';
 import type { RetrievedDoc } from '../retriever/types.js';
 import { composeAnswer } from './composer.js';
 
@@ -46,7 +46,7 @@ describe('composeAnswer (section 4.7, DEC-07)', () => {
       { text: 'Refunds post within five business days.', docId: 'doc-1' },
       { text: 'Orders ship within two days.', docId: 'doc-2' },
     ]);
-    expect(result.costCents).toBe(1);
+    expect(result.costMicros).toBe(ONE_CENT_IN_MICROS);
     expect(result.servedModelVer).toBe('test-model-1');
   });
 
@@ -109,7 +109,7 @@ describe('composeAnswer (section 4.7, DEC-07)', () => {
 
     expect(result.abstained).toBe(true);
     expect(result.staleDocuments).toEqual([]);
-    expect(result.costCents).toBe(0);
+    expect(result.costMicros).toBe(0);
     expect(result.servedModelVer).toBeNull();
     // No script entry was consumed because no call happened.
     expect(provider.calls).toHaveLength(0);
@@ -122,5 +122,46 @@ describe('composeAnswer (section 4.7, DEC-07)', () => {
 
     expect(provider.calls[0]?.promptVer).toBe('composer-prompt-1');
     expect(provider.calls[0]?.modelVer).toBe('test-model-1');
+  });
+});
+
+describe('conversation history in the prompt (DEC-37)', () => {
+  it('offers earlier turns as context, ahead of the retrieved documents', async () => {
+    const provider = new FakeProvider([
+      { text: '[doc:d1] Resets take 15 minutes.' },
+    ]);
+
+    await composeAnswer(
+      {
+        question: 'Any update?',
+        docs: [doc({ docId: 'd1', body: 'Resets take 15 minutes.' })],
+        history: [{ turnNumber: 1, author: 'customer', bodyText: 'I cannot sign in.' }],
+      },
+      { provider, promptVer: 'p@1', modelVer: 'm@1' },
+    );
+
+    const prompt = provider.calls[0]?.messages?.at(-1)?.content ?? '';
+    expect(prompt).toContain('I cannot sign in.');
+    expect(prompt.indexOf('I cannot sign in.')).toBeLessThan(prompt.indexOf('Documents:'));
+  });
+
+  it('abstains on an answer that rests on history alone', async () => {
+    // History is context, never evidence. A claim citing no retrieved doc
+    // fails the parser, so the composer abstains (DEC-07).
+    const provider = new FakeProvider([
+      { text: 'You told me earlier that the tiles were broken.' },
+    ]);
+
+    const result = await composeAnswer(
+      {
+        question: 'Any update?',
+        docs: [doc({ docId: 'd1', body: 'Resets take 15 minutes.' })],
+        history: [{ turnNumber: 1, author: 'customer', bodyText: 'Tiles broken.' }],
+      },
+      { provider, promptVer: 'p@1', modelVer: 'm@1' },
+    );
+
+    expect(result.abstained).toBe(true);
+    expect(result.draft).toBeNull();
   });
 });

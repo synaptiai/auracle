@@ -44,7 +44,7 @@ class ConstantProvider implements ModelProvider {
   async complete(call: ChatRequest & PinnedVersions): Promise<ChatResult> {
     return {
       text: this.intentId,
-      costCents: 0,
+      costMicros: 0,
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       servedModelVer: call.modelVer,
     };
@@ -173,6 +173,27 @@ describe('runReplay wires classifier -> policy -> scoring over the split halves'
     expect(withB.actionMatchRate).toBeCloseTo(0.5, 12);
   });
 
+  // DEC-39: a later turn's disposition belongs to the whole conversation, so
+  // it can neither fit a route nor score one. Both halves carry a turn 2 here
+  // and neither reaches the model or the counts.
+  it('excludes later turns from fitting and from scoring (DEC-39)', async () => {
+    const provider = new ReplayStubProvider();
+    const conversation = (id: string, overrides: Partial<GoldTicket>): GoldTicket[] => [
+      makeTicket({ conversation_id: id, turn_number: 1, ...overrides }),
+      makeTicket({ conversation_id: id, turn_number: 2, ...overrides, subject: 'LATER TURN subject', body: 'LATER TURN body' }),
+    ];
+    const fit = goldFile('fit', conversation('CONV-FIT-1', { queue: 'desk-c' }));
+    const report = goldFile('report', conversation('CONV-REP-1', { queue: 'desk-c' }));
+
+    const result = await runReplay({ provider, taxonomy: TAXONOMY, pins: PINS, fit, report });
+
+    expect(result.fitTickets).toBe(1);
+    expect(result.reportTickets).toBe(1);
+    expect(JSON.stringify(provider.chatCalls)).not.toContain('LATER TURN');
+    // Nine samples for the fit turn and nine for the report turn, and no more.
+    expect(provider.chatCalls).toHaveLength(CLASSIFIER_K * 2);
+  });
+
   it('feeds only fit-half text to the model during fitting (DEC-31)', async () => {
     const provider = new ReplayStubProvider();
     const fit = goldFile('fit', [makeTicket({ subject: 'FIT subject', body: 'FIT body' })]);
@@ -182,7 +203,9 @@ describe('runReplay wires classifier -> policy -> scoring over the split halves'
     const sentTexts = provider.chatCalls.map((call) => call.messages?.at(-1)?.content ?? '');
     expect(sentTexts.length).toBeGreaterThan(0);
     for (const text of sentTexts) {
-      expect(text).toBe('FIT subject\nFIT body');
+      // The runtime composes subject and body this way and stores the result
+      // in turn.body_text, so every offline job must send the same text.
+      expect(text).toBe('FIT subject\n\nFIT body');
     }
   });
 });
@@ -212,9 +235,17 @@ describe('end-to-end over the committed synthetic corpus', () => {
       report: gold.report,
     });
 
+    // DEC-39: the counts name the scored first turns, not the size of a half.
+    // Counted straight off turn_number, not through isFirstTurn, so a filter
+    // that stopped filtering cannot satisfy both sides of the assertion.
+    const openers = (tickets: readonly GoldTicket[]): number =>
+      tickets.filter((ticket) => ticket.turn_number === 1).length;
     expect(report.method).toBe('action-match');
-    expect(report.fitTickets).toBe(385);
-    expect(report.reportTickets).toBe(385);
+    expect(report.fitTickets).toBe(openers(gold.fit.tickets));
+    expect(report.reportTickets).toBe(openers(gold.report.tickets));
+    // The corpus carries later turns, so the filter must have removed some.
+    expect(report.reportTickets).toBeGreaterThan(0);
+    expect(report.reportTickets).toBeLessThan(gold.report.tickets.length);
     // Every fitted route names a queue; every key is something the stub model can predict.
     expect(Object.keys(report.routeMap).length).toBeGreaterThan(0);
     for (const queue of Object.values(report.routeMap)) {

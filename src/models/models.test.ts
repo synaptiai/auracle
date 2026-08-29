@@ -19,8 +19,8 @@ describe('assertSamplingTemperature', () => {
 describe('FakeProvider', () => {
   it('returns scripted chat responses in order and records each call', async () => {
     const provider = new FakeProvider([
-      { text: 'billing_refund', costCents: 3 },
-      { text: 'shipping_status', costCents: 2 },
+      { text: 'billing_refund', costMicros: 3 },
+      { text: 'shipping_status', costMicros: 2 },
     ]);
 
     const first = await provider.complete({
@@ -37,7 +37,7 @@ describe('FakeProvider', () => {
     });
 
     expect(first.text).toBe('billing_refund');
-    expect(first.costCents).toBe(3);
+    expect(first.costMicros).toBe(3);
     expect(second.text).toBe('shipping_status');
     expect(second.servedModelVer).toBe('test/model-a');
 
@@ -52,7 +52,7 @@ describe('FakeProvider', () => {
   });
 
   it('scripts embeddings and echoes the pinned versions', async () => {
-    const provider = new FakeProvider([{ vectors: [[1, 2], [3, 4]], costCents: 0 }]);
+    const provider = new FakeProvider([{ vectors: [[1, 2], [3, 4]], costMicros: 0 }]);
 
     const result = await provider.embed({
       input: ['doc one', 'doc two'],
@@ -61,7 +61,7 @@ describe('FakeProvider', () => {
     });
 
     expect(result.vectors).toEqual([[1, 2], [3, 4]]);
-    expect(result.costCents).toBe(0);
+    expect(result.costMicros).toBe(0);
     expect(provider.calls[0]).toMatchObject({
       kind: 'embed',
       promptVer: 'embed@1',
@@ -158,14 +158,15 @@ describe('OpenRouterProvider (injected fetch, no live calls)', () => {
     });
 
     expect(result.text).toBe('the routed intent');
-    // DEC-25: USD fraction to integer cents for the cost limit.
-    expect(result.costCents).toBe(0);
+    // DEC-25: 0.000841 USD is 841 micro-dollars. In cents it rounded to 0,
+    // so the ledger recorded nothing for a call that really cost money.
+    expect(result.costMicros).toBe(841);
     expect(result.usage.totalTokens).toBe(1205);
     // DEC-26: record the version the server actually served.
     expect(result.servedModelVer).toBe('openai/gpt-4o-mini-2024-07-18');
   });
 
-  it('rounds a larger cost into honest cents and omits zdr unless configured', async () => {
+  it('keeps a sub-cent cost instead of rounding it away, and omits zdr unless configured', async () => {
     let capturedBody: Record<string, unknown> | undefined;
     const fetchImpl = (async (
       _input: string | URL | Request,
@@ -182,8 +183,9 @@ describe('OpenRouterProvider (injected fetch, no live calls)', () => {
       promptVer: 'p@1',
       modelVer: 'openai/gpt-4o-mini',
     });
-    // 0.000841 USD * 100 -> 0 cents; use the raw check below for rounding.
-    expect(result.costCents).toBe(0);
+    // 0.000841 USD is 841 micro-dollars. The old cents unit reported 0 here,
+    // which is what made the DEC-25 limit compare a sum of zeros.
+    expect(result.costMicros).toBe(841);
 
     const body = capturedBody!;
     expect(body.model).toBe('openai/gpt-4o-mini');
@@ -289,7 +291,7 @@ describe('OpenRouterProvider (injected fetch, no live calls)', () => {
     });
 
     expect(result.vectors).toEqual([[0.1, 0.2], [0.3, 0.4]]);
-    expect(result.costCents).toBe(2); // 1M tokens at $0.02/MTok
+    expect(result.costMicros).toBe(20_000); // 1M tokens at $0.02/MTok
     expect(result.servedModelVer).toBe('openai/text-embedding-3-small');
   });
 
@@ -323,5 +325,39 @@ describe('OpenRouterProvider (injected fetch, no live calls)', () => {
         modelVer: 'm@1',
       }),
     ).rejects.toThrow(/\(429\)/);
+  });
+
+  it('aborts a request that never returns, so a run cannot hang forever', async () => {
+    // The run's clock limit (DEC-25) is only checked between steps, so a
+    // provider that never answers would park the run with nothing to stop
+    // it. Every request therefore carries its own deadline.
+    const seen: Array<AbortSignal | undefined> = [];
+    const fetchImpl = ((_url: string, init?: RequestInit) => {
+      seen.push(init?.signal ?? undefined);
+      // Never resolves on its own; only the abort signal ends this.
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(init.signal?.reason ?? new Error('aborted'));
+        });
+      });
+    }) as typeof fetch;
+
+    const provider = new OpenRouterProvider({
+      apiKey: 'k',
+      fetchImpl,
+      requestTimeoutMs: 20,
+    });
+
+    await expect(
+      provider.complete({
+        messages: [{ role: 'user', content: 'hi' }],
+        temperature: 0.7,
+        promptVer: 'p@1',
+        modelVer: 'm@1',
+      }),
+    ).rejects.toThrow(/exceeded 20ms/);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeInstanceOf(AbortSignal);
   });
 });

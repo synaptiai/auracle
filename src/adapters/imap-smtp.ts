@@ -33,6 +33,7 @@ import { randomUUID } from 'node:crypto';
 import { ImapFlow } from 'imapflow';
 import { createTransport } from 'nodemailer';
 import { normalizeMime } from './mime.js';
+import { PermanentEgressError } from './types.js';
 import type {
   AdapterCapabilities,
   DeliveryState,
@@ -109,7 +110,17 @@ export class ImapSmtpAdapter implements IngressAdapter {
       email.messageId ??
       null;
 
+    // Mail carries message-level linkage: In-Reply-To and References name
+    // the parent, even when the customer starts a new thread. Thread root
+    // first, so the ledger meets the oldest turn first.
+    const priorMessageIds = [
+      ...email.references,
+      ...(email.inReplyTo === null ? [] : [email.inReplyTo]),
+    ].filter((id) => id.length > 0);
+
     return {
+      sourceId: event.sourceId,
+      linkage: priorMessageIds.length > 0 ? { priorMessageIds } : null,
       ticket: {
         ticketId: deriveTicketId(threadRoot, event.sourceId),
         subject: email.subject ?? '',
@@ -242,6 +253,8 @@ export interface OutgoingReply {
   readonly body: string;
   readonly disclosure?: string;
   readonly provenance?: DraftReply['provenance'];
+  /** DEC-24 park key, written as a header so a retry can find this draft. */
+  readonly idemKey?: string;
 }
 
 /**
@@ -249,6 +262,9 @@ export interface OutgoingReply {
  * format without a mailbox: ASCII-safe headers, a UTF-8 base64 body, real
  * threading headers, and X-Auracle provenance/disclosure headers (DEC-33).
  */
+/** Carries the park's idempotency key on the draft (DEC-24). */
+export const IDEM_KEY_HEADER = 'X-Auracle-Idem-Key';
+
 export function buildDraftMessage(reply: OutgoingReply): Buffer {
   requireNonEmpty('reply.fromAddress', reply.fromAddress);
   requireNonEmpty('reply.toAddress', reply.toAddress);
@@ -272,6 +288,12 @@ export function buildDraftMessage(reply: OutgoingReply): Buffer {
   }
   if (reply.references.length > 0) {
     lines.push(`References: ${reply.references.map((id) => `<${id}>`).join(' ')}`);
+  }
+  if (reply.idemKey !== undefined && reply.idemKey !== '') {
+    // The park's DEC-24 key, written so a retry can find this draft again.
+    // A mailbox has no primary key, so the header is the only handle that
+    // survives a crash between the append and the ledger write.
+    lines.push(headerLine(IDEM_KEY_HEADER, reply.idemKey));
   }
   if (reply.provenance) {
     lines.push(
@@ -314,26 +336,59 @@ interface ThreadOriginator {
  * skipped: a mis-addressed reply is the worst failure mode of an email
  * egress, so the lookup fails closed.
  */
-async function findThreadOriginator(
-  client: ImapFlow,
+// The lookup needs three imapflow calls and ignores what mailboxOpen answers.
+// Naming them structurally keeps the fault behaviour of `search` and `fetchOne`
+// — both answer `false` rather than throwing — under the compiler's eye.
+export type ThreadLookupClient = Pick<ImapFlow, 'search' | 'fetchOne'> & {
+  mailboxOpen(path: string): Promise<unknown>;
+};
+
+export async function findThreadOriginator(
+  client: ThreadLookupClient,
   ticketId: string,
 ): Promise<ThreadOriginator> {
   if (ticketId.startsWith('no-id-')) {
-    throw new Error(
+    // Permanent by construction: the id is a content digest, so no retry ever
+    // turns it into an addressable Message-ID. A plain Error here would spend
+    // the whole intake attempt ceiling on a case that can never clear.
+    throw new PermanentEgressError(
       `email ticket '${ticketId}' carries no message id, so the reply cannot be addressed`,
     );
   }
   await client.mailboxOpen('INBOX');
   const matches = await client.search({ header: { 'message-id': ticketId } }, { uid: true });
-  const candidates = matches !== false ? matches : [];
-  for (const uid of candidates) {
+  // imapflow answers `false` when the server refuses the SEARCH, and the same
+  // for a connection that dropped before the command ran. That is a fault,
+  // not an empty mailbox, and it clears on a retry. Reading it as "no such
+  // thread" sends the ticket down the permanent path below, which skips the
+  // intake attempt ceiling: one window of IMAP faults would escalate every
+  // ticket parking during it. findDraftByIdemKey draws the same distinction.
+  if (matches === false) {
+    throw new Error(
+      `IMAP refused the header SEARCH for message-id '${ticketId}' in INBOX; `
+        + 'the reply cannot be addressed on this attempt and the ticket retries',
+    );
+  }
+  for (const uid of matches) {
     const fetched = await client.fetchOne(String(uid), { source: true }, { uid: true });
-    const source = fetched !== false ? fetched.source : undefined;
+    if (fetched === false) {
+      // Same rule as the SEARCH: the server answered nothing for a UID it had
+      // just listed. Skipping it would read a transient FETCH fault as a
+      // missing thread root and escalate a ticket that a retry addresses.
+      throw new Error(
+        `IMAP refused the FETCH of uid ${uid} while addressing '${ticketId}'; `
+          + 'the reply cannot be addressed on this attempt and the ticket retries',
+      );
+    }
+    const source = fetched.source;
     if (!source) continue;
     const parsed = normalizeMime(source.toString());
     if (parsed.messageId !== ticketId) continue; // substring hit, not this thread
     if (parsed.fromAddress === null) {
-      throw new Error(`message '${ticketId}' has no From address to reply to`);
+      // The message's headers do not change, so no retry finds an address.
+      throw new PermanentEgressError(
+        `message '${ticketId}' has no From address to reply to`,
+      );
     }
     return {
       fromAddress: parsed.fromAddress,
@@ -342,14 +397,82 @@ async function findThreadOriginator(
       references: parsed.references,
     };
   }
-  throw new Error(
+  // The thread root arrived before this ticket existed, so a later scan does
+  // not find it either: it was archived, moved or deleted. A person has to
+  // reconcile that, which is what escalation is for.
+  throw new PermanentEgressError(
     `no message in INBOX carries message-id '${ticketId}', so the reply cannot be addressed`,
   );
 }
 
 /** Creates the drafts mailbox when it does not exist yet; a no-op when it does. */
 async function ensureMailbox(client: ImapFlow, path: string): Promise<void> {
-  await client.mailboxCreate(path).catch(() => undefined);
+  await client.mailboxCreate(path).catch((error: unknown) => {
+    // ALREADYEXISTS is the ordinary case and is not a fault. Anything else
+    // (a bad mailbox name, a revoked create permission) would otherwise
+    // surface later as a misleading append error.
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/alreadyexists|already exists/i.test(message)) {
+      console.error(JSON.stringify({ event: 'mailbox_create_failed', path, error: message }));
+    }
+  });
+}
+
+/**
+ * The UID of a draft already parked under this key, or null.
+ *
+ * IMAP has no primary key for an appended message, so the park's DEC-24 key
+ * travels as a header and this searches for it.
+ *
+ * A search that fails is NOT the same as a search that found nothing. This
+ * used to swallow every throw and answer null, which `createDraft` reads as
+ * "no draft exists" and appends a second one. The ledger-side guard does not
+ * cover that: `priorParkUnresolved` matches a journal row still in status
+ * 'parking', so a park that reached 'done', or a retry before the journal
+ * write, passes it untouched. This guard is the whole defence, so it fails
+ * loudly and the park fails with it.
+ */
+async function findDraftByIdemKey(
+  client: ImapFlow,
+  mailbox: string,
+  idemKey: string,
+): Promise<string | null> {
+  await client.mailboxOpen(mailbox);
+  const uids = await client.search(
+    { header: { [IDEM_KEY_HEADER.toLowerCase()]: idemKey } },
+    { uid: true },
+  );
+  // imapflow answers `false` when the server refuses the SEARCH. That is not
+  // "no draft exists" — reading it as one makes this guard fail open and
+  // appends a second draft in front of the customer.
+  if (uids === false) {
+    throw new Error(
+      `IMAP refused a header SEARCH for the park key in ${mailbox}; `
+        + 'the repeat-park guard cannot run, so the park fails rather than risking a second draft',
+    );
+  }
+  if (!Array.isArray(uids) || uids.length === 0) return null;
+  // SEARCH HEADER matches substrings (RFC 3501), so a hit is a candidate and
+  // not a match. findThreadOriginator re-verifies for the same reason: the
+  // worst failure of an email egress is showing somebody the wrong message.
+  const verified: number[] = [];
+  for await (const message of client.fetch(
+    { uid: uids.join(',') },
+    { uid: true, headers: [IDEM_KEY_HEADER.toLowerCase()] },
+    { uid: true },
+  )) {
+    const header = message.headers?.toString() ?? '';
+    if (headerValue(header, IDEM_KEY_HEADER) === idemKey) verified.push(message.uid);
+  }
+  if (verified.length === 0) return null;
+  // Lowest UID is the first draft appended under this key.
+  return String(Math.min(...verified));
+}
+
+/** The exact value of one header in a raw header block, or null. */
+function headerValue(block: string, name: string): string | null {
+  const match = new RegExp(`^${name}:\\s*(.*)$`, 'im').exec(block);
+  return match?.[1]?.trim() ?? null;
 }
 
 /**
@@ -386,9 +509,26 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
     requireNonEmpty('reply.body', reply.body);
     // The adapter refuses to hold a reply with no disclosure (DEC-14).
     requireNonEmpty('reply.disclosure', reply.disclosure);
+    requireNonEmpty('reply.idemKey', reply.idemKey);
 
     return this.withImap(async (client) => {
       const thread = await findThreadOriginator(client, reply.ticketExternalId);
+      // The recipient this adapter resolved must be the participant the ledger
+      // recorded. A message that names another thread's Message-ID gets a new
+      // conversation (db/012) but keeps that forged id as its ticket, so this
+      // lookup would otherwise address the reply to the person who wrote the
+      // original — the exact delivery the membership check exists to stop.
+      const expected = reply.expectedRecipient;
+      if (
+        expected !== undefined
+        && expected !== null
+        && expected.toLowerCase() !== thread.fromAddress.toLowerCase()
+      ) {
+        throw new PermanentEgressError(
+          `refusing to park a reply: the conversation records ${expected} but thread `
+            + `${reply.ticketExternalId} is addressed to ${thread.fromAddress}`,
+        );
+      }
       const subject = /^re:/i.test(thread.subject)
         ? thread.subject
         : `Re: ${thread.subject}`;
@@ -401,9 +541,23 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
         body: reply.body,
         disclosure: reply.disclosure,
         provenance: reply.provenance,
+        idemKey: reply.idemKey,
       });
 
       await ensureMailbox(client, this.config.draftsMailbox);
+
+      // A repeat park must return the first draft, never append a second:
+      // the customer must not see two. The mailbox has no primary key, so
+      // the search is by the header the previous append wrote.
+      const existing = await findDraftByIdemKey(
+        client,
+        this.config.draftsMailbox,
+        reply.idemKey,
+      );
+      if (existing !== null) {
+        return { draftExternalId: existing };
+      }
+
       const appended = await client.append(this.config.draftsMailbox, raw, ['\\Draft']);
       if (!appended || typeof appended.uid !== 'number') {
         throw new Error(
@@ -481,13 +635,17 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
     });
   }
 
-  async performAction(): Promise<{ readonly externalId: string }> {
+  async performAction(
+    _actionClass: string,
+    _payload: Record<string, unknown>,
+    _idemKey: string,
+  ): Promise<{ readonly externalId: string }> {
     throw new AdapterCapabilityError(
       'smtp cannot apply automatic internal writes: supportsIdempotencyKey is false',
     );
   }
 
-  async readBack(): Promise<DeliveryState> {
+  async readBack(_ref: { readonly idemKey: string }): Promise<DeliveryState> {
     throw new AdapterCapabilityError(
       'smtp cannot read delivery state back: supportsReadBack is false (DEC-30)',
     );

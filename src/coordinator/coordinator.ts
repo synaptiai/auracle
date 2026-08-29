@@ -22,6 +22,7 @@ import type { Pool } from 'pg';
 
 import type { EgressAdapter, ReplyProvenance } from '../adapters/types.js';
 import { parkGatedReply } from '../approval/bridge.js';
+import { PermanentEgressError } from '../adapters/types.js';
 import { classifyTicket } from '../classifier/classifier.js';
 import { composeAnswer } from '../composer/composer.js';
 import { checkGroundedness } from '../groundedness/groundedness.js';
@@ -34,7 +35,7 @@ import { deriveIdemKey } from '../ledger/keys.js';
 import type { ModelProvider, PinnedVersions } from '../models/provider.js';
 import { evaluatePolicy } from '../policy/policy.js';
 import type { AdapterCapabilities, RiskTier } from '../policy/policy.js';
-import { COMPENSATION_ACTION_CLASS } from '../relay/relay.js';
+import { COMPENSATION_ACTION_CLASS } from '../adapters/types.js';
 import { hybridSearch } from '../retriever/retriever.js';
 import type { RetrievedDoc } from '../retriever/types.js';
 
@@ -53,14 +54,18 @@ export type ActiveRunState = (typeof RUN_STATES)[number];
 export type TerminalRunState = 'resolved' | 'escalated' | 'superseded' | 'abandoned';
 
 /**
- * DEC-27: hash(ticket_id) % N gives the partition. One consumer owns each
- * partition, so two runs on one ticket cannot occur together in normal
+ * DEC-36: hash(partition key) % N gives the partition. One consumer owns each
+ * partition, so two runs of one conversation cannot occur together in normal
  * operation; the fencing epoch covers the rebalance overlap.
+ *
+ * The key is the conversation id for a V2 turn, so every turn of one
+ * conversation lands on one consumer. A V1-era run and a replay run have no
+ * conversation, and pass the ticket id instead (DEC-27 behaviour).
  */
-export function partitionOf(ticketId: string, partitionCount: number): number {
+export function partitionOf(partitionKey: string, partitionCount: number): number {
   let hash = 0x811c9dc5;
-  for (let i = 0; i < ticketId.length; i++) {
-    hash ^= ticketId.charCodeAt(i);
+  for (let i = 0; i < partitionKey.length; i++) {
+    hash ^= partitionKey.charCodeAt(i);
     hash = Math.imul(hash, 0x01000193);
   }
   return (hash >>> 0) % partitionCount;
@@ -68,7 +73,7 @@ export function partitionOf(ticketId: string, partitionCount: number): number {
 
 /** DEC-25 limits. Reaching one escalates the run; it is never an error. */
 export interface RunLimits {
-  maxCostCents: number;
+  maxCostMicros: number;
   maxSteps: number;
   deadlineAt: Date;
 }
@@ -129,6 +134,52 @@ export interface CoordinateInput {
    * the intake row. Absent for callers with no queue.
    */
   enqueuedAt?: Date;
+  /**
+   * DEC-28: the partition the intake row was filed under. The run row must
+   * record the same one, because `claimPartition` bumps a ticket's fence by
+   * joining through `run.partition`. Recomputing it here instead would use
+   * this process's PARTITION_COUNT, and enqueue and consume read that
+   * variable independently; a mismatch would make the rebalance bump the
+   * wrong fences and silently stop protecting the ticket. Absent for
+   * callers with no queue, which then fall back to the computed value.
+   */
+  partition?: number;
+  /**
+   * DEC-38: the turn that requested this action. Absent for a caller with no
+   * conversation, whose keys then keep their V1 form.
+   */
+  turnNumber?: number;
+  /**
+   * DEC-35: the conversation this turn belongs to. Null on a V1-era run and
+   * on a replay run, which have no conversation; the partition key then
+   * falls back to the ticket id.
+   */
+  conversationId?: string | null;
+  /**
+   * DEC-35: the participant the conversation records. Passed to the egress so
+   * the recipient it resolves is checked against the ledger, never against the
+   * ticket id alone.
+   */
+  customerAddress?: string | null;
+  /**
+   * Prior turns of this conversation, oldest first. Empty on a first turn.
+   *
+   * DEC-37: the classifier and the composer read it. The gates never do, so
+   * history can never stand in for retrieved evidence.
+   */
+  history?: readonly ConversationTurn[];
+}
+
+/**
+ * One earlier turn of a conversation, as the prompts see it (DEC-37).
+ *
+ * Text only: the gates never read history, so nothing here can stand in for
+ * retrieved evidence.
+ */
+export interface ConversationTurn {
+  turnNumber: number;
+  author: 'customer' | 'agent' | 'system';
+  bodyText: string;
 }
 
 export type EscalationReason =
@@ -136,7 +187,10 @@ export type EscalationReason =
   | 'limit_steps'
   | 'limit_clock'
   | 'composer_abstained'
-  | 'policy_escalated';
+  | 'policy_escalated'
+  | 'park_unresolved'
+  /** The egress refused the action and a retry can never clear it. */
+  | 'egress_refused';
 
 export type CoordinateOutcome =
   | { runId: string; outcome: 'resolved' }
@@ -145,8 +199,12 @@ export type CoordinateOutcome =
   | { runId: string; outcome: 'superseded' }
   | { runId: string; outcome: 'stale_epoch'; highestAcceptedEpoch: bigint };
 
+/**
+ * Step count for the run. Cost is not here: it lives in the meter, which
+ * wraps the provider and is the single reader for the DEC-25 limit and for
+ * every journal write.
+ */
 interface Progress {
-  costCents: number;
   stepsUsed: number;
 }
 
@@ -159,21 +217,21 @@ function meterProvider(provider: ModelProvider): {
   provider: ModelProvider;
   cost: () => number;
 } {
-  let costCents = 0;
+  let costMicros = 0;
   return {
     provider: {
       async complete(call) {
         const result = await provider.complete(call);
-        costCents += result.costCents;
+        costMicros += result.costMicros;
         return result;
       },
       async embed(call) {
         const result = await provider.embed(call);
-        costCents += result.costCents;
+        costMicros += result.costMicros;
         return result;
       },
     },
-    cost: () => costCents,
+    cost: () => costMicros,
   };
 }
 
@@ -188,6 +246,35 @@ function replyProvenanceFor(pins: PinnedVersions): ReplyProvenance {
     promptVer: pins.promptVer,
     generatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * True when an earlier run on this ticket began parking a draft and never
+ * recorded the outcome.
+ *
+ * `createDraft` mutates the target system before the ledger learns the draft
+ * handle. A crash in that window leaves a draft nobody can name: the journal
+ * row is still 'parking' and carries no handle. Parking again would put a
+ * second draft in front of the customer, so the retry escalates instead and
+ * a person reconciles the one that is already there.
+ */
+async function priorParkUnresolved(
+  pool: Pool,
+  ticketId: string,
+  runId: string,
+): Promise<boolean> {
+  const rows = await pool.query(
+    `SELECT 1
+       FROM step_journal sj
+       JOIN run r ON r.run_id = sj.run_id
+      WHERE r.ticket_id = $1
+        AND sj.step_id = 'park'
+        AND sj.status = 'parking'
+        AND sj.run_id <> $2
+      LIMIT 1`,
+    [ticketId, runId],
+  );
+  return rows.rows.length > 0;
 }
 
 /**
@@ -212,7 +299,7 @@ export async function coordinateTicket(
   }
 
   const runId = randomUUID();
-  const progress: Progress = { costCents: 0, stepsUsed: 0 };
+  const progress: Progress = { stepsUsed: 0 };
   const meter = meterProvider(deps.provider);
 
   // Run creation through the existing ledger insert path. No outbox record:
@@ -223,7 +310,10 @@ export async function coordinateTicket(
     {
       runId,
       ticketId: input.ticketId,
-      partition: partitionOf(input.ticketId, deps.partitionCount),
+      partition:
+        input.partition
+        ?? partitionOf(input.conversationId ?? input.ticketId, deps.partitionCount),
+      ...(input.conversationId == null ? {} : { conversationId: input.conversationId }),
       epoch: input.epoch,
       state: 'received',
       promptVer: deps.pins.promptVer,
@@ -242,7 +332,7 @@ export async function coordinateTicket(
   }
 
   const limitHit = (): EscalationReason | null => {
-    if (meter.cost() >= deps.limits.maxCostCents) return 'limit_cost';
+    if (meter.cost() >= deps.limits.maxCostMicros) return 'limit_cost';
     if (progress.stepsUsed >= deps.limits.maxSteps) return 'limit_steps';
     if (Date.now() >= deps.limits.deadlineAt.getTime()) return 'limit_clock';
     return null;
@@ -250,7 +340,7 @@ export async function coordinateTicket(
 
   const journalStart = async (stepId: string): Promise<void> => {
     await deps.pool.query(
-      `INSERT INTO step_journal (run_id, step_id, status, prompt_ver, model_ver, cost_cents)
+      `INSERT INTO step_journal (run_id, step_id, status, prompt_ver, model_ver, cost_micros)
        VALUES ($1, $2, 'started', $3, $4, $5)`,
       [runId, stepId, deps.pins.promptVer, deps.pins.modelVer, meter.cost()],
     );
@@ -262,7 +352,7 @@ export async function coordinateTicket(
     result: Record<string, unknown>,
   ): Promise<void> => {
     await deps.pool.query(
-      `UPDATE step_journal SET status = $3, result = $4, cost_cents = $5
+      `UPDATE step_journal SET status = $3, result = $4, cost_micros = $5
        WHERE run_id = $1 AND step_id = $2`,
       [runId, stepId, status, JSON.stringify(result), meter.cost()],
     );
@@ -277,7 +367,7 @@ export async function coordinateTicket(
     const r = await fencedTransition(deps.pool, {
       runId,
       state,
-      costCents: meter.cost(),
+      costMicros: meter.cost(),
       stepsUsed: progress.stepsUsed,
       ...(outbox === undefined ? {} : { outbox }),
     });
@@ -311,6 +401,7 @@ export async function coordinateTicket(
   const classification = await classifyTicket(meter.provider, {
     taxonomy: deps.taxonomy,
     ticketText: input.ticketText,
+    history: input.history ?? [],
     ...deps.pins,
   });
   progress.stepsUsed++;
@@ -360,7 +451,7 @@ export async function coordinateTicket(
 
   await journalStart('compose');
   const composed = await composeAnswer(
-    { question: input.ticketText, docs },
+    { question: input.ticketText, docs, history: input.history ?? [] },
     { provider: meter.provider, ...deps.pins },
   );
   progress.stepsUsed++;
@@ -383,8 +474,15 @@ export async function coordinateTicket(
   if (gateLimit !== null) return stopEscalated(gateLimit);
 
   await journalStart('gate');
+  // The composer's own claim partition, not a re-split of the joined draft.
+  // Every claim here already carries a citation the composer resolved to a
+  // retrieved document (DEC-07), so the coverage denominator is fixed by the
+  // composer rather than chosen by a second model call.
   const grounded = await checkGroundedness(
-    { draft: composed.draft, retrievedTexts: docs.map((doc) => doc.body) },
+    {
+      claims: composed.claims.map((claim) => claim.text),
+      retrievedTexts: docs.map((doc) => doc.body),
+    },
     { provider: meter.provider, versions: deps.pins },
   );
   const intent = deps.taxonomy.intents.find((i) => i.id === classification.intentId);
@@ -401,9 +499,9 @@ export async function coordinateTicket(
     action: {
       isWrite: true,
       isCustomerVisible: input.isCustomerVisible,
-      // V2: compensation of an irreversible action always gates (DEC-03),
-      // whatever the gates read. Derived from the class, so a caller
-      // cannot mark a compensation reversible.
+      // DEC-34: an irreversible action always gates, whatever the gates
+      // read. Derived from the class, so a caller cannot mark a
+      // compensation reversible.
       isIrreversible: input.actionClass === COMPENSATION_ACTION_CLASS,
     },
   });
@@ -422,10 +520,11 @@ export async function coordinateTicket(
     await journalStart('park');
 
     if (!input.isCustomerVisible) {
-      // V2: compensation of an irreversible action (DEC-03). No adapter
-      // call: a compensation has no customer-visible draft to park in the
-      // helpdesk (DEC-11), and approval queues a `performAction` record,
-      // not a `sendDraft` one. The composed text is the rationale a
+      // DEC-34: a gated write with no customer draft parks in the ledger.
+      // No adapter call: such a write has nothing to park in the helpdesk
+      // (DEC-11), and approval queues a `performAction` record, not a
+      // `sendDraft` one. Compensation is one case; a high-risk internal
+      // write and one with mediocre coverage reach this branch too. The composed text is the rationale a
       // person reads when approving; it also keeps the edit-distance
       // measurement (section 4.10) available. The action payload goes
       // into the journal verbatim: approveRun copies it onto the outbox.
@@ -435,6 +534,10 @@ export async function coordinateTicket(
         delivery: input.delivery,
         body: composed.draft,
         payload: input.actionPayload,
+        // DEC-38: approval derives the outbox key from this record, so the
+        // turn has to survive the wait. Without it, one request per turn
+        // would collapse into one key and the later turn would be dropped.
+        ...(input.turnNumber === undefined ? {} : { turnNumber: input.turnNumber }),
       });
       const awaiting = await transitionOrStop('awaiting_approval');
       if (awaiting !== null) return awaiting;
@@ -447,17 +550,83 @@ export async function coordinateTicket(
     // throws before any adapter call. The parked handle goes into the
     // journal, then the run stops at 'awaiting_approval'. No outbox record
     // yet: the approve entrypoint inserts it after a person approves.
-    const parked = await parkGatedReply(deps.egress, {
-      ticketExternalId: input.ticketId,
-      body: composed.draft,
-      disclosure: input.disclosure,
-      provenance: replyProvenanceFor(deps.pins),
+    //
+    // `createDraft` reaches the customer's helpdesk before the ledger can
+    // record what it created. An earlier run that died in that window left a
+    // draft with no handle in the journal; parking again would show the
+    // customer two. So the ledger states the intent first, and a run that
+    // finds an unresolved one escalates for a person to reconcile.
+    if (await priorParkUnresolved(deps.pool, input.ticketId, runId)) {
+      return stopEscalated('park_unresolved');
+    }
+    // DEC-24: the park's key comes from the action and the ticket, never
+    // from this run. Two runs of the same park derive the same key, so the
+    // adapter recognises the repeat and returns the first draft.
+    //
+    // CAUTION for whoever adds rejection. Nothing in the key distinguishes a
+    // retry from a fresh attempt after a person rejected the draft. V1 has
+    // no reject path, and the consumer acks the ticket out of intake once
+    // the run reaches 'awaiting_approval', so a second run on one ticket
+    // does not occur. A reject path changes that: the new run would derive
+    // this same key and the adapter would hand back the rejected draft. Add
+    // something that separates the attempts and is still action semantics,
+    // such as a digest of the composed body. Never the run id (DEC-24).
+    const parkKey = deriveIdemKey({
+      actionClass: `${input.actionClass}:park`,
+      ticketId: input.ticketId,
+      ...(input.turnNumber === undefined ? {} : { turnNumber: input.turnNumber }),
+      // DEC-35: the conversation the turn belongs to. A turn number alone is
+      // not unique — db/012 can put two conversations on one ticket.
+      conversationId: input.conversationId ?? null,
+      payload: input.actionPayload,
     });
+    await journalFinish('park', 'parking', {
+      actionClass: input.actionClass,
+      delivery: input.delivery,
+      parkKey,
+    });
+
+    // The 'parking' row above is the crash marker: it says a draft may exist
+    // that nobody can name, and priorParkUnresolved escalates every later run
+    // on this ticket while it stands. That is right for a crash and wrong for
+    // a throw we can see, which proves the adapter did NOT get as far as
+    // appending. Leaving the marker for one of those poisons the ticket
+    // permanently: every future run escalates park_unresolved with no draft
+    // anywhere to reconcile.
+    let parked;
+    try {
+      parked = await parkGatedReply(deps.egress, {
+        ticketExternalId: input.ticketId,
+        body: composed.draft,
+        disclosure: input.disclosure,
+        provenance: replyProvenanceFor(deps.pins),
+        idemKey: parkKey,
+        expectedRecipient: input.customerAddress ?? null,
+      });
+    } catch (error) {
+      await journalFinish('park', 'failed', {
+        actionClass: input.actionClass,
+        delivery: input.delivery,
+        parkKey,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // A permanent refusal must not go round the retry loop. The queue's
+      // attempt ceiling is sized for a transient fault, so a refused recipient
+      // would otherwise spend a full pipeline run and file an orphan run row
+      // on every scan until it hit that ceiling.
+      if (error instanceof PermanentEgressError) {
+        return stopEscalated('egress_refused');
+      }
+      throw error;
+    }
     progress.stepsUsed++;
     await journalFinish('park', 'done', {
       draftExternalId: parked.draftExternalId,
       actionClass: input.actionClass,
       delivery: input.delivery,
+      // DEC-38: the turn survives the wait, so approval derives the key this
+      // turn's request deserves.
+      ...(input.turnNumber === undefined ? {} : { turnNumber: input.turnNumber }),
       // The parked body, exactly as it entered the target system. The
       // approve entrypoint measures the person's edit against it
       // (section 4.10) from the ledger alone.
@@ -477,6 +646,11 @@ export async function coordinateTicket(
   const idemKey = deriveIdemKey({
     actionClass: input.actionClass,
     ticketId: input.ticketId,
+    // DEC-38: two turns asking for the same thing are two requests.
+    ...(input.turnNumber === undefined ? {} : { turnNumber: input.turnNumber }),
+      // DEC-35: the conversation the turn belongs to. A turn number alone is
+      // not unique — db/012 can put two conversations on one ticket.
+      conversationId: input.conversationId ?? null,
     payload: input.actionPayload,
   });
   progress.stepsUsed++;

@@ -8,17 +8,19 @@ function newAdapter(): HelpdeskAdapter {
   return new HelpdeskAdapter();
 }
 
-function reply(): DraftReply {
+function reply(overrides: Partial<DraftReply> = {}): DraftReply {
   return {
     ticketExternalId: 'HD-1001',
     body: 'The sign-in page accepts your address again.',
     disclosure: 'This reply was drafted with AI assistance.',
+    idemKey: 'park:t-1001:a',
     provenance: {
       generatedBy: 'auracle',
       modelId: 'test-model',
       promptVer: 'prompt-v1',
       generatedAt: '2026-01-01T00:00:00.000Z',
     },
+    ...overrides,
   };
 }
 
@@ -51,7 +53,7 @@ describe('HelpdeskAdapter capabilities', () => {
     const adapter = newAdapter();
 
     expect(() => {
-      (adapter.capabilities as Record<string, unknown>).supportsIdempotencyKey = false;
+      (adapter.capabilities as unknown as Record<string, unknown>).supportsIdempotencyKey = false;
     }).toThrow();
     expect(adapter.capabilities.supportsIdempotencyKey).toBe(true);
   });
@@ -79,19 +81,36 @@ describe('HelpdeskAdapter.createDraft', () => {
     });
   });
 
-  it('assigns distinct ids to successive drafts', async () => {
+  it('assigns distinct ids to drafts parked under distinct keys', async () => {
+    const adapter = newAdapter();
+
+    const first = await adapter.createDraft(reply({ idemKey: 'park:t-1001:a' }));
+    const second = await adapter.createDraft(reply({ idemKey: 'park:t-1001:b' }));
+
+    expect(second.draftExternalId).not.toBe(first.draftExternalId);
+  });
+
+  it('returns the first draft for a repeated park key (DEC-24)', async () => {
+    // createDraft reaches the target system before the ledger records the
+    // handle. A retry after a crash in that window must not put a second
+    // draft in front of the customer.
     const adapter = newAdapter();
 
     const first = await adapter.createDraft(reply());
-    const second = await adapter.createDraft(reply());
+    const repeat = await adapter.createDraft(reply({ body: 'A reworded retry.' }));
 
-    expect(second.draftExternalId).not.toBe(first.draftExternalId);
+    expect(repeat.draftExternalId).toBe(first.draftExternalId);
+    // The first draft stands: the repeat neither created nor overwrote one.
+    expect(adapter.getDraft(first.draftExternalId)?.body).toBe(
+      'The sign-in page accepts your address again.',
+    );
   });
 
   it.each([
     ['ticketExternalId is empty', { ...reply(), ticketExternalId: '' }],
     ['body is empty', { ...reply(), body: '' }],
     ['disclosure is empty (DEC-14)', { ...reply(), disclosure: '' }],
+    ['idemKey is empty (DEC-24)', { ...reply(), idemKey: '' }],
   ])('refuses a reply when %s', async (_label, bad) => {
     const adapter = newAdapter();
 
@@ -191,7 +210,11 @@ describe('HelpdeskAdapter.sendDraft and readBack', () => {
   it('returns the first delivery for a repeated idempotency key (DEC-24)', async () => {
     const adapter = newAdapter();
     const first = await adapter.createDraft(reply());
-    const second = await adapter.createDraft({ ...reply(), ticketExternalId: 'HD-1002' });
+    // A genuinely different park, so the two drafts stay distinct; the
+    // shared value under test is the outbox send key, not the park key.
+    const second = await adapter.createDraft(
+      reply({ ticketExternalId: 'HD-1002', idemKey: 'park:t-1002:a' }),
+    );
 
     const sentFirst = await adapter.sendDraft(first.draftExternalId, 'idem-1');
     const resent = await adapter.sendDraft(second.draftExternalId, 'idem-1');

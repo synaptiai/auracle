@@ -13,14 +13,12 @@
 //
 // Skipped when Docker or the ledger is unavailable. Synthetic data only
 // (DEC-18): example.test addresses throughout.
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+
+import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { ImapFlow } from 'imapflow';
 import { createTransport } from 'nodemailer';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, inject } from 'vitest';
 
 import { approveRun } from '../approval/approve.js';
 import { approvalEditDistance } from '../approval/edit_distance.js';
@@ -33,34 +31,26 @@ import { dbUrl } from '../db/config.js';
 import { FakeProvider } from '../models/fake.js';
 import type { FakeStep } from '../models/fake.js';
 import type { AdapterCapabilities as PolicyCapabilities } from '../policy/policy.js';
-import { CUSTOMER_REPLY_ACTION_CLASS, relayPending } from '../relay/relay.js';
+import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
+import { relayPending } from '../relay/relay.js';
 import { indexDocument } from '../retriever/retriever.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
-let greenmail: StartedTestContainer | undefined;
-try {
-  greenmail = await new GenericContainer('greenmail/standalone:2.1.12')
-    .withEnvironment({
-      GREENMAIL_OPTS:
-        '-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled',
-    })
-    .withExposedPorts(3025, 3143)
-    .withStartupTimeout(300_000)
-    .start();
-} catch {
-  greenmail = undefined;
-}
+// The GreenMail server is shared: src/test-support/global-setup.ts starts one
+// per run, waits until it answers IMAP, and provides its mapped address. This
+// suite used to start its own and guard itself with describe.skipIf, so a
+// container that failed to start produced a green run.
+const greenmail = inject('mail');
 
 afterAll(async () => {
-  await greenmail?.stop();
   await pool.end();
 });
 
@@ -88,7 +78,6 @@ function script(): FakeStep[] {
     ...Array.from({ length: 9 }, () => ({ text: 'complaint_resolution' })),
     { vectors: [VEC] },
     { text: '[doc:d1] We are sorry about the broken tiles. We ship a replacement today.' },
-    { text: '- We are sorry about the broken tiles. We ship a replacement today.' },
     { text: 'VERDICT: SUPPORTED' },
   ];
 }
@@ -107,7 +96,7 @@ function makeDeps(egress: EgressAdapter): CoordinatorDeps {
     egress,
     pins: PINS,
     limits: {
-      maxCostCents: 10_000,
+      maxCostMicros: 100_000_000,
       maxSteps: 50,
       deadlineAt: new Date(Date.now() + 60_000),
     },
@@ -129,18 +118,17 @@ function replyInput(epoch: bigint): CoordinateInput {
 }
 
 function egressAdapter(): SmtpEgressAdapter {
-  if (!greenmail) throw new Error('greenmail container not started');
   return new SmtpEgressAdapter({
     imap: {
-      host: greenmail.getHost(),
-      port: greenmail.getMappedPort(3143),
+      host: greenmail.host,
+      port: greenmail.imapPort,
       secure: false,
       user: SUPPORT_USER,
       pass: 'synthetic-password',
     },
     smtp: {
-      host: greenmail.getHost(),
-      port: greenmail.getMappedPort(3025),
+      host: greenmail.host,
+      port: greenmail.smtpPort,
       secure: false,
     },
     fromAddress: SUPPORT_USER,
@@ -160,10 +148,9 @@ interface MailboxMail {
 
 /** Reads every message in one user's INBOX through the adapter's own MIME path. */
 async function fetchInbox(user: string): Promise<MailboxMail[]> {
-  if (!greenmail) throw new Error('greenmail container not started');
   const client = new ImapFlow({
-    host: greenmail.getHost(),
-    port: greenmail.getMappedPort(3143),
+    host: greenmail.host,
+    port: greenmail.imapPort,
     secure: false,
     auth: { user, pass: 'synthetic-password' },
     logger: false,
@@ -183,7 +170,7 @@ async function fetchInbox(user: string): Promise<MailboxMail[]> {
           subject: parsed.subject,
           inReplyTo: parsed.inReplyTo,
           references: parsed.references,
-          disclosure: /X-Auracle-Disclosure: ([^\r\n]*)/.exec(message.source.toString())?.[1]?.trim() ?? null,
+          disclosure: /X-Auracle-Disclosure: ([^\r\n]*)/.exec(message.source!.toString())?.[1]?.trim() ?? null,
           bodyText: parsed.bodyText,
         });
       }
@@ -197,7 +184,10 @@ async function fetchInbox(user: string): Promise<MailboxMail[]> {
 }
 
 async function waitFor(condition: () => Promise<boolean>, what: string): Promise<void> {
-  const deadline = Date.now() + 15_000;
+  // The shared server is already answering IMAP before any suite runs, so
+  // this budget covers one delivery rather than a JVM start. It stays
+  // generous because a loaded Docker host slows every round trip.
+  const deadline = Date.now() + 60_000;
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {
@@ -211,18 +201,10 @@ async function waitFor(condition: () => Promise<boolean>, what: string): Promise
   throw new Error(`timed out waiting for ${what}${lastError ? ` (last error: ${String(lastError)})` : ''}`);
 }
 
-const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
-const LEDGER_DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
-const DOCUMENTS_DDL = readFileSync(path.join(dbDir, '002_documents.sql'), 'utf8');
-const EDIT_DISTANCE_DDL = readFileSync(path.join(dbDir, '003_approval_edit_distance.sql'), 'utf8');
-const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
-describe.skipIf(!dbUp || !greenmail)('email duplex flow end to end', () => {
+describe('email duplex flow end to end', () => {
   beforeEach(async () => {
-    await pool.query(LEDGER_DDL);
-    await pool.query(DOCUMENTS_DDL);
-    await pool.query(EDIT_DISTANCE_DDL);
-    await pool.query(TIMING_DDL);
+    await applyLedgerSchema(pool);
     await pool.query(
       'TRUNCATE run, ticket_epoch, step_journal, outbox, document',
     );
@@ -246,8 +228,8 @@ describe.skipIf(!dbUp || !greenmail)('email duplex flow end to end', () => {
     //    substring-first lookup would address the reply to the wrong
     //    person. The exact-match lookup must skip it.
     const inbound = createTransport({
-      host: greenmail!.getHost(),
-      port: greenmail!.getMappedPort(3025),
+      host: greenmail.host,
+      port: greenmail.smtpPort,
       secure: false,
     });
     await inbound.sendMail({
@@ -279,10 +261,9 @@ describe.skipIf(!dbUp || !greenmail)('email duplex flow end to end', () => {
 
     // The parked draft answers the customer with real threading headers.
     const drafts = await (async () => {
-      if (!greenmail) throw new Error('no container');
       const client = new ImapFlow({
-        host: greenmail.getHost(),
-        port: greenmail.getMappedPort(3143),
+        host: greenmail.host,
+        port: greenmail.imapPort,
         secure: false,
         auth: { user: SUPPORT_USER, pass: 'synthetic-password' },
         logger: false,
@@ -318,6 +299,8 @@ describe.skipIf(!dbUp || !greenmail)('email duplex flow end to end', () => {
     expect(approval).toMatchObject({ outcome: 'approved' });
 
     // 4. The relay routes the customer reply through sendDraft over SMTP.
+    expect(approval.outcome).toBe('approved');
+    if (approval.outcome !== 'approved') return;
     expect(await relayPending(pool, egress)).toEqual([
       { idemKey: approval.idemKey, outcome: 'sent' },
     ]);
@@ -369,6 +352,9 @@ describe.skipIf(!dbUp || !greenmail)('email duplex flow end to end', () => {
       ticketExternalId: TICKET_ID,
       body: trailingBody,
       disclosure: DISCLOSURE,
+      // A park key of its own, so this draft is not deduplicated onto the
+      // one the coordinator already parked in this test.
+      idemKey: 'park:edit-distance-round-trip',
       provenance: {
         generatedBy: 'auracle',
         modelId: PINS.modelVer,
@@ -380,6 +366,97 @@ describe.skipIf(!dbUp || !greenmail)('email duplex flow end to end', () => {
     expect(readBack).not.toBeNull();
     expect(readBack!.body).not.toBe(trailingBody);
     expect(approvalEditDistance(trailingBody, readBack!.body)).toBe(0);
+
+    // The addressing path must agree with the membership check. db/012 gives a
+    // message that names another thread's Message-ID a NEW conversation, but
+    // the ticket id is still that forged root — so this lookup would resolve
+    // the victim as the recipient and park a reply to them. The recorded
+    // participant is the check.
+    await expect(
+      egress.createDraft({
+        ticketExternalId: TICKET_ID,
+        body: 'Send the refund to my account instead.',
+        disclosure: DISCLOSURE,
+        idemKey: 'park:recipient-mismatch',
+        expectedRecipient: 'attacker@example.test',
+        provenance: {
+          generatedBy: 'auracle',
+          modelId: PINS.modelVer,
+          promptVer: PINS.promptVer,
+          generatedAt: new Date().toISOString(),
+        },
+      }),
+    ).rejects.toThrow(/refusing to park a reply/);
+
+    // The genuine participant still parks normally.
+    const forOwner = await egress.createDraft({
+      ticketExternalId: TICKET_ID,
+      body: 'We are replacing the broken tiles.',
+      disclosure: DISCLOSURE,
+      idemKey: 'park:recipient-match',
+      expectedRecipient: CUSTOMER_ADDRESS,
+      provenance: {
+        generatedBy: 'auracle',
+        modelId: PINS.modelVer,
+        promptVer: PINS.promptVer,
+        generatedAt: new Date().toISOString(),
+      },
+    });
+    expect(forOwner.draftExternalId).toBeTruthy();
+  }, 120_000);
+
+  it('parks one draft for a repeated park key, against a real mailbox (DEC-24)', async () => {
+    // The crash window: createDraft appends to Drafts before the ledger can
+    // record the UID. A retry must find the draft the previous attempt left
+    // and return it, so the customer never sees two replies waiting.
+    await seedInboundThread();
+    const egress = egressAdapter();
+
+    const key = `park:${TICKET_ID}:duplicate-guard`;
+    const draft = {
+      ticketExternalId: TICKET_ID,
+      body: 'We are sorry about the broken tiles.',
+      disclosure: DISCLOSURE,
+      idemKey: key,
+      provenance: {
+        generatedBy: 'auracle',
+        modelId: PINS.modelVer,
+        promptVer: PINS.promptVer,
+        generatedAt: new Date().toISOString(),
+      },
+    };
+
+    const first = await egress.createDraft(draft);
+    const repeat = await egress.createDraft({ ...draft, body: 'A reworded retry.' });
+
+    expect(repeat.draftExternalId).toBe(first.draftExternalId);
+
+    // Proof at the mailbox, not just in the return value: exactly one
+    // message in Drafts carries this key.
+    const client = new ImapFlow({
+      host: greenmail.host,
+      port: greenmail.imapPort,
+      secure: false,
+      auth: { user: SUPPORT_USER, pass: 'synthetic-password' },
+      logger: false,
+    });
+    let matching: number[] = [];
+    try {
+      await client.connect();
+      const lock = await client.getMailboxLock('Drafts');
+      try {
+        const found = await client.search(
+          { header: { 'x-auracle-idem-key': key } },
+          { uid: true },
+        );
+        matching = Array.isArray(found) ? found : [];
+      } finally {
+        lock.release();
+      }
+    } finally {
+      await client.logout();
+    }
+    expect(matching).toHaveLength(1);
   }, 120_000);
 
   it('refuses the approval when read-back finds the draft deleted', async () => {
@@ -388,8 +465,8 @@ describe.skipIf(!dbUp || !greenmail)('email duplex flow end to end', () => {
 
     // The operator deleted the draft in the mail client.
     const client = new ImapFlow({
-      host: greenmail!.getHost(),
-      port: greenmail!.getMappedPort(3143),
+      host: greenmail.host,
+      port: greenmail.imapPort,
       secure: false,
       auth: { user: SUPPORT_USER, pass: 'synthetic-password' },
       logger: false,
@@ -426,8 +503,8 @@ async function outboxStatuses(): Promise<string[]> {
 async function seedInboundThread(): Promise<void> {
   const baseline = (await fetchInbox(SUPPORT_USER)).length;
   const inbound = createTransport({
-    host: greenmail!.getHost(),
-    port: greenmail!.getMappedPort(3025),
+    host: greenmail.host,
+    port: greenmail.smtpPort,
     secure: false,
   });
   await inbound.sendMail({

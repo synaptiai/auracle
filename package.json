@@ -7,27 +7,29 @@
   "engines": {
     "node": ">=22"
   },
+  "packageManager": "pnpm@11.20.0",
   "exports": {
     ".": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit",
+    "check": "tsc -p tsconfig.check.json",
     "test": "vitest run",
     "lint": "eslint .",
-    "db:migrate": "npm run build && node dist/ledger/migrate.js",
-    "escalations": "npm run build && node dist/escalations/cli.js",
-    "approve": "npm run build && node dist/approval/cli.js",
-    "calibrate": "npm run build && node dist/calibration/run.js",
-    "replay": "npm run build && node dist/replay/cli.js",
-    "gold-report": "npm run build && node dist/goldreport/run.js",
-    "export-corpus": "npm run build && node dist/corpus/export-main.js",
-    "triage": "npm run build && node dist/triage/run.js",
-    "relay": "npm run build && node dist/relay/main.js",
-    "consumer": "npm run build && node dist/coordinator/consumer-main.js",
-    "imap": "npm run build && node dist/imap/main.js",
-    "webhook": "npm run build && node dist/intake/webhook-main.js",
-    "load-docs": "npm run build && node dist/kb/cli.js"
+    "db:migrate": "pnpm run build && node dist/ledger/migrate.js",
+    "escalations": "pnpm run build && node dist/escalations/cli.js",
+    "approve": "pnpm run build && node dist/approval/cli.js",
+    "calibrate": "pnpm run build && node dist/calibration/run.js",
+    "replay": "pnpm run build && node dist/replay/cli.js",
+    "gold-report": "pnpm run build && node dist/goldreport/run.js",
+    "export-corpus": "pnpm run build && node dist/corpus/export-main.js",
+    "induce": "pnpm run build && node dist/jobs/run-taxonomy-induction.js",
+    "triage": "pnpm run build && node dist/triage/run.js",
+    "relay": "pnpm run build && node dist/relay/main.js",
+    "consumer": "pnpm run build && node dist/coordinator/consumer-main.js",
+    "imap": "pnpm run build && node dist/imap/main.js",
+    "webhook": "pnpm run build && node dist/intake/webhook-main.js",
+    "load-docs": "pnpm run build && node dist/kb/cli.js"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^12.1.0",

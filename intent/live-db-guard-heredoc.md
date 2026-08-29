@@ -34,7 +34,7 @@ The guard is `.claude/hooks/live_db_approval.py`. No runtime code changes.
 The guard exists for DEC-17 and DEC-19: the adopter is the data controller,
 and a live-database command needs a person. The change narrows false
 positives only. It removes no block on a real command.
-`.claude/hooks/test_live_db_approval.py` holds 12 cases and runs in
+`.claude/hooks/test_live_db_approval.py` holds 24 cases and runs in
 `.github/workflows/guardrails.yml`.
 
 ## Decisions affected

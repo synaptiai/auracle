@@ -5,9 +5,8 @@
 // redeliver-on-crash (mail stays UNSEEN until intake resolved AND \Seen was
 // written). Synthetic data only (DEC-18).
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -15,7 +14,7 @@ import { SIMPLE_TEXT_EMAIL } from '../adapters/fixtures.js';
 import { dbUrl } from '../db/config.js';
 import type { IntakeHandler } from '../ingress/types.js';
 import { enqueueTicket } from '../coordinator/intake.js';
-import { partitionOf } from '../coordinator/coordinator.js';
+import { toIntakeTicket } from '../intake/adapter.js';
 import { pollCycle } from './daemon.js';
 import type { ImapDaemonLogEntry } from './daemon.js';
 import { ImapPoller } from '../ingress/imap-poller.js';
@@ -23,25 +22,17 @@ import { ImapPoller } from '../ingress/imap-poller.js';
 const PARTITION_COUNT = 8;
 
 const pool = new Pool({ connectionString: dbUrl(), max: 5 });
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
-const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
-const LEDGER_DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
-const DOCUMENTS_DDL = readFileSync(path.join(dbDir, '002_documents.sql'), 'utf8');
-const INTAKE_DDL = readFileSync(path.join(dbDir, '004_intake.sql'), 'utf8');
-const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
-describe.skipIf(!dbUp)('imap daemon intake', () => {
+describe('imap daemon intake', () => {
   beforeEach(async () => {
-    await pool.query(LEDGER_DDL);
-    await pool.query(DOCUMENTS_DDL);
-    await pool.query(INTAKE_DDL);
-    await pool.query(TIMING_DDL);
+    await applyLedgerSchema(pool);
     await pool.query('DELETE FROM intake');
   });
 
@@ -111,12 +102,9 @@ describe.skipIf(!dbUp)('imap daemon intake', () => {
 
     await pollCycle({
       fetcher: mailbox.fetcher,
-      poller: makePoller(mailbox.fetcher, (event) =>
-        enqueueTicket(
-          pool,
-          { ticketId: event.ticket.ticketId, ticketText: event.message.bodyText },
-          PARTITION_COUNT,
-        ),
+      poller: makePoller(mailbox.fetcher, async (event) => {
+        await enqueueTicket(pool, toIntakeTicket(event), PARTITION_COUNT);
+      },
       ),
       log,
     });
@@ -131,7 +119,11 @@ describe.skipIf(!dbUp)('imap daemon intake', () => {
     expect(rows.rows[0]?.ticket_text).toContain('crushed corner');
     // DEC-27: enqueued under its hash partition.
     for (const row of rows.rows) {
-      expect(row.partition).toBe(partitionOf(row.ticket_id, PARTITION_COUNT));
+      // DEC-36 routes on the conversation id, which intake generates, so the
+      // partition is no longer a function of the ticket id. It must still be
+      // a partition of the ring.
+      expect(row.partition).toBeGreaterThanOrEqual(0);
+      expect(row.partition).toBeLessThan(PARTITION_COUNT);
     }
     // \Seen was written only after intake resolved.
     expect(mailbox.markedSeen.sort()).toEqual(['1', '2']);
@@ -155,15 +147,11 @@ describe.skipIf(!dbUp)('imap daemon intake', () => {
 
     await pollCycle({
       fetcher: mailbox.fetcher,
-      poller: makePoller(mailbox.fetcher, (event) => {
+      poller: makePoller(mailbox.fetcher, async (event) => {
         if (event.message.bodyText.includes('POISON')) {
           throw new Error('intake exploded');
         }
-        return enqueueTicket(
-          pool,
-          { ticketId: event.ticket.ticketId, ticketText: event.message.bodyText },
-          PARTITION_COUNT,
-        );
+        await enqueueTicket(pool, toIntakeTicket(event), PARTITION_COUNT);
       }),
       log: () => {},
     });
@@ -178,12 +166,12 @@ describe.skipIf(!dbUp)('imap daemon intake', () => {
 
   it('redelivers after a crash between intake and markSeen', async () => {
     const mailbox = fakeMailbox([{ uid: 7, rfc5322Text: SIMPLE_TEXT_EMAIL }]);
-    const onEvent: IntakeHandler = (event) =>
-      enqueueTicket(
-        pool,
-        { ticketId: event.ticket.ticketId, ticketText: event.message.bodyText },
-        PARTITION_COUNT,
-      );
+    // Awaited, not discarded: pollCycle marks \Seen after the poller resolves,
+    // so a handler that returns undefined lets markSeen race the enqueue and
+    // the ordering this case is named for is never exercised.
+    const onEvent: IntakeHandler = async (event) => {
+      await enqueueTicket(pool, toIntakeTicket(event), PARTITION_COUNT);
+    };
     const runCycle = (): Promise<void> =>
       pollCycle({
         fetcher: mailbox.fetcher,
@@ -200,8 +188,9 @@ describe.skipIf(!dbUp)('imap daemon intake', () => {
     // Cycle 2: the same UID is still unseen, so it is delivered again.
     await runCycle();
     expect(mailbox.markedSeen).toEqual(['7']);
-    // The re-enqueue was a no-op (enqueueTicket is idempotent on
-    // ticket_id), so the queue holds exactly one copy of the ticket.
+    // The re-enqueue was a no-op: the same mail carries the same Message-ID,
+    // so it deduplicates on (ticket_id, message_id) and the queue holds one
+    // copy. A genuinely new message on this thread would enqueue instead.
     expect(await pool.query('SELECT * FROM intake')).toHaveProperty('rows.length', 1);
   });
 

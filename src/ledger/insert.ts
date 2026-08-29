@@ -17,7 +17,9 @@ export interface FencedRunInput {
   enqueuedAt?: Date;
   promptVer: string;
   modelVer: string;
-  costCents?: number;
+  costMicros?: number;
+  /** DEC-35: the conversation this run serves. Null on a V1-era run. */
+  conversationId?: string;
   stepsUsed?: number;
   deadlineAt: Date;
 }
@@ -101,9 +103,9 @@ export async function fencedInsert(
       await client.query(
         `INSERT INTO run (
            run_id, ticket_id, partition, epoch, state,
-           prompt_ver, model_ver, cost_cents, steps_used, deadline_at,
-           enqueued_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+           prompt_ver, model_ver, cost_micros, steps_used, deadline_at,
+           enqueued_at, conversation_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [
           run.runId,
           run.ticketId,
@@ -112,10 +114,11 @@ export async function fencedInsert(
           run.state,
           run.promptVer,
           run.modelVer,
-          run.costCents ?? 0,
+          run.costMicros ?? 0,
           run.stepsUsed ?? 0,
           run.deadlineAt.toISOString(),
           run.enqueuedAt ?? null,
+          run.conversationId ?? null,
         ],
       );
 
@@ -168,7 +171,7 @@ export interface FencedTransitionInput {
   /** The next state to commit when the write succeeds. */
   state: string;
   /** Accumulated run totals (DEC-25 bookkeeping); written as absolute values. */
-  costCents: number;
+  costMicros: number;
   stepsUsed: number;
   /**
    * Optional outbox record committed in the same transaction (section 4.2
@@ -244,13 +247,13 @@ export async function fencedTransition(
       // also stamps the finish time. One transaction, one truth.
       if (TERMINAL_RUN_STATES.has(t.state)) {
         await client.query(
-          'UPDATE run SET state = $2, cost_cents = $3, steps_used = $4, finished_at = now() WHERE run_id = $1',
-          [t.runId, t.state, t.costCents, t.stepsUsed],
+          'UPDATE run SET state = $2, cost_micros = $3, steps_used = $4, finished_at = now() WHERE run_id = $1',
+          [t.runId, t.state, t.costMicros, t.stepsUsed],
         );
       } else {
         await client.query(
-          'UPDATE run SET state = $2, cost_cents = $3, steps_used = $4 WHERE run_id = $1',
-          [t.runId, t.state, t.costCents, t.stepsUsed],
+          'UPDATE run SET state = $2, cost_micros = $3, steps_used = $4 WHERE run_id = $1',
+          [t.runId, t.state, t.costMicros, t.stepsUsed],
         );
       }
 

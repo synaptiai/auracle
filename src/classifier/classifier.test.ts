@@ -229,3 +229,47 @@ describe('classifyTicket (section 4.5, DEC-05)', () => {
     expect(result.agreement).toBe(1.0);
   });
 });
+
+describe('conversation history in the prompt (DEC-37)', () => {
+  function taxonomy() {
+    return { intents: [{ id: 'refund', label: 'Refund', risk_tier: 'high' as const }] };
+  }
+
+  it('puts earlier turns before the latest message', async () => {
+    const provider = new FakeProvider(
+      Array.from({ length: 9 }, () => ({ text: 'refund' })),
+    );
+
+    await classifyTicket(provider, {
+      taxonomy: taxonomy(),
+      ticketText: 'It still does not work.',
+      history: [{ turnNumber: 1, author: 'customer', bodyText: 'I want a refund.' }],
+      promptVer: 'p@1',
+      modelVer: 'm@1',
+    });
+
+    const prompt = provider.calls[0]?.messages?.at(-1)?.content ?? '';
+    // Without the earlier turn, "it" names nothing the classifier can read.
+    expect(prompt).toContain('I want a refund.');
+    expect(prompt).toContain('It still does not work.');
+    expect(prompt.indexOf('I want a refund.')).toBeLessThan(
+      prompt.indexOf('It still does not work.'),
+    );
+  });
+
+  it('sends the message alone on a first turn', async () => {
+    const provider = new FakeProvider(
+      Array.from({ length: 9 }, () => ({ text: 'refund' })),
+    );
+
+    await classifyTicket(provider, {
+      taxonomy: taxonomy(),
+      ticketText: 'I want a refund.',
+      history: [],
+      promptVer: 'p@1',
+      modelVer: 'm@1',
+    });
+
+    expect(provider.calls[0]?.messages?.at(-1)?.content).toBe('I want a refund.');
+  });
+});

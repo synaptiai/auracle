@@ -5,9 +5,8 @@
 // distance back from the ledger. The three cases pin the bands the daily
 // sample depends on: unchanged, edited, fully rewritten.
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -17,17 +16,13 @@ import { recordApprovalEditDistance } from './measure.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
-const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
-const LEDGER_DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
-const EDIT_DDL = readFileSync(path.join(dbDir, '003_approval_edit_distance.sql'), 'utf8');
-const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 async function seedRun(): Promise<string> {
   const run: FencedRunInput = {
@@ -53,16 +48,14 @@ async function recordedDistance(runId: string): Promise<number | null> {
   return rows.rows[0]!.approval_edit_distance as number | null;
 }
 
-describe.skipIf(!dbUp)('section 4.10 approval-edit distance recording', () => {
+describe('section 4.10 approval-edit distance recording', () => {
   beforeEach(async () => {
-    await pool.query(LEDGER_DDL);
-    await pool.query(EDIT_DDL);
-    await pool.query(TIMING_DDL);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
+    await applyLedgerSchema(pool);
+    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
+    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
   });
 
   it('records exactly 0 when the person sent the draft unchanged', async () => {

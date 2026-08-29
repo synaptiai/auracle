@@ -7,9 +7,12 @@ on:
       - ".claude/**"
       - "evals/**"
       - ".github/workflows/agent-evals.yml"
-  schedule:
-    - cron: "0 3 * * *"
   workflow_dispatch:
+    inputs:
+      behaviour:
+        description: "Run the behaviour layer. It spends model calls."
+        type: boolean
+        default: false
 
 jobs:
   structural-checks:
@@ -22,18 +25,25 @@ jobs:
       - name: Structural validation of the eval suite
         run: python3 evals/run.py
 
+  # The behaviour layer spends model calls, and it greps the agent's stdout
+  # rather than the repository. The fixture-PII case therefore passes when an
+  # agent writes the file and prints "Done." A nightly cron paid for that.
+  # It stays opt-in until the cases assert against the tree; evals/run.py
+  # holds the same gate for a local run.
   behaviour-evals:
+    if: inputs.behaviour
     # Needs the Claude CLI and a key. Runs after the structural layer passes.
     needs: structural-checks
     runs-on: ubuntu-latest
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       EVAL_AGENT_CMD: ${{ vars.EVAL_AGENT_CMD }}
+      EVAL_BEHAVIOUR: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

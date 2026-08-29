@@ -3,9 +3,8 @@
 // (fencedInsert, section 4.2) so each test exercises insert -> pending ->
 // relay -> terminal status exactly as production would.
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -17,20 +16,18 @@ import type {
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { dbUrl } from '../db/config.js';
 import { fencedInsert, type FencedOutboxInput, type FencedRunInput } from '../ledger/insert.js';
+import { COMPENSATION_ACTION_CLASS } from '../adapters/types.js';
 import { relayPending } from './relay.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
-const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
-const DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
-const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 /** Egress fake whose send and read-back behaviour a test scripts per case. */
 class ScriptedEgress implements EgressAdapter {
@@ -166,15 +163,26 @@ async function runState(idemKey: string): Promise<string> {
   return rows.rows[0]!.state as string;
 }
 
-describe.skipIf(!dbUp)('section 4.4 outbox relay', () => {
+/**
+ * `finished_at` for the run behind one outbox record. Null means the service
+ * time cannot be measured for that run (db/005_run_timing.sql).
+ */
+async function runFinishedAt(idemKey: string): Promise<Date | null> {
+  const rows = await pool.query(
+    'SELECT r.finished_at FROM run r JOIN outbox o ON o.run_id = r.run_id WHERE o.idem_key = $1',
+    [idemKey],
+  );
+  return rows.rows[0]!.finished_at as Date | null;
+}
+
+describe('section 4.4 outbox relay', () => {
   beforeEach(async () => {
-    await pool.query(DDL);
-    await pool.query(TIMING_DDL);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
+    await applyLedgerSchema(pool);
+    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
+    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
   });
 
   it('sends first and sets the status second', async () => {
@@ -224,6 +232,53 @@ describe.skipIf(!dbUp)('section 4.4 outbox relay', () => {
     expect(await runState(idemKey)).toBe('queued'); // success touches nothing else
   });
 
+  it('never pays a compensation twice: at_most_once escalates on not_found (DEC-34, DEC-30)', async () => {
+    // The cell the compensation decision leans on. A sent refund cannot be
+    // reversed, so an adapter with no idempotency support that reports the
+    // delivery 'not_found' must escalate rather than try again. A second
+    // attempt here would move money twice.
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedPendingAction(
+      ticket,
+      10n,
+      COMPENSATION_ACTION_CLASS,
+      { reason: 'refund issued against the wrong ticket' },
+      'at_most_once',
+    );
+
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: false,
+        supportsReadBack: true,
+        supportsDraftState: false,
+        supportsStructuredFields: false,
+        supportsThreading: false,
+      }),
+      async () => {
+        throw new Error('gateway timed out; the refund may or may not have gone out');
+      },
+      async () => ({ state: 'not_found' }),
+    );
+
+    const results = await relayPending(pool, adapter);
+    expect(results.map((r) => ({ idemKey: r.idemKey, outcome: r.outcome }))).toEqual([
+      { idemKey, outcome: 'delivery_unknown_escalated' },
+    ]);
+    // The relay decides DEC-30, so it must say why it could not send.
+    expect(results[0]?.sendError).toBeTruthy();
+    // Rode performAction, not the draft path: a compensation has no draft.
+    expect(adapter.performCalls).toHaveLength(1);
+    expect(adapter.performCalls[0]?.actionClass).toBe(COMPENSATION_ACTION_CLASS);
+    expect(adapter.sendCalls).toHaveLength(0);
+    expect(await outboxStatus(idemKey)).toBe('delivery_unknown');
+    expect(await runState(idemKey)).toBe('escalated');
+    expect(await runFinishedAt(idemKey)).toBeInstanceOf(Date);
+
+    // Terminal: a later scan finds nothing, so no second refund is possible.
+    await relayPending(pool, adapter);
+    expect(adapter.performCalls).toHaveLength(1);
+  });
+
   it('escalates at-most-once records with unknown delivery state and never blind-retries', async () => {
     // DEC-29/DEC-30, the cell AGENTS.md flags: no idempotency support, the
     // send threw, no read-back -> the state is unknown -> delivery_unknown
@@ -248,10 +303,18 @@ describe.skipIf(!dbUp)('section 4.4 outbox relay', () => {
     );
 
     const results = await relayPending(pool, adapter);
-    expect(results).toEqual([{ idemKey, outcome: 'delivery_unknown_escalated' }]);
+    expect(results.map((r) => ({ idemKey: r.idemKey, outcome: r.outcome }))).toEqual([
+      { idemKey, outcome: 'delivery_unknown_escalated' },
+    ]);
+    // The relay decides DEC-30, so it must say why it could not send.
+    expect(results[0]?.sendError).toBeTruthy();
     expect(adapter.sendCalls).toHaveLength(1);
     expect(await outboxStatus(idemKey)).toBe('delivery_unknown');
     expect(await runState(idemKey)).toBe('escalated');
+    // 'escalated' is terminal, so the service time must be measurable. The
+    // relay used to move the state without the stamp, which dropped every
+    // escalated run out of the latency report (db/005_run_timing.sql).
+    expect(await runFinishedAt(idemKey)).toBeInstanceOf(Date);
 
     // A later scan finds nothing pending: escalation is terminal for the
     // relay, so no second refund can ever be paid by accident.
@@ -284,7 +347,10 @@ describe.skipIf(!dbUp)('section 4.4 outbox relay', () => {
     );
 
     const results = await relayPending(pool, adapter);
-    expect(results).toEqual([{ idemKey, outcome: 'sent_reconciled' }]);
+    expect(results.map((r) => ({ idemKey: r.idemKey, outcome: r.outcome }))).toEqual([
+      { idemKey, outcome: 'sent_reconciled' },
+    ]);
+    expect(results[0]?.sendError).toBeTruthy();
     expect(adapter.sendCalls).toHaveLength(1);
     expect(await outboxStatus(idemKey)).toBe('sent');
     expect(await runState(idemKey)).toBe('queued');
@@ -315,7 +381,11 @@ describe.skipIf(!dbUp)('section 4.4 outbox relay', () => {
     );
 
     const results = await relayPending(pool, adapter);
-    expect(results).toEqual([{ idemKey, outcome: 'delivery_unknown_escalated' }]);
+    expect(results.map((r) => ({ idemKey: r.idemKey, outcome: r.outcome }))).toEqual([
+      { idemKey, outcome: 'delivery_unknown_escalated' },
+    ]);
+    // The relay decides DEC-30, so it must say why it could not send.
+    expect(results[0]?.sendError).toBeTruthy();
     expect(adapter.sendCalls).toHaveLength(1);
     expect(await outboxStatus(idemKey)).toBe('delivery_unknown');
     expect(await runState(idemKey)).toBe('escalated');
@@ -351,7 +421,10 @@ describe.skipIf(!dbUp)('section 4.4 outbox relay', () => {
     );
 
     const firstPass = await relayPending(pool, adapter);
-    expect(firstPass).toEqual([{ idemKey, outcome: 'left_pending_retry' }]);
+    expect(firstPass.map((r) => ({ idemKey: r.idemKey, outcome: r.outcome }))).toEqual([
+      { idemKey, outcome: 'left_pending_retry' },
+    ]);
+    expect(firstPass[0]?.sendError).toBeTruthy();
     expect(await outboxStatus(idemKey)).toBe('pending');
 
     const secondPass = await relayPending(pool, adapter);
@@ -434,7 +507,10 @@ describe.skipIf(!dbUp)('section 4.4 outbox relay', () => {
     );
 
     const firstPass = await relayPending(pool, adapter);
-    expect(firstPass).toEqual([{ idemKey, outcome: 'left_pending_retry' }]);
+    expect(firstPass.map((r) => ({ idemKey: r.idemKey, outcome: r.outcome }))).toEqual([
+      { idemKey, outcome: 'left_pending_retry' },
+    ]);
+    expect(firstPass[0]?.sendError).toBeTruthy();
     expect(await outboxStatus(idemKey)).toBe('pending');
 
     const secondPass = await relayPending(pool, adapter);
@@ -479,7 +555,10 @@ describe.skipIf(!dbUp)('section 4.4 outbox relay', () => {
     );
 
     const results = await relayPending(pool, adapter);
-    expect(results).toEqual([{ idemKey, outcome: 'malformed_escalated' }]);
+    expect(results.map((r) => ({ idemKey: r.idemKey, outcome: r.outcome }))).toEqual([
+      { idemKey, outcome: 'malformed_escalated' },
+    ]);
+    expect(await runFinishedAt(idemKey)).toBeInstanceOf(Date);
     expect(adapter.sendCalls).toHaveLength(0);
     expect(adapter.performCalls).toHaveLength(0);
     expect(await outboxStatus(idemKey)).toBe('malformed');
@@ -514,7 +593,9 @@ describe.skipIf(!dbUp)('section 4.4 outbox relay', () => {
     );
 
     const results = await relayPending(pool, adapter);
-    expect(results).toEqual([{ idemKey, outcome: 'malformed_escalated' }]);
+    expect(results.map((r) => ({ idemKey: r.idemKey, outcome: r.outcome }))).toEqual([
+      { idemKey, outcome: 'malformed_escalated' },
+    ]);
     expect(adapter.performCalls).toHaveLength(0);
     expect(await outboxStatus(idemKey)).toBe('malformed');
     expect(await runState(idemKey)).toBe('escalated');

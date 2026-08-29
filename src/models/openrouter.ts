@@ -27,15 +27,32 @@ export interface OpenRouterConfig {
    * embed() throws instead of reporting zero.
    */
   embeddingsUsdPerMTok?: number;
+  /**
+   * DEC-25 applies a clock limit to a run, but the coordinator can only
+   * check it between steps. A request that never returns therefore parks the
+   * run forever and no deadline fires. Every call carries this timeout so a
+   * stalled provider surfaces as an error the state machine can act on.
+   */
+  requestTimeoutMs?: number;
   /** Injection point for tests. Defaults to globalThis.fetch. */
   fetchImpl?: typeof fetch;
 }
 
 const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1';
 
-/** USD fraction to integer cents, matching run.cost_cents (integer >= 0). */
-function usdToCents(usd: number): number {
-  return Math.max(0, Math.round(usd * 100));
+/** Ceiling for one provider call. Long enough for a slow completion. */
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * USD to integer micro-dollars, matching run.cost_micros (integer >= 0).
+ *
+ * Cents lost every real call: a completion costing 0.000841 USD rounded to
+ * 0, so the ledger recorded nothing and the DEC-25 limit summed zeros. One
+ * micro-dollar is one millionth of a dollar, which holds any price this
+ * system meets.
+ */
+function usdToMicros(usd: number): number {
+  return Math.max(0, Math.round(usd * 1_000_000));
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -74,14 +91,28 @@ async function postJson(
   body: unknown,
 ): Promise<Record<string, unknown>> {
   const doFetch = config.fetchImpl ?? globalThis.fetch;
-  const response = await doFetch(`${config.baseUrl ?? DEFAULT_BASE_URL}${path}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+  const timeoutMs = config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  let response: Response;
+  try {
+    response = await doFetch(`${config.baseUrl ?? DEFAULT_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      // Without this the call can hang forever. The run's clock limit is
+      // only checked between steps, so nothing else would ever stop it.
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      throw new Error(
+        `OpenRouter request to ${path} exceeded ${timeoutMs}ms and was aborted`,
+      );
+    }
+    throw error;
+  }
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`OpenRouter request failed (${response.status}): ${text}`);
@@ -106,7 +137,10 @@ export class OpenRouterProvider implements ModelProvider {
 
   private zdrEnabled(perCall: DataGuarantee | undefined): boolean {
     // DEC-17 rejects forcing ZDR on each request, so absence means off.
-    const merged = { ...this.config.dataGuarantee, ...perCall };
+    // Field-wise, not a spread: a per-call `{ zdrOnly: undefined }` is a
+    // present key, and a spread would overwrite a configured true with it,
+    // turning the guarantee off silently.
+    const merged = { zdrOnly: perCall?.zdrOnly ?? this.config.dataGuarantee?.zdrOnly };
     return merged.zdrOnly === true;
   }
 
@@ -152,7 +186,7 @@ export class OpenRouterProvider implements ModelProvider {
 
     return {
       text: content,
-      costCents: usdToCents(parsed.usdCost),
+      costMicros: usdToMicros(parsed.usdCost),
       usage: parsed.usage,
       servedModelVer,
     };
@@ -211,7 +245,7 @@ export class OpenRouterProvider implements ModelProvider {
 
     return {
       vectors,
-      costCents: usdToCents(usdCost),
+      costMicros: usdToMicros(usdCost),
       usage: parsed.usage,
       servedModelVer:
         typeof response.model === 'string' ? response.model : call.modelVer,

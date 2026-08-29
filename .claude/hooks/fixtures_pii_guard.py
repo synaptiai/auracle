@@ -9,8 +9,17 @@ import json
 import re
 import sys
 
+# RFC 2606 and RFC 6761 reserve these for documentation and testing. An
+# address under one of them cannot reach a person, so it is synthetic by
+# construction and the rule is about reachable addresses.
+RESERVED_EMAIL = re.compile(
+    r"@(?:[A-Za-z0-9-]+\.)*(?:test|example|invalid|localhost)$"
+    r"|@(?:[A-Za-z0-9-]+\.)*example\.(?:com|net|org)$",
+    re.IGNORECASE,
+)
+
 PATTERNS = [
-    ("email address", r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}"),
+    ("email address", r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}"),
     ("phone number",
      r"(?<![\w.\-])(?:\+\d{1,3}[\s.\-])?(?:\(\d{2,4}\)[\s.\-]?|\d{2,4}[\s.\-])"
      r"\d{3,4}[\s.\-]?\d{3,4}(?![\w.\-])"),
@@ -23,9 +32,14 @@ PATTERNS = [
 def scan(text):
     hits = []
     for label, pat in PATTERNS:
-        found = re.search(pat, text)
-        if found:
-            hits.append(f"{label}: {found.group(0)[:40]!r}")
+        for found in re.finditer(pat, text):
+            value = found.group(0)
+            if label == "email address":
+                domain = value[value.rindex("@"):]
+                if RESERVED_EMAIL.search(domain):
+                    continue
+            hits.append(f"{label}: {value[:40]!r}")
+            break
     return hits
 
 
@@ -57,8 +71,17 @@ def hook_mode():
     else:
         sys.exit(0)
 
+    # REVIEW.md extends the rule to fixtures, evals and examples. Matching
+    # only '/fixtures/' left the fixture modules under src/ and the eval
+    # cases outside the guard, which is most of the surface it names.
     norm = "/" + path.lstrip("/")
-    if "/fixtures/" not in norm:
+    covered = (
+        "/fixtures/" in norm
+        or "/evals/cases/" in norm
+        or re.search(r"/fixtures?[.-][^/]*$", norm) is not None
+        or norm.endswith("/fixtures.ts")
+    )
+    if not covered:
         sys.exit(0)
 
     hits = scan(content)

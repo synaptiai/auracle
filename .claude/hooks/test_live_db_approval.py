@@ -43,6 +43,23 @@ CASES = [
      "sudo -s <<'EOF'\npg_dump app > d.sql\nEOF"),
     ("data consumer next to an interpreter keeps its body", BLOCK,
      "git commit -F - <<'MSG' && bash\npsql -h prod.example.com\nMSG"),
+    # A comment is not a connection target. The exemption used to scan the
+    # whole line, so a trailing comment laundered a remote host.
+    ("comment cannot supply the local exemption", BLOCK,
+     "pg_dump -h prod.example.com app > d.sql # localhost"),
+    # `docker exec` names a local container, not a local database. The
+    # exemption used to apply whatever the inner command targeted.
+    ("container cannot launder a remote host", BLOCK,
+     "docker exec x pg_dump -h prod.example.com app"),
+    # Reading text that mentions a tool touches no database. The guard used
+    # to block its own repository search.
+    ("read-only search for a tool name", ALLOW, "grep -rn 'pg_dump' docs/"),
+    ("read-only history search", ALLOW, "git log --oneline -- src/ledger/migrate.ts"),
+    # 'migrate' is an ordinary word and names the runner's own files. It
+    # counts as a command word, not as part of a path.
+    ("runner source path is not a command", ALLOW, "npx tsc src/ledger/migrate.ts"),
+    ("runner test path is not a command", ALLOW, "npx vitest run src/ledger/migrate.db.test.ts"),
+    ("npm script still names a migration", BLOCK, "npm run db:migrate"),
     ("cat to a file is inert", ALLOW,
      "cat > notes.md <<'EOF'\nRun psql against production only by hand.\nEOF"),
     ("gh issue body is inert", ALLOW,

@@ -12,6 +12,9 @@
  */
 
 import type { ModelProvider } from '../models/provider.js';
+
+import type { ConversationTurn } from '../coordinator/coordinator.js';
+import { renderPromptBody } from '../coordinator/history.js';
 import { assertSamplingTemperature } from '../models/provider.js';
 
 /** Section 4.5: nine samples at a temperature above zero. */
@@ -41,6 +44,12 @@ export interface ClassifierTaxonomy {
 export interface ClassifyInput {
   taxonomy: ClassifierTaxonomy;
   ticketText: string;
+  /**
+   * DEC-37: earlier turns of this conversation, oldest first. Empty on a
+   * first turn. Context only, and never evidence: the gates read retrieved
+   * documents alone.
+   */
+  history?: readonly ConversationTurn[];
   /** DEC-26: the caller pins prompt and model versions. */
   promptVer: string;
   modelVer: string;
@@ -74,12 +83,16 @@ export async function classifyTicket(
     input.taxonomy.intents.map((intent) => normalizeLabel(intent.id)),
   );
 
+  // DEC-37: the customer's earlier turns say what "it still does not work"
+  // refers to. The label is about the whole conversation, not one message.
+  const userPrompt = renderPromptBody(input.history ?? [], input.ticketText);
+
   const counts = new Map<string, number>();
   for (let i = 0; i < CLASSIFIER_K; i++) {
     const result = await provider.complete({
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: input.ticketText },
+        { role: 'user', content: userPrompt },
       ],
       temperature,
       promptVer: input.promptVer,

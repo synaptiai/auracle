@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   checkGroundedness,
   judgeClaim,
-  splitClaims,
   type GroundednessDeps,
 } from './groundedness.js';
 import { FakeProvider } from '../models/fake.js';
@@ -16,41 +15,6 @@ function deps(script: ConstructorParameters<typeof FakeProvider>[0]): Groundedne
   const fake = new FakeProvider(script);
   return { provider: fake, versions: VERSIONS, fake };
 }
-
-describe('splitClaims (section 4.7)', () => {
-  it('strips bullet prefixes and blank lines', async () => {
-    const d = deps([{ text: '- Password resets take 15 minutes.\n\n- The link expires after one hour.' }]);
-    const claims = await splitClaims('draft', d);
-    expect(claims).toEqual([
-      'Password resets take 15 minutes.',
-      'The link expires after one hour.',
-    ]);
-  });
-
-  it('strips numbered list prefixes', async () => {
-    const d = deps([{ text: '1. First claim.\n2) Second claim.' }]);
-    const claims = await splitClaims('draft', d);
-    expect(claims).toEqual(['First claim.', 'Second claim.']);
-  });
-
-  it('sends the draft to the model with the pinned versions (DEC-26)', async () => {
-    const d = deps([{ text: '- One claim.' }]);
-    await splitClaims('The draft text.', d);
-    expect(d.fake.calls).toHaveLength(1);
-    expect(d.fake.calls[0]?.kind).toBe('chat');
-    expect(d.fake.calls[0]?.promptVer).toBe(VERSIONS.promptVer);
-    expect(d.fake.calls[0]?.modelVer).toBe(VERSIONS.modelVer);
-    expect(d.fake.calls[0]?.messages?.at(-1)?.content).toContain('The draft text.');
-  });
-
-  it('treats each non-empty line as a claim even without list formatting', async () => {
-    const d = deps([{ text: 'First plain claim.\nSecond plain claim.' }]);
-    expect(await splitClaims('draft', d)).toEqual([
-      'First plain claim.',
-      'Second plain claim.',
-    ]);
-  });
-});
 
 describe('judgeClaim (section 4.7)', () => {
   it('returns true for a supported verdict', async () => {
@@ -89,15 +53,17 @@ describe('judgeClaim (section 4.7)', () => {
 });
 
 describe('checkGroundedness (section 4.7 fraction math)', () => {
+  // The gate takes the composer's claim partition. It runs no split call, so
+  // every model call below is a judge call and the denominator is fixed by
+  // the caller rather than chosen by a model.
   it('returns supported claims over total claims', async () => {
     const d = deps([
-      { text: '- Claim A.\n- Claim B.\n- Claim C.', costCents: 2 },
-      { text: 'VERDICT: SUPPORTED', costCents: 1 },
-      { text: 'VERDICT: UNSUPPORTED', costCents: 1 },
-      { text: 'VERDICT: SUPPORTED', costCents: 1 },
+      { text: 'VERDICT: SUPPORTED', costMicros: 1 },
+      { text: 'VERDICT: UNSUPPORTED', costMicros: 1 },
+      { text: 'VERDICT: SUPPORTED', costMicros: 1 },
     ]);
     const result = await checkGroundedness(
-      { draft: 'draft', retrievedTexts: ['Span.'] },
+      { claims: ['Claim A.', 'Claim B.', 'Claim C.'], retrievedTexts: ['Span.'] },
       d,
     );
     expect(result.groundedness).toBeCloseTo(2 / 3);
@@ -106,50 +72,70 @@ describe('checkGroundedness (section 4.7 fraction math)', () => {
       { claim: 'Claim B.', supported: false },
       { claim: 'Claim C.', supported: true },
     ]);
-    expect(result.costCents).toBe(5);
+    expect(result.costMicros).toBe(3);
   });
 
   it('returns 1.0 when every claim is supported', async () => {
-    const d = deps([
-      { text: '- Claim A.' },
-      { text: 'VERDICT: SUPPORTED' },
-    ]);
+    const d = deps([{ text: 'VERDICT: SUPPORTED' }]);
     const result = await checkGroundedness(
-      { draft: 'draft', retrievedTexts: ['Span.'] },
+      { claims: ['Claim A.'], retrievedTexts: ['Span.'] },
       d,
     );
     expect(result.groundedness).toBe(1);
   });
 
   it('returns 0 when nothing grounds, without any judge calls', async () => {
-    const d = deps([{ text: '- Claim A.\n- Claim B.' }]);
-    const result = await checkGroundedness({ draft: 'draft', retrievedTexts: [] }, d);
+    const d = deps([]);
+    const result = await checkGroundedness(
+      { claims: ['Claim A.', 'Claim B.'], retrievedTexts: [] },
+      d,
+    );
     expect(result.groundedness).toBe(0);
     expect(result.claims.every((c) => !c.supported)).toBe(true);
-    expect(d.fake.calls).toHaveLength(1);
+    expect(d.fake.calls).toHaveLength(0);
   });
 
-  it('makes exactly one judge call per claim', async () => {
-    const d = deps([
-      { text: '- Claim A.\n- Claim B.' },
-      { text: 'VERDICT: SUPPORTED' },
-      { text: 'VERDICT: SUPPORTED' },
-    ]);
-    await checkGroundedness({ draft: 'draft', retrievedTexts: ['Span.'] }, d);
-    expect(d.fake.calls).toHaveLength(3);
+  it('makes exactly one judge call per claim and no split call', async () => {
+    const d = deps([{ text: 'VERDICT: SUPPORTED' }, { text: 'VERDICT: SUPPORTED' }]);
+    await checkGroundedness(
+      { claims: ['Claim A.', 'Claim B.'], retrievedTexts: ['Span.'] },
+      d,
+    );
+    expect(d.fake.calls).toHaveLength(2);
   });
 
-  it('throws on an empty draft', async () => {
+  it('throws when no claim arrives', async () => {
     const d = deps([]);
     await expect(
-      checkGroundedness({ draft: '   ', retrievedTexts: ['Span.'] }, d),
-    ).rejects.toThrow(/empty draft/);
+      checkGroundedness({ claims: [], retrievedTexts: ['Span.'] }, d),
+    ).rejects.toThrow(/no claims/);
   });
 
-  it('throws when a non-empty draft yields zero claims', async () => {
-    const d = deps([{ text: '\n \n' }]);
+  it('throws when every claim is blank', async () => {
+    const d = deps([]);
     await expect(
-      checkGroundedness({ draft: 'draft', retrievedTexts: ['Span.'] }, d),
-    ).rejects.toThrow(/zero claims/);
+      checkGroundedness({ claims: ['   ', ''], retrievedTexts: ['Span.'] }, d),
+    ).rejects.toThrow(/no claims/);
+  });
+
+  it('cannot have its denominator set by a model', async () => {
+    // The defect this replaced: the gate asked a model to split the draft,
+    // so a split that returned one line scored 1.0 over 1 and cleared both
+    // policy thresholds. The count now comes from the composer alone.
+    const d = deps([
+      { text: 'VERDICT: SUPPORTED' },
+      { text: 'VERDICT: UNSUPPORTED' },
+      { text: 'VERDICT: UNSUPPORTED' },
+      { text: 'VERDICT: UNSUPPORTED' },
+    ]);
+    const result = await checkGroundedness(
+      {
+        claims: ['A.', 'B.', 'C.', 'D.'],
+        retrievedTexts: ['Span.'],
+      },
+      d,
+    );
+    expect(result.claims).toHaveLength(4);
+    expect(result.groundedness).toBe(0.25);
   });
 });

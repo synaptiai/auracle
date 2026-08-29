@@ -7,37 +7,33 @@
 // The model is a FakeProvider with scripted responses; every ledger write is
 // real. Synthetic data only (DEC-18).
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { coordinateTicket, partitionOf } from './coordinator.js';
 import type { CoordinateInput, CoordinatorDeps } from './coordinator.js';
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
+import type { ModelProvider } from '../models/provider.js';
 import type { EgressAdapter } from '../adapters/types.js';
 import { dbUrl } from '../db/config.js';
 import { deriveIdemKey } from '../ledger/keys.js';
-import { FakeProvider } from '../models/fake.js';
+import { FakeProvider, ONE_CENT_IN_MICROS } from '../models/fake.js';
 import type { FakeStep } from '../models/fake.js';
 import type { AdapterCapabilities } from '../policy/policy.js';
-import { COMPENSATION_ACTION_CLASS, CUSTOMER_REPLY_ACTION_CLASS } from '../relay/relay.js';
+import { COMPENSATION_ACTION_CLASS, CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
 import { indexDocument } from '../retriever/retriever.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
-const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
-const LEDGER_DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
-const DOCUMENTS_DDL = readFileSync(path.join(dbDir, '002_documents.sql'), 'utf8');
-const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 const PINS = { promptVer: 'coord-test-prompt', modelVer: 'coord-test-model' };
 const CAPABILITIES: AdapterCapabilities = {
@@ -104,7 +100,6 @@ function happyScript(): FakeStep[] {
     ...Array.from({ length: 9 }, () => ({ text: 'password_reset' })),
     { vectors: [VEC] },
     { text: '[doc:d1] Open the account settings page and choose reset password.' },
-    { text: '- Open the account settings page and choose reset password.' },
     { text: 'VERDICT: SUPPORTED' },
   ];
 }
@@ -129,7 +124,7 @@ function makeDeps(
     egress,
     pins: PINS,
     limits: {
-      maxCostCents: 10_000,
+      maxCostMicros: 100_000_000,
       maxSteps: 50,
       deadlineAt: new Date(Date.now() + 60_000),
       ...limits,
@@ -182,6 +177,14 @@ async function runState(runId: string): Promise<string | undefined> {
   return rows.rows[0]?.state as string | undefined;
 }
 
+/**
+ * Journal rows for one run, ordered by step id.
+ *
+ * That order is alphabetical, not causal: step_journal carries no sequence
+ * column, so the order a run walked its steps is not recoverable from it.
+ * Assert the set of steps, never the sequence — a list assertion here reads
+ * like an order check and cannot detect a reordered pipeline.
+ */
 async function journalRows(runId: string): Promise<{ step_id: string; status: string; result: unknown }[]> {
   const rows = await pool.query(
     'SELECT step_id, status, result FROM step_journal WHERE run_id = $1 ORDER BY step_id',
@@ -190,11 +193,9 @@ async function journalRows(runId: string): Promise<{ step_id: string; status: st
   return rows.rows as { step_id: string; status: string; result: unknown }[];
 }
 
-describe.skipIf(!dbUp)('section 4.3 run coordinator', () => {
+describe('section 4.3 run coordinator', () => {
   beforeEach(async () => {
-    await pool.query(LEDGER_DDL);
-    await pool.query(DOCUMENTS_DDL);
-    await pool.query(TIMING_DDL);
+    await applyLedgerSchema(pool);
     await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, document');
     await indexFixtureDoc();
   });
@@ -213,12 +214,12 @@ describe.skipIf(!dbUp)('section 4.3 run coordinator', () => {
     expect(await runState(result.runId)).toBe('resolved');
 
     const runRow = await pool.query(
-      'SELECT cost_cents, steps_used, partition FROM run WHERE run_id = $1',
+      'SELECT cost_micros, steps_used, partition FROM run WHERE run_id = $1',
       [result.runId],
     );
     expect(runRow.rows[0]).toMatchObject({
       // 12 chat calls at the FakeProvider default of 1 cent; the embed call costs 0.
-      cost_cents: 12,
+      cost_micros: 11 * ONE_CENT_IN_MICROS,
       steps_used: 5,
       partition: partitionOf(ticketId, 8),
     });
@@ -366,8 +367,7 @@ describe.skipIf(!dbUp)('section 4.3 run coordinator', () => {
       ].map((text) => ({ text })),
       { vectors: [VEC] },
       { text: '[doc:d1] Open the account settings page and choose reset password.' },
-      { text: '- Open the account settings page and choose reset password.' },
-      { text: 'VERDICT: SUPPORTED' },
+        { text: 'VERDICT: SUPPORTED' },
     ];
     const deps = makeDeps(script);
 
@@ -378,19 +378,20 @@ describe.skipIf(!dbUp)('section 4.3 run coordinator', () => {
     expect(await runState(result.runId)).toBe('escalated');
 
     const runRow = await pool.query(
-      'SELECT cost_cents, steps_used FROM run WHERE run_id = $1',
+      'SELECT cost_micros, steps_used FROM run WHERE run_id = $1',
       [result.runId],
     );
-    expect(runRow.rows[0]).toMatchObject({ cost_cents: 12, steps_used: 4 });
+    expect(runRow.rows[0]).toMatchObject({
+      cost_micros: 11 * ONE_CENT_IN_MICROS,
+      steps_used: 4,
+    });
 
     const steps = await journalRows(result.runId);
-    expect(steps.map((s) => s.step_id)).toEqual([
-      'classify',
-      'compose',
-      'escalate',
-      'gate',
-      'retrieve',
-    ]);
+    // The set of steps the run journaled. Causal order is 'classify',
+    // 'retrieve', 'compose', 'gate', 'escalate'; the journal cannot record it.
+    expect(new Set(steps.map((s) => s.step_id))).toEqual(
+      new Set(['classify', 'retrieve', 'compose', 'gate', 'escalate']),
+    );
     const classify = steps.find((s) => s.step_id === 'classify');
     expect(classify?.result).toMatchObject({ intentId: 'password_reset', agreement: 4 / 9 });
     expect(steps.find((s) => s.step_id === 'escalate')?.result).toMatchObject({
@@ -409,16 +410,78 @@ describe.skipIf(!dbUp)('section 4.3 run coordinator', () => {
     expect(await runState(result.runId)).toBe('escalated');
 
     const runRow = await pool.query(
-      'SELECT cost_cents, steps_used FROM run WHERE run_id = $1',
+      'SELECT cost_micros, steps_used FROM run WHERE run_id = $1',
       [result.runId],
     );
     // Classify spent 9 cents over two steps; compose never ran.
-    expect(runRow.rows[0]).toMatchObject({ cost_cents: 9, steps_used: 2 });
-    expect((await journalRows(result.runId)).map((s) => s.step_id)).toEqual([
-      'classify',
-      'escalate',
-      'retrieve',
+    expect(runRow.rows[0]).toMatchObject({
+      cost_micros: 9 * ONE_CENT_IN_MICROS,
+      steps_used: 2,
+    });
+    // Set, not sequence: the run went classify, retrieve, escalate.
+    expect(new Set((await journalRows(result.runId)).map((s) => s.step_id))).toEqual(
+      new Set(['classify', 'retrieve', 'escalate']),
+    );
+  });
+
+  it('records a sub-cent spend instead of losing it to rounding (DEC-25)', async () => {
+    // The defect this replaced: cost was stored in cents, and
+    // Math.round(0.000841 * 100) is 0. A whole run of real calls recorded
+    // nothing, so the limit summed zeros and could never fire on spend.
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const PER_CALL_MICROS = 841;
+    const script = happyScript().map((step) =>
+      'text' in step ? { ...step, costMicros: PER_CALL_MICROS } : step,
+    );
+    const deps = makeDeps(script);
+
+    const result = await coordinateTicket(deps, autoInput(ticketId, 1n));
+    expect(result.outcome).toBe('resolved');
+
+    const runRow = await pool.query(
+      'SELECT cost_micros FROM run WHERE run_id = $1',
+      [result.runId],
+    );
+    // Eleven chat calls; the embedding call is scripted with no cost.
+    expect(runRow.rows[0]?.cost_micros).toBe(11 * PER_CALL_MICROS);
+    // In cents every one of those calls would have rounded to zero.
+    expect(Math.round(PER_CALL_MICROS / 10_000)).toBe(0);
+  });
+
+  it('escalates on the cost limit and keeps its partial work (DEC-25)', async () => {
+    // The only limit no test drove. FakeProvider charges one cent per chat
+    // call, so the 9 classifier samples spend 9 cents; a 5 cent ceiling is
+    // already breached when the retrieve step checks it. Cents are written
+    // in micro-dollars, the unit the ledger stores (DEC-25).
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const deps = makeDeps(happyScript(), { maxCostMicros: 5 * ONE_CENT_IN_MICROS });
+
+    const result = await coordinateTicket(deps, autoInput(ticketId, 1n));
+
+    expect(result.outcome).toBe('escalated');
+    if (result.outcome === 'escalated') {
+      expect(result.reason).toBe('limit_cost');
+    }
+    expect(await runState(result.runId)).toBe('escalated');
+
+    // Reaching a limit is not an error: the run keeps what it already did.
+    const runRow = await pool.query(
+      'SELECT cost_micros, steps_used FROM run WHERE run_id = $1',
+      [result.runId],
+    );
+    expect(runRow.rows[0]).toMatchObject({
+      cost_micros: 9 * ONE_CENT_IN_MICROS,
+      steps_used: 1,
+    });
+    expect(new Set((await journalRows(result.runId)).map((s) => s.step_id))).toEqual(
+      new Set(['classify', 'escalate']),
+    );
+
+    // No outbox record: the run never reached the executing path.
+    const outbox = await pool.query('SELECT 1 FROM outbox WHERE run_id = $1', [
+      result.runId,
     ]);
+    expect(outbox.rows).toHaveLength(0);
   });
 
   it('escalates an expired clock before any model call', async () => {
@@ -428,7 +491,7 @@ describe.skipIf(!dbUp)('section 4.3 run coordinator', () => {
       ...makeDeps([]),
       provider,
       limits: {
-        maxCostCents: 10_000,
+        maxCostMicros: 100_000_000,
         maxSteps: 50,
         deadlineAt: new Date(Date.now() - 1000),
       },
@@ -440,9 +503,9 @@ describe.skipIf(!dbUp)('section 4.3 run coordinator', () => {
     if (result.outcome === 'escalated') expect(result.reason).toBe('limit_clock');
     expect(provider.calls).toHaveLength(0);
     expect(await runState(result.runId)).toBe('escalated');
-    expect((await journalRows(result.runId)).map((s) => s.step_id)).toEqual([
-      'escalate',
-    ]);
+    expect(new Set((await journalRows(result.runId)).map((s) => s.step_id))).toEqual(
+      new Set(['escalate']),
+    );
   });
 
   it('stops a replayed semantic action superseded, never executing (section 4.2 rule 2)', async () => {
@@ -560,5 +623,45 @@ describe.skipIf(!dbUp)('section 4.3 run coordinator', () => {
 
   afterAll(async () => {
     await pool.end();
+  });
+
+  it('escalates instead of parking a second draft after a crash mid-park (DEC-11)', async () => {
+    // createDraft reaches the helpdesk before the ledger can record the
+    // handle. Simulate a run that died in exactly that window: a park step
+    // left 'parking' with no handle, on this ticket, under another run.
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const orphanRunId = randomUUID();
+    await pool.query(
+      `INSERT INTO run (run_id, ticket_id, partition, epoch, state, prompt_ver,
+                        model_ver, deadline_at)
+       VALUES ($1, $2, 0, 1, 'gated', 'p', 'm', now() + interval '1 hour')`,
+      [orphanRunId, ticketId],
+    );
+    await pool.query(
+      `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver,
+                                 model_ver, cost_micros)
+       VALUES ($1, 'park', 'parking', '{}'::jsonb, 'p', 'm', 0)`,
+      [orphanRunId],
+    );
+
+    const helpdesk = helpdeskWith(ticketId);
+    const deps = makeDeps(happyScript(), undefined, helpdesk);
+
+    const result = await coordinateTicket(deps, replyInput(ticketId, 2n));
+
+    expect(result.outcome).toBe('escalated');
+    if (result.outcome === 'escalated') {
+      expect(result.reason).toBe('park_unresolved');
+    }
+    // The decisive assertion: the retry put no second draft in front of the
+    // customer. Only the orphan the earlier run left behind exists.
+    const drafts = await pool.query(
+      `SELECT sj.result->>'draftExternalId' AS handle
+         FROM step_journal sj JOIN run r ON r.run_id = sj.run_id
+        WHERE r.ticket_id = $1 AND sj.step_id = 'park'
+          AND sj.result->>'draftExternalId' IS NOT NULL`,
+      [ticketId],
+    );
+    expect(drafts.rows).toHaveLength(0);
   });
 });

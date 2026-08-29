@@ -38,8 +38,12 @@ class FakeClient implements ImapClientLike {
 
   constructor(private readonly server: FakeServer) {}
 
-  on(event: 'error' | 'close', listener: () => void): unknown {
-    this.listeners.set(event, listener);
+  // The port overloads this: 'error' hands the listener an Error, 'close'
+  // hands it nothing. The fake accepts either shape.
+  on(event: 'error', listener: (error: Error) => void): unknown;
+  on(event: 'close', listener: () => void): unknown;
+  on(event: 'error' | 'close', listener: (...args: never[]) => void): unknown {
+    this.listeners.set(event, listener as () => void);
     return this;
   }
 

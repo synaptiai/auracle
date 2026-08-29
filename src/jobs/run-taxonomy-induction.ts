@@ -1,7 +1,7 @@
 // Offline runner for the taxonomy-induction job (section 4.11, DEC-02,
 // DEC-10). Run via:
 //
-//   npm run build && node dist/jobs/run-taxonomy-induction.js [output.json]
+//   pnpm run induce [-- output.json]
 //
 // Environment:
 //   OPENROUTER_API_KEY   required (DEC-16: OpenRouter supplies the models)
@@ -11,7 +11,7 @@
 //   OPENROUTER_BASE_URL  optional override of the API base URL
 //
 // The history is the synthetic fixture corpus (DEC-18) by default. Set
-// CORPUS_PATH to a file written by `npm run export-corpus` to run the same
+// CORPUS_PATH to a file written by `pnpm run export-corpus` to run the same
 // job over real mailbox history instead; that file is gitignored and never
 // committed (DEC-18). In corpus mode the output default also lands under
 // the gitignored corpus/ directory: the artifact is real-derived data. The
@@ -21,9 +21,9 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { loadDotEnv } from '../config/env.js';
+import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
 import { CORPUS_SOURCE, loadCorpusFile } from '../corpus/corpus.js';
-import { loadGoldSet } from '../fixtures/load.js';
+import { goldCaseText, loadGoldSet } from '../fixtures/load.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { INTENT_CAP, induceTaxonomy } from './taxonomy-induction.js';
 import type { HistoryItem } from './taxonomy-induction.js';
@@ -53,14 +53,14 @@ async function main(): Promise<void> {
   if (corpusPath !== undefined) {
     items = loadCorpusFile(corpusPath).tickets.map((ticket) => ({
       id: ticket.ticket_id,
-      text: `${ticket.subject}\n${ticket.body}`,
+      text: goldCaseText(ticket),
     }));
     console.log(`history source: ${corpusPath} (${items.length} real threads, gitignored)`);
   } else {
     const { fit, report } = loadGoldSet();
     items = [...fit.tickets, ...report.tickets].map((ticket) => ({
       id: ticket.ticket_id,
-      text: `${ticket.subject}\n${ticket.body}`,
+      text: goldCaseText(ticket),
     }));
     console.log('history source: synthetic fixture gold set');
   }
@@ -70,6 +70,7 @@ async function main(): Promise<void> {
     ...(process.env['OPENROUTER_BASE_URL']
       ? { baseUrl: process.env['OPENROUTER_BASE_URL'] }
       : {}),
+    ...dataGuaranteeOption(),
   });
 
   const chatModelVer = process.env['CHAT_MODEL_VER'] ?? DEFAULT_CHAT_MODEL;
@@ -91,7 +92,7 @@ async function main(): Promise<void> {
   console.log(
     `wrote ${outputPath}: ${taxonomy.candidates.length} named candidates ` +
       `(cap ${INTENT_CAP - 1}) + other group of ${taxonomy.other.size}, ` +
-      `${taxonomy.cost_cents} cents`,
+      `${taxonomy.cost_micros} micro-dollars`,
   );
   if (corpusPath !== undefined) {
     console.log('this artifact holds real-derived data. It is gitignored and must stay that way (DEC-18).');

@@ -1,6 +1,6 @@
 ---
 name: decision-tracing
-description: Traces behavioural changes to the decision register. Triggers when the user asks to change behaviour, modify a component, add a feature, or when a change touches anything docs/v1-architecture.md specifies.
+description: Traces behavioural changes to the decision register. Triggers on a request to change behaviour, modify a component or add a feature. Triggers also on any change that touches what docs/v1-architecture.md specifies.
 ---
 
 # Decision Tracing
@@ -9,7 +9,7 @@ This skill is advisory. The deterministic backstop is the commit hook. It
 blocks a change to `docs/v1-architecture.md` without a DEC citation. The
 compliance pass in `REVIEW.md` is a second backstop.
 
-`docs/v1-architecture.md` holds 33 numbered decisions, DEC-01 to DEC-33. The
+`docs/v1-architecture.md` holds 39 numbered decisions, DEC-01 to DEC-39. The
 decisions are the only design authority.
 
 ## Rules

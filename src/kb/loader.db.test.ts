@@ -3,10 +3,10 @@
 // indexDocument (no second storage path) and comes back out of hybridSearch.
 // Also covers loud per-file failures and both dimension-mismatch guards.
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+
+import { applyLedgerSchema } from '../test-support/schema.js';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -21,15 +21,13 @@ import { DEFAULT_EMBED_MODEL, loadKbDirectory } from './loader.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 5 });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
-const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
-const DDL = readFileSync(path.join(dbDir, '002_documents.sql'), 'utf8');
 
 const DIM = 1536;
 const FRESH_REVIEW_BY = '2999-01-01';
@@ -73,7 +71,7 @@ class VectorStub implements ModelProvider {
       vectors: call.input.map(
         (_, i) => this.vectors[i % this.vectors.length] as number[],
       ),
-      costCents: 3,
+      costMicros: 3,
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 12 },
       servedModelVer: call.modelVer,
     };
@@ -134,11 +132,11 @@ async function writeCorpus(dir: string): Promise<void> {
   await writeFile(path.join(dir, 'notes.txt'), 'not markdown', 'utf8');
 }
 
-describe.skipIf(!dbUp)('kb loader against postgres', () => {
+describe('kb loader against postgres', () => {
   let corpusDir: string;
 
   beforeEach(async () => {
-    await pool.query(DDL);
+    await applyLedgerSchema(pool);
     await pool.query('TRUNCATE document');
     corpusDir = await mkdtemp(path.join(tmpdir(), 'kb-corpus-'));
     await writeCorpus(corpusDir);
@@ -164,7 +162,7 @@ describe.skipIf(!dbUp)('kb loader against postgres', () => {
       skipped: 1,
       failed: 0,
       failures: [],
-      costCents: 3,
+      costMicros: 3,
     });
     // One batched embed() call carries every document body.
     expect(stub.calls).toHaveLength(1);

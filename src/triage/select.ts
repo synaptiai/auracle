@@ -11,6 +11,8 @@
 // model (DEC-16), offline runs plug in the deterministic stub below so a
 // triage pass on the synthetic corpus is reproducible without a network.
 
+import type { ConversationTurn } from '../coordinator/coordinator.js';
+import { renderPromptBody } from '../coordinator/history.js';
 import { predictIntent } from '../replay/fake-model.js';
 import type { RiskTier } from '../fixtures/load.js';
 
@@ -23,6 +25,26 @@ export interface TriageCase {
   origin: CaseOrigin;
   subject: string;
   body: string;
+  /**
+   * DEC-37: earlier turns of this conversation, oldest first. Empty on a
+   * first turn.
+   *
+   * A follow-up message names no topic of its own. A judge that read the
+   * message alone would call every follow-up uncertain and fill the review
+   * queue with cases a person cannot read either.
+   */
+  history?: readonly ConversationTurn[];
+}
+
+/**
+ * The text a judge reads for one case: the same prompt body the classifier
+ * builds, so the judge and the classifier never disagree about the case.
+ */
+export function caseText(case_: TriageCase): string {
+  // The classifier's own assembly, not a copy of it. A copy drifts, and the
+  // drift shows up as a review cohort computed from a prompt production never
+  // issues — the failure goldCaseText removed for the other jobs.
+  return renderPromptBody(case_.history ?? [], `${case_.subject}\n\n${case_.body}`);
 }
 
 /** The judge's verdict on one case. `reason` is provenance, not a score. */
@@ -66,7 +88,7 @@ export class StubTriageJudge implements TriageJudge {
   constructor(private readonly riskByIntent: ReadonlyMap<string, RiskTier>) {}
 
   async review(case_: TriageCase): Promise<JudgeVerdict> {
-    const intent = predictIntent(`${case_.subject}\n\n${case_.body}`);
+    const intent = predictIntent(caseText(case_));
     if (intent === 'other') {
       return {
         selected: true,

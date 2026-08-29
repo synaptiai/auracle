@@ -247,6 +247,8 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
       expect(artifact.coverage_at_threshold).toBeCloseTo(200 / 385);
       expect(artifact.fit_tickets).toBe(385);
       expect(artifact.split_used).toBe('fit');
+      // Every scripted case is a first turn, so the recorded scope says so.
+      expect(artifact.scope).toBe('first_turn');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -339,12 +341,93 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
   });
 });
 
+describe('runCalibrationJob over a conversation (DEC-37, DEC-39)', () => {
+  const REPLY = 'We closed the duplicate charge and confirmed the renewal date.';
+
+  /**
+   * Turns the first two cases of the scripted half into one two-turn
+   * conversation, leaving the remaining 383 as first turns. The provider
+   * script is untouched: the job still classifies 385 cases in the same
+   * order, so every scripted vote still lands on the case it was written for.
+   */
+  function withOneConversation(): { steps: FakeStep[]; half: GoldFile } {
+    const { steps, half } = scriptedFitHalf();
+    const [first, second] = half.tickets;
+    if (!first || !second) throw new Error('scripted half is too small to hold a conversation');
+    first.conversation_id = 'CONV-CAL-0001';
+    first.turn_number = 1;
+    first.agent_reply = REPLY;
+    second.conversation_id = 'CONV-CAL-0001';
+    second.turn_number = 2;
+    return { steps, half };
+  }
+
+  it('sends the earlier turn and its reply into the later turn prompt', async () => {
+    const dir = tempDirUrl();
+    try {
+      const { steps, half } = withOneConversation();
+      const provider = new FakeProvider(steps);
+      const [first, second] = half.tickets;
+
+      await runCalibrationJob({
+        provider,
+        taxonomy: TAXONOMY,
+        fitHalf: half,
+        artifactDir: dir,
+        ...PIN,
+      });
+
+      const prompts = provider.calls
+        .filter((call) => call.kind === 'chat')
+        .map((call) => call.messages?.[1]?.content ?? '');
+      // Nine samples per case, in case order: the first nine are turn 1.
+      const turnOnePrompt = prompts[0] ?? '';
+      const turnTwoPrompt = prompts[9] ?? '';
+
+      expect(turnOnePrompt).not.toContain('Earlier turns:');
+      expect(turnOnePrompt).toBe(`${first?.subject}\n\n${first?.body}`);
+
+      expect(turnTwoPrompt).toContain('Earlier turns:');
+      // The history line is the whole earlier message, subject included: that
+      // is what turn.body_text holds, so this is the runtime's own shape.
+      expect(turnTwoPrompt).toContain(`[turn 1] customer: ${first?.subject}\n\n${first?.body}`);
+      expect(turnTwoPrompt).toContain(`[turn 1] agent: ${REPLY}`);
+      expect(turnTwoPrompt).toContain(`Latest message:\n${second?.subject}\n\n${second?.body}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('fits on every turn and records the population as all_turns', async () => {
+    const dir = tempDirUrl();
+    try {
+      const { steps, half } = withOneConversation();
+
+      const { artifact } = await runCalibrationJob({
+        provider: new FakeProvider(steps),
+        taxonomy: TAXONOMY,
+        fitHalf: half,
+        artifactDir: dir,
+        ...PIN,
+      });
+
+      // DEC-39 binds the jobs that score a disposition. This one scores a
+      // label, which a later turn carries, so nothing is dropped.
+      expect(artifact.fit_tickets).toBe(385);
+      expect(artifact.scope).toBe('all_turns');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
+
 describe('calibration artifact round-trip', () => {
   const BASE: CalibrationArtifact = {    artifact: 'agreement-threshold',
     version: 1,
     fitted_at: '2026-02-01T00:00:00.000Z',
     gold_source: 'synthetic',
     split_used: 'fit',
+    scope: 'first_turn',
     fit_tickets: 385,
     prompt_ver: 'classify-p1',
     model_ver: 'test-model',
@@ -427,6 +510,9 @@ describe('calibration artifact round-trip', () => {
     ).toThrow(/bracket/);
     expect(() => validateCalibrationArtifact({ ...BASE, gold_source: 'live' })).toThrow(
       /synthetic/,
+    );
+    expect(() => validateCalibrationArtifact({ ...BASE, scope: 'every-turn' })).toThrow(
+      /artifact.scope/,
     );
     // A well-formed artifact passes untouched.
     expect(validateCalibrationArtifact(BASE)).toEqual(BASE);

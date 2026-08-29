@@ -1,5 +1,5 @@
 // Versioned schema migrations over db/*.sql (V2 open item 6).
-// Run via `npm run db:migrate` (executes the built dist/ledger/migrate.js).
+// Run via `pnpm run db:migrate` (executes the built dist/ledger/migrate.js).
 //
 // The runner keeps the numbered-file approach: plain SQL, lexical order,
 // no framework. It adds a schema_version table so an applied file is

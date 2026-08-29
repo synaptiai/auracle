@@ -12,9 +12,9 @@ See DEC-18.
   risk tier per DEC-13. A high-risk intent never reaches the automatic path,
   whatever the gate values say. The `other` group stays in the list per
   section 4.11, so unmatched tickets have a target label.
-- `gold/fit.json`. The fit half of the gold set. It holds 385 synthetic tickets.
+- `gold/fit.json`. The fit half of the gold set. It holds 385 synthetic cases.
 - `gold/report.json`. The report half of the gold set. It also holds 385
-  synthetic tickets.
+  synthetic cases.
 - `documents.json`. Help-center documents and canonical resolutions for the
   retrieval index per DEC-22. Approved resolutions record how people actually
   solved tickets. Each entry declares an owner and a review date per DEC-23.
@@ -29,8 +29,26 @@ See DEC-31.
 
 The strata are the intents. Each intent holds 30 or 31 cases. The split divides
 each stratum as evenly as possible between the halves. Each half contains every
-intent, so every risk tier appears in both halves. This keeps the strata usable
-at the half size that section 4.10 describes.
+intent, so every risk tier appears in both halves.
+
+A stratum counts case records. The scored population is smaller, because the
+replay and the gold report read first turns only. Each intent opens 9 to 14
+threads per half. Read a stratum count from the artifact of the run, never
+from this file.
+
+## Conversations
+
+A case is one turn, not one thread. Most threads hold one turn. A minority hold
+two or three. Turns of one thread share a `conversation_id` and number from 1.
+See DEC-35 and DEC-38.
+
+Each half holds whole threads, so no thread crosses the split. The
+loader refuses a corpus where one does.
+
+The replay and the gold report score first turns only, because a disposition
+belongs to the whole thread. See DEC-39. The calibration job scores a
+prediction against the intent label of the case, which every turn carries, so
+it fits on every turn and records that population in its artifact.
 
 ## Ticket schema
 
@@ -42,6 +60,11 @@ Each ticket object carries these fields.
 - `queue`. The queue that received the ticket.
 - `disposition`. Observable outcome, see below.
 - `subject`, `body`. Invented ticket text.
+- `conversation_id`. Synthetic thread id with a `CONV-SYN-` prefix.
+- `turn_number`. Position in the thread, counting from 1.
+- `agent_reply`. The invented reply that answered this turn. The last turn of a
+  thread carries none, because no reply followed it. A later turn's prompt
+  carries the earlier turns and their replies, per DEC-37.
 
 A disposition records an observable result of the work. The fields are
 `escalated`, `macro_applied`, `refund_issued` and `first_reply_minutes`. Action

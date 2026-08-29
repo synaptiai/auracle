@@ -1,6 +1,6 @@
 /**
  * IMAP ingress daemon entrypoint (section 4.1). A different process: run
- * via `npm run imap` (executes the built dist/imap/main.js).
+ * via `pnpm run imap` (executes the built dist/imap/main.js).
  *
  * Configuration:
  * - IMAP_HOST         mailbox host (required)
@@ -19,7 +19,7 @@
 import { Pool } from 'pg';
 
 import { loadDotEnv } from '../config/env.js';
-import { dbUrl } from '../db/config.js';
+import { requireDbUrl } from '../db/config.js';
 import { intakeEnqueuer } from '../intake/adapter.js';
 import { startImapDaemon } from './daemon.js';
 import { ImapMailboxFetcher, imapFlowFactory } from './fetcher.js';
@@ -54,7 +54,7 @@ async function main(): Promise<void> {
   const intervalMs = positiveIntFromEnv('IMAP_INTERVAL_MS', 60_000);
   const partitionCount = positiveIntFromEnv('PARTITION_COUNT', 8);
 
-  const pool = new Pool({ connectionString: dbUrl(), max: 1 });
+  const pool = new Pool({ connectionString: requireDbUrl('the IMAP ingress'), max: 1 });
   const fetcher = new ImapMailboxFetcher(config, imapFlowFactory(config));
 
   const daemon = startImapDaemon({

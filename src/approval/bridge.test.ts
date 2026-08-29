@@ -10,6 +10,7 @@ import {
 
 function reply(overrides: Partial<DraftReply> = {}): DraftReply {
   return {
+    idemKey: 'park:T-1:a',
     ticketExternalId: 'HD-1001',
     body: 'The sign-in page accepts your address again.',
     disclosure: 'This reply was drafted with AI assistance.',
@@ -111,7 +112,7 @@ describe('parkGatedReply provenance enforcement (DEC-33)', () => {
   it('refuses a reply whose provenance is missing entirely', async () => {
     const adapter = recordingAdapter();
     const missing = reply() as unknown as DraftReply;
-    delete (missing as Record<string, unknown>)['provenance'];
+    delete (missing as unknown as Record<string, unknown>)['provenance'];
 
     await expect(parkGatedReply(adapter, missing)).rejects.toThrow(ApprovalRefusalError);
     expect(adapter.calls).toBe(0);

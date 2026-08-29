@@ -11,7 +11,8 @@
 // keep once real volume exists to triage; on the synthetic 770-case gold set
 // this run is a demonstration of the mechanism, not a tool.
 
-import { loadGoldSet, loadTaxonomy } from '../fixtures/load.js';
+import { conversationHistories, loadGoldSet, loadTaxonomy } from '../fixtures/load.js';
+import type { GoldFile } from '../fixtures/load.js';
 import { StubTriageJudge } from './select.js';
 import type { CaseOrigin, TriageCase, TriageJudge } from './select.js';
 import {
@@ -49,15 +50,14 @@ export function goldSetCases(): TriageCase[] {
   return [...halfToCases(gold.fit, 'fit'), ...halfToCases(gold.report, 'report')];
 }
 
-function halfToCases(
-  half: { tickets: readonly { ticket_id: string; subject: string; body: string }[] },
-  origin: CaseOrigin,
-): TriageCase[] {
+function halfToCases(half: GoldFile, origin: CaseOrigin): TriageCase[] {
+  const histories = conversationHistories(half.tickets);
   return half.tickets.map((ticket) => ({
     ticketId: ticket.ticket_id,
     origin,
     subject: ticket.subject,
     body: ticket.body,
+    history: histories.get(ticket.ticket_id) ?? [],
   }));
 }
 
@@ -119,7 +119,7 @@ function defaultPins(judge: TriageJudge): { prompt_ver: string; model_ver: strin
   throw new Error('runTriageJob needs pinned prompt_ver and model_ver (DEC-26)');
 }
 
-// CLI entry: `npm run triage` executes dist/triage/run.js over the committed
+// CLI entry: `pnpm run triage` executes dist/triage/run.js over the committed
 // fixture corpus with the offline stub judge. No network, no database, no API
 // key: deterministic and byte-for-byte reproducible (DEC-18).
 async function main(): Promise<void> {

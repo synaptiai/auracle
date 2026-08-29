@@ -13,73 +13,63 @@
 //
 // Skipped when Docker or the ledger is unavailable. Synthetic data only
 // (DEC-18): example.test addresses throughout.
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+
+import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { createTransport } from 'nodemailer';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, inject } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
 import { enqueueTicket } from '../coordinator/intake.js';
-import { partitionOf } from '../coordinator/coordinator.js';
+import { toIntakeTicket } from '../intake/adapter.js';
 import { ImapPoller } from '../ingress/imap-poller.js';
 import { pollCycle } from '../imap/daemon.js';
 import type { ImapDaemonLogEntry } from '../imap/daemon.js';
 import { ImapMailboxFetcher, imapFlowFactory } from '../imap/fetcher.js';
 
 const PARTITION_COUNT = 8;
-const SUPPORT_USER = 'support@acme.example';
-const CUSTOMER_ADDRESS = 'dana.doe@example.test';
+// One GreenMail server now serves every mail suite, so each suite owns its
+// own mailboxes. Sharing `support@acme.example` with the duplex suite let
+// its delivered mail count as this suite's unseen mail. Synthetic reserved
+// domains throughout (DEC-18).
+const SUPPORT_USER = 'support-ingress@acme.example';
+const CUSTOMER_ADDRESS = 'dana.ingress@example.test';
 /** The thread root message-id; also the ticket id the adapter derives. */
-const TICKET_ID = 'order-4471-damaged@example.test';
+const TICKET_ID = 'order-4471-ingress@example.test';
 const TICKET_TEXT = 'The box arrived with a crushed corner. Two tiles are broken.';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 5 });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
-let greenmail: StartedTestContainer | undefined;
-try {
-  greenmail = await new GenericContainer('greenmail/standalone:2.1.12')
-    .withEnvironment({
-      GREENMAIL_OPTS:
-        '-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled',
-    })
-    .withExposedPorts(3025, 3143)
-    .withStartupTimeout(300_000)
-    .start();
-} catch {
-  greenmail = undefined;
-}
+// The GreenMail server is shared: src/test-support/global-setup.ts starts one
+// per run, waits until it answers IMAP, and provides its mapped address. This
+// suite used to start its own and guard itself with describe.skipIf, so a
+// container that failed to start produced a green run.
+const greenmail = inject('mail');
 
 afterAll(async () => {
-  await greenmail?.stop();
   await pool.end();
 });
 
-const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
-const INTAKE_DDL = readFileSync(path.join(dbDir, '004_intake.sql'), 'utf8');
 
 function realFetcher(): ImapMailboxFetcher {
-  if (!greenmail) throw new Error('greenmail container not started');
   return new ImapMailboxFetcher(
     {
-      host: greenmail.getHost(),
-      port: greenmail.getMappedPort(3143),
+      host: greenmail.host,
+      port: greenmail.imapPort,
       secure: false,
       user: SUPPORT_USER,
       pass: 'synthetic-password',
     },
     imapFlowFactory({
-      host: greenmail.getHost(),
-      port: greenmail.getMappedPort(3143),
+      host: greenmail.host,
+      port: greenmail.imapPort,
       secure: false,
       user: SUPPORT_USER,
       pass: 'synthetic-password',
@@ -92,12 +82,9 @@ function realFetcher(): ImapMailboxFetcher {
 function runCycle(fetcher: ImapMailboxFetcher, logs: ImapDaemonLogEntry[]): Promise<void> {
   const poller = new ImapPoller({
     fetchMessages: () => fetcher.fetchUnseen(),
-    onEvent: (event) =>
-      enqueueTicket(
-        pool,
-        { ticketId: event.ticket.ticketId, ticketText: event.message.bodyText },
-        PARTITION_COUNT,
-      ),
+    onEvent: async (event) => {
+      await enqueueTicket(pool, toIntakeTicket(event), PARTITION_COUNT);
+    },
     onError: () => {},
   });
   return pollCycle({
@@ -110,7 +97,10 @@ function runCycle(fetcher: ImapMailboxFetcher, logs: ImapDaemonLogEntry[]): Prom
 }
 
 async function waitFor(condition: () => Promise<boolean>, what: string): Promise<void> {
-  const deadline = Date.now() + 15_000;
+  // The shared server is already answering IMAP before any suite runs, so
+  // this budget covers one delivery rather than a JVM start. It stays
+  // generous because a loaded Docker host slows every round trip.
+  const deadline = Date.now() + 60_000;
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {
@@ -124,9 +114,9 @@ async function waitFor(condition: () => Promise<boolean>, what: string): Promise
   throw new Error(`timed out waiting for ${what}${lastError ? ` (last error: ${String(lastError)})` : ''}`);
 }
 
-describe.skipIf(!dbUp || !greenmail)('imap ingress daemon end to end', () => {
+describe('imap ingress daemon end to end', () => {
   beforeEach(async () => {
-    await pool.query(INTAKE_DDL);
+    await applyLedgerSchema(pool);
     await pool.query('DELETE FROM intake');
   });
 
@@ -136,8 +126,8 @@ describe.skipIf(!dbUp || !greenmail)('imap ingress daemon end to end', () => {
 
     // 1. Customer mail arrives at the support account over SMTP.
     const inbound = createTransport({
-      host: greenmail!.getHost(),
-      port: greenmail!.getMappedPort(3025),
+      host: greenmail.host,
+      port: greenmail.smtpPort,
       secure: false,
     });
     await inbound.sendMail({
@@ -164,8 +154,10 @@ describe.skipIf(!dbUp || !greenmail)('imap ingress daemon end to end', () => {
     expect(rows.rows).toHaveLength(1);
     expect(rows.rows[0]!.ticket_id).toBe(TICKET_ID);
     expect(rows.rows[0]!.ticket_text).toContain('crushed corner');
-    // DEC-27: the row sits under its hash partition.
-    expect(rows.rows[0]!.partition).toBe(partitionOf(TICKET_ID, PARTITION_COUNT));
+    // DEC-36: the row sits under its conversation's partition, which intake
+    // generates, so it is not a function of the ticket id.
+    expect(rows.rows[0]!.partition).toBeGreaterThanOrEqual(0);
+    expect(rows.rows[0]!.partition).toBeLessThan(PARTITION_COUNT);
     expect(logs.some((e) => e.event === 'mail_intaked' && e.count === 1)).toBe(true);
 
     // 3. The message gained \Seen only after intake resolved.

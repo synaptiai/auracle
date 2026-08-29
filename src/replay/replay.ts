@@ -3,7 +3,8 @@
  *
  * Obeys DEC-09 (replay scores action match), DEC-20 (replay the history
  * before going live), DEC-31 (fit on one half, report on the other) and
- * DEC-32 (score the disposition, never the intent label).
+ * DEC-32 (score the disposition, never the intent label) and DEC-39 (score
+ * first turns only).
  *
  * DEC-32 is the core constraint. The gold tickets carry an `intent` field,
  * and this module never reads it. Intent labels come from the induction job,
@@ -14,12 +15,16 @@
  * DEC-31 is a code-level split. `runReplay` fits the route map from the fit
  * half only and scores on the report half only. Nothing in the fit phase
  * touches the report tickets.
+ *
+ * DEC-39 narrows both phases to first turns. The reported counts follow that
+ * population, so a half that carries later turns never claims them as scored.
  */
 
 import { classifyTicket } from '../classifier/classifier.js';
 import { evaluatePolicy } from '../policy/policy.js';
 import type { AdapterCapabilities, RiskTier } from '../policy/policy.js';
 import type { ModelProvider } from '../models/provider.js';
+import { goldCaseText, isFirstTurn } from '../fixtures/load.js';
 import type { GoldFile, GoldTicket } from '../fixtures/load.js';
 
 /**
@@ -126,7 +131,9 @@ export interface ScoredTicket {
 
 export interface ReplayReport {
   method: 'action-match';
+  /** First-turn cases the route map was fitted on, not the size of the half (DEC-39). */
   fitTickets: number;
+  /** First-turn cases scored, not the size of the half (DEC-39). */
   reportTickets: number;
   /** Fitted routes as a plain object, for the report output. */
   routeMap: Record<string, string>;
@@ -150,8 +157,13 @@ export interface RoutedTicket {
   decision: 'auto' | 'gated' | 'escalate';
 }
 
-function ticketText(ticket: GoldTicket): string {
-  return `${ticket.subject}\n${ticket.body}`;
+/**
+ * DEC-39: the replay scores routing against an observable disposition, and a
+ * later turn's disposition belongs to the whole conversation. Both phases
+ * apply the filter, so a caller that fits routes on its own still gets it.
+ */
+function firstTurnsOf(half: GoldFile): GoldTicket[] {
+  return half.tickets.filter(isFirstTurn);
 }
 
 async function classifyAndApplyPolicy(
@@ -162,7 +174,7 @@ async function classifyAndApplyPolicy(
 ): Promise<RoutedTicket> {
   const classification = await classifyTicket(provider, {
     taxonomy,
-    ticketText: ticketText(ticket),
+    ticketText: goldCaseText(ticket),
     ...pins,
   });
   const tier = taxonomy.intents.find((intent) => intent.id === classification.intentId)?.risk_tier;
@@ -191,7 +203,7 @@ function predictedOutcome(routed: RoutedTicket, routes: RouteMap): TicketOutcome
 }
 
 /**
- * Run the fit phase: classify every fit-half ticket once per CLASSIFIER_K
+ * Run the fit phase: classify every fit-half first turn once per CLASSIFIER_K
  * samples through the real classifier, then fit the route map from the
  * predicted intents against the observed queues. This function receives the
  * fit half and nothing else — the type system keeps the report half out.
@@ -203,7 +215,7 @@ export async function fitRoutes(
   fit: GoldFile,
 ): Promise<RouteMap> {
   const pairs: { intentId: string; queue: string }[] = [];
-  for (const ticket of fit.tickets) {
+  for (const ticket of firstTurnsOf(fit)) {
     const routed = await classifyAndApplyPolicy(provider, taxonomy, pins, ticket);
     // DEC-32: the pair records the prediction and the OBSERVED queue only.
     pairs.push({ intentId: routed.intentId, queue: routed.ticket.queue });
@@ -244,7 +256,7 @@ export async function runReplay(input: {
   const routes = await fitRoutes(provider, taxonomy, pins, fit);
 
   const scored: ScoredTicket[] = [];
-  for (const ticket of report.tickets) {
+  for (const ticket of firstTurnsOf(report)) {
     const routed = await classifyAndApplyPolicy(provider, taxonomy, pins, ticket);
     scored.push(scoreTicket(routed, routes));
   }
@@ -271,8 +283,8 @@ export async function runReplay(input: {
 
   return {
     method: 'action-match',
-    fitTickets: fit.tickets.length,
-    reportTickets: report.tickets.length,
+    fitTickets: firstTurnsOf(fit).length,
+    reportTickets: scored.length,
     routeMap: Object.fromEntries(routes.queues),
     fallbackQueue: FALLBACK_QUEUE,
     actionMatchRate: scored.length === 0 ? 0 : matches / scored.length,

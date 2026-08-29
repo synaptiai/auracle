@@ -6,7 +6,7 @@
  *
  * DEC-26: every call carries a pinned prompt_ver and model_ver. The caller
  * pins them; the provider records what the server actually served.
- * DEC-25: every result reports cost in integer cents for the run limits.
+ * DEC-25: every result reports cost in integer micro-dollars for the run limits.
  */
 
 export interface ChatMessage {
@@ -53,8 +53,8 @@ export interface TokenUsage {
 
 export interface ChatResult {
   text: string;
-  /** DEC-25: integer cents, for the coordinator's cost limit. */
-  costCents: number;
+  /** DEC-25: integer micro-dollars, for the coordinator's cost limit. */
+  costMicros: number;
   usage: TokenUsage;
   /** The model id the server reports it served. May differ from the request. */
   servedModelVer: string;
@@ -62,12 +62,22 @@ export interface ChatResult {
 
 export interface EmbeddingResult {
   vectors: number[][];
-  costCents: number;
+  costMicros: number;
   usage: TokenUsage;
   servedModelVer: string;
 }
 
 export interface ModelProvider {
+  /**
+   * What actually answers a call.
+   *
+   * A published number must not claim a model produced it when a stub did.
+   * Deriving that from the requested pin is unsound: `provider` and
+   * `modelVer` are independent options, so a stub answering under a real
+   * model's version would report `scored_by: 'model'`. Absent means 'model',
+   * which keeps every existing provider correct.
+   */
+  readonly kind?: 'stub' | 'model';
   complete(
     call: ChatRequest & PinnedVersions & { dataGuarantee?: DataGuarantee },
   ): Promise<ChatResult>;

@@ -4,9 +4,8 @@
 // every write goes through fencedInsert (section 4.2), so each test exercises
 // the full path: derive key -> transactional fenced write -> ledger state.
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -16,16 +15,13 @@ import { deriveIdemKey } from './keys.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
-const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
-const DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
-const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 interface RefundAction {
   amountCents: number;
@@ -82,15 +78,14 @@ async function seedEpoch(ticketId: string, epoch: bigint): Promise<void> {
   );
 }
 
-describe.skipIf(!dbUp)('section 3.4 concurrency rules', () => {
+describe('section 3.4 concurrency rules', () => {
   beforeEach(async () => {
-    await pool.query(DDL);
-    await pool.query(TIMING_DDL);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
+    await applyLedgerSchema(pool);
+    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox');
+    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
   });
 
   it('collides concurrent inserts of one semantic action; the loser lands superseded, never queued', async () => {

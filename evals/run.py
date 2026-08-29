@@ -4,9 +4,15 @@
 Two layers:
 
 1. Structural checks. Always run. No model needed.
-2. Behaviour checks. Each case runs through a configurable agent CLI.
+2. Behaviour checks. Opt in with EVAL_BEHAVIOUR=1. Each case then runs
+   through a configurable agent CLI, which costs real model calls.
    Set EVAL_AGENT_CMD to an argv template. The literal token {prompt}
    receives the case prompt. Default: claude -p {prompt} --output-format text
+
+Without EVAL_BEHAVIOUR=1 this runs the structural layer only and needs no
+model. The layer used to start whenever an agent binary sat on PATH, which
+is always true inside an agent session, so the documented command quietly
+spawned a subprocess per case.
 """
 import json
 import os
@@ -18,6 +24,8 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_AGENT_CMD = "claude -p {prompt} --output-format text"
+# One case that never returns used to stall the suite for 15 minutes.
+CASE_TIMEOUT_S = 180
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}")
 PHONE = re.compile(r"(?<![\w.\-])(?:\+\d{1,3}[\s.\-])?(?:\(\d{2,4}\)[\s.\-]?|\d{2,4}[\s.\-])\d{3,4}[\s.\-]?\d{3,4}(?![\w.\-])")
 
@@ -48,6 +56,11 @@ def structural_checks(manifest):
             die(f"{cid}: empty prompt")
         if not case.get("checks"):
             die(f"{cid}: no checks")
+        for chk in case.get("checks") or []:
+            # An unrecognised type falls through to the 'contains' branch in
+            # run_behaviour_case, which inverts what the author wrote.
+            if chk.get("type") not in ("contains", "not_contains"):
+                die(f"{cid}: check {chk.get('name')!r} has unknown type {chk.get('type')!r}")
         text = json.dumps(case)
         if EMAIL.search(text) or PHONE.search(text):
             die(f"{cid}: prompt or check contains PII-like data (DEC-18)")
@@ -63,7 +76,7 @@ def structural_checks(manifest):
 
 def run_behaviour_case(case, cmd):
     proc = subprocess.run(
-        cmd, capture_output=True, text=True, cwd=ROOT, timeout=900,
+        cmd, capture_output=True, text=True, cwd=ROOT, timeout=CASE_TIMEOUT_S,
     )
     out = proc.stdout
     for chk in case["checks"]:
@@ -82,8 +95,10 @@ def main():
 
     template = os.environ.get("EVAL_AGENT_CMD") or DEFAULT_AGENT_CMD
     argv = shlex.split(template)
-    if shutil.which(argv[0]) is None:
-        print(f"SKIP behaviour layer: runner binary {argv[0]!r} not on PATH")
+    if os.environ.get("EVAL_BEHAVIOUR") != "1":
+        print("SKIP behaviour layer: set EVAL_BEHAVIOUR=1 to run it (costs model calls)")
+    elif shutil.which(argv[0]) is None:
+        die(f"EVAL_BEHAVIOUR=1 but runner binary {argv[0]!r} is not on PATH")
     else:
         for entry in manifest["cases"]:
             case = json.load(open(os.path.join(ROOT, entry["case_file"])))

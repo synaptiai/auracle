@@ -5,9 +5,8 @@
 // listEscalations surfaces exactly what needs a person and why. Also pins
 // the filters (--since parsing, --state) as unit cases.
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -17,17 +16,13 @@ import { listEscalations, parseSince } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
-let dbUp = true;
-try {
-  await pool.query('SELECT 1');
-} catch {
-  dbUp = false;
-}
+// src/test-support/global-setup.ts guarantees a reachable database before
+// the workers fork: it starts a container, or probes an explicit
+// DATABASE_URL and fails the run. A failure here is therefore a fault, and
+// a suite that skipped itself instead would report success while proving
+// nothing.
+await pool.query('SELECT 1');
 
-const dbDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../db');
-const LEDGER_DDL = readFileSync(path.join(dbDir, '001_ledger.sql'), 'utf8');
-const INTAKE_DDL = readFileSync(path.join(dbDir, '004_intake.sql'), 'utf8');
-const TIMING_DDL = readFileSync(path.join(dbDir, '005_run_timing.sql'), 'utf8');
 
 async function seedRun(state: string): Promise<FencedRunInput> {
   const run: FencedRunInput = {
@@ -47,21 +42,22 @@ async function seedRun(state: string): Promise<FencedRunInput> {
 
 async function journalStep(runId: string, stepId: string, result: object): Promise<void> {
   await pool.query(
-    "INSERT INTO step_journal (run_id, step_id, status, result) VALUES ($1, $2, 'done', $3)",
+    // DEC-26 pins are NOT NULL on step_journal (db/006). This suite used to
+    // omit them, because it applied 001 alone and never saw the constraint.
+    `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
+     VALUES ($1, $2, 'done', $3, 'escalations-test-prompt', 'escalations-test-model', 0)`,
     [runId, stepId, JSON.stringify(result)],
   );
 }
 
-describe.skipIf(!dbUp)('escalations CLI queries', () => {
+describe('escalations CLI queries', () => {
   beforeEach(async () => {
-    await pool.query(LEDGER_DDL);
-    await pool.query(INTAKE_DDL);
-    await pool.query(TIMING_DDL);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake');
+    await applyLedgerSchema(pool);
+    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn');
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake');
+    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn');
   });
 
   it('surfaces a coordinator escalation with its limit reason', async () => {
@@ -80,7 +76,7 @@ describe.skipIf(!dbUp)('escalations CLI queries', () => {
       draftExternalId: null,
       actionClass: null,
       delivery: null,
-      costCents: 0,
+      costMicros: 0,
       stepsUsed: 0,
     });
   });
@@ -182,8 +178,9 @@ describe.skipIf(!dbUp)('escalations CLI queries', () => {
     ]);
     await journalStep(recent.runId, 'escalate', { reason: 'limit_clock' });
     await pool.query(
-      'INSERT INTO intake (ticket_id, partition, ticket_text, enqueued_at) VALUES ($1, $2, $3, $4)',
-      [recentTicket, 0, 'body', new Date(Date.now() - 60_000)],
+      'INSERT INTO intake (ticket_id, message_id, partition, ticket_text, enqueued_at) VALUES ($1, $2, $3, $4, $5)',
+      // One queued message for this ticket, keyed by its own identity.
+      [recentTicket, recentTicket, 0, 'body', new Date(Date.now() - 60_000)],
     );
 
     const items = await listEscalations(pool, { since: '24h' });
@@ -206,8 +203,8 @@ describe.skipIf(!dbUp)('escalations CLI queries', () => {
     ]);
     await journalStep(stale.runId, 'escalate', { reason: 'limit_steps' });
     await pool.query(
-      'INSERT INTO intake (ticket_id, partition, ticket_text, enqueued_at) VALUES ($1, $2, $3, $4)',
-      [staleTicket, 0, 'body', new Date(Date.now() - 7 * 86_400_000)],
+      'INSERT INTO intake (ticket_id, message_id, partition, ticket_text, enqueued_at) VALUES ($1, $2, $3, $4, $5)',
+      [staleTicket, staleTicket, 0, 'body', new Date(Date.now() - 7 * 86_400_000)],
     );
 
     // No intake row: arrival unknown, so this one stays listed.

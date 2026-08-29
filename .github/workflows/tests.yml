@@ -2,9 +2,13 @@
 # pass with exit code 0 on every pull request.
 #
 # The database is the same pgvector Postgres the compose stack runs
-# (docker-compose.yml): user, password and db name auracle. The suites apply
-# their own DDL (db/001-004) and skip cleanly when the database is
-# unreachable, so no migration step is needed here.
+# (docker-compose.yml): user, password and db name auracle. Each suite applies
+# the real schema through src/test-support/schema.ts, which walks every file
+# under db/ in version order, so no migration step is needed here.
+#
+# DATABASE_URL is set below, so the global setup probes it before the workers
+# fork and fails this job when the service is unreachable. Without that probe
+# every database suite would skip itself and the job would still pass.
 name: Tests
 
 on:
@@ -33,21 +37,33 @@ jobs:
       - uses: actions/checkout@v4
 
       # engines requires Node >= 22.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: npm run build
+        run: pnpm run build
 
       - name: Test
-        run: npm test
+        run: pnpm test
         env:
           DATABASE_URL: postgres://auracle:auracle@localhost:5433/auracle
 
       - name: Lint
-        run: npm run lint
+        run: pnpm run lint
+
+      # DEC-18: the committed corpus must match what the generator writes.
+      # Running the generator and eyeballing it is circular. The diff is the
+      # part that can fail.
+      - name: Fixtures match the generator (DEC-18)
+        run: |
+          node scripts/generate-fixtures.mjs
+          git diff --exit-code fixtures/

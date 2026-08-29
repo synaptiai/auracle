@@ -167,20 +167,21 @@ describe('induceTaxonomy (section 4.11 pipeline, fake model)', () => {
 
   it('records pinned versions, counts, cost and synthetic source in the artifact', async () => {
     const provider = new FakeProvider([
-      { vectors: VECTORS, costCents: 3 },
-      { text: 'Refund request', costCents: 7 },
-      { text: 'Login trouble', costCents: 7 },
+      { vectors: VECTORS, costMicros: 3 },
+      { text: 'Refund request', costMicros: 7 },
+      { text: 'Login trouble', costMicros: 7 },
     ]);
 
     const result = await induceTaxonomy(provider, input({ maxClusters: 3, minClusterSize: 2 }));
 
-    expect(result.version).toBe(1);
+    // Version 2: cost_micros holds micro-dollars, where version 1 held cents.
+    expect(result.version).toBe(2);
     expect(result.source).toBe('synthetic');
     expect(result.prompt_ver).toBe(PIN.promptVer);
     expect(result.chat_model_ver).toBe(PIN.chatModelVer);
     expect(result.embed_model_ver).toBe(PIN.embedModelVer);
     expect(result.item_count).toBe(ITEMS.length);
-    expect(result.cost_cents).toBe(17);
+    expect(result.cost_micros).toBe(17);
   });
 
   it('dedupes ids when two clusters receive the same name', async () => {

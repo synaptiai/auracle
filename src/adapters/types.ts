@@ -1,4 +1,28 @@
 /**
+ * Action-class vocabulary shared by the coordinator, the relay and every
+ * adapter (DEC-29: each class declares its delivery rule).
+ *
+ * These live with the port rather than with the relay, because an adapter
+ * implements the port and must not depend on the process that drives it.
+ */
+
+/**
+ * The only action class the relay routes through `sendDraft`. The approval
+ * bridge parks that draft inside the target system and records its external
+ * id in the payload before the record becomes relayable. Every other class
+ * names an automatic internal write and goes through `performAction`.
+ */
+export const CUSTOMER_REPLY_ACTION_CLASS = 'customer_reply';
+
+/**
+ * Compensation of an irreversible action, such as a sent refund. It rides
+ * `performAction` like every other internal write, but it always gates
+ * (DEC-34) and its delivery rule is `at_most_once` (DEC-29): a duplicate
+ * refund costs money, so an uncertain send escalates (DEC-30).
+ */
+export const COMPENSATION_ACTION_CLASS = 'compensate';
+
+/**
  * Ingress and egress ports (docs/v1-architecture.md, sections 4.1, 4.4,
  * 4.9). Obeys DEC-01 (the port is the contract), DEC-06 (adapters declare
  * capability; autonomy decreases to agree).
@@ -76,10 +100,36 @@ export interface Message {
   attachments: readonly Attachment[];
 }
 
+/**
+ * What an adapter can say about the conversation an inbound message joins
+ * (DEC-35). It offers evidence, never a conclusion: the ledger resolves the
+ * conversation, because only the ledger knows which turns exist.
+ *
+ * An adapter that cannot detect linkage returns null. The ticket id still
+ * groups the messages of one thread, so a null here means "no evidence
+ * beyond the ticket", not "start a new conversation".
+ */
+export interface ConversationLinkage {
+  /**
+   * Ids of messages this one replies to, thread root first. Resolving any of
+   * them to a recorded turn joins that conversation, which is how a customer
+   * can continue one problem on a new thread.
+   */
+  readonly priorMessageIds: readonly string[];
+}
+
 /** Result of normalizing one inbound event. */
 export interface NormalizedEvent {
   ticket: Ticket;
   message: Message;
+  /**
+   * The adapter's own identity for this delivery: an IMAP UID, or the id the
+   * webhook server minted. Intake prefers the message id and falls back to
+   * this, so a message with no id of its own still deduplicates (DEC-24).
+   */
+  sourceId: string;
+  /** Conversation evidence, or null when the adapter has none (DEC-06). */
+  linkage: ConversationLinkage | null;
   /**
    * Provider-native dedupe id, present only when the source guarantees it is
    * stable across redelivery. Absent otherwise; callers must not invent one
@@ -135,6 +185,30 @@ export interface DraftReply {
    * where the adapter permits structured fields (section 4.9).
    */
   provenance: ReplyProvenance;
+  /**
+   * DEC-35: the participant the ledger recorded for this conversation.
+   *
+   * An adapter that resolves the recipient from the ticket id must agree with
+   * it. db/012 refuses a conversation join by a different sender, but the
+   * ticket id is still the forged thread root, so a mail adapter would look
+   * that root up and address the reply to the victim who wrote it. The
+   * membership check and the addressing path have to agree about what a
+   * ticket id proves.
+   *
+   * Absent when the ledger recorded no participant, which is not a licence to
+   * address the reply anywhere: it means there is nothing to check against.
+   */
+  expectedRecipient?: string | null;
+  /**
+   * DEC-24 semantic key for the park itself, derived from the action and the
+   * ticket, never from the run.
+   *
+   * `createDraft` reaches the target system before the ledger can record
+   * what it made. A crash in that window used to leave a draft nobody could
+   * name, and the retry parked a second one in front of the customer. The
+   * key lets the adapter recognise the repeat and return the first draft.
+   */
+  idemKey: string;
 }
 
 /**
@@ -154,10 +228,19 @@ export interface EgressAdapter {
   readonly name: string;
   readonly capabilities: AdapterCapabilities;
   /** Park one gated reply as a draft inside the target system (DEC-11). */
+  /**
+   * Park one gated reply as a draft (DEC-11). A repeat call carrying the
+   * same `reply.idemKey` returns the first draft and must not create a
+   * second one: the customer must never see two.
+   */
   createDraft(reply: DraftReply): Promise<{ readonly draftExternalId: string }>;
   /**
-   * Send one approved draft with the outbox idempotency key. A repeat call
-   * with the same key returns the first delivery and must not send again.
+   * Send one approved draft with the outbox idempotency key.
+   *
+   * An adapter declaring `supportsIdempotencyKey` must return the first
+   * delivery on a repeat call and must not send again. An adapter declaring
+   * it false cannot honour that (SMTP accepts no key), so the relay's own
+   * `status = 'pending'` guard is what prevents a second send there.
    */
   sendDraft(draftExternalId: string, idemKey: string): Promise<{ readonly externalId: string }>;
   /**
@@ -206,5 +289,20 @@ export class AdapterCapabilityError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'AdapterCapabilityError';
+  }
+}
+
+/**
+ * An egress failure that a retry can never clear.
+ *
+ * A refused recipient, a payload the target will always reject: repeating it
+ * spends a full pipeline run and files an orphan run row each time, and the
+ * queue's attempt ceiling is sized for transient faults. The coordinator
+ * escalates this class on the first occurrence instead.
+ */
+export class PermanentEgressError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PermanentEgressError';
   }
 }

@@ -8,10 +8,14 @@ import type {
 } from './provider.js';
 
 /** One scripted model response. Absent fields fall back to sane defaults. */
+/** One cent, in micro-dollars. The fake bills a chat call this much. */
+export const ONE_CENT_IN_MICROS = 10_000;
+
 export interface FakeStep {
   text?: string;
   vectors?: number[][];
-  costCents?: number;
+  /** Micro-dollars for this step. Defaults to one cent for a chat call. */
+  costMicros?: number;
   /** The served model id the step reports back. Defaults to the pinned id. */
   servedModelVer?: string;
 }
@@ -60,7 +64,7 @@ export class FakeProvider implements ModelProvider {
     this.calls.push(record);
     return {
       text: step.text ?? '',
-      costCents: step.costCents ?? 1,
+      costMicros: step.costMicros ?? ONE_CENT_IN_MICROS,
       usage: {
         promptTokens: 0,
         completionTokens: 0,
@@ -85,7 +89,7 @@ export class FakeProvider implements ModelProvider {
     });
     return {
       vectors: step.vectors ?? call.input.map(() => []),
-      costCents: step.costCents ?? 0,
+      costMicros: step.costMicros ?? 0,
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       servedModelVer: step.servedModelVer ?? call.modelVer,
     };

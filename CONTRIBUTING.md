@@ -3,7 +3,7 @@
 This guide takes you from a clean checkout to a merged pull request.
 Read it once before you write code.
 The design authority is `docs/v1-architecture.md`.
-That document holds decisions DEC-01 to DEC-33.
+That document holds decisions DEC-01 to DEC-39.
 A statement that does not trace to a DEC is an implementation detail.
 
 ## 1. Set up and verify your checkout
@@ -15,9 +15,9 @@ Three commands define the contract. Each must exit 0.
 
 | Command | Task |
 |---------|------|
-| `npm run build` | Compiles TypeScript. No errors may appear. |
-| `npm test` | Runs every test. All tests must pass. |
-| `npm run lint` | Runs ESLint. No findings may appear. |
+| `pnpm run build` | Compiles TypeScript. No errors may appear. |
+| `pnpm test` | Runs every test. All tests must pass. |
+| `pnpm run lint` | Runs ESLint. No findings may appear. |
 
 Run all three before you open a pull request.
 Paste the output of each command into the pull request description.
@@ -70,6 +70,7 @@ cp hooks/commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
 The commit hook blocks a change to `docs/v1-architecture.md` that carries no DEC
 citation.
 CI runs the same check through `.github/workflows/guardrails.yml`.
+Both modes read the whole message and both accept only a DEC the register defines.
 
 If you use Claude Code, the session hooks in `.claude/settings.json` also block
 three things while you work:
@@ -137,72 +138,21 @@ The rules:
 5. One technical name has one meaning. Reuse the names in the appendix of
    `docs/v1-architecture.md`. Introduce no synonyms for them.
 
-Run the check from the repository root.
-Paste the whole block into your shell.
-It reads the files you pass as arguments:
+Run the check from the repository root against each changed document:
 
 ```sh
-python3 - "$@" <<'EOF'
-import re, sys
-
-if len(sys.argv) < 2:
-    sys.exit("usage: python3 - FILE [FILE ...] <<'EOF'")
-fail = False
-
-def check(paragraph, path):
-    global fail
-    for s in re.split(r'(?<=[.!?])\s+', paragraph):
-        n = len(re.findall(r"[A-Za-z0-9_-]+", s))
-        if n > 20:
-            fail = True
-            print(f"{path}: {n} words: {s[:90]}")
-
-def clean(line):
-    s = line.strip()
-    s = re.sub(r'^#{1,6}\s+', '', s)
-    s = re.sub(r'^>\s?', '', s)
-    return s
-
-for path in sys.argv[1:]:
-    text = open(path).read()
-    text = re.sub(r'```.*?```', '', text, flags=re.S)
-    text = re.sub(r'`[^`]*`', 'x', text)
-    # A heading is its own unit, even with no blank line around it.
-    text = re.sub(r'(?m)^(#{1,6}\s+.*)$', '\n\\1\n', text)
-    for block in re.split(r'\n\s*\n', text):
-        lines = [clean(l) for l in block.splitlines() if clean(l)]
-        if not lines:
-            continue
-        if all(l.startswith('|') for l in lines):
-            for l in lines:
-                cells = [c.strip() for c in l.strip('|').split('|')]
-                cells = [c for c in cells
-                         if c and not set(c) <= set('-: ')]
-                para = ' '.join(cells)
-                if para:
-                    check(para, path)
-            continue
-        groups, cur = [], None
-        for l in lines:
-            item = re.match(r'^([-*+]|\d+[.)])\s+(.*)$', l)
-            if item:
-                cur = [item.group(2)]
-                groups.append(cur)
-            else:
-                if cur is None:
-                    cur = []
-                    groups.append(cur)
-                cur.append(l)
-        for g in groups:
-            check(' '.join(g), path)
-
-sys.exit(1 if fail else 0)
-EOF
+python3 scripts/ste-check.py README.md AGENTS.md docs/v1-architecture.md
 ```
+
+The script decides rules 1 and 2. Rules 3 to 5 need a reader, so a clean exit
+is not coverage of those three.
+
+`.github/workflows/guardrails.yml` runs the same script on every pull request.
+`scripts/test_ste_check.py` holds the checker's own cases.
 
 The script strips markdown structure first.
 Headings and list items count as their own units.
-A table row counts as one unit per row.
+A table cell counts as its own unit.
 
 A non-zero exit means a sentence is above the limit.
 Rewrite the sentence as two sentences.

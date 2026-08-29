@@ -9,6 +9,10 @@
 
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 
+/** The turn population a fit consumed. See `CalibrationArtifact.scope`. */
+export const CALIBRATION_SCOPES = ['first_turn', 'all_turns'] as const;
+export type CalibrationScope = (typeof CALIBRATION_SCOPES)[number];
+
 export interface CalibrationInterval {
   confidence: number;
   lower: number;
@@ -26,6 +30,17 @@ export interface CalibrationArtifact {
   gold_source: 'synthetic';
   /** DEC-31: the fit consumed the fit half only. */
   split_used: 'fit';
+  /**
+   * The turn population the fit consumed.
+   *
+   * DEC-39 narrows the replay and the gold report to first turns, because
+   * both score against a conversation-level disposition. This job scores a
+   * prediction against the case's own intent label, which a later turn
+   * carries, so it consumes every turn and section 6 requires it to. The
+   * field says which population a threshold actually covers, so a reader
+   * never has to infer it from the corpus of the day.
+   */
+  scope: CalibrationScope;
   /** Number of fit-half tickets the fit consumed. */
   fit_tickets: number;
   /** DEC-26 pins in force during the run. */
@@ -63,6 +78,10 @@ export function validateCalibrationArtifact(raw: unknown): CalibrationArtifact {
   assert(raw['gold_source'] === 'synthetic', 'artifact.gold_source is not synthetic (DEC-18)');
   // DEC-31 as code: an artifact fitted on any other split must not load.
   assert(raw['split_used'] === 'fit', 'artifact.split_used is not the fit half (DEC-31)');
+  assert(
+    typeof raw['scope'] === 'string' && (CALIBRATION_SCOPES as readonly string[]).includes(raw['scope']),
+    `artifact.scope is ${String(raw['scope'])}, expected one of ${CALIBRATION_SCOPES.join(', ')}`,
+  );
   assert(
     typeof raw['fit_tickets'] === 'number' && Number.isInteger(raw['fit_tickets']) && raw['fit_tickets'] > 0,
     'artifact.fit_tickets is not a positive integer',

@@ -9,7 +9,7 @@ import type {
 /**
  * Webhook reference adapter (section 4.1, DEC-01). Obeys DEC-06.
  *
- * Accepts plain HTTP webhook payloads shaped as `WebhookEvent`, delivered
+ * Accepts plain HTTP webhook payloads, delivered
  * through `IngressEvent.raw` (parsed JSON object or JSON text). Capabilities
  * are declared honestly for a bare webhook integration:
  *
@@ -78,7 +78,13 @@ export class WebhookAdapter implements IngressAdapter {
       attachments: [],
     };
 
+    // The webhook contract carries ticket-level grouping only: it declares
+    // supportsThreading false, and the payload has no reply chain. The
+    // ticket id already groups a thread, so there is no further evidence
+    // and this adapter offers none (DEC-06).
     return {
+      sourceId: event.sourceId,
+      linkage: null,
       ticket,
       message,
       ...(typeof body.eventId === 'string' && body.eventId.length > 0

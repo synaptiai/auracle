@@ -16,7 +16,7 @@
  * `IngressEvent.sourceId` (an opaque receipt label), never a dedupe id.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 
@@ -27,18 +27,89 @@ import type { IntakeHandler } from './types.js';
 /** Largest request body the driver reads before answering 413. */
 export const MAX_BODY_BYTES = 1_048_576;
 
+/** Header carrying the hex HMAC-SHA256 of the raw body. */
+export const SIGNATURE_HEADER = 'x-auracle-signature';
+
+/**
+ * Verifies the body signature when a secret is configured.
+ *
+ * Unauthenticated, this endpoint lets anyone enqueue a ticket, which spends
+ * the adopter's model budget, and lets anyone name a `ticket.id` that a
+ * conversation already uses. `resolveConversation` checks the sender against
+ * the conversation (db/012), so a forged id no longer joins a stranger's
+ * thread; the spend and the unbounded queue growth remain.
+ *
+ * Absent secret means absent check, because a reference driver must still run
+ * from a fresh checkout. `docs/operations.md` states the deployment rule: set
+ * the secret, or put the driver behind something that authenticates.
+ */
+function signatureValid(secret: string, bodyText: string, provided: string | undefined): boolean {
+  if (provided === undefined) return false;
+  const expected = createHmac('sha256', secret).update(bodyText).digest();
+  let supplied: Buffer;
+  try {
+    supplied = Buffer.from(provided, 'hex');
+  } catch {
+    return false;
+  }
+  // Length must match before timingSafeEqual, which throws on a mismatch.
+  if (supplied.length !== expected.length) return false;
+  return timingSafeEqual(supplied, expected);
+}
+
 export interface WebhookServerDeps {
   /** The intake seam. */
   onEvent: IntakeHandler;
   /** Injected for tests; defaults to the reference adapter. */
   adapter?: WebhookAdapter;
+  /**
+   * Where a failed delivery is recorded. Defaults to stderr.
+   *
+   * Not optional in effect: an intake throw is a lost customer message, and
+   * the source is the only other party that knows it happened.
+   */
+  log?: (entry: Record<string, unknown>) => void;
+  /**
+   * Shared secret for the body signature. Absent means no check, and the
+   * driver logs that it is running open.
+   */
+  secret?: string | undefined;
+}
+
+function defaultLog(entry: Record<string, unknown>): void {
+  console.error(JSON.stringify(entry));
 }
 
 export function createWebhookServer(deps: WebhookServerDeps): Server {
   const adapter = deps.adapter ?? new WebhookAdapter();
+  const log = deps.log ?? defaultLog;
+  const secret = deps.secret;
+  if (secret === undefined || secret.length === 0) {
+    log({
+      event: 'webhook_unauthenticated',
+      at: new Date().toISOString(),
+      detail:
+        'no WEBHOOK_SECRET set: every caller that reaches this port can enqueue a ticket '
+        + 'and spend the model budget. Set one, or place the driver behind an authenticating proxy.',
+    });
+  }
   return createServer((req, res) => {
-    void handleDelivery(req, res, adapter, deps.onEvent).catch(() => {
-      respondJson(res, 500, { error: 'internal error' });
+    void handleDelivery(req, res, adapter, deps.onEvent, log, secret).catch((error: unknown) => {
+      // Everything the intake seam throws lands here: a Postgres failure, a
+      // constraint violation, a pool exhaustion. This used to discard the
+      // error, so a source could retry, give up, and lose the ticket while
+      // the daemon's own logs stayed clean.
+      log({
+        event: 'delivery_failed',
+        at: new Date().toISOString(),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // The 4xx paths below already ended the response. Writing again throws
+      // ERR_STREAM_WRITE_AFTER_END and turns a handled 500 into an unhandled
+      // rejection.
+      if (!res.writableEnded) {
+        respondJson(res, 500, { error: 'internal error' });
+      }
     });
   });
 }
@@ -48,6 +119,8 @@ async function handleDelivery(
   res: ServerResponse,
   adapter: WebhookAdapter,
   onEvent: IntakeHandler,
+  log: (entry: Record<string, unknown>) => void,
+  secret: string | undefined,
 ): Promise<void> {
   if (req.method !== 'POST') {
     respondJson(res, 405, { error: 'webhook deliveries are POST only' });
@@ -66,6 +139,15 @@ async function handleDelivery(
     return;
   }
 
+  if (secret !== undefined && secret.length > 0) {
+    const header = req.headers[SIGNATURE_HEADER];
+    const provided = Array.isArray(header) ? header[0] : header;
+    if (!signatureValid(secret, bodyText, provided)) {
+      respondJson(res, 401, { error: 'bad or missing signature' });
+      return;
+    }
+  }
+
   // Receipt label for logging and tracing only. It is not derived from the
   // payload and never used as a dedupe id (DEC-24).
   const event: IngressEvent = { sourceId: `wh-${randomUUID()}`, raw: bodyText };
@@ -74,8 +156,21 @@ async function handleDelivery(
   try {
     normalized = adapter.normalize(event);
   } catch (error) {
-    const message = error instanceof TypeError ? error.message : 'malformed payload';
-    respondJson(res, 400, { error: message });
+    // Only the adapter's own validators answer 400. Any other throw class is
+    // a fault on this side, and a 400 tells an at-least-once source not to
+    // retry — so relabelling one as a bad payload drops the message and
+    // blames the sender.
+    if (error instanceof TypeError) {
+      respondJson(res, 400, { error: error.message });
+      return;
+    }
+    log({
+      event: 'normalize_failed',
+      at: new Date().toISOString(),
+      sourceId: event.sourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    respondJson(res, 500, { error: 'internal error' });
     return;
   }
 

@@ -5,12 +5,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { applyRerank, lexicalRerank, RERANK_MIN_CANDIDATES } from './reranker.js';
 import type { RetrievedDoc } from './types.js';
 
-function doc(id: string, title: string): RetrievedDoc {
+function doc(id: string, title: string, body = ''): RetrievedDoc {
   return {
     docId: id,
     kind: 'document',
     title,
-    body: '',
+    body,
     owner: 'synthetic-owner',
     reviewBy: '2999-01-01',
     fresh: true,

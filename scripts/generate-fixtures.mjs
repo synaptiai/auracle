@@ -61,35 +61,53 @@ if (INTENTS.length > 25) throw new Error(`taxonomy exceeds 25 intents: ${INTENTS
 
 const ESCALATION_RATE = { high: 0.5, medium: 0.2, low: 0.05 };
 
-// One subject and one body per named intent. All text is invented. No names,
-// addresses, phone numbers or account identifiers appear anywhere (DEC-18).
+// One subject, one opening body and one agent reply per named intent. All
+// text is invented. No names, addresses, phone numbers or account identifiers
+// appear anywhere (DEC-18).
+//
+// The reply is what the customer sees before a follow-up turn, so a later
+// turn's prompt carries it (DEC-37). Each reply names its own intent and
+// avoids the topic words of the intents above it, because the offline stub in
+// src/replay/fake-model.ts matches phrases first-match-wins over the whole
+// prompt, history included.
 const TEXT = {
-  'refund-request': ['Charged twice this month', 'I see two charges for one subscription month and I want the duplicate refunded.'],
-  'billing-dispute': ['Invoice total does not match the plan', 'The invoice total is higher than the plan price shown on the pricing page.'],
-  'cancel-subscription': ['Close the subscription at period end', 'Please close the workspace subscription when the current period ends.'],
-  'data-deletion-request': ['Remove all stored data', 'I want every record tied to the workspace erased under the deletion policy.'],
-  'chargeback-notice': ['Bank opened a dispute', 'The bank started a dispute for last month and the case needs your response.'],
-  'payment-failure': ['Card declined without reason', 'Renewal failed with a decline message although the card works everywhere else.'],
-  'plan-change-question': [ 'Switch to the annual plan', 'How do I move the workspace to annual billing before the next renewal date?'],
-  'invoice-copy-request': ['Need a past invoice again', 'Send a fresh copy of the invoice from three periods ago for the finance archive.'],
-  'account-recovery': ['Locked out after losing the second factor', 'The backup codes are gone and the sign-in page rejects every method.'],
-  'login-trouble': ['Password reset mail never arrives', 'The reset message does not reach any folder and sign-in keeps failing.'],
-  'sync-error-report': ['Desktop client stops syncing', 'The desktop client pauses sync every few minutes and shows error E-412.'],
-  'export-broken': ['Export produces an empty archive', 'The full export finishes in seconds and the archive contains no records.'],
-  'integration-failure': ['Calendar link drops daily', 'The calendar connection disconnects once a day and needs manual relinking.'],
-  'feature-request': ['Request for saved filter views', 'Saved filter views would remove the same setup steps every morning.'],
-  'how-to-question': ['Assign tasks to several people', 'Can one task carry more than one assignee in the current plans?'],
-  'pricing-question': ['Seats above the plan limit', 'What happens to billing when the seat count passes the plan limit mid-period?'],
-  'documentation-gap': ['Docs miss the bulk import steps', 'The import guide skips the field mapping screen that appears after upload.'],
-  'feedback-positive': ['Reports page saves hours', 'The weekly summary gives the numbers that used to need a spreadsheet session.'],
-  'bug-minor-report': ['Typo on the settings page', 'The settings header spells the word notifications wrong on every load.'],
-  'onboarding-help': ['First workspace setup stuck', 'The setup checklist stays on step two although the sample project imported.'],
-  'notification-settings-help': ['Digest arrives at night', 'The digest lands at midnight local time and the schedule control looks ignored.'],
-  'mobile-app-question': ['Offline edits on mobile', 'Do edits made offline in the mobile app merge without conflicts afterwards?'],
-  'api-usage-question': ['Pagination stops at one page', 'The list endpoint returns the first page and ignores the cursor parameter.'],
-  'status-inquiry': ['Slow responses this morning', 'Responses lag since the morning window. Is there an incident on the status page?'],
-  other: ['Question about the team plan trial', 'The trial banner disappeared early and the remaining days are unclear.'],
+  'refund-request': ['Charged twice this month', 'I see two charges for one subscription month and I want the duplicate refunded.', 'We confirm the duplicate charge and we send the refund to the original card.'],
+  'billing-dispute': ['Invoice total does not match the plan', 'The invoice total is higher than the plan price shown on the pricing page.', 'We check the invoice total against your plan price and correct any difference.'],
+  'cancel-subscription': ['Close the subscription at period end', 'Please close the workspace subscription when the current period ends.', 'We schedule the subscription to close at the end of the current period.'],
+  'data-deletion-request': ['Remove all stored data', 'I want every record tied to the workspace erased under the deletion policy.', 'We start the erase under the deletion policy and confirm when it finishes.'],
+  'chargeback-notice': ['Bank opened a dispute', 'The bank started a dispute for last month and the case needs your response.', 'We see the bank started a dispute and we send the case evidence today.'],
+  'payment-failure': ['Card declined without reason', 'Renewal failed with a decline message although the card works everywhere else.', 'The card issuer sent a decline code, so please retry with a fresh payment method.'],
+  'plan-change-question': [ 'Switch to the annual plan', 'How do I move the workspace to annual billing before the next renewal date?', 'We can move the workspace to annual billing before your next renewal date.'],
+  'invoice-copy-request': ['Need a past invoice again', 'Send a fresh copy of the invoice from three periods ago for the finance archive.', 'We attach a fresh copy of the invoice for your finance archive.'],
+  'account-recovery': ['Locked out after losing the second factor', 'The backup codes are gone and the sign-in page rejects every method.', 'We clear the old second factor and we issue new backup codes today.'],
+  'login-trouble': ['Password reset mail never arrives', 'The reset message does not reach any folder and sign-in keeps failing.', 'We cleared the blocked send, so a fresh reset message reaches you now.'],
+  'sync-error-report': ['Desktop client stops syncing', 'The desktop client pauses sync every few minutes and shows error E-412.', 'Error E-412 means a stale token, so relink the client and sync resumes.'],
+  'export-broken': ['Export produces an empty archive', 'The full export finishes in seconds and the archive contains no records.', 'An empty archive means the export ran before indexing finished. Please retry it.'],
+  'integration-failure': ['Calendar link drops daily', 'The calendar connection disconnects once a day and needs manual relinking.', 'We rotated the stale token, so the calendar connection stays linked now.'],
+  'feature-request': ['Request for saved filter views', 'Saved filter views would remove the same setup steps every morning.', 'We logged the request for saved filter views with the product team.'],
+  'how-to-question': ['Assign tasks to several people', 'Can one task carry more than one assignee in the current plans?', 'A task carries one assignee today, and the team plans wider ownership later.'],
+  'pricing-question': ['Seats above the plan limit', 'What happens to billing when the seat count passes the plan limit mid-period?', 'Seats above the plan limit bill at the standard seat price each period.'],
+  'documentation-gap': ['Docs miss the bulk import steps', 'The import guide skips the field mapping screen that appears after upload.', 'We added the field mapping screen to the import guide this week.'],
+  'feedback-positive': ['Reports page saves hours', 'The weekly summary gives the numbers that used to need a spreadsheet session.', 'Thank you. We passed your note about the weekly summary to the reports team.'],
+  'bug-minor-report': ['Typo on the settings page', 'The settings header spells the word notifications wrong on every load.', 'We fixed the typo on the settings header and it ships in the next release.'],
+  'onboarding-help': ['First workspace setup stuck', 'The setup checklist stays on step two although the sample project imported.', 'We cleared the stuck step, so the setup checklist now shows your progress.'],
+  'notification-settings-help': ['Digest arrives at night', 'The digest lands at midnight local time and the schedule control looks ignored.', 'We matched your timezone offset and the digest now lands in the morning.'],
+  'mobile-app-question': ['Offline edits on mobile', 'Do edits made offline in the mobile app merge without conflicts afterwards?', 'Edits made offline merge on the next connection and keep the newest change.'],
+  'api-usage-question': ['Pagination stops at one page', 'The list endpoint returns the first page and ignores the cursor parameter.', 'Pass the cursor value from the response header to fetch the next page.'],
+  'status-inquiry': ['Slow responses this morning', 'Responses lag since the morning window. Is there an incident on the status page?', 'We match the slowdown to an open incident and we post updates on the status page.'],
+  other: ['Question about the team plan trial', 'The trial banner disappeared early and the remaining days are unclear.', 'We reviewed your question and the team sends a fuller answer shortly.'],
 };
+
+// Follow-up messages a customer sends when the first reply did not settle the
+// case. They name no topic on purpose: a follow-up turn is classifiable only
+// from the turns before it, which is what DEC-37 puts in the prompt.
+const FOLLOW_UPS = [
+  'This still happens after I followed those steps.',
+  'Nothing changed on my side, so I am writing again.',
+  'The problem came back the next morning.',
+  'That did not help. Please look at this again.',
+  'I tried your suggestion and the result is the same.',
+];
 
 const BODY_SUFFIXES = [
   'This started today.',
@@ -120,9 +138,13 @@ const chance = (rate) => rng() < rate;
 
 // ---------------------------------------------------------------------------
 // Gold set: stratify by intent (this nests the three risk-tier strata from
-// section 4.10). 770 = 25 x 30 + 20, so 20 intents get 31 tickets and 5 get
-// 30. Odd counts alternate the spare ticket between the fit and report halves
-// so both halves land on exactly 385.
+// section 4.10). 770 = 25 x 30 + 20, so 20 intents get 31 case records and 5
+// get 30. Odd counts alternate the spare record between the fit and report
+// halves so both halves land on exactly 385.
+//
+// A record is one turn, not one conversation. Each half is filled with whole
+// conversations, so no thread straddles the split and DEC-31 cannot leak
+// through a shared conversation.
 // ---------------------------------------------------------------------------
 
 const counts = INTENTS.map((_, i) => (i < TOTAL_TICKETS - INTENTS.length * 30 ? 31 : 30));
@@ -135,37 +157,80 @@ const splitsFor = (n) => {
 
 let seq = 0;
 const nextId = () => `SYN-${String(++seq).padStart(6, '0')}`;
+let conversationSeq = 0;
+const nextConversationId = () => `CONV-SYN-${String(++conversationSeq).padStart(6, '0')}`;
 
-function makeTicket(intent) {
+// Turn counts per conversation. Most cases end on the first reply; a minority
+// need one or two follow-ups. `cap` is the room left in the half being filled,
+// so a conversation never straddles the fit and report halves (DEC-31).
+function drawTurnCount(cap) {
+  const draw = rng();
+  const wanted = draw < 0.75 ? 1 : draw < 0.93 ? 2 : 3;
+  return Math.min(wanted, cap);
+}
+
+/**
+ * One conversation as a run of case records that share a conversation id
+ * (DEC-35) and number their turns from 1 (DEC-38).
+ *
+ * The queue, the disposition and the intent belong to the conversation, so
+ * every turn repeats them. That is exactly why DEC-39 scores first turns only:
+ * a later turn's disposition reports the whole thread, not the decision the
+ * replay would be grading.
+ *
+ * The reply that answered a turn hangs off that turn, and the last turn has
+ * none. This mirrors `turn.approved_reply_text` in the ledger, where a reply
+ * also takes no turn number of its own.
+ */
+function makeConversation(intent, cap) {
   const escalated = chance(ESCALATION_RATE[intent.risk_tier]);
   const macro = intent.macro && chance(0.6) ? intent.macro : null;
   const queue = chance(0.85) ? intent.queue : 'general';
   const refundIssued = chance(intent.refund_rate);
   const minutes = escalated ? between(10, 90) : intent.risk_tier === 'high' ? between(20, 180) : between(45, 480);
-  const [subject, body] = TEXT[intent.id];
+  const [subject, body, reply] = TEXT[intent.id];
   const suffix = chance(0.4) ? ` ${pick(BODY_SUFFIXES)}` : '';
-  return {
-    ticket_id: nextId(),
-    source: 'synthetic',
-    intent: intent.id,
-    queue,
-    disposition: {
-      escalated,
-      macro_applied: macro,
-      refund_issued: refundIssued,
-      first_reply_minutes: minutes,
-    },
-    subject,
-    body: body + suffix,
-  };
+  const conversationId = nextConversationId();
+  const turnCount = drawTurnCount(cap);
+
+  const turns = [];
+  for (let turn = 1; turn <= turnCount; turn++) {
+    turns.push({
+      ticket_id: nextId(),
+      source: 'synthetic',
+      conversation_id: conversationId,
+      turn_number: turn,
+      intent: intent.id,
+      queue,
+      disposition: {
+        escalated,
+        macro_applied: macro,
+        refund_issued: refundIssued,
+        first_reply_minutes: minutes,
+      },
+      subject: turn === 1 ? subject : `Re: ${subject}`,
+      body: turn === 1 ? body + suffix : pick(FOLLOW_UPS),
+      ...(turn < turnCount ? { agent_reply: reply } : {}),
+    });
+  }
+  return turns;
+}
+
+/** Whole conversations until the half holds exactly `target` case records. */
+function fillHalf(intent, target) {
+  const tickets = [];
+  while (tickets.length < target) {
+    tickets.push(...makeConversation(intent, target - tickets.length));
+  }
+  return tickets;
 }
 
 const fitTickets = [];
 const reportTickets = [];
 for (let i = 0; i < INTENTS.length; i++) {
   const { fit, report } = splitsFor(counts[i]);
-  for (let k = 0; k < fit; k++) fitTickets.push(makeTicket(INTENTS[i]));
-  for (let k = 0; k < report; k++) reportTickets.push(makeTicket(INTENTS[i]));
+  fitTickets.push(...fillHalf(INTENTS[i], fit));
+  reportTickets.push(...fillHalf(INTENTS[i], report));
 }
 
 if (fitTickets.length !== HALF || reportTickets.length !== HALF) {
@@ -256,7 +321,8 @@ writeJson(join(FIXTURES, 'documents.json'), { version: 1, documents: DOCUMENTS }
 
 console.log(
   `fixtures: taxonomy=${INTENTS.length} intents, gold fit=${fitTickets.length} ` +
-  `report=${reportTickets.length}, documents=${DOCUMENTS.length}`,
+  `report=${reportTickets.length} across ${conversationSeq} conversations, ` +
+  `documents=${DOCUMENTS.length}`,
 );
 
 function writeJson(path, value) {

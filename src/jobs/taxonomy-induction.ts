@@ -51,13 +51,14 @@ export interface TaxonomyCandidate {
 
 /** The candidate taxonomy artifact a person curates (section 4.11 step 4). */
 export interface CandidateTaxonomy {
-  version: 1;
+  version: 2;
   source: string;
   prompt_ver: string;
   chat_model_ver: string;
   embed_model_ver: string;
   item_count: number;
-  cost_cents: number;
+  /** DEC-25: total model cost in micro-dollars. Version 1 held cents. */
+  cost_micros: number;
   candidates: TaxonomyCandidate[];
   other: {
     size: number;
@@ -200,7 +201,7 @@ export async function induceTaxonomy(
   // Steps 3 and 4. Name each surviving cluster; a person curates later.
   const candidates: TaxonomyCandidate[] = [];
   const usedIds = new Set<string>(['other']);
-  let costCents = embedded.costCents;
+  let costMicros = embedded.costMicros;
 
   for (const cluster of kept) {
     const members = membersOf(cluster);
@@ -212,7 +213,7 @@ export async function induceTaxonomy(
       promptVer: input.promptVer,
       modelVer: input.chatModelVer,
     });
-    costCents += named.costCents;
+    costMicros += named.costMicros;
 
     const label = named.text.trim().replace(/\s+/g, ' ');
     candidates.push({
@@ -227,13 +228,13 @@ export async function induceTaxonomy(
   const otherIndices = foldedIntoOther.flatMap(membersOf);
 
   return {
-    version: 1,
+    version: 2,
     source: input.source ?? 'synthetic',
     prompt_ver: input.promptVer,
     chat_model_ver: input.chatModelVer,
     embed_model_ver: input.embedModelVer,
     item_count: input.items.length,
-    cost_cents: costCents,
+    cost_micros: costMicros,
     candidates,
     other: {
       size: otherIndices.length,

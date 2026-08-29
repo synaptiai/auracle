@@ -23,6 +23,10 @@
  */
 import type { Pool } from 'pg';
 
+// The relay routes by negation: only a customer reply takes the draft
+// path, so it never names the other classes.
+import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
+
 import type {
   AdapterCapabilities,
   DeliveryState,
@@ -90,9 +94,23 @@ export function resolveSendFailure(
     : { action: 'escalate' }; // at_most_once: no second attempt, ever.
 }
 
+/** The message of a thrown value, whatever its class. */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** One relayed record and what became of it. */
 export interface RelayResult {
   readonly idemKey: string;
+  /**
+   * Why the send failed, when it did. The relay decides DEC-30 and used to
+   * discard this: an operator facing a wall of `left_pending_retry` had no
+   * line anywhere naming the cause, and could not tell a genuinely uncertain
+   * delivery from a read-back that throws on every call.
+   */
+  readonly sendError?: string;
+  /** Why the read-back failed, when one was attempted and threw. */
+  readonly readBackError?: string;
   readonly outcome:
     | 'sent' // send succeeded
     | 'sent_reconciled' // send threw, read-back proved delivery (DEC-30)
@@ -101,23 +119,6 @@ export interface RelayResult {
     | 'left_pending_retry' // safe to retry on a later scan
     | 'fenced'; // DEC-28: epoch stale at send time; never sent
 }
-
-/**
- * The only action class the relay routes through `sendDraft`. The approval
- * bridge parks that draft inside the target system and records its external
- * id in the payload before the record becomes relayable. Every other class
- * names an automatic internal write and goes through `performAction`.
- */
-export const CUSTOMER_REPLY_ACTION_CLASS = 'customer_reply';
-
-/**
- * V2: compensation of an irreversible action (a sent refund). It rides
- * `performAction` like every other internal write, but it always gates —
- * a person approves each one — and its delivery rule is `at_most_once`
- * (DEC-29): a duplicate refund costs money, so an uncertain send escalates
- * (DEC-30) instead of retrying.
- */
-export const COMPENSATION_ACTION_CLASS = 'compensate';
 
 /** One pending outbox row as a scan reads it from the ledger. */
 export interface PendingOutboxRow {
@@ -258,7 +259,7 @@ export async function relayOne(
     dispatch = dispatchFor(row);
   } catch (error) {
     if (!(error instanceof PayloadShapeError)) throw error;
-    await parkEscalated(pool, row, 'malformed');
+    await parkEscalated(pool, row, 'malformed', `malformed_payload: ${errorText(error)}`);
     return { idemKey, outcome: 'malformed_escalated' };
   }
 
@@ -270,6 +271,8 @@ export async function relayOne(
           adapter.performAction(row.action_class, dispatch.payload, idemKey);
 
   let resolution: FailureResolution;
+  let sendFailure: string | null = null;
+  let readBackFailure: string | null = null;
   try {
     await deliver();
     // Send first. Only now, with the send resolved, set the status second.
@@ -278,21 +281,47 @@ export async function relayOne(
       [row.run_id, row.step_id],
     );
     return { idemKey, outcome: 'sent' };
-  } catch {
+  } catch (sendError) {
     // The throw leaves the delivery state unknown unless the adapter can
     // read it back (DEC-30). A read-back that itself throws leaves the
     // state unknown too: pass null so the matrix escalates instead of
     // letting the error turn a failed send into a blind retry.
+    //
+    // Both causes are recorded. The relay is the component whose failures
+    // decide DEC-30, and it used to discard them: rotated SMTP credentials
+    // produced an endless stream of left_pending_retry with no line anywhere
+    // naming the authentication failure, and a readBack that throws on every
+    // call manufactures delivery_unknown escalations that look exactly like
+    // genuine ones.
+    sendFailure = errorText(sendError);
     let readBack: DeliveryState | null = null;
     if (adapter.capabilities.supportsReadBack) {
       try {
         readBack = await adapter.readBack({ idemKey });
-      } catch {
+      } catch (readBackError) {
         readBack = null;
+        readBackFailure = errorText(readBackError);
       }
     }
-    resolution = resolveSendFailure(adapter.capabilities, assertDeliveryRule(row.delivery), readBack);
+    // Read the rule before it can throw over the top of the send failure:
+    // assertDeliveryRule only ever runs on this path, so an unknown value
+    // would replace the error that actually matters.
+    let rule;
+    try {
+      rule = assertDeliveryRule(row.delivery);
+    } catch (ruleError) {
+      throw new Error(
+        `${errorText(ruleError)} (the send had already failed with: ${sendFailure})`,
+      );
+    }
+    resolution = resolveSendFailure(adapter.capabilities, rule, readBack);
   }
+
+  // Carried on every non-'sent' outcome below, so the daemon can log a cause.
+  const causes = {
+    ...(sendFailure === null ? {} : { sendError: sendFailure }),
+    ...(readBackFailure === null ? {} : { readBackError: readBackFailure }),
+  };
 
   switch (resolution.action) {
     case 'mark_sent': {
@@ -300,17 +329,22 @@ export async function relayOne(
         "UPDATE outbox SET status = 'sent' WHERE run_id = $1 AND step_id = $2 AND status = 'pending'",
         [row.run_id, row.step_id],
       );
-      return { idemKey, outcome: 'sent_reconciled' };
+      return { idemKey, ...causes, outcome: 'sent_reconciled' };
     }
     case 'leave_pending':
-      return { idemKey, outcome: 'left_pending_retry' };
+      return { idemKey, ...causes, outcome: 'left_pending_retry' };
     case 'escalate': {
       // One transaction: the record states the uncertainty
       // (`delivery_unknown`) and the run moves to the approval path.
       // No approval-queue table exists yet; the escalated run plus this
       // status is the hand-off signal until that card lands.
-      await parkEscalated(pool, row, 'delivery_unknown');
-      return { idemKey, outcome: 'delivery_unknown_escalated' };
+      await parkEscalated(
+        pool,
+        row,
+        'delivery_unknown',
+        sendFailure === null ? undefined : `delivery_unknown: ${sendFailure}`,
+      );
+      return { idemKey, ...causes, outcome: 'delivery_unknown_escalated' };
     }
   }
 }
@@ -319,8 +353,18 @@ export async function relayOne(
  * Park one unrelayable record and its run in one transaction (DEC-04):
  * `status` states what went wrong on the record, the run moves to the
  * approval path. Terminal for the relay — a later scan finds nothing.
+ *
+ * `escalated` is a terminal state, so the move stamps `finished_at` exactly
+ * as the ledger path does (db/005_run_timing.sql). Without the stamp the
+ * service-time measurement silently omits every run the relay escalated,
+ * which is the population the measurement most needs.
  */
-async function parkEscalated(pool: Pool, row: PendingOutboxRow, status: string): Promise<void> {
+async function parkEscalated(
+  pool: Pool,
+  row: PendingOutboxRow,
+  status: string,
+  reason?: string,
+): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -328,9 +372,25 @@ async function parkEscalated(pool: Pool, row: PendingOutboxRow, status: string):
       "UPDATE outbox SET status = $3 WHERE run_id = $1 AND step_id = $2 AND status = 'pending'",
       [row.run_id, row.step_id, status],
     );
-    await client.query("UPDATE run SET state = 'escalated' WHERE run_id = $1", [
-      row.run_id,
-    ]);
+    await client.query(
+      "UPDATE run SET state = 'escalated', finished_at = now() WHERE run_id = $1",
+      [row.run_id],
+    );
+    // The escalations view reads its reason from a journaled escalate step.
+    // Without this row every relay escalation listed with reason null, which
+    // reads the same as any other escalation and names no cause.
+    await client.query(
+      // step_id is exactly 'escalate': that is the id the escalations view
+      // joins on. One per run, so a repeat keeps the first reason.
+      `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
+       VALUES ($1, $2, 'done', $3::jsonb, 'relay', 'relay', 0)
+       ON CONFLICT (run_id, step_id) DO NOTHING`,
+      [
+        row.run_id,
+        'escalate',
+        JSON.stringify({ reason: reason ?? `relay_${status}` }),
+      ],
+    );
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');

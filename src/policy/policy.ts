@@ -1,13 +1,13 @@
 /**
- * Policy engine (section 4.8). Obeys DEC-03, DEC-06, DEC-12, DEC-13.
+ * Policy engine (section 4.8). Obeys DEC-03, DEC-06, DEC-12, DEC-13, DEC-34.
  *
  * A pure function. It calls no model and reads no state.
  *
  * Rule order below is authoritative and follows section 4.8 exactly:
  * autonomy decreases to agree with the guarantees the target system gives
- * (DEC-06), customer replies always need approval (DEC-12), the only
- * automatic writes are reversible ones (DEC-03), and one global agreement
- * threshold applies with person-set risk tiers (DEC-13).
+ * (DEC-06), customer replies always need approval (DEC-12), a write that
+ * cannot be reversed always gates (DEC-34, extending DEC-03), and one
+ * global agreement threshold applies with person-set risk tiers (DEC-13).
  */
 
 /** Cost of an error for an intent. A person sets it; the system does not learn it (DEC-13). */
@@ -27,8 +27,8 @@ export interface ActionClass {
   isWrite: boolean;
   isCustomerVisible: boolean;
   /**
-   * V2: the write cannot be undone once delivered (a sent refund). DEC-03
-   * limits autonomy to reversible writes, so such an action never takes
+   * The write cannot be undone once delivered (a sent refund). DEC-34
+   * extends DEC-03's reversible-write limit, so such an action never takes
    * the automatic path, whatever the gates read.
    */
   isIrreversible: boolean;
@@ -63,7 +63,7 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   if (!input.capabilities.supportsIdempotencyKey && input.action.isWrite) return 'gated';
   // DEC-12: customer replies always need approval.
   if (input.action.isCustomerVisible) return 'gated';
-  // DEC-03 (V2): an irreversible write never reaches the automatic path,
+  // DEC-34: an irreversible write never reaches the automatic path,
   // whatever the gates read — compensation of a sent refund gates like a
   // customer reply does.
   if (input.action.isWrite && input.action.isIrreversible) return 'gated';

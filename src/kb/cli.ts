@@ -1,6 +1,6 @@
 // CLI for the knowledge-base loader (Phase 2, decisions D4-A + D5-A). Run via:
 //
-//   npm run load-docs -- <dir-of-markdown>
+//   pnpm run load-docs -- <dir-of-markdown>
 //
 // Environment:
 //   OPENROUTER_API_KEY       required (DEC-16: OpenRouter supplies the models)
@@ -17,8 +17,8 @@
 
 import { Pool } from 'pg';
 
-import { loadDotEnv } from '../config/env.js';
-import { dbUrl } from '../db/config.js';
+import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
+import { requireDbUrl } from '../db/config.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { DEFAULT_EMBED_MODEL, loadKbDirectory } from './loader.js';
 
@@ -32,7 +32,7 @@ async function main(): Promise<void> {
   loadDotEnv();
   const dir = process.argv[2];
   if (!dir) {
-    console.error('usage: npm run load-docs -- <dir-of-markdown>');
+    console.error('usage: pnpm run load-docs -- <dir-of-markdown>');
     process.exitCode = 1;
     return;
   }
@@ -64,9 +64,10 @@ async function main(): Promise<void> {
       ? { baseUrl: process.env['OPENROUTER_BASE_URL'] }
       : {}),
     embeddingsUsdPerMTok: usdPerMTok,
+    ...dataGuaranteeOption(),
   });
 
-  const pool = new Pool({ connectionString: dbUrl(), max: 1 });
+  const pool = new Pool({ connectionString: requireDbUrl('the knowledge-base CLI'), max: 1 });
   try {
     console.log(`indexing ${dir} with ${embedModelVer}...`);
     const report = await loadKbDirectory(pool, provider, dir, embedModelVer);
@@ -75,7 +76,7 @@ async function main(): Promise<void> {
     }
     console.log(
       `load-docs report: indexed=${report.indexed} skipped=${report.skipped} ` +
-        `failed=${report.failed} cost_cents=${report.costCents}`,
+        `failed=${report.failed} cost_micros=${report.costMicros}`,
     );
     if (report.failed > 0) {
       process.exitCode = 1;
