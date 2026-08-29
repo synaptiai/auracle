@@ -34,12 +34,37 @@ export interface ActionClass {
   isIrreversible: boolean;
 }
 
+/**
+ * The three numbers that govern the gates (section 4.5, section 4.7).
+ *
+ * They travel as data so a fitted value can reach the engine. DEC-13 rules
+ * out a threshold per intent, and this shape cannot express one: there is no
+ * intent key, so one agreement value governs every ticket.
+ *
+ * DEC-05 keeps the two gates independent. The agreement value and the
+ * coverage values live in one record for transport only. No rule reads both,
+ * and nothing here combines them into a score.
+ */
+export interface GateThresholds {
+  /** Section 4.5. Below this, escalate. */
+  readonly agreement: number;
+  /** Section 4.7. Below this, block. Do not send. */
+  readonly groundednessBlock: number;
+  /** Section 4.7. Below this, send to a person for review. */
+  readonly groundednessReview: number;
+}
+
 export interface PolicyInput {
   riskTier: RiskTier;
   /** Fraction of classifier samples that agree (section 4.5). */
   agreement: number;
   /** Fraction of claims the retrieved text supports (section 4.7). */
   groundedness: number;
+  /**
+   * The gate numbers this decision applies. Injected, never loaded here: the
+   * engine stays a pure synchronous function that reads no state.
+   */
+  thresholds: GateThresholds;
   capabilities: AdapterCapabilities;
   action: ActionClass;
 }
@@ -53,10 +78,67 @@ export type PolicyDecision = 'auto' | 'gated' | 'escalate';
 export const GATE_AGREEMENT = 0.6;
 
 /** Below this, block. Do not send (section 4.7). */
-const GROUNDEDNESS_BLOCK = 0.7;
+export const GROUNDEDNESS_BLOCK = 0.7;
 
 /** Below this, send to a person for review (section 4.7). */
-const GROUNDEDNESS_REVIEW = 0.8;
+export const GROUNDEDNESS_REVIEW = 0.8;
+
+/**
+ * The documented seeds, used until a fitting run produces an artifact.
+ *
+ * A process that adopts these says so at startup. A seed that reads like a
+ * fitted number is how the open loop stayed invisible: the job wrote an
+ * artifact for months and no gate moved.
+ */
+export const SEED_THRESHOLDS: GateThresholds = Object.freeze(makeThresholds({
+  agreement: GATE_AGREEMENT,
+  groundednessBlock: GROUNDEDNESS_BLOCK,
+  groundednessReview: GROUNDEDNESS_REVIEW,
+}));
+
+/**
+ * Validate a threshold set, or throw.
+ *
+ * The order constraint is the one a fit can break. Below block the engine
+ * escalates and below review it gates, so an inverted pair empties the review
+ * band and escalates values the register sends to a person. A fitted pair is
+ * two independent searches over one score, so nothing in the fit guarantees
+ * the order — this is where it is guaranteed.
+ */
+export function makeThresholds(values: GateThresholds): GateThresholds {
+  assertFraction(values.agreement, 'agreement');
+  assertFraction(values.groundednessBlock, 'groundednessBlock');
+  assertFraction(values.groundednessReview, 'groundednessReview');
+  if (values.groundednessBlock > values.groundednessReview) {
+    throw new Error(
+      `groundedness block ${values.groundednessBlock} exceeds review ${values.groundednessReview}; `
+        + 'below block escalates and below review gates, so an inverted pair has no review band',
+    );
+  }
+  // Frozen: the record is shared by reference into every PolicyInput a
+  // process builds, so one mutation anywhere would move the gate for all of
+  // them. `readonly` is a compile-time claim and does not survive to runtime.
+  return Object.freeze({
+    agreement: values.agreement,
+    groundednessBlock: values.groundednessBlock,
+    groundednessReview: values.groundednessReview,
+  });
+}
+
+/**
+ * A threshold must be a fraction, and it must be above zero.
+ *
+ * At zero the comparison never fails, so the gate passes every ticket. DEC-05
+ * gives the system two gates and neither is optional, so a set that disables
+ * one is refused rather than adopted. The fitter cannot reach zero either:
+ * agreement is a count over CLASSIFIER_K samples and the modal count is at
+ * least one, so its lowest candidate is 1/9.
+ */
+function assertFraction(value: number, field: string): void {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 1) {
+    throw new Error(`threshold ${field} must be a number in (0, 1], got ${String(value)}`);
+  }
+}
 
 export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   // DEC-06: no idempotency support means no automatic write, whatever the evidence.
@@ -71,9 +153,9 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   // regardless of the gate values.
   if (input.riskTier === 'high') return 'gated';
   // Gate 1: sample agreement (DEC-05).
-  if (input.agreement < GATE_AGREEMENT) return 'escalate';
+  if (input.agreement < input.thresholds.agreement) return 'escalate';
   // Gate 2: groundedness coverage (DEC-05, section 4.7 thresholds).
-  if (input.groundedness < GROUNDEDNESS_BLOCK) return 'escalate';
-  if (input.groundedness < GROUNDEDNESS_REVIEW) return 'gated';
+  if (input.groundedness < input.thresholds.groundednessBlock) return 'escalate';
+  if (input.groundedness < input.thresholds.groundednessReview) return 'gated';
   return 'auto';
 }

@@ -21,8 +21,8 @@
  */
 
 import { classifyTicket } from '../classifier/classifier.js';
-import { evaluatePolicy } from '../policy/policy.js';
-import type { AdapterCapabilities, RiskTier } from '../policy/policy.js';
+import { SEED_THRESHOLDS, evaluatePolicy } from '../policy/policy.js';
+import type { AdapterCapabilities, GateThresholds, RiskTier } from '../policy/policy.js';
 import type { ModelProvider } from '../models/provider.js';
 import { goldCaseText, isFirstTurn } from '../fixtures/load.js';
 import type { GoldFile, GoldTicket } from '../fixtures/load.js';
@@ -171,6 +171,7 @@ async function classifyAndApplyPolicy(
   taxonomy: ReplayTaxonomy,
   pins: ReplayPins,
   ticket: GoldTicket,
+  thresholds: GateThresholds,
 ): Promise<RoutedTicket> {
   const classification = await classifyTicket(provider, {
     taxonomy,
@@ -185,6 +186,7 @@ async function classifyAndApplyPolicy(
     riskTier: tier,
     agreement: classification.agreement,
     groundedness: ROUTING_GROUNDEDNESS,
+    thresholds,
     capabilities: FULL_CAPABILITIES,
     action: ROUTING_ACTION,
   });
@@ -213,10 +215,11 @@ export async function fitRoutes(
   taxonomy: ReplayTaxonomy,
   pins: ReplayPins,
   fit: GoldFile,
+  thresholds: GateThresholds = SEED_THRESHOLDS,
 ): Promise<RouteMap> {
   const pairs: { intentId: string; queue: string }[] = [];
   for (const ticket of firstTurnsOf(fit)) {
-    const routed = await classifyAndApplyPolicy(provider, taxonomy, pins, ticket);
+    const routed = await classifyAndApplyPolicy(provider, taxonomy, pins, ticket, thresholds);
     // DEC-32: the pair records the prediction and the OBSERVED queue only.
     pairs.push({ intentId: routed.intentId, queue: routed.ticket.queue });
   }
@@ -250,14 +253,17 @@ export async function runReplay(input: {
   pins: ReplayPins;
   fit: GoldFile;
   report: GoldFile;
+  /** The gate numbers this run applies. Defaults to the documented seeds. */
+  thresholds?: GateThresholds;
 }): Promise<ReplayReport> {
   const { provider, taxonomy, pins, fit, report } = input;
+  const thresholds = input.thresholds ?? SEED_THRESHOLDS;
 
-  const routes = await fitRoutes(provider, taxonomy, pins, fit);
+  const routes = await fitRoutes(provider, taxonomy, pins, fit, thresholds);
 
   const scored: ScoredTicket[] = [];
   for (const ticket of firstTurnsOf(report)) {
-    const routed = await classifyAndApplyPolicy(provider, taxonomy, pins, ticket);
+    const routed = await classifyAndApplyPolicy(provider, taxonomy, pins, ticket, thresholds);
     scored.push(scoreTicket(routed, routes));
   }
 

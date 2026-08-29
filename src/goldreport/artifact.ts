@@ -6,7 +6,21 @@
 // src/calibration/artifact.ts: a broken artifact fails fast instead of
 // quietly changing a published number.
 
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+
+import {
+  prepareArtifactDir,
+  assertVersionArg,
+  listArtifacts,
+  nextArtifactVersion,
+  readArtifactText,
+} from '../artifacts/versioned.js';
+import type { ArtifactFile } from '../artifacts/versioned.js';
+
+/** Names this artifact kind in every fault message. */
+const LABEL = 'gold report';
+
+import { CALIBRATION_SCOPES } from '../calibration/artifact.js';
 import type { RateWithInterval } from './score.js';
 
 export interface GoldReportArtifact {
@@ -49,8 +63,26 @@ export interface GoldReportArtifact {
   /** DEC-26 pins in force during the run. */
   prompt_ver: string;
   model_ver: string;
-  /** The agreement threshold the policy applied (seed until calibration wires its artifact in). */
+  /** The agreement threshold the policy applied. */
   gate_agreement: number;
+  /**
+   * Where `gate_agreement` came from.
+   *
+   * 'seed' is the documented section 4.5 value; 'calibration' names the
+   * artifact version that produced it. Without this a reader cannot tell a
+   * fitted run from a seeded one, and the two publish different numbers.
+   */
+  gate_source: 'seed' | 'calibration';
+  /** The calibration artifact version behind `gate_agreement`. Null when seeded. */
+  gate_calibration_version: number | null;
+  /**
+   * The turn population the threshold was fitted on. Null when seeded.
+   *
+   * `scope` above names the population this report SCORED, which DEC-39 fixes
+   * at first turns. The threshold may come from a fit over every turn, and a
+   * reader who saw only one of the two would attribute the number wrongly.
+   */
+  gate_calibration_scope: string | null;
   action_match: RateWithInterval;
   containment: RateWithInterval;
   /** Indication-only risk-tier slices; never publishable (section 4.10). */
@@ -111,6 +143,32 @@ export function validateGoldReportArtifact(raw: unknown): GoldReportArtifact {
   assert(typeof raw['model_ver'] === 'string' && raw['model_ver'].length > 0, 'artifact.model_ver is missing');
   const gate = raw['gate_agreement'];
   assert(typeof gate === 'number' && gate >= 0 && gate <= 1, 'artifact.gate_agreement is outside [0, 1]');
+  const gateSource = raw['gate_source'];
+  assert(
+    gateSource === 'seed' || gateSource === 'calibration',
+    `artifact.gate_source is ${String(gateSource)}, expected seed or calibration`,
+  );
+  const gateVersion = raw['gate_calibration_version'];
+  if (gateSource === 'calibration') {
+    assert(
+      typeof gateVersion === 'number' && Number.isInteger(gateVersion) && gateVersion >= 1,
+      'artifact.gate_calibration_version is not a positive integer on a calibrated run',
+    );
+    assert(
+      typeof raw['gate_calibration_scope'] === 'string'
+        && (CALIBRATION_SCOPES as readonly string[]).includes(raw['gate_calibration_scope']),
+      `artifact.gate_calibration_scope is ${String(raw['gate_calibration_scope'])}, `
+        + `expected one of ${CALIBRATION_SCOPES.join(', ')}`,
+    );
+  } else {
+    // A seeded run names no version. A number here would claim a fit that
+    // never produced this number.
+    assert(gateVersion === null, 'artifact.gate_calibration_version is set on a seeded run');
+    assert(
+      raw['gate_calibration_scope'] === null,
+      'artifact.gate_calibration_scope is set on a seeded run',
+    );
+  }
   assertRateWithInterval(raw['action_match'], 'action_match');
   assertRateWithInterval(raw['containment'], 'containment');
   const strata = raw['strata'];
@@ -155,35 +213,29 @@ export async function loadGoldReportArtifact(
   dir: URL = defaultGoldReportDir(),
 ): Promise<GoldReportArtifact | null> {
   const base = withTrailingSlash(dir);
-  const target = version ?? (await highestVersion(base));
-  if (target === null) return null;
-  const text = await readFile(new URL(`v${target}.json`, base), 'utf8');
-  return validateGoldReportArtifact(JSON.parse(text));
+  const all = await listArtifacts(base, LABEL);
+  let found: ArtifactFile | null;
+  if (version === undefined) {
+    found = all.at(-1) ?? null;
+  } else {
+    assertVersionArg(version, LABEL);
+    found = all.find((entry) => entry.version === version) ?? null;
+  }
+  if (found === null) return null;
+  return validateGoldReportArtifact(JSON.parse(await readArtifactText(base, found, LABEL)));
 }
 
-async function highestVersion(base: URL): Promise<number | null> {
-  let names: string[];
-  try {
-    names = await readdir(base);
-  } catch (err) {
-    // An absent directory means nothing has been reported yet.
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw err;
-  }
-  let max: number | null = null;
-  for (const name of names) {
-    const match = /^v(\d+)\.json$/.exec(name);
-    if (!match) continue;
-    const version = Number(match[1]);
-    if (max === null || version > max) max = version;
-  }
-  return max;
+/**
+ * Fault on a directory that would fault at write time, before the caller
+ * spends anything. The job then mints the version after its loop.
+ */
+export async function assertGoldReportDirUsable(dir: URL): Promise<void> {
+  await prepareArtifactDir(withTrailingSlash(dir), LABEL);
 }
 
 /** Mint the next version number by scanning existing artifacts under dir. */
 export async function nextVersion(dir: URL): Promise<number> {
-  const current = await highestVersion(withTrailingSlash(dir));
-  return current === null ? 1 : current + 1;
+  return nextArtifactVersion(withTrailingSlash(dir), LABEL);
 }
 
 function assert(ok: boolean, message: string): asserts ok {

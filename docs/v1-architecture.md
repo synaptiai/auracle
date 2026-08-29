@@ -653,8 +653,29 @@ rights to the inputs and the outputs. The discount is 1 percent.
 
 **No threshold has a fit yet.** The agreement threshold and the two
 groundedness thresholds are the seed values of paragraph 4.5 and paragraph 4.7.
-No fitting run has produced an artifact, and no artifact reaches the policy
-engine. Read every gate number as a seed until this paragraph says otherwise.
+No fitting run in this repository has produced an artifact. Read every gate
+number as a seed until this paragraph says otherwise.
+
+A fitted artifact now reaches the policy engine. Each process resolves its
+gate numbers once at startup and logs which it adopted. A run on the seeds
+logs `gate_thresholds_seeded`; a run on a fit logs `gate_thresholds_fitted`
+and the version. The gold report records the same provenance beside its gate
+value, so a published number names the gate that produced it. Only the
+agreement number has a job that fits it. The two coverage numbers stay at
+their seeds, because the gates are independent and fitting one moves neither
+value of the other (DEC-05).
+
+**A fitted threshold cannot move the published numbers.** The gold report runs
+against the offline stub, which answers each sample by matching a phrase. Every
+sample of one ticket therefore agrees, and agreement is 1.0 on every scored
+case. DEC-39 scores the 287 first turns of the report half. No threshold below
+1.0 changes a decision. A run at 0.60 and a run at
+0.75 publish the same rates, and only the recorded provenance differs.
+
+The wiring is real and the runtime gate does move. The synthetic corpus cannot
+exercise it, because a deterministic stub has no disagreement to measure.
+Treat the published rates as a measure of routing under a gate that never
+binds. A real model on real history is the first case where the number moves.
 
 The gold set now holds later turns, so the calibration job fits on prompts that
 carry history, per DEC-37. Its artifact records the turn population as `scope`.

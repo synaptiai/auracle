@@ -8,7 +8,19 @@
 // the artifact fail to load instead of quietly turning a selection tool into
 // a published number (DEC-09).
 
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+
+import {
+  prepareArtifactDir,
+  assertVersionArg,
+  listArtifacts,
+  nextArtifactVersion,
+  readArtifactText,
+} from '../artifacts/versioned.js';
+import type { ArtifactFile } from '../artifacts/versioned.js';
+
+/** Names this artifact kind in every fault message. */
+const LABEL = 'triage';
 import type { CaseOrigin } from './select.js';
 
 /** One case the judge sent to a person, with its provenance. */
@@ -176,35 +188,29 @@ export async function loadTriageArtifact(
   dir: URL = defaultTriageDir(),
 ): Promise<TriageArtifact | null> {
   const base = withTrailingSlash(dir);
-  const target = version ?? (await highestVersion(base));
-  if (target === null) return null;
-  const text = await readFile(new URL(`v${target}.json`, base), 'utf8');
-  return validateTriageArtifact(JSON.parse(text));
+  const all = await listArtifacts(base, LABEL);
+  let found: ArtifactFile | null;
+  if (version === undefined) {
+    found = all.at(-1) ?? null;
+  } else {
+    assertVersionArg(version, LABEL);
+    found = all.find((entry) => entry.version === version) ?? null;
+  }
+  if (found === null) return null;
+  return validateTriageArtifact(JSON.parse(await readArtifactText(base, found, LABEL)));
 }
 
-async function highestVersion(base: URL): Promise<number | null> {
-  let names: string[];
-  try {
-    names = await readdir(base);
-  } catch (err) {
-    // An absent directory means nothing has been triaged yet.
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw err;
-  }
-  let max: number | null = null;
-  for (const name of names) {
-    const match = /^v(\d+)\.json$/.exec(name);
-    if (!match) continue;
-    const version = Number(match[1]);
-    if (max === null || version > max) max = version;
-  }
-  return max;
+/**
+ * Fault on a directory that would fault at write time, before the caller
+ * spends anything. The job then mints the version after its loop.
+ */
+export async function assertTriageDirUsable(dir: URL): Promise<void> {
+  await prepareArtifactDir(withTrailingSlash(dir), LABEL);
 }
 
 /** Mint the next version number by scanning existing artifacts under dir. */
 export async function nextVersion(dir: URL): Promise<number> {
-  const current = await highestVersion(withTrailingSlash(dir));
-  return current === null ? 1 : current + 1;
+  return nextArtifactVersion(withTrailingSlash(dir), LABEL);
 }
 
 function assert(ok: boolean, message: string): asserts ok {

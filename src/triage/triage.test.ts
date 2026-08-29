@@ -10,7 +10,7 @@
 // 4. artifact round-trip and tamper rejection.
 
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -190,7 +190,7 @@ describe('triage run', () => {
       review: async () => ({ selected: true, reason: 'always' }),
     };
     await expect(
-      runTriageJob({ judge: anonymousJudge, cases: [makeCase()] }),
+      runTriageJob({ judge: anonymousJudge, cases: [makeCase()], artifactDir: tempDirUrl() }),
     ).rejects.toThrow('DEC-26');
   });
 
@@ -297,3 +297,42 @@ function selectionsAreFromCases(
 ): boolean {
   return cases.some((c) => c.ticketId === selection.ticket_id);
 }
+
+// The strictness this module gained when three loaders were put on one scan.
+// Mutation testing found it unprotected: reverting the loader to its old
+// lenient scan left every case in this file green.
+describe('the triage directory obeys the shared scan', () => {
+  function dirWith(name: string): URL {
+    const dir = pathToFileURL(mkdtempSync(join(tmpdir(), 'auracle-triagedir-')));
+    writeFileSync(new URL(name, `${dir.href}/`), '{}');
+    return dir;
+  }
+
+  it('mints over a capitalised name instead of writing on top of it', async () => {
+    expect(await nextVersion(dirWith('V5.json'))).toBe(6);
+  });
+
+  it('refuses a leading zero rather than reading a different file', async () => {
+    await expect(nextVersion(dirWith('v05.json'))).rejects.toThrow(
+      /triage directory holds 'v05\.json'/,
+    );
+  });
+
+  it('checks the directory before the judge reviews every case', async () => {
+    // 770 cases reviewed, then thrown away by a stray file. The check moved
+    // ahead of the loop.
+    let reviewed = 0;
+    const judge: TriageJudge = {
+      async review() {
+        reviewed += 1;
+        return { selected: false, reason: '' };
+      },
+    };
+
+    await expect(
+      runTriageJob({ judge, artifactDir: dirWith('v5.backup.json') }),
+    ).rejects.toThrow(/not a versioned artifact/);
+
+    expect(reviewed).toBe(0);
+  });
+});

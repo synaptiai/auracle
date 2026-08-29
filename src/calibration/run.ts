@@ -23,7 +23,7 @@ import type { GoldFile } from '../fixtures/load.js';
 import type { ModelProvider } from '../models/provider.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { pathToFileURL } from 'node:url';
-import { nextVersion, validateCalibrationArtifact, writeCalibrationArtifact, defaultCalibrationDir } from './artifact.js';
+import { assertCalibrationDirUsable, nextVersion, validateCalibrationArtifact, writeCalibrationArtifact, defaultCalibrationDir } from './artifact.js';
 import type { CalibrationArtifact, CalibrationScope } from './artifact.js';
 import { fitAgreementThreshold } from './calibrate.js';
 
@@ -74,6 +74,14 @@ export async function runCalibrationJob(
 
   assertFitHalf(fitHalf);
 
+  // Check the artifact directory before the sampling loop, not after it. The
+  // loop makes CLASSIFIER_K model calls per fit-half ticket, and nextVersion
+  // reads the same listing either way; faulting afterwards threw away a run
+  // an operator had already paid for, over a directory state visible before
+  // the first call.
+  const dir = options.artifactDir ?? defaultCalibrationDir();
+  await assertCalibrationDirUsable(dir);
+
   // DEC-37: a later turn's prompt carries the turns before it. Fitting on the
   // bare message would fit a threshold for a prompt the runtime never sends.
   const histories = conversationHistories(fitHalf.tickets);
@@ -98,7 +106,6 @@ export async function runCalibrationJob(
 
   const fit = fitAgreementThreshold(samples, { targetPrecision });
 
-  const dir = options.artifactDir ?? defaultCalibrationDir();
   const version = await nextVersion(dir);
   const artifact = validateCalibrationArtifact({
     artifact: 'agreement-threshold',

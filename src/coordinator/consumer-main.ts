@@ -26,6 +26,12 @@
 //                         therefore every write gates).
 // - DATABASE_URL          ledger connection (see src/db/config.ts)
 //
+// Gate thresholds come from the highest calibration artifact under
+// <repo>/calibration/. With none present the documented seeds of section 4.5
+// and section 4.7 apply, and startup logs `gate_thresholds_seeded` naming
+// them. A fitted run logs `gate_thresholds_fitted` with the version. Read one
+// of those two lines before you trust a gate number.
+//
 // All of the above may live in a ./.env file: every entrypoint loads it at
 // startup when present. An explicit shell env always wins over .env.
 //
@@ -40,6 +46,7 @@ import { Pool } from 'pg';
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.js';
 import type { EgressAdapter } from '../adapters/types.js';
+import { resolveThresholds } from '../calibration/resolve.js';
 import { actionProfileFromEnv } from '../config/action-profile.js';
 import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
 import { requireDbUrl } from '../db/config.js';
@@ -98,6 +105,10 @@ async function main(): Promise<void> {
   const profile = actionProfileFromEnv();
   const egress = selectEgressAdapter(process.env['EGRESS_ADAPTER'] ?? 'helpdesk');
 
+  // Resolved once, here, and passed down. The policy engine stays a pure
+  // synchronous function, so nothing reads a file inside a gate decision.
+  const { thresholds } = await resolveThresholds();
+
   // fixtures/taxonomy.json is curated by a person (section 4.11 step 4).
   const taxonomyUrl = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -133,6 +144,7 @@ async function main(): Promise<void> {
     // Rolling per-ticket clock: the getter re-reads at each check, so a
     // long-lived daemon does not escalate everything once a fixed deadline
     // passes (DEC-25).
+    thresholds,
     limits: {
       // 100 USD in micro-dollars. The ceiling was 10 000 cents before the
       // ledger moved to micro-dollars; the amount is unchanged.

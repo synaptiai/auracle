@@ -33,8 +33,8 @@ import {
 } from '../ledger/insert.js';
 import { deriveIdemKey } from '../ledger/keys.js';
 import type { ModelProvider, PinnedVersions } from '../models/provider.js';
-import { evaluatePolicy } from '../policy/policy.js';
-import type { AdapterCapabilities, RiskTier } from '../policy/policy.js';
+import { SEED_THRESHOLDS, evaluatePolicy } from '../policy/policy.js';
+import type { AdapterCapabilities, GateThresholds, RiskTier } from '../policy/policy.js';
 import { COMPENSATION_ACTION_CLASS } from '../adapters/types.js';
 import { hybridSearch } from '../retriever/retriever.js';
 import type { RetrievedDoc } from '../retriever/types.js';
@@ -102,6 +102,12 @@ export interface CoordinatorDeps {
    */
   embedModelVer?: string;
   limits: RunLimits;
+  /**
+   * The gate numbers this process runs on. Resolved once at startup by
+   * resolveThresholds, so a fitted artifact reaches the engine and a seeded
+   * run says so in its log. Absent means the documented seeds.
+   */
+  thresholds?: GateThresholds;
   /** DEC-27: partition count N. */
   partitionCount: number;
 }
@@ -491,10 +497,12 @@ export async function coordinateTicket(
       `classified intent ${classification.intentId} is absent from the taxonomy`,
     );
   }
+  const gateThresholds = deps.thresholds ?? SEED_THRESHOLDS;
   const decision = evaluatePolicy({
     riskTier: intent.risk_tier,
     agreement: classification.agreement,
     groundedness: grounded.groundedness,
+    thresholds: gateThresholds,
     capabilities: deps.capabilities,
     action: {
       isWrite: true,
@@ -509,6 +517,13 @@ export async function coordinateTicket(
   await journalFinish('gate', 'done', {
     groundedness: grounded.groundedness,
     decision,
+    // Section 6 documents a rebalance window where two consumers overlap, and
+    // each resolves its thresholds once at startup. During a rolling restart
+    // one consumer can run a fitted number and the other the seed, and
+    // identical evidence then decides differently. Without this the journal
+    // records the verdict and nothing that explains it (DEC-26 pins versions
+    // for the same reason).
+    thresholds: gateThresholds,
   });
   const gated = await transitionOrStop('gated');
   if (gated !== null) return gated;

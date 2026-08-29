@@ -1,7 +1,7 @@
 {
   "artifact": "gold-report",
-  "version": 4,
-  "generated_at": "2026-08-29T00:08:40.004Z",
+  "version": 5,
+  "generated_at": "2026-08-29T13:32:54.489Z",
   "method": "human-review",
   "scored_by": "stub",
   "gold_source": "synthetic",
@@ -11,6 +11,9 @@
   "prompt_ver": "classify-p1",
   "model_ver": "replay-stub",
   "gate_agreement": 0.6,
+  "gate_source": "seed",
+  "gate_calibration_version": null,
+  "gate_calibration_scope": null,
   "action_match": {
     "rate": 0.7909407665505227,
     "successes": 227,

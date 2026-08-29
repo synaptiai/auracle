@@ -7,6 +7,7 @@ import type { GoldFile, GoldTicket } from '../fixtures/load.js';
 import { ReplayStubProvider } from './fake-model.js';
 import { FALLBACK_QUEUE, fitRouteMap, fitRoutes, observedOutcome, runReplay, scoreTicket } from './replay.js';
 import type { ReplayTaxonomy, RoutedTicket, RouteMap } from './replay.js';
+import { SEED_THRESHOLDS, makeThresholds } from '../policy/policy.js';
 
 const PINS = { promptVer: 'test-prompt', modelVer: 'test-model' };
 
@@ -260,5 +261,99 @@ describe('end-to-end over the committed synthetic corpus', () => {
       report.confusion['escalate->queue'] +
       report.confusion['escalate->escalate'];
     expect(confusionTotal).toBe(report.reportTickets);
+  });
+});
+
+// The replay routes every ticket through evaluatePolicy, so its scored
+// outcomes depend on the gate it was given. Nothing exercised that wiring:
+// every other case here uses a provider that answers one intent for all nine
+// samples, which pins agreement at 1.0 where no threshold below 1.0 bites.
+describe('the replay scores through the gate it was given (DEC-13)', () => {
+  /** Answers 7 of 9 samples with the modal intent, so agreement is 0.777... */
+  class SplitProvider implements ModelProvider {
+    private call = 0;
+    constructor(
+      private readonly modal: string,
+      private readonly other: string,
+      /** How many of the CLASSIFIER_K samples pick the modal intent. */
+      private readonly modalCount = 7,
+    ) {}
+    async complete(call: ChatRequest & PinnedVersions): Promise<ChatResult> {
+      const withinTicket = this.call % CLASSIFIER_K;
+      this.call += 1;
+      return {
+        text: withinTicket >= this.modalCount ? this.other : this.modal,
+        costMicros: 0,
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        servedModelVer: call.modelVer,
+      };
+    }
+    async embed(_call: EmbeddingRequest & PinnedVersions): Promise<EmbeddingResult> {
+      throw new Error('not used');
+    }
+  }
+
+  function halves(): { fit: GoldFile; report: GoldFile } {
+    const make = (): GoldTicket[] =>
+      Array.from({ length: 4 }, () => makeTicket({ queue: 'billing' }));
+    return { fit: goldFile('fit', make()), report: goldFile('report', make()) };
+  }
+
+  function replayAt(agreement?: number): ReturnType<typeof runReplay> {
+    const { fit, report } = halves();
+    return runReplay({
+      provider: new SplitProvider('alpha', 'beta'),
+      taxonomy: TAXONOMY,
+      pins: PINS,
+      fit,
+      report,
+      ...(agreement === undefined
+        ? {}
+        : { thresholds: makeThresholds({ ...SEED_THRESHOLDS, agreement }) }),
+    });
+  }
+
+  it('routes to a queue below the threshold and escalates above it', async () => {
+    // Agreement is 0.777 on every ticket, and no ticket was escalated by a
+    // person. A 0.6 gate routes them all to a queue; a 0.8 gate escalates the
+    // same evidence, and the confusion matrix moves accordingly.
+    const loose = await replayAt(0.6);
+    const strict = await replayAt(0.8);
+
+    // The keys read predicted->observed. Nothing here was escalated by a
+    // person, so the observed side stays 'queue' in both runs.
+    expect(loose.confusion['queue->queue']).toBe(4);
+    expect(loose.confusion['escalate->queue']).toBe(0);
+
+    expect(strict.confusion['escalate->queue']).toBe(4);
+    expect(strict.confusion['queue->queue']).toBe(0);
+
+    // The published rate moves with the gate, which is the whole point.
+    expect(loose.actionMatchRate).toBe(1);
+    expect(strict.actionMatchRate).toBe(0);
+  });
+
+  it('defaults to the documented seed, bracketed from both sides', async () => {
+    // Asserting "nothing escalates at 0.777" would hold for any default at or
+    // below 0.777, so it does not pin the seed. Two evidence levels either
+    // side of 0.6 do: 5 of 9 is 0.555 and must escalate, 6 of 9 is 0.666 and
+    // must not. That places the default inside (0.555, 0.666].
+    const below = await runReplay({
+      provider: new SplitProvider('alpha', 'beta', 5),
+      taxonomy: TAXONOMY,
+      pins: PINS,
+      ...halves(),
+    });
+    const above = await runReplay({
+      provider: new SplitProvider('alpha', 'beta', 6),
+      taxonomy: TAXONOMY,
+      pins: PINS,
+      ...halves(),
+    });
+
+    expect(below.confusion['escalate->queue']).toBe(4);
+    expect(above.confusion['queue->queue']).toBe(4);
+    expect(SEED_THRESHOLDS.agreement).toBeGreaterThan(5 / CLASSIFIER_K);
+    expect(SEED_THRESHOLDS.agreement).toBeLessThanOrEqual(6 / CLASSIFIER_K);
   });
 });

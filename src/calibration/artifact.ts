@@ -7,7 +7,30 @@
 // src/fixtures/load.ts: a broken artifact fails fast instead of silently
 // moving a live gate.
 
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+
+import {
+  prepareArtifactDir,
+  assertVersionArg,
+  listArtifacts,
+  nextArtifactVersion,
+  readArtifactText,
+  scanArtifactNames,
+} from '../artifacts/versioned.js';
+import type { ArtifactFile } from '../artifacts/versioned.js';
+
+/** Names this artifact kind in every fault message. */
+const LABEL = 'calibration';
+
+/**
+ * The highest artifact in a listing, or null.
+ *
+ * Kept as a named export so the pure suite attacks the scan through the
+ * module that depends on it.
+ */
+export function selectArtifactName(names: readonly string[]): ArtifactFile | null {
+  return scanArtifactNames(names, LABEL).at(-1) ?? null;
+}
 
 /** The turn population a fit consumed. See `CalibrationArtifact.scope`. */
 export const CALIBRATION_SCOPES = ['first_turn', 'all_turns'] as const;
@@ -90,7 +113,15 @@ export function validateCalibrationArtifact(raw: unknown): CalibrationArtifact {
   assert(typeof raw['model_ver'] === 'string' && raw['model_ver'].length > 0, 'artifact.model_ver is missing');
   const target = raw['target_precision'];
   assert(typeof target === 'number' && target > 0 && target <= 1, 'artifact.target_precision is outside (0, 1]');
-  assertThresholdField(raw['threshold'], 'threshold');
+  // The other fields below are rates, where zero is a real measurement. This
+  // one becomes a gate: at zero the comparison never fails and gate 1 passes
+  // every ticket. Refusing it here fails at the write, not later inside a
+  // daemon that already validated the file (DEC-05).
+  const threshold = raw['threshold'];
+  assert(
+    typeof threshold === 'number' && threshold > 0 && threshold <= 1,
+    'artifact.threshold is outside (0, 1]',
+  );
   assertThresholdField(raw['precision_at_threshold'], 'precision_at_threshold');
   assertThresholdField(raw['coverage_at_threshold'], 'coverage_at_threshold');
   const interval = raw['interval'];
@@ -128,35 +159,53 @@ export async function loadCalibrationArtifact(
   dir: URL = defaultCalibrationDir(),
 ): Promise<CalibrationArtifact | null> {
   const base = withTrailingSlash(dir);
-  const target = version ?? (await highestVersion(base));
-  if (target === null) return null;
-  const text = await readFile(new URL(`v${target}.json`, base), 'utf8');
-  return validateCalibrationArtifact(JSON.parse(text));
+  // One scan for both paths. An earlier pass pre-filtered the listing on the
+  // explicit branch, which hid every fault belonging to another version and
+  // left a second, lenient posture behind a docstring claiming one.
+  const all = await listArtifacts(base, LABEL);
+  let found: ArtifactFile | null;
+  if (version === undefined) {
+    found = all.at(-1) ?? null;
+  } else {
+    assertVersionArg(version, LABEL);
+    found = all.find((entry) => entry.version === version) ?? null;
+  }
+  if (found === null) return null;
+
+  const artifact = validateCalibrationArtifact(
+    JSON.parse(await readArtifactText(base, found, LABEL)),
+  );
+  // The file is chosen by its name and the provenance is read from inside
+  // it. A copy renamed by hand would run one threshold and report another
+  // version, and every log line and gold report would name the wrong fit.
+  if (artifact.version !== found.version) {
+    throw new Error(
+      `calibration artifact '${found.name}' declares version ${artifact.version}; `
+        + 'the file name and its contents must agree',
+    );
+  }
+  return artifact;
 }
 
-async function highestVersion(base: URL): Promise<number | null> {
-  let names: string[];
-  try {
-    names = await readdir(base);
-  } catch (err) {
-    // An absent directory means nothing has been calibrated yet.
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw err;
-  }
-  let max: number | null = null;
-  for (const name of names) {
-    const match = /^v(\d+)\.json$/.exec(name);
-    if (!match) continue;
-    const version = Number(match[1]);
-    if (max === null || version > max) max = version;
-  }
-  return max;
+/**
+ * Fault on a directory that would fault at write time, before the caller
+ * spends anything. The job then mints the version after its loop.
+ */
+export async function assertCalibrationDirUsable(dir: URL): Promise<void> {
+  await prepareArtifactDir(withTrailingSlash(dir), LABEL);
 }
 
-/** Mint the next version number by scanning existing artifacts under dir. */
+/**
+ * Mint the next version number by scanning existing artifacts under dir.
+ *
+ * Strict, like the loader. An earlier pass made this lenient on the argument
+ * that `pnpm run calibrate` is the way out of a directory the loader refused.
+ * It is not: the job writes a new version and the loader refuses the same
+ * stray file as before. The job checks the directory before it spends
+ * anything, so a fault costs no model call.
+ */
 export async function nextVersion(dir: URL): Promise<number> {
-  const current = await highestVersion(withTrailingSlash(dir));
-  return current === null ? 1 : current + 1;
+  return nextArtifactVersion(withTrailingSlash(dir), LABEL);
 }
 
 function assert(ok: boolean, message: string): asserts ok {

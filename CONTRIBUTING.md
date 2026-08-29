@@ -56,6 +56,13 @@ One case never serves both tasks.
 Selecting a threshold on the same cases that you later report on inflates the result.
 The split keeps the published numbers honest at the cost of a wider interval.
 
+A gate number now travels as data, not as a constant in the policy engine.
+
+Never read a threshold inside the engine. It stays a pure synchronous
+function. A process resolves its numbers once at startup and passes them down.
+A job that publishes a number records where that number came from. A seed and
+a fit produce different results, so a reader must be able to tell them apart.
+
 `scripts/generate-fixtures.mjs` regenerates the corpus deterministically.
 A committed fixture file must match the generator output byte for byte.
 

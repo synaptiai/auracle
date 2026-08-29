@@ -87,7 +87,7 @@ allow the compose address for a local run.
 
 | Command | Task |
 |---------|------|
-| `pnpm run calibrate` | Fits the agreement threshold on the fit half of the gold set. Writes a versioned artifact. |
+| `pnpm run calibrate` | Fits the agreement threshold on the fit half of the gold set. Writes a versioned artifact that the daemons then adopt. |
 | `pnpm run replay` | Runs the action-match replay over the fixture corpus. Uses the offline stub model. Needs no network and no database. |
 | `pnpm run gold-report` | Scores the report half of the gold set. Writes `gold-report/vN.json`, the next version. |
 | `pnpm run triage` | Selects cases for human review with the offline judge. Writes `triage/vN.json`, the next version. |
@@ -155,7 +155,7 @@ Never commit real emails, phone numbers, names or account identifiers.
 
 ## Published numbers
 
-The published numbers live in `gold-report/v4.json`.
+The published numbers live in `gold-report/v5.json`.
 They exercise the pipeline. They do not measure answer quality.
 The artifact says so itself: `scored_by` reads `stub`.
 
@@ -189,6 +189,21 @@ Run `pnpm run gold-report` to regenerate it.
 - Containment: 0.801. Interval 0.751 to 0.843. 287 cases.
 
 The artifact records an agreement gate threshold of 0.60.
+
+It also records where that number came from. A `gate_source` of `seed` names
+the section 4.5 seed. A `gate_source` of `calibration` names the artifact
+version that fitted it. A fitted gate and a seeded gate publish different
+numbers, so read the two fields together.
+
+`gate_calibration_scope` names the turn population the threshold was fitted
+on. The `scope` field names the population this report scored, which DEC-39
+fixes at first turns. The two can differ.
+
+A fitted threshold does not move these rates. The offline stub answers every
+sample of one ticket alike, so agreement is 1.0 on all 287 scored cases and no
+threshold below 1.0 changes a decision. The gate is wired and it binds at
+runtime. This corpus cannot show it.
+
 Action match scores the routing decision against observable dispositions (DEC-32).
 A disposition records what actually happened, for example a refund or an escalation.
 An intent label records only a prediction, so it cannot grade the system honestly.

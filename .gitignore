@@ -12,8 +12,13 @@ dist/
 # Exclude the directory's contents, not the directory: a negation cannot
 # re-include a file inside an excluded directory.
 /gold-report/*
-!/gold-report/v4.json
+!/gold-report/v5.json
 /triage/
+
+# Calibration artifacts are run output, not source. A committed artifact would
+# be adopted by every checkout and would move each adopter's gates to numbers
+# fitted on somebody else's corpus. Run `pnpm run calibrate` to make your own.
+/calibration/
 .creatumo/MEMORY.md
 
 # Agent session transcripts. Never commit.

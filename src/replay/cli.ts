@@ -8,6 +8,7 @@
  * Run via `pnpm run replay` (executes the built dist/replay/cli.js).
  */
 
+import { resolveThresholds } from '../calibration/resolve.js';
 import { loadGoldSet, loadTaxonomy } from '../fixtures/load.js';
 import { loadDotEnv } from '../config/env.js';
 import { ReplayStubProvider } from './fake-model.js';
@@ -19,12 +20,16 @@ async function main(): Promise<void> {
   loadDotEnv();
   const taxonomy = loadTaxonomy();
   const gold = loadGoldSet();
+  // The route map is fitted through the gate, so the replay reads the same
+  // thresholds the runtime reads rather than assuming the seeds.
+  const { thresholds } = await resolveThresholds();
   const report = await runReplay({
     provider: new ReplayStubProvider(),
     taxonomy,
     pins: PINS,
     fit: gold.fit,
     report: gold.report,
+    thresholds,
   });
   console.log(JSON.stringify(report, null, 2));
 }

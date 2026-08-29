@@ -367,7 +367,7 @@ that you pass.
 
 | Command | Task |
 |---------|------|
-| `pnpm run calibrate` | Fits the global agreement threshold on the fit half of the gold set. Writes a versioned artifact. |
+| `pnpm run calibrate` | Fits the global agreement threshold on the fit half of the gold set. Writes `calibration/vN.json`, the next version. |
 | `pnpm run replay` | Runs the action-match replay over the fixture corpus. Uses the offline stub model. Needs no network and no database. Prints the report as JSON. |
 | `pnpm run gold-report` | Scores the report half of the gold set. Writes `gold-report/vN.json`, the next version. |
 | `pnpm run triage` | Selects cases for human review with the offline judge. Writes `triage/vN.json`, the next version. |
@@ -489,6 +489,72 @@ halves under `corpus/` and never commits them.
 
 
 ## 7. Observability
+
+### Which gate numbers a process runs on
+
+Every process that evaluates policy resolves its gate numbers once at startup.
+It reads the highest artifact under `calibration/` and logs what it adopted.
+Read that line before you trust a gate number.
+
+```
+{"event":"gate_thresholds_seeded","reason":"no calibration artifact found","agreement":0.6,...}
+{"event":"gate_thresholds_fitted","version":3,"scope":"all_turns","agreement":0.72,...}
+```
+
+A `gate_thresholds_seeded` line means no fit has run. The documented seeds of
+section 4.5 and section 4.7 apply. This is the ordinary state of a fresh
+checkout and it is not a fault.
+
+A `gate_thresholds_fitted` line names the artifact version behind the number.
+Run `pnpm run calibrate` to produce the next one, then restart the consumers.
+A running process never re-reads the artifact, so a fit takes effect at the
+next start.
+
+Only the agreement number has a job that fits it. The two coverage numbers
+stay at their seeds. The gates are independent, so fitting one moves neither
+value of the other (DEC-05).
+
+A corrupt artifact stops the process. It does not fall back to the seeds. A
+truncated write must not read as "not calibrated yet" behind a gate that still
+looks healthy.
+
+Artifacts under `calibration/` are run output and the repository ignores them.
+Never commit one. A committed artifact reaches every checkout and moves each
+adopter's gates to numbers fitted on somebody else's corpus. Each deployment
+runs `pnpm run calibrate` against its own fit half.
+
+Never rename an artifact by hand. The loader picks the file by its name and
+reads the version from inside it, and it refuses a file where the two
+disagree. Copy the whole `calibration/` directory instead.
+
+Keep one file per version. A case-sensitive filesystem holds `v1.json` and
+`V1.json` as two files, and both name version 1. The loader refuses that
+directory, because nothing records which file a gate read.
+
+A file the loader refuses also stops `pnpm run calibrate`. The job cannot
+write its way out of the fault, so remove the file the message names. The job
+reads the directory before it samples, so a fault costs no model call.
+
+The gold report and the triage job apply the same rules to their own
+directories, and each reads its directory before its own loop. One scan and
+one pre-check serve all three.
+
+A job creates and reads the directory before it spends, and reads it again to
+mint the version it writes. The first step creates the directory the way the
+writer does, so a revoked permission on the parent faults before the first
+model call. A file dropped in during a run still costs that run. The check
+removes a directory that was already unusable, not every fault.
+
+Every gate journal row records the numbers that decided it. A rolling restart
+gives one consumer a new fit while another still holds the old one, so two
+identical tickets can decide differently for a legitimate reason. The journal
+row says which numbers each run applied.
+
+`pnpm run gold-report` reads the same artifact. A clean checkout carries none,
+so it scores through the seeds and the artifact says `gate_source: seed`. A
+machine that holds a fit publishes different rates, and its artifact names the
+version and the turn population behind them. The gate is part of the number.
+
 
 ### Control bands
 

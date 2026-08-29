@@ -17,6 +17,7 @@ import { StubTriageJudge } from './select.js';
 import type { CaseOrigin, TriageCase, TriageJudge } from './select.js';
 import {
   defaultTriageDir,
+  assertTriageDirUsable,
   nextVersion,
   validateTriageArtifact,
   writeTriageArtifact,
@@ -77,6 +78,11 @@ export async function runTriageJob(options: TriageRunOptions = {}): Promise<Tria
     throw new Error('triage received no cases');
   }
 
+  // Before the loop, not after it: the judge reviews every gold case, and a
+  // stray file in the output directory used to throw that work away.
+  const dir = options.artifactDir ?? defaultTriageDir();
+  await assertTriageDirUsable(dir);
+
   const selections: TriageArtifact['selections'] = [];
   for (const testCase of cases) {
     const verdict = await judge.review(testCase);
@@ -91,7 +97,6 @@ export async function runTriageJob(options: TriageRunOptions = {}): Promise<Tria
     });
   }
 
-  const dir = options.artifactDir ?? defaultTriageDir();
   const version = await nextVersion(dir);
   const artifact = validateTriageArtifact({
     artifact: 'judge-triage',

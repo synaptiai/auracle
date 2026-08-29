@@ -10,7 +10,7 @@
 // 4. artifact round-trip and tamper rejection.
 
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -29,6 +29,7 @@ import {
 } from './artifact.js';
 import type { GoldReportArtifact } from './artifact.js';
 import { runGoldReportJob } from './run.js';
+import { SEED_THRESHOLDS, makeThresholds } from '../policy/policy.js';
 import { FakeProvider } from '../models/fake.js';
 import { isFirstTurn, loadGoldHalf } from '../fixtures/load.js';
 import type { GoldFile, GoldTicket } from '../fixtures/load.js';
@@ -171,6 +172,48 @@ function makeScriptedReportHalf(): { half: GoldFile; steps: { text: string }[] }
   };
 }
 
+
+/**
+ * A report half whose agreement values straddle a threshold.
+ *
+ * makeScriptedReportHalf gives every ticket nine identical samples, so
+ * agreement is 1.0 everywhere and no threshold below 1.0 changes a decision.
+ * That is why a broken threshold wiring is invisible to it. Here every third
+ * ticket takes 7 of 9 samples, so it clears a 0.6 gate and fails a 0.8 one.
+ */
+function makeMixedAgreementReportHalf(): { half: GoldFile; steps: { text: string }[] } {
+  const labels = ['a', 'b', 'c'];
+  const tickets: GoldTicket[] = [];
+  const steps: { text: string }[] = [];
+  for (let i = 0; i < 385; i++) {
+    const label = labels[i % 3]!;
+    const other = labels[(i + 1) % 3]!;
+    tickets.push({
+      ticket_id: `SYN-M${String(i).padStart(3, '0')}`,
+      source: 'synthetic',
+      intent: label,
+      queue: 'billing',
+      disposition: {
+        escalated: false,
+        macro_applied: null,
+        refund_issued: false,
+        first_reply_minutes: 30,
+      },
+      subject: `REPORT-ONLY subject ${i}`,
+      body: `REPORT-ONLY body ${i}`,
+    });
+    // Every third ticket: 7 of 9 agree, so agreement is 0.777...
+    const split = i % 3 === 0;
+    for (let k = 0; k < 9; k++) {
+      steps.push({ text: split && k >= 7 ? other : label });
+    }
+  }
+  return {
+    half: { split: 'report', source: 'synthetic', count: 385, tickets },
+    steps,
+  };
+}
+
 describe('runGoldReportJob (section 4.10, DEC-31)', () => {
   it('scores only report-half tickets and publishes the expected numbers', async () => {
     const dir = tempDirUrl();
@@ -282,8 +325,7 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
   });
 });
 
-describe('gold report artifact round-trip', () => {
-  function makeArtifact(version: number): GoldReportArtifact {
+function makeArtifact(version: number): GoldReportArtifact {
     return {
       artifact: 'gold-report',
       version,
@@ -296,6 +338,9 @@ describe('gold report artifact round-trip', () => {
       report_tickets: 385,
       prompt_ver: 'classify-p1',
       model_ver: 'test-stub',
+      gate_source: 'seed',
+      gate_calibration_version: null,
+      gate_calibration_scope: null,
       gate_agreement: 0.6,
       action_match: {
         rate: 362 / 385,
@@ -330,6 +375,8 @@ describe('gold report artifact round-trip', () => {
       ],
     };
   }
+
+describe('gold report artifact round-trip', () => {
 
   it('writes versioned files and loads the highest back', async () => {
     const dir = tempDirUrl();
@@ -430,5 +477,314 @@ describe('first-turn scope (DEC-39)', () => {
     // A later turn's disposition reflects the whole conversation, not the
     // routing decision being scored (DEC-32).
     expect(isFirstTurn(goldTicket({ turn_number: 2 }))).toBe(false);
+  });
+});
+
+// A published number is only readable beside the gate it was scored through.
+// Before this the artifact recorded the value and not its origin, so a fitted
+// run and a seeded run published different numbers under identical metadata.
+describe('the artifact names the provenance of its gate (DEC-13, DEC-31)', () => {
+  function runWith(
+    extra: Partial<Parameters<typeof runGoldReportJob>[0]>,
+  ): ReturnType<typeof runGoldReportJob> {
+    const { half, steps } = makeScriptedReportHalf();
+    return runGoldReportJob({
+      provider: new FakeProvider([...steps]),
+      taxonomy: TEST_TAXONOMY,
+      reportHalf: half,
+      artifactDir: tempDirUrl(),
+      promptVer: 'classify-p1',
+      modelVer: 'test-stub',
+      ...extra,
+    });
+  }
+
+  it('records a seeded run as seeded, naming no version', async () => {
+    const { artifact } = await runWith({});
+
+    expect(artifact.gate_source).toBe('seed');
+    expect(artifact.gate_calibration_version).toBeNull();
+    expect(artifact.gate_agreement).toBe(SEED_THRESHOLDS.agreement);
+  }, 30_000);
+
+  it('records the calibration version that produced its gate', async () => {
+    const { artifact } = await runWith({
+      thresholds: makeThresholds({ ...SEED_THRESHOLDS, agreement: 0.72 }),
+      provenance: { source: 'calibration', version: 7, scope: 'all_turns' },
+    });
+
+    expect(artifact.gate_source).toBe('calibration');
+    expect(artifact.gate_calibration_version).toBe(7);
+    // `scope` above names the population this report scored (first turns,
+    // DEC-39). This names the population the THRESHOLD was fitted on.
+    expect(artifact.gate_calibration_scope).toBe('all_turns');
+    expect(artifact.scope).toBe('first_turn');
+    // The published gate is the fitted one, not the seed.
+    expect(artifact.gate_agreement).toBe(0.72);
+  }, 30_000);
+
+  it('refuses an artifact claiming a calibrated gate with no version', () => {
+    expect(() =>
+      validateGoldReportArtifact({
+        ...makeArtifact(1),
+        gate_source: 'calibration',
+        gate_calibration_version: null,
+      }),
+    ).toThrow(/gate_calibration_version/);
+  });
+
+  it('refuses an artifact claiming a seeded gate that names a version', () => {
+    // A version here credits a fit that did not produce this number.
+    expect(() =>
+      validateGoldReportArtifact({
+        ...makeArtifact(1),
+        gate_source: 'seed',
+        gate_calibration_version: 3,
+      }),
+    ).toThrow(/gate_calibration_version/);
+  });
+
+  it('refuses an unknown gate_source', () => {
+    expect(() =>
+      validateGoldReportArtifact({ ...makeArtifact(1), gate_source: 'guess' }),
+    ).toThrow(/gate_source/);
+  });
+});
+
+// The repository ships one published artifact and README quotes its numbers.
+// Adding a required field to the validator silently invalidated it: nothing
+// loads it in production, so no test noticed until a reader tried.
+describe('the committed gold report artifact', () => {
+  it('validates against the validator this repository ships', () => {
+    const url = new URL('../../gold-report/v5.json', import.meta.url);
+    const artifact = validateGoldReportArtifact(
+      JSON.parse(readFileSync(url, 'utf8')),
+    );
+
+    expect(artifact.split_used).toBe('report');
+    expect(artifact.scope).toBe('first_turn');
+    // README quotes these two. A change here republishes a number.
+    expect(artifact.action_match.rate).toBeCloseTo(0.791, 3);
+    expect(artifact.containment.rate).toBeCloseTo(0.801, 3);
+  });
+});
+
+// The published rates must be scored THROUGH the resolved gate, not merely
+// reported beside it. The provenance cases above copy the inputs into the
+// artifact, so they pass even when the scoring loop ignores `thresholds`
+// entirely — the same trap the coordinator suite names and avoids.
+describe('the report half is scored through the resolved gate (DEC-31)', () => {
+  function runAt(agreement: number): ReturnType<typeof runGoldReportJob> {
+    const { half, steps } = makeMixedAgreementReportHalf();
+    return runGoldReportJob({
+      provider: new FakeProvider([...steps]),
+      taxonomy: TEST_TAXONOMY,
+      reportHalf: half,
+      artifactDir: tempDirUrl(),
+      promptVer: 'classify-p1',
+      modelVer: 'test-stub',
+      thresholds: makeThresholds({ ...SEED_THRESHOLDS, agreement }),
+      provenance: { source: 'calibration', version: 2, scope: 'all_turns' },
+    });
+  }
+
+  it('publishes different rates under a threshold that reclassifies tickets', async () => {
+    // Every third ticket agrees 7 of 9. Under 0.6 it clears gate 1; under 0.8
+    // it escalates. No ticket in this half was escalated by a person, so a
+    // stricter gate lowers both published rates.
+    const loose = (await runAt(0.6)).artifact;
+    const strict = (await runAt(0.8)).artifact;
+
+    expect(loose.containment.rate).toBeGreaterThan(strict.containment.rate);
+    expect(loose.action_match.rate).toBeGreaterThan(strict.action_match.rate);
+    // Both artifacts name the gate they were scored through.
+    expect(loose.gate_agreement).toBe(0.6);
+    expect(strict.gate_agreement).toBe(0.8);
+  }, 60_000);
+});
+
+// `thresholds` and `provenance` are two independent options, so a caller can
+// hand over a fitted number and no provenance. The artifact would then
+// publish a fitted gate labelled as the seed, past a validator whose whole
+// purpose is to keep the two apart.
+describe('a seeded provenance must carry the seed value (DEC-31)', () => {
+  function runWithThresholds(
+    overrides: Partial<Record<string, number>>,
+    provenance?: { source: 'calibration'; version: number; scope: 'all_turns' },
+  ): ReturnType<typeof runGoldReportJob> {
+    const { half, steps } = makeScriptedReportHalf();
+    return runGoldReportJob({
+      provider: new FakeProvider([...steps]),
+      taxonomy: TEST_TAXONOMY,
+      reportHalf: half,
+      artifactDir: tempDirUrl(),
+      modelVer: 'test-stub',
+      thresholds: makeThresholds({ ...SEED_THRESHOLDS, ...overrides }),
+      ...(provenance === undefined ? {} : { provenance }),
+    });
+  }
+
+  it.each([
+    ['groundednessBlock', 0.5],
+    ['groundednessReview', 0.9],
+  ])('refuses a moved %s on a seeded run', async (field, value) => {
+    // DEC-05: the artifact records a value for the first gate only, so a
+    // moved coverage threshold would otherwise reach the published rates with
+    // nothing in the file naming it.
+    await expect(runWithThresholds({ [field]: value })).rejects.toThrow(
+      new RegExp(`non-seed ${field}`),
+    );
+  });
+
+  it.each([
+    ['groundednessBlock', 0.5],
+    ['groundednessReview', 0.9],
+  ])('refuses a moved %s on a CALIBRATED run too', async (field, value) => {
+    // The guard used to sit inside the seed branch, so naming a run
+    // 'calibration' let any coverage pair through — and the artifact records
+    // no coverage value at all, so nothing disclosed it.
+    await expect(
+      runWithThresholds(
+        { [field]: value },
+        { source: 'calibration', version: 3, scope: 'all_turns' },
+      ),
+    ).rejects.toThrow(new RegExp(`non-seed ${field}`));
+  });
+
+  it('refuses a scope outside the closed set', () => {
+    expect(() =>
+      validateGoldReportArtifact({
+        ...makeArtifact(1),
+        gate_source: 'calibration',
+        gate_calibration_version: 2,
+        gate_calibration_scope: 'every_other_turn',
+      }),
+    ).toThrow(/gate_calibration_scope/);
+  });
+
+  it('refuses a fitted agreement value with no calibration provenance', async () => {
+    const { half, steps } = makeScriptedReportHalf();
+
+    await expect(
+      runGoldReportJob({
+        provider: new FakeProvider([...steps]),
+        taxonomy: TEST_TAXONOMY,
+        reportHalf: half,
+        artifactDir: tempDirUrl(),
+        modelVer: 'test-stub',
+        thresholds: makeThresholds({ ...SEED_THRESHOLDS, agreement: 0.72 }),
+      }),
+    ).rejects.toThrow(/no calibration provenance/);
+  });
+
+  it('refuses an artifact naming a scope on a seeded run', () => {
+    expect(() =>
+      validateGoldReportArtifact({
+        ...makeArtifact(1),
+        gate_calibration_scope: 'all_turns',
+      }),
+    ).toThrow(/gate_calibration_scope/);
+  });
+
+  it('refuses a calibrated artifact that names no scope', () => {
+    expect(() =>
+      validateGoldReportArtifact({
+        ...makeArtifact(1),
+        gate_source: 'calibration',
+        gate_calibration_version: 2,
+        gate_calibration_scope: null,
+      }),
+    ).toThrow(/gate_calibration_scope/);
+  });
+});
+
+// A caveat the register now states, pinned so it cannot rot into a false
+// claim. The wiring is exercised by the mixed-agreement suite above; this
+// records that the COMMITTED corpus cannot exercise it, because the offline
+// stub answers every sample of one ticket alike.
+describe('the offline stub leaves no room for a threshold to bind', () => {
+  it('reports agreement 1.0 for every scripted ticket, whatever the gate', async () => {
+    const { half, steps } = makeScriptedReportHalf();
+    const strict = await runGoldReportJob({
+      provider: new FakeProvider([...steps]),
+      taxonomy: TEST_TAXONOMY,
+      reportHalf: half,
+      artifactDir: tempDirUrl(),
+      modelVer: 'test-stub',
+      thresholds: makeThresholds({ ...SEED_THRESHOLDS, agreement: 0.99 }),
+      provenance: { source: 'calibration', version: 1, scope: 'all_turns' },
+    });
+    const seeded = await runGoldReportJob({
+      provider: new FakeProvider([...makeScriptedReportHalf().steps]),
+      taxonomy: TEST_TAXONOMY,
+      reportHalf: makeScriptedReportHalf().half,
+      artifactDir: tempDirUrl(),
+      modelVer: 'test-stub',
+    });
+
+    // Nine identical samples give agreement 1.0, which clears 0.99 and 0.6
+    // alike. Only the recorded provenance separates the two artifacts.
+    expect(strict.artifact.action_match).toEqual(seeded.artifact.action_match);
+    expect(strict.artifact.containment).toEqual(seeded.artifact.containment);
+    expect(strict.artifact.gate_agreement).toBe(0.99);
+    expect(seeded.artifact.gate_agreement).toBe(SEED_THRESHOLDS.agreement);
+  }, 60_000);
+});
+
+// The strictness this module gained when three loaders were put on one scan.
+// Mutation testing found it unprotected here: reverting the loader to its old
+// lenient scan left every case in this file green, so the reproduction that
+// justified the change killed no test in the module it was measured in.
+describe('the gold report directory obeys the shared scan', () => {
+  function dirWith(...names: string[]): URL {
+    const dir = tempDirUrl();
+    for (const name of names) {
+      writeFileSync(new URL(name, `${dir.href}/`), JSON.stringify(makeArtifact(5)));
+    }
+    return dir;
+  }
+
+  it('mints over a capitalised name instead of writing on top of it', async () => {
+    // The old scan skipped 'V5.json' and answered 1, so the job wrote v1 over
+    // a directory already holding version 5 and then published the new file
+    // while the old one sat unread. README quotes these numbers.
+    expect(await nextVersion(dirWith('V5.json'))).toBe(6);
+  });
+
+  it('refuses a leading zero rather than reading a different file', async () => {
+    await expect(nextVersion(dirWith('v05.json'))).rejects.toThrow(
+      /gold report directory holds 'v05\.json'/,
+    );
+  });
+
+  it('refuses a version too large to read back', async () => {
+    await expect(nextVersion(dirWith('v9007199254740993.json'))).rejects.toThrow(
+      /too large to read/,
+    );
+  });
+
+  it('refuses an explicit version that is not a positive integer', async () => {
+    await expect(loadGoldReportArtifact(Number.NaN, dirWith('v5.json'))).rejects.toThrow(
+      /must be a positive integer/,
+    );
+  });
+
+  it('checks the directory before the scoring loop spends a model call', async () => {
+    // 385 report tickets at CLASSIFIER_K samples each. A stray file used to
+    // throw all of that away after the spend.
+    const { half } = makeScriptedReportHalf();
+    const provider = new FakeProvider([]);
+
+    await expect(
+      runGoldReportJob({
+        provider,
+        taxonomy: TEST_TAXONOMY,
+        reportHalf: half,
+        artifactDir: dirWith('v5.backup.json'),
+        modelVer: 'test-stub',
+      }),
+    ).rejects.toThrow(/not a versioned artifact/);
+
+    expect(provider.calls).toHaveLength(0);
   });
 });

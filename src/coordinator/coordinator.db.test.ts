@@ -7,6 +7,7 @@
 // The model is a FakeProvider with scripted responses; every ledger write is
 // real. Synthetic data only (DEC-18).
 import { randomUUID } from 'node:crypto';
+import { SEED_THRESHOLDS, makeThresholds } from '../policy/policy.js';
 
 import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
@@ -346,6 +347,64 @@ describe('section 4.3 run coordinator', () => {
     const gate = steps.find((s) => s.step_id === 'gate');
     expect(gate?.result).toMatchObject({ decision: 'gated', groundedness: 1 });
     expect(steps.find((s) => s.step_id === 'execute')).toBeUndefined();
+  });
+
+  // deps.thresholds is the line that makes a fitted artifact reach a live
+  // gate. Delete it and every other case in this file still passes: they all
+  // run on evidence that clears the seeds, so the seed and the fitted value
+  // agree and the wiring is invisible. This case picks evidence where they
+  // disagree (DEC-13).
+  it('applies the thresholds it was given, not the compiled-in seeds', async () => {
+    // Modal intent takes 7 of 9 samples: agreement 0.78. That clears the 0.6
+    // seed, so this same script resolves under the default deps.
+    const script: FakeStep[] = [
+      ...[
+        'password_reset',
+        'password_reset',
+        'password_reset',
+        'password_reset',
+        'password_reset',
+        'password_reset',
+        'password_reset',
+        'billing_question',
+        'other',
+      ].map((text) => ({ text })),
+      { vectors: [VEC] },
+      { text: '[doc:d1] Open the account settings page and choose reset password.' },
+      { text: 'VERDICT: SUPPORTED' },
+    ];
+
+    const seeded = await coordinateTicket(
+      makeDeps([...script]),
+      autoInput('T-' + randomUUID().slice(0, 8), 1n),
+    );
+    expect(seeded.outcome).toBe('resolved');
+
+    // The same evidence against a fitted threshold of 0.8 escalates.
+    const fitted = await coordinateTicket(
+      {
+        ...makeDeps([...script]),
+        thresholds: makeThresholds({ ...SEED_THRESHOLDS, agreement: 0.8 }),
+      },
+      autoInput('T-' + randomUUID().slice(0, 8), 1n),
+    );
+
+    expect(fitted.outcome).toBe('escalated');
+    if (fitted.outcome === 'escalated') expect(fitted.reason).toBe('policy_escalated');
+
+    // The gate journal records the decision AND the numbers that produced
+    // it. During a rolling restart two consumers can run different fits, and
+    // a verdict with no record of its gate cannot be explained afterwards.
+    const steps = await journalRows(fitted.runId);
+    expect(steps.find((s) => s.step_id === 'gate')?.result).toMatchObject({
+      decision: 'escalate',
+      thresholds: { agreement: 0.8, groundednessBlock: 0.7, groundednessReview: 0.8 },
+    });
+
+    const seededSteps = await journalRows(seeded.runId);
+    expect(seededSteps.find((s) => s.step_id === 'gate')?.result).toMatchObject({
+      thresholds: { agreement: SEED_THRESHOLDS.agreement },
+    });
   });
 
   it('escalates when classifier agreement falls below the gate and keeps partial work', async () => {

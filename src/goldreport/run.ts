@@ -18,11 +18,14 @@ import { loadDotEnv } from '../config/env.js';
 import { REPORT_COUNT, goldCaseText, isFirstTurn, loadGoldHalf, loadTaxonomy } from '../fixtures/load.js';
 import type { GoldFile } from '../fixtures/load.js';
 import type { ModelProvider } from '../models/provider.js';
-import { GATE_AGREEMENT, evaluatePolicy } from '../policy/policy.js';
-import type { AdapterCapabilities, ActionClass, RiskTier } from '../policy/policy.js';
+import { SEED_THRESHOLDS, evaluatePolicy } from '../policy/policy.js';
+import type { AdapterCapabilities, ActionClass, GateThresholds, RiskTier } from '../policy/policy.js';
+import { resolveThresholds } from '../calibration/resolve.js';
+import type { ThresholdProvenance } from '../calibration/resolve.js';
 import { pathToFileURL } from 'node:url';
 import {
   defaultGoldReportDir,
+  assertGoldReportDirUsable,
   nextVersion,
   validateGoldReportArtifact,
   writeGoldReportArtifact,
@@ -50,6 +53,12 @@ export interface GoldReportRunOptions {
   promptVer?: string;
   modelVer?: string;
   temperature?: number;
+  /**
+   * The gate numbers this run applies, and where they came from. Defaults to
+   * the documented seeds, which the artifact then records as such.
+   */
+  thresholds?: GateThresholds;
+  provenance?: ThresholdProvenance;
   /** Artifact directory override (tests). */
   artifactDir?: URL;
 }
@@ -93,6 +102,24 @@ function scorerOf(provider: ModelProvider): 'stub' | 'model' {
   return provider.kind ?? 'model';
 }
 
+/**
+ * The coverage half of the threshold record (DEC-05, section 4.7).
+ *
+ * Listed explicitly rather than derived from Object.keys: an optional field
+ * added to GateThresholds later would be absent from SEED_THRESHOLDS, so a
+ * derived list would silently stop covering it. The type below fails to
+ * compile if a non-agreement field appears and is not named here.
+ */
+const COVERAGE_FIELDS = ['groundednessBlock', 'groundednessReview'] as const;
+
+type UncoveredThreshold = Exclude<
+  keyof GateThresholds,
+  'agreement' | (typeof COVERAGE_FIELDS)[number]
+>;
+// A new gate field must join COVERAGE_FIELDS or this alias stops being never.
+const _everyThresholdIsChecked: UncoveredThreshold extends never ? true : never = true;
+void _everyThresholdIsChecked;
+
 /** Routing writes the queue field on the ticket; the write is never customer-visible. */
 const ROUTING_ACTION: ActionClass = { isWrite: true, isCustomerVisible: false, isIrreversible: false };
 
@@ -113,6 +140,34 @@ export async function runGoldReportJob(
   options: GoldReportRunOptions,
 ): Promise<GoldReportRunResult> {
   const taxonomy = options.taxonomy ?? loadTaxonomy();
+  const thresholds = options.thresholds ?? SEED_THRESHOLDS;
+  const provenance: ThresholdProvenance = options.provenance ?? { source: 'seed' };
+  // `thresholds` and `provenance` arrive as two independent options, so a
+  // caller can pass a fitted number and no provenance. The artifact would
+  // then publish a fitted gate labelled as the seed, past a validator whose
+  // whole purpose is to keep the two apart (DEC-31).
+  if (provenance.source === 'seed' && thresholds.agreement !== SEED_THRESHOLDS.agreement) {
+    throw new Error(
+      `gold report was given agreement ${thresholds.agreement} with no calibration provenance; `
+        + `a seeded run publishes the section 4.5 seed ${SEED_THRESHOLDS.agreement}`,
+    );
+  }
+  // The coverage pair is checked on BOTH branches, not the seed branch alone.
+  // The artifact records a value for the first gate only, so a moved coverage
+  // threshold would reach the published rates with nothing in the file naming
+  // it — and calling the run 'calibration' does not disclose it either
+  // (DEC-05). No job fits coverage yet, so the seeds are the only honest
+  // value; when one exists this must record the pair beside gate_agreement.
+  const movedCoverage = COVERAGE_FIELDS.filter(
+    (field) => thresholds[field] !== SEED_THRESHOLDS[field],
+  );
+  if (movedCoverage.length > 0) {
+    throw new Error(
+      `gold report was given non-seed ${movedCoverage.join(' and ')}; `
+        + 'no job fits a coverage threshold and the artifact records none, '
+        + 'so a moved one would reach the published rates undisclosed (DEC-05)',
+    );
+  }
   const reportHalf = options.reportHalf ?? loadGoldHalf('report');
   // DEC-39: replay scores first turns only. A later turn's disposition
   // reflects the whole conversation, not the decision being scored. The
@@ -126,6 +181,14 @@ export async function runGoldReportJob(
   }
 
   assertReportHalf(reportHalf);
+
+  // Before the loop, not after it. The loop makes CLASSIFIER_K model calls
+  // per report ticket, and the previous pass moved this check ahead of the
+  // spend for calibration alone while its own documentation claimed all three
+  // jobs did it. A gold-report directory is gitignored output that collects
+  // operator files, so a stray 'v5 copy.json' cost the whole scoring run.
+  const dir = options.artifactDir ?? defaultGoldReportDir();
+  await assertGoldReportDirUsable(dir);
 
   const scores = [];
   for (const ticket of firstTurns) {
@@ -148,6 +211,7 @@ export async function runGoldReportJob(
       riskTier: tier,
       agreement: classification.agreement,
       groundedness: ROUTING_GROUNDEDNESS,
+      thresholds,
       capabilities: FULL_CAPABILITIES,
       action: ROUTING_ACTION,
     });
@@ -161,7 +225,6 @@ export async function runGoldReportJob(
 
   const metrics = aggregateReport(scores);
 
-  const dir = options.artifactDir ?? defaultGoldReportDir();
   const version = await nextVersion(dir);
   const artifact = validateGoldReportArtifact({
     artifact: 'gold-report',
@@ -175,7 +238,12 @@ export async function runGoldReportJob(
     report_tickets: firstTurns.length,
     prompt_ver: promptVer,
     model_ver: modelVer,
-    gate_agreement: GATE_AGREEMENT,
+    gate_agreement: thresholds.agreement,
+    gate_source: provenance.source === 'calibration' ? 'calibration' : 'seed',
+    gate_calibration_version:
+      provenance.source === 'calibration' ? provenance.version : null,
+    gate_calibration_scope:
+      provenance.source === 'calibration' ? provenance.scope : null,
     action_match: metrics.actionMatch,
     containment: metrics.containment,
     strata: metrics.strata.map((stratum) => ({
@@ -215,14 +283,26 @@ function assertReportHalf(half: GoldFile): void {
 
 // CLI entry: `pnpm run gold-report` executes dist/goldreport/run.js over the
 // committed fixture corpus with the offline stub model. No network, no
-// database, no API key: deterministic and byte-for-byte reproducible (DEC-18).
+// database, no API key (DEC-18).
+//
+// Reproducible from a clean checkout, which carries no calibration artifact:
+// the run then scores through the documented seeds and the artifact records
+// `gate_source: 'seed'`. It is NOT reproducible across machines that hold
+// different artifacts, because the gate a number was scored through is part
+// of that number. The artifact names its gate for exactly this reason, and
+// `calibration/` is ignored so no fit travels with the repository.
 async function main(): Promise<void> {
   loadDotEnv();
   const { ReplayStubProvider } = await import('../replay/fake-model.js');
+  // The published numbers depend on the gate they were scored through, so the
+  // job reads the same artifact the runtime reads and records which one.
+  const { thresholds, provenance } = await resolveThresholds();
   const { artifact } = await runGoldReportJob({
     provider: new ReplayStubProvider(),
     promptVer: 'classify-p1',
     modelVer: STUB_MODEL_VER,
+    thresholds,
+    provenance,
   });
   console.log(JSON.stringify(artifact, null, 2));
 }
