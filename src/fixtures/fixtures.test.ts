@@ -5,7 +5,9 @@
 // each document), DEC-31 (385 fit / 385 report, no overlap), section 4.10
 // (strata present in both halves), section 4.11 ('other' group kept).
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -22,6 +24,11 @@ import {
   validateTicketFields,
   loadGoldSet,
   loadTaxonomy,
+  assertHalvesDisjoint,
+  halfDigest,
+  identityOf,
+  loadGoldHalf,
+  readHalfIdentity,
   validateGoldHalf,
 } from './load.js';
 import type { GoldFile, GoldTicket } from './load.js';
@@ -221,12 +228,325 @@ describe('the gold-half validator rejects a broken corpus', () => {
     expect(validateGoldHalf(half(thread()), 'fit').tickets).toHaveLength(2);
   });
 
+  // A labelled half drawn from an adopter's own history carries their ids,
+  // not the generator's. The prefix rules describe the shipped corpus, so
+  // they bind a half that claims to be it. Every other rule still binds.
+  function realHalf(tickets: GoldTicket[]): unknown {
+    return { split: 'fit', source: 'real', count: tickets.length, tickets };
+  }
+
+  function realTurn(overrides: Partial<GoldTicket> = {}): GoldTicket {
+    return turn({
+      ticket_id: 'order-4471@example.test',
+      source: 'real',
+      conversation_id: 'order-4471@example.test',
+      ...overrides,
+    });
+  }
+
+  it('accepts a half whose cases come from real history', () => {
+    const half = realHalf([
+      realTurn(),
+      realTurn({ ticket_id: 'order-4471-late@example.test', turn_number: 2, body: 'Still nothing.' }),
+    ]);
+    const loaded = validateGoldHalf(half, 'fit');
+    expect(loaded.source).toBe('real');
+    expect(loaded.tickets).toHaveLength(2);
+  });
+
+  it('refuses a provenance outside the closed set', () => {
+    expect(() => validateGoldHalf({ ...(realHalf([realTurn()]) as object), source: 'imap' }, 'fit'))
+      .toThrow(/declares source imap/);
+  });
+
+  it('still holds a real half to every rule that is not about the shipped corpus', () => {
+    expect(() => validateGoldHalf(realHalf([realTurn({ turn_number: 0 })]), 'fit'))
+      .toThrow(/turn_number is not a positive integer/);
+    const orphan = realTurn();
+    delete orphan.conversation_id;
+    expect(() => validateGoldHalf(realHalf([orphan]), 'fit')).toThrow(/names no conversation/);
+    // The turn-numbering check sits above the synthetic-only reply rule, and
+    // it must stay there. A gap makes a rendered history quote a turn the
+    // file does not hold, whatever the provenance.
+    expect(() =>
+      validateGoldHalf(
+        realHalf([
+          realTurn({ agent_reply: 'We are looking into it.' }),
+          realTurn({ ticket_id: 'later@example.test', turn_number: 3 }),
+        ]),
+        'fit',
+      ),
+    ).toThrow(/numbers its turns/);
+  });
+
+  it('reads a half held outside the repository, and names that path in a fault', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gold-half-'));
+    try {
+      const file = join(dir, 'fit.json');
+      writeFileSync(file, JSON.stringify(realHalf([realTurn()])));
+      expect(loadGoldHalf('fit', file).source).toBe('real');
+
+      const broken = join(dir, 'broken.json');
+      writeFileSync(broken, JSON.stringify({ ...(realHalf([realTurn()]) as object), count: 9 }));
+      expect(() => loadGoldHalf('fit', broken)).toThrow(new RegExp(broken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Node embeds a window of the input in a JSON SyntaxError. Step 5 of the
+  // curation loop has a person hand-write these two files, so a trailing
+  // comma is the commonest fault there is — and it would put a customer's
+  // body on stderr and into CI (DEC-18). The export guards its own parse for
+  // exactly this reason; the guard belongs on every parse of real data.
+  it('never quotes the file when it cannot be parsed', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gold-parse-'));
+    try {
+      const path = join(dir, 'fit.json');
+      // A trailing comma after a value: Node reports it with a snippet.
+      writeFileSync(path, '{"split":"fit","source":"real","count":1,"tickets":[{"body":"my card was declined"},]}');
+      const call = () => loadGoldHalf('fit', path);
+      expect(call).toThrow(/not valid JSON/);
+      expect(call).toThrow(/content withheld/);
+      expect(call).not.toThrow(/card was declined/);
+      // The path is the operator's own and stays, so they know which file.
+      expect(call).toThrow(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('proves two halves disjoint by identifier, and refuses an overlap (DEC-31)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gold-halves-'));
+    try {
+      const fitPath = join(dir, 'fit.json');
+      const reportPath = join(dir, 'report.json');
+      writeFileSync(fitPath, JSON.stringify(realHalf([realTurn()])));
+      writeFileSync(
+        reportPath,
+        JSON.stringify({
+          split: 'report',
+          source: 'real',
+          count: 1,
+          tickets: [realTurn({ ticket_id: 'other@example.test', conversation_id: 'other@example.test' })],
+        }),
+      );
+
+      const fitIdentity = readHalfIdentity(fitPath, 'fit');
+      const reportIdentity = readHalfIdentity(reportPath, 'report');
+      // Identifiers alone. No case text crosses into a fitting job.
+      expect(fitIdentity.ticketIds.has('order-4471@example.test')).toBe(true);
+      expect(Object.keys(fitIdentity)).toEqual(['split', 'source', 'ticketIds', 'conversationIds']);
+      expect(() => assertHalvesDisjoint(fitIdentity, reportIdentity)).not.toThrow();
+
+      const shared = join(dir, 'shared.json');
+      writeFileSync(
+        shared,
+        JSON.stringify({ split: 'report', source: 'real', count: 1, tickets: [realTurn()] }),
+      );
+      expect(() => assertHalvesDisjoint(fitIdentity, readHalfIdentity(shared, 'report')))
+        .toThrow(/appears in both halves/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses halves that share a conversation but no case (DEC-31)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gold-conv-'));
+    try {
+      const fitPath = join(dir, 'fit.json');
+      const reportPath = join(dir, 'report.json');
+      writeFileSync(fitPath, JSON.stringify(realHalf([realTurn()])));
+      writeFileSync(
+        reportPath,
+        JSON.stringify({
+          split: 'report',
+          source: 'real',
+          count: 1,
+          // A different case, the same thread. Fitting on one turn and
+          // publishing on another turn of one conversation is the leak
+          // DEC-31 forbids.
+          tickets: [realTurn({ ticket_id: 'later@example.test' })],
+        }),
+      );
+      expect(() => assertHalvesDisjoint(readHalfIdentity(fitPath, 'fit'), readHalfIdentity(reportPath, 'report')))
+        .toThrow(/conversation .* appears in both halves/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The digest's whole purpose is comparability across two runs, so its
+  // order independence is the property that matters. Every earlier assertion
+  // compared halfDigest(x) to halfDigest(x), which passes with the sort
+  // removed.
+  it('names a case set independently of the order the file listed it in', () => {
+    const a = realTurn();
+    const b = realTurn({ ticket_id: 'b@example.test', conversation_id: 'b@example.test' });
+    const c = realTurn({ ticket_id: 'c@example.test', conversation_id: 'c@example.test' });
+    const forward = identityOf({ split: 'fit', source: 'real', count: 3, tickets: [a, b, c] });
+    const reversed = identityOf({ split: 'fit', source: 'real', count: 3, tickets: [c, b, a] });
+    expect(halfDigest(forward)).toBe(halfDigest(reversed));
+
+    // And it must actually depend on the set: a different case set is a
+    // different name, or the digest proves nothing.
+    const different = identityOf({ split: 'fit', source: 'real', count: 3, tickets: [a, b, realTurn({ ticket_id: 'd@example.test', conversation_id: 'd@example.test' })] });
+    expect(halfDigest(different)).not.toBe(halfDigest(forward));
+    expect(halfDigest(forward)).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('refuses halves of different sizes (DEC-31)', () => {
+    const one = identityOf({ split: 'fit', source: 'real', count: 1, tickets: [realTurn()] });
+    const two = identityOf({
+      split: 'report', source: 'real', count: 2,
+      tickets: [
+        realTurn({ ticket_id: 'x@example.test', conversation_id: 'x@example.test' }),
+        realTurn({ ticket_id: 'y@example.test', conversation_id: 'y@example.test' }),
+      ],
+    });
+    expect(() => assertHalvesDisjoint(one, two)).toThrow(/two halves of equal size/);
+  });
+
+  // Pairing an own fit half with a copy of the shipped report half passed
+  // trivially: SYN- ids never collide with real ones, so the proof held
+  // against a set nobody would ever publish from.
+  it('refuses halves of different provenance (DEC-18, DEC-31)', () => {
+    const real = identityOf({ split: 'fit', source: 'real', count: 1, tickets: [realTurn()] });
+    const synthetic = identityOf({ split: 'report', source: 'synthetic', count: 1, tickets: [turn()] });
+    expect(() => assertHalvesDisjoint(real, synthetic)).toThrow(/different provenance/);
+  });
+
+  // A real identifier is a Message-ID: it carries the customer's domain, and
+  // a fault reaches a terminal and a CI log (DEC-18).
+  it('names a real case by digest, and a synthetic one plainly', () => {
+    const shared = realTurn();
+    const fit = identityOf({ split: 'fit', source: 'real', count: 1, tickets: [shared] });
+    const report = identityOf({ split: 'report', source: 'real', count: 1, tickets: [shared] });
+    expect(() => assertHalvesDisjoint(fit, report)).toThrow(/id digest [0-9a-f]{12}/);
+    expect(() => assertHalvesDisjoint(fit, report)).not.toThrow(/example\.test/);
+
+    const synth = turn();
+    expect(() => assertHalvesDisjoint(
+      identityOf({ split: 'fit', source: 'synthetic', count: 1, tickets: [synth] }),
+      identityOf({ split: 'report', source: 'synthetic', count: 1, tickets: [synth] }),
+    )).toThrow(/ticket SYN-000001 appears in both halves/);
+  });
+
+  // The ticket assert fires first when both halves share a case, so the
+  // conversation arm's own redaction was never reached by any test.
+  it('names a shared conversation by digest too', () => {
+    const first = realTurn();
+    const later = realTurn({ ticket_id: 'later@customer-domain.example' });
+    delete later.agent_reply;
+    const fit = identityOf({ split: 'fit', source: 'real', count: 1, tickets: [first] });
+    const report = identityOf({ split: 'report', source: 'real', count: 1, tickets: [later] });
+    const call = () => assertHalvesDisjoint(fit, report);
+    expect(call).toThrow(/conversation with id digest [0-9a-f]{12} appears in both halves/);
+    expect(call).not.toThrow(/customer-domain\.example/);
+  });
+
+  // A real half's cases reach these validators through loadGoldHalf on the
+  // path an operator uses, so a fault here is the commonest leak of all.
+  it('names a real case by digest in every validator, not only the split check', () => {
+    const leaky = realTurn({ ticket_id: 'leak@customer-domain.example', body: '' });
+    const call = () => validateGoldHalf(realHalf([leaky]), 'fit');
+    expect(call).toThrow(/id digest [0-9a-f]{12}/);
+    expect(call).not.toThrow(/customer-domain\.example/);
+
+    const badTurns = () => validateGoldHalf(
+      realHalf([realTurn({ ticket_id: 'x@customer-domain.example', turn_number: 2 })]),
+      'fit',
+    );
+    expect(badTurns).toThrow(/numbers its turns/);
+    expect(badTurns).not.toThrow(/customer-domain\.example/);
+  });
+
+  it('reports an overlap before a size mismatch, because the overlap is graver', () => {
+    const shared = realTurn();
+    const fit = identityOf({ split: 'fit', source: 'real', count: 1, tickets: [shared] });
+    const report = identityOf({
+      split: 'report', source: 'real', count: 2,
+      tickets: [shared, realTurn({ ticket_id: 'b@example.test', conversation_id: 'b@example.test' })],
+    });
+    expect(() => assertHalvesDisjoint(fit, report)).toThrow(/appears in both halves/);
+  });
+
+  it('refuses a case whose provenance disagrees with its half, naming it by digest', () => {
+    const call = () => validateGoldHalf(
+      realHalf([realTurn({ ticket_id: 'x@customer-domain.example', source: 'synthetic' })]),
+      'fit',
+    );
+    expect(call).toThrow(/declares source synthetic, but its half declares real/);
+    // This case sat on the leaking line and asserted only the message text,
+    // while every sibling paired the assertion with this one.
+    expect(call).not.toThrow(/customer-domain\.example/);
+  });
+
+  // validateTicket's own five faults were the last raw-identifier path.
+  it.each([
+    ['a missing turn number', 'turn_number', /turn_number is not a positive integer/],
+    ['a missing conversation', 'conversation_id', /names no conversation/],
+  ] as const)('names a real case by digest on %s', (_name, field, pattern) => {
+    const broken: Record<string, unknown> = { ...realTurn({ ticket_id: 'y@customer-domain.example' }) };
+    delete broken[field];
+    const call = () => validateGoldHalf(
+      { split: 'fit', source: 'real', count: 1, tickets: [broken] },
+      'fit',
+    );
+    expect(call).toThrow(pattern);
+    expect(call).not.toThrow(/customer-domain\.example/);
+  });
+
+  it('names a real case by digest on an empty agent reply', () => {
+    const call = () => validateGoldHalf(
+      realHalf([realTurn({ ticket_id: 'y@customer-domain.example', agent_reply: '' })]),
+      'fit',
+    );
+    expect(call).toThrow(/agent_reply is present but empty/);
+    expect(call).not.toThrow(/customer-domain\.example/);
+  });
+
+  it('names a repeated real ticket and a conversation fault by digest', () => {
+    const one = realTurn({ ticket_id: 'dup@customer-domain.example' });
+    const repeated = () => validateGoldHalf(realHalf([one, { ...one }]), 'fit');
+    expect(repeated).toThrow(/repeats ticket with id digest [0-9a-f]{12}/);
+    expect(repeated).not.toThrow(/customer-domain\.example/);
+
+    const gap = () => validateGoldHalf(
+      realHalf([realTurn({ ticket_id: 'g@customer-domain.example', turn_number: 2 })]),
+      'fit',
+    );
+    expect(gap).toThrow(/conversation with id digest [0-9a-f]{12} numbers its turns/);
+    expect(gap).not.toThrow(/customer-domain\.example/);
+  });
+
+  it('refuses two halves that declare the same split (DEC-31)', () => {
+    const one = identityOf({
+      split: 'fit', source: 'real', count: 1, tickets: [realTurn()],
+    });
+    const two = identityOf({
+      split: 'fit', source: 'real', count: 1,
+      tickets: [realTurn({ ticket_id: 'other@example.test', conversation_id: 'other@example.test' })],
+    });
+    // Disjoint by identifier, and still not a fit-and-report pair. Two fit
+    // halves prove nothing about what a report half holds.
+    expect(() => assertHalvesDisjoint(one, two)).toThrow(/both halves declare split fit/);
+  });
+
+  it('still holds a synthetic half to the shipped-corpus id rules', () => {
+    expect(() => validateGoldHalf(half([turn({ ticket_id: 'order-1@example.test' })]), 'fit'))
+      .toThrow(/must start with SYN-/);
+    // Its sibling conditional. Both became provenance-scoped in the same
+    // refactor; only one had a case, so the DEC-35 prefix rule on the
+    // committed corpus was unproven.
+    expect(() => validateGoldHalf(half([turn({ conversation_id: 'CONV-1' })]), 'fit'))
+      .toThrow(/must start with CONV-SYN-/);
+  });
+
   it('rejects a case with no conversation id (DEC-35)', () => {
     const orphan = turn();
     delete orphan.conversation_id;
-    expect(() => validateGoldHalf(half([orphan]), 'fit')).toThrow(
-      /conversation_id must start with CONV-SYN-/,
-    );
+    expect(() => validateGoldHalf(half([orphan]), 'fit')).toThrow(/names no conversation/);
   });
 
   it('rejects a turn number that is not a positive integer (DEC-38)', () => {
@@ -372,7 +692,7 @@ describe('claim ground truth', () => {
 
   it('accepts a case whose claims are well formed', () => {
     expect(() =>
-      validateTicketFields(ticketWith([claim(), claim({ supported: false, grade: 'absent' })])),
+      validateTicketFields(ticketWith([claim(), claim({ supported: false, grade: 'absent' })]), 'synthetic'),
     ).not.toThrow();
   });
 
@@ -381,17 +701,17 @@ describe('claim ground truth', () => {
     const ticket = ticketWith(undefined);
     delete ticket['claims'];
 
-    expect(() => validateTicketFields(ticket)).not.toThrow();
+    expect(() => validateTicketFields(ticket, 'synthetic')).not.toThrow();
   });
 
   it('refuses an empty claims array', () => {
     // Coverage would be nothing over nothing.
-    expect(() => validateTicketFields(ticketWith([]))).toThrow(/empty claims array/);
+    expect(() => validateTicketFields(ticketWith([]), 'synthetic')).toThrow(/empty claims array/);
   });
 
   it('refuses a supported claim that names a grade', () => {
     expect(() =>
-      validateTicketFields(ticketWith([claim({ grade: 'absent' })])),
+      validateTicketFields(ticketWith([claim({ grade: 'absent' })]), 'synthetic'),
     ).toThrow(/supported and names a grade/);
   });
 
@@ -399,18 +719,18 @@ describe('claim ground truth', () => {
     // The grade is what makes a per-grade report possible, so a fit cannot
     // hide behind the easy negatives.
     expect(() =>
-      validateTicketFields(ticketWith([claim({ supported: false, grade: null })])),
+      validateTicketFields(ticketWith([claim({ supported: false, grade: null })]), 'synthetic'),
     ).toThrow(/names no known grade/);
   });
 
   it('refuses an unknown grade', () => {
     expect(() =>
-      validateTicketFields(ticketWith([claim({ supported: false, grade: 'tricky' })])),
+      validateTicketFields(ticketWith([claim({ supported: false, grade: 'tricky' })]), 'synthetic'),
     ).toThrow(/names no known grade/);
   });
 
   it('refuses a claim that cites no document', () => {
-    expect(() => validateTicketFields(ticketWith([claim({ doc_id: '' })]))).toThrow(/cites no document/);
+    expect(() => validateTicketFields(ticketWith([claim({ doc_id: '' })]), 'synthetic')).toThrow(/cites no document/);
   });
 
   it('gives the committed corpus both classes and all three grades', () => {

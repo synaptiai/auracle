@@ -18,6 +18,8 @@ import {
   scanArtifactNames,
 } from '../artifacts/versioned.js';
 import type { ArtifactFile } from '../artifacts/versioned.js';
+import { GOLD_SOURCES } from '../fixtures/load.js';
+import type { GoldSource } from '../fixtures/load.js';
 
 /** Names this artifact kind in every fault message. */
 const LABEL = 'calibration';
@@ -49,8 +51,15 @@ export interface CalibrationArtifact {
   version: number;
   /** ISO timestamp of the fitting run. */
   fitted_at: string;
-  /** DEC-18: the shipped gold set is synthetic only. */
-  gold_source: 'synthetic';
+  /**
+   * Where the half this run consumed came from (DEC-18).
+   *
+   * A closed set. The shipped corpus is synthetic and every number this
+   * repository publishes is measured on it. An adopter fitting on their own
+   * labelled history records 'real', so a reader never has to infer which
+   * data a number covers.
+   */
+  gold_source: GoldSource;
   /** DEC-31: the fit consumed the fit half only. */
   split_used: 'fit';
   /**
@@ -66,6 +75,17 @@ export interface CalibrationArtifact {
   scope: CalibrationScope;
   /** Number of fit-half tickets the fit consumed. */
   fit_tickets: number;
+  /**
+   * Names the exact case sets this run proved disjoint (DEC-31).
+   *
+   * Null when no counterpart was named, which is the committed corpus, whose
+   * two halves the loader cross-checks. Otherwise a reader can compare these
+   * against a gold report's own pair and see whether the two runs were proved
+   * against the same sets. Without them the proof lives only in the moment of
+   * the run and binds nothing to the number it produced.
+   */
+  fit_half_digest: string | null;
+  report_half_digest: string | null;
   /** DEC-26 pins in force during the run. */
   prompt_ver: string;
   model_ver: string;
@@ -98,7 +118,11 @@ export function validateCalibrationArtifact(raw: unknown): CalibrationArtifact {
   const version = raw['version'];
   assert(typeof version === 'number' && Number.isInteger(version) && version >= 1, 'artifact.version is not a positive integer');
   assert(typeof raw['fitted_at'] === 'string' && !Number.isNaN(Date.parse(raw['fitted_at'])), 'artifact.fitted_at is not a valid timestamp');
-  assert(raw['gold_source'] === 'synthetic', 'artifact.gold_source is not synthetic (DEC-18)');
+  const goldSource = raw['gold_source'];
+  assert(
+    typeof goldSource === 'string' && (GOLD_SOURCES as readonly string[]).includes(goldSource),
+    `artifact.gold_source is ${String(goldSource)}, expected one of ${GOLD_SOURCES.join(', ')} (DEC-18)`,
+  );
   // DEC-31 as code: an artifact fitted on any other split must not load.
   assert(raw['split_used'] === 'fit', 'artifact.split_used is not the fit half (DEC-31)');
   assert(
@@ -109,6 +133,27 @@ export function validateCalibrationArtifact(raw: unknown): CalibrationArtifact {
     typeof raw['fit_tickets'] === 'number' && Number.isInteger(raw['fit_tickets']) && raw['fit_tickets'] > 0,
     'artifact.fit_tickets is not a positive integer',
   );
+  for (const field of ['report_half_digest', 'fit_half_digest'] as const) {
+    const value = raw[field];
+    assert(
+      value === null || (typeof value === 'string' && /^[0-9a-f]{16}$/.test(value)),
+      `artifact.${field} is neither null nor a digest`,
+    );
+  }
+  // Null means the committed corpus, whose two halves the loader cross-checks.
+  // A run on real history has no such guarantee, so it must name the pair it
+  // proved. Without this an artifact could declare real provenance with the
+  // proof absent, and the startup resolver would adopt that threshold — the
+  // very field that would reveal the gap asserting the opposite (DEC-31).
+  if (goldSource !== 'synthetic') {
+    for (const field of ['report_half_digest', 'fit_half_digest'] as const) {
+      assert(
+        raw[field] !== null,
+        `artifact.${field} is null on a ${String(goldSource)} run; a half that is not the `
+          + 'committed corpus must name the pair it proved disjoint (DEC-31)',
+      );
+    }
+  }
   assert(typeof raw['prompt_ver'] === 'string' && raw['prompt_ver'].length > 0, 'artifact.prompt_ver is missing');
   assert(typeof raw['model_ver'] === 'string' && raw['model_ver'].length > 0, 'artifact.model_ver is missing');
   const target = raw['target_precision'];

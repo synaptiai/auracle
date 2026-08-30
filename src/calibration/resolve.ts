@@ -19,6 +19,7 @@ import { SEED_THRESHOLDS, makeThresholds } from '../policy/policy.js';
 import type { GateThresholds } from '../policy/policy.js';
 import { defaultCalibrationDir, loadCalibrationArtifact } from './artifact.js';
 import type { CalibrationScope } from './artifact.js';
+import type { GoldSource } from '../fixtures/load.js';
 
 /** Where a threshold set came from. Recorded by every job that publishes numbers. */
 export type ThresholdProvenance =
@@ -32,6 +33,13 @@ export type ThresholdProvenance =
        * See CalibrationArtifact.scope.
        */
       readonly scope: CalibrationScope;
+      /**
+       * Which data the threshold was fitted on (DEC-18). A number fitted on
+       * an adopter's own history and one fitted on the shipped corpus are
+       * different claims, and a reader must not have to guess which they
+       * hold.
+       */
+      readonly goldSource: GoldSource;
     };
 
 export interface ResolvedThresholds {
@@ -84,6 +92,7 @@ export async function resolveThresholds(
     event: 'gate_thresholds_fitted',
     version: artifact.version,
     scope: artifact.scope,
+    gold_source: artifact.gold_source,
     fitted_at: artifact.fitted_at,
     agreement: thresholds.agreement,
     groundedness_block: thresholds.groundednessBlock,
@@ -95,6 +104,7 @@ export async function resolveThresholds(
       source: 'calibration',
       version: artifact.version,
       scope: artifact.scope,
+      goldSource: artifact.gold_source,
     },
   };
 }

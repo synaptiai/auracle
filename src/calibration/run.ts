@@ -2,8 +2,12 @@
 //
 // Classifies every fit-half ticket through the real classifier port, fits the
 // ONE global agreement threshold (DEC-13) and writes a versioned artifact.
-// The report half is never read here: this module imports loadGoldHalf, not
-// loadGoldSet, so a report-half leak needs a code change, not an accident.
+// The report half's CASES are never read here. On the committed corpus this
+// module opens the fit half alone. On a real half it also opens the report
+// file, to prove the two disjoint (DEC-31) — but only through
+// readHalfIdentity, which returns identifiers and whose type has no field
+// that could carry a subject or a body. So a case-level leak still needs a
+// code change and not an accident.
 //
 // Every turn counts here. DEC-39 narrows the replay and the gold report to
 // first turns because both score against a conversation-level disposition.
@@ -18,8 +22,20 @@
 import { classifyTicket } from '../classifier/classifier.js';
 import type { ClassifierTaxonomy } from '../classifier/classifier.js';
 import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
-import { FIT_COUNT, conversationHistories, goldCaseText, isFirstTurn, loadGoldHalf, loadTaxonomy } from '../fixtures/load.js';
-import type { GoldFile } from '../fixtures/load.js';
+import {
+  FIT_COUNT,
+  GOLD_SOURCES,
+  assertHalvesDisjoint,
+  conversationHistories,
+  goldCaseText,
+  halfDigest,
+  identityOf,
+  isFirstTurn,
+  loadGoldHalf,
+  loadTaxonomy,
+} from '../fixtures/load.js';
+import type { GoldFile, HalfIdentity } from '../fixtures/load.js';
+import { selectHalf } from '../fixtures/half-from-env.js';
 import type { ModelProvider } from '../models/provider.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { pathToFileURL } from 'node:url';
@@ -36,6 +52,15 @@ export interface CalibrationRunOptions {
    * asserts the injected half really is the fit split (DEC-31).
    */
   fitHalf?: GoldFile;
+  /**
+   * Identifiers of the report half, for the DEC-31 proof.
+   *
+   * Required when the fit half is not the shipped corpus, and unnecessary
+   * otherwise. This job must never open the report half's cases — the
+   * guarantee that a leak needs a code change is worth more than any check —
+   * so the caller reads the identifiers and passes those alone.
+   */
+  reportIdentity?: HalfIdentity;
   promptVer?: string;
   modelVer?: string;
   targetPrecision?: number;
@@ -56,9 +81,12 @@ export interface CalibrationRunResult {
  *
  * DEC-31 discipline, enforced in order:
  * 1. only the fit half enters this function (the CLI loads fit.json alone);
- * 2. the injected half must declare split 'fit' and source 'synthetic';
- * 3. the artifact records split_used 'fit', and the loader refuses any
- *    other value.
+ * 2. the injected half must declare split 'fit' and a provenance in the
+ *    closed set; a half that is not the committed corpus must also carry the
+ *    report half's identifiers, and the two are proved disjoint;
+ * 3. the artifact records split_used 'fit' and the pair it proved, and the
+ *    loader refuses any other split, and refuses a real fit that names no
+ *    proved pair.
  */
 export async function runCalibrationJob(
   options: CalibrationRunOptions,
@@ -72,7 +100,7 @@ export async function runCalibrationJob(
   }
   const targetPrecision = options.targetPrecision ?? DEFAULT_TARGET_PRECISION;
 
-  assertFitHalf(fitHalf);
+  assertFitHalf(fitHalf, options.reportIdentity);
 
   // Check the artifact directory before the sampling loop, not after it. The
   // loop makes CLASSIFIER_K model calls per fit-half ticket, and nextVersion
@@ -111,10 +139,13 @@ export async function runCalibrationJob(
     artifact: 'agreement-threshold',
     version,
     fitted_at: new Date().toISOString(),
-    gold_source: 'synthetic',
+    gold_source: fitHalf.source,
     split_used: 'fit',
     scope: scopeOf(fitHalf),
     fit_tickets: fitHalf.tickets.length,
+    fit_half_digest: options.reportIdentity === undefined ? null : halfDigest(identityOf(fitHalf)),
+    report_half_digest:
+      options.reportIdentity === undefined ? null : halfDigest(options.reportIdentity),
     prompt_ver: promptVer,
     model_ver: modelVer,
     target_precision: targetPrecision,
@@ -137,7 +168,21 @@ function scopeOf(half: GoldFile): CalibrationScope {
   return half.tickets.every(isFirstTurn) ? 'first_turn' : 'all_turns';
 }
 
-function assertFitHalf(half: GoldFile): void {
+/**
+ * Refuse a half this job must not fit on.
+ *
+ * The split rule and the shape rule bind every half. The size rule does not:
+ * 385 describes the corpus this repository generates, and an adopter's
+ * labelled half is whatever size their history gave them. Refusing it for
+ * not being 385 would say nothing about its correctness.
+ *
+ * What replaces the size rule is the DEC-31 proof. A synthetic half gets it
+ * from the committed corpus, whose two halves the loader cross-checks. A
+ * real half has no such guarantee, so the caller must name the report half's
+ * identifiers and this refuses to fit without them. A threshold nobody
+ * proved disjoint is a threshold fitted and published on one case.
+ */
+function assertFitHalf(half: GoldFile, reportIdentity: HalfIdentity | undefined): void {
   // The production loader cross-checks these; the injection path must not
   // trust a declared count that disagrees with the array it will fit on.
   if (half.count !== half.tickets.length) {
@@ -145,17 +190,39 @@ function assertFitHalf(half: GoldFile): void {
       `fit half declares ${half.count} tickets but carries ${half.tickets.length}`,
     );
   }
+  // The loader checks this, and the injection path does not go through the
+  // loader. A provenance nothing understands must not reach an artifact that
+  // states it (DEC-18).
+  if (!(GOLD_SOURCES as readonly string[]).includes(half.source)) {
+    throw new Error(
+      `calibration half declares source ${String(half.source)}, `
+        + `expected one of ${GOLD_SOURCES.join(', ')} (DEC-18)`,
+    );
+  }
   if (half.split !== 'fit') {
     throw new Error(
       `calibration consumes the fit half only, got split '${half.split}' (DEC-31)`,
     );
   }
-  if (half.source !== 'synthetic') {
-    throw new Error('calibration runs on synthetic gold data only (DEC-18)');
+  if (half.source === 'synthetic') {
+    // The committed corpus holds exactly 385 fit tickets (DEC-31).
+    if (half.count !== FIT_COUNT) {
+      throw new Error(`fit half holds ${half.count} tickets, expected ${FIT_COUNT}`);
+    }
+  } else if (reportIdentity === undefined) {
+    throw new Error(
+      `a fit half of source '${half.source}' needs the report half's identifiers to prove `
+        + 'the two are disjoint; calibration never opens the report half itself (DEC-31)',
+    );
   }
-  // The committed corpus holds exactly 385 fit tickets (DEC-31).
-  if (half.count !== FIT_COUNT) {
-    throw new Error(`fit half holds ${half.count} tickets, expected ${FIT_COUNT}`);
+  // Unconditional. An earlier version returned here for a synthetic half, on
+  // the ground that the loader cross-checks the committed corpus. That ground
+  // does not hold for a file read by path: `loadGoldHalf(split, path)` checks
+  // nothing across halves, so a file declaring `synthetic` with 385 SYN- ids
+  // took the fit through with the caller's proof in hand and unused. A
+  // counterpart the caller supplied is a counterpart this must check.
+  if (reportIdentity !== undefined) {
+    assertHalvesDisjoint(identityOf(half), reportIdentity);
   }
 }
 
@@ -166,6 +233,14 @@ function normalize(text: string): string {
 // CLI entry: `pnpm run calibrate` executes dist/calibration/run.js.
 // Needs OPENROUTER_API_KEY and CALIBRATION_MODEL_VER in the environment;
 // CALIBRATION_TARGET_PRECISION overrides the default precision floor.
+//
+// GOLD_FIT_PATH points the job at a labelled half held outside the
+// repository, following the CORPUS_PATH precedent. GOLD_REPORT_PATH must
+// then name the other half. The job opens that file and validates it, and
+// takes identifiers from it alone: no case of the report half reaches this
+// job, and the type carrying them holds no field that could. Neither variable is
+// needed for the committed synthetic corpus, whose halves the loader already
+// cross-checks. Keep both files under corpus/, which is gitignored (DEC-18).
 async function main(): Promise<void> {
   loadDotEnv();
   const apiKey = process.env['OPENROUTER_API_KEY'];
@@ -189,9 +264,18 @@ async function main(): Promise<void> {
     return;
   }
 
+  const selected = selectHalf('fit');
+  if (selected.half !== undefined) {
+    console.log(
+      `fit half: ${String(selected.path)} (${selected.half.count} cases, source ${selected.half.source})`,
+    );
+  }
+
   const { artifact } = await runCalibrationJob({
     provider: new OpenRouterProvider({ apiKey, ...dataGuaranteeOption() }),
     modelVer,
+    ...(selected.half === undefined ? {} : { fitHalf: selected.half }),
+    ...(selected.counterpart === undefined ? {} : { reportIdentity: selected.counterpart }),
     ...(targetPrecision === undefined ? {} : { targetPrecision }),
   });
   console.log(

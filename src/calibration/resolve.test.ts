@@ -23,6 +23,8 @@ function artifact(overrides: Partial<CalibrationArtifact> = {}): CalibrationArti
     split_used: 'fit',
     scope: 'all_turns',
     fit_tickets: 385,
+    fit_half_digest: null,
+    report_half_digest: null,
     prompt_ver: 'classify-p1',
     model_ver: 'stealth/ox-alpha',
     target_precision: 0.985,
@@ -62,6 +64,7 @@ describe('resolveThresholds (DEC-05, DEC-13, DEC-31)', () => {
     expect(resolved.thresholds.agreement).toBe(0.78);
     expect(resolved.provenance).toEqual({
       source: 'calibration',
+      goldSource: 'synthetic',
       version: 1,
       scope: 'all_turns',
     });
@@ -116,6 +119,49 @@ describe('resolveThresholds (DEC-05, DEC-13, DEC-31)', () => {
       agreement: 0.78,
       scope: 'all_turns',
     });
+  });
+
+  // The verified blocking chain this issue closes. Before it, a threshold
+  // fitted on an adopter's own labelled half wrote an artifact whose own
+  // validator refused it, and every daemon reading that artifact at startup
+  // threw instead of starting. Fitting on real data broke the runtime.
+  it('starts against an artifact fitted on real history and names the provenance', async () => {
+    await write(artifact({
+      gold_source: 'real',
+      threshold: 0.71,
+      fit_half_digest: 'a1b2c3d4e5f60718',
+      report_half_digest: 'f0e1d2c3b4a59687',
+    }));
+
+    const resolved = await resolveThresholds({ dir, log });
+
+    expect(resolved.thresholds.agreement).toBe(0.71);
+    expect(resolved.provenance).toMatchObject({ source: 'calibration', goldSource: 'real' });
+    expect(logged[0]).toMatchObject({
+      event: 'gate_thresholds_fitted',
+      gold_source: 'real',
+    });
+    // Never a seed line: a fitted number must not read as an unfitted one.
+    expect(logged[0]).not.toMatchObject({ event: 'gate_thresholds_seeded' });
+  });
+
+  it('names the provenance of a synthetic fit too', async () => {
+    await write(artifact({ threshold: 0.78 }));
+    await resolveThresholds({ dir, log });
+    expect(logged[0]).toMatchObject({ gold_source: 'synthetic' });
+  });
+
+  // Null digests mean the committed corpus. A real artifact declaring them
+  // would be a threshold whose DEC-31 proof is absent, adopted at startup
+  // with the field that would reveal the gap asserting the opposite.
+  it('refuses a real artifact that names no proved pair (DEC-31)', async () => {
+    await write(artifact({ gold_source: 'real', threshold: 0.71 }));
+    await expect(resolveThresholds({ dir, log })).rejects.toThrow(/must name the pair it proved/);
+  });
+
+  it('refuses a provenance outside the closed set', async () => {
+    await write(artifact({ gold_source: 'imap' as CalibrationArtifact['gold_source'] }));
+    await expect(resolveThresholds({ dir, log })).rejects.toThrow(/gold_source/);
   });
 
   it('refuses an artifact fitted on the report half (DEC-31)', async () => {

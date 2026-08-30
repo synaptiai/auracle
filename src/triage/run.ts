@@ -24,6 +24,8 @@ import {
 } from './artifact.js';
 import type { TriageArtifact } from './artifact.js';
 import { pathToFileURL } from 'node:url';
+import { label } from '../fixtures/load.js';
+import type { GoldSource } from '../fixtures/load.js';
 
 export interface TriageRunOptions {
   /** Defaults to the deterministic offline stub judge over the fixture taxonomy. */
@@ -34,6 +36,11 @@ export interface TriageRunOptions {
    * records where each case came from.
    */
   cases?: readonly TriageCase[];
+  /**
+   * Where the injected cases came from. Required with `cases`, because only
+   * the caller knows: the default gold set is synthetic and says so.
+   */
+  goldSource?: GoldSource;
   /** DEC-26 pins; default to the stub judge's pins when the stub runs. */
   prompt_ver?: string;
   model_ver?: string;
@@ -74,6 +81,18 @@ export async function runTriageJob(options: TriageRunOptions = {}): Promise<Tria
       new Map(loadTaxonomy().intents.map((intent) => [intent.id, intent.risk_tier])),
     );
   const cases = options.cases ?? goldSetCases();
+  // Injected cases carry no provenance of their own, and the default set is
+  // the synthetic corpus. A caller that injects must SAY which it is: the
+  // earlier default of 'real' let a caller injecting synthetic-derived cases
+  // publish an artifact falsely claiming real provenance, and the doc above
+  // called the field required while the code quietly filled it in.
+  if (options.cases !== undefined && options.goldSource === undefined) {
+    throw new Error(
+      'runTriageJob needs goldSource with injected cases: only the caller knows '
+        + 'where they came from, and the artifact states it (DEC-18)',
+    );
+  }
+  const goldSource: GoldSource = options.goldSource ?? 'synthetic';
   if (cases.length === 0) {
     throw new Error('triage received no cases');
   }
@@ -88,7 +107,7 @@ export async function runTriageJob(options: TriageRunOptions = {}): Promise<Tria
     const verdict = await judge.review(testCase);
     if (!verdict.selected) continue;
     if (verdict.reason.length === 0) {
-      throw new Error(`judge selected ${testCase.ticketId} without a reason`);
+      throw new Error(`judge selected ${label(testCase.ticketId, goldSource)} without a reason`);
     }
     selections.push({
       ticket_id: testCase.ticketId,
@@ -104,7 +123,7 @@ export async function runTriageJob(options: TriageRunOptions = {}): Promise<Tria
     generated_at: new Date().toISOString(),
     method: 'judge-triage',
     role: 'selection',
-    gold_source: 'synthetic',
+    gold_source: goldSource,
     cases_reviewed: cases.length,
     cases_selected: selections.length,
     prompt_ver: options.prompt_ver ?? defaultPins(judge).prompt_ver,
@@ -129,7 +148,32 @@ function defaultPins(judge: TriageJudge): { prompt_ver: string; model_ver: strin
 // key: deterministic and byte-for-byte reproducible (DEC-18).
 async function main(): Promise<void> {
   const { artifact } = await runTriageJob();
-  console.log(JSON.stringify(artifact, null, 2));
+  console.log(summariseForStdout(artifact));
+}
+
+/**
+ * What the command prints.
+ *
+ * `selections` carries a case id and a model-written reason. On the shipped
+ * corpus both are synthetic and the full artifact is the useful output. A run
+ * over real cases would put a customer's identifier and a sentence about
+ * their problem into a terminal and a CI log, which DEC-18 forbids — and the
+ * artifact is on disk under the gitignored `triage/` either way.
+ */
+export function summariseForStdout(artifact: TriageArtifact): string {
+  if (artifact.gold_source === 'synthetic') return JSON.stringify(artifact, null, 2);
+  return JSON.stringify(
+    {
+      artifact: artifact.artifact,
+      version: artifact.version,
+      gold_source: artifact.gold_source,
+      cases_reviewed: artifact.cases_reviewed,
+      cases_selected: artifact.cases_selected,
+      selections: `withheld: ${String(artifact.selections.length)} selection(s) name real cases (DEC-18)`,
+    },
+    null,
+    2,
+  );
 }
 
 const invokedDirectly =

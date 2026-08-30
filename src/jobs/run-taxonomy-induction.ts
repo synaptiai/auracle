@@ -22,7 +22,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
-import { CORPUS_SOURCE, loadCorpusFile } from '../corpus/corpus.js';
+import { CORPUS_SOURCE, corpusHistoryItems, loadCorpusFile } from '../corpus/corpus.js';
+import { resolveCorpusOutput, startedAsCommand } from '../corpus/output-path.js';
 import { goldCaseText, loadGoldSet } from '../fixtures/load.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { INTENT_CAP, induceTaxonomy } from './taxonomy-induction.js';
@@ -46,16 +47,30 @@ async function main(): Promise<void> {
   // Corpus mode never defaults into the repo root: labels and sample ids
   // derive from real customer text, and only /corpus/ is gitignored
   // (DEC-18). Synthetic mode keeps the old default.
-  const outputPath =
-    process.argv[2] ??
-    (corpusPath !== undefined ? 'corpus/taxonomy-candidates-real.json' : 'taxonomy-candidates.json');
+  let outputPath: string;
+  if (corpusPath !== undefined) {
+    const output = resolveCorpusOutput(process.argv.slice(2), 'corpus/taxonomy-candidates-real.json');
+    if ('refusal' in output) {
+      console.error(output.refusal);
+      process.exitCode = 1;
+      return;
+    }
+    outputPath = output.path;
+  } else {
+    outputPath = process.argv.slice(2).filter((arg) => arg !== '--')[0] ?? 'taxonomy-candidates.json';
+  }
+
   let items: HistoryItem[];
   if (corpusPath !== undefined) {
-    items = loadCorpusFile(corpusPath).tickets.map((ticket) => ({
-      id: ticket.ticket_id,
-      text: goldCaseText(ticket),
-    }));
-    console.log(`history source: ${corpusPath} (${items.length} real threads, gitignored)`);
+    const corpus = loadCorpusFile(corpusPath);
+    items = corpusHistoryItems(corpus.tickets);
+    const later = corpus.tickets.length - items.length;
+    // Always printed, including zero: an absent line cannot be told apart
+    // from "not reported", and the runbook tells an operator to read it.
+    console.log(
+      `history source: ${corpusPath} (${items.length} real first turns, `
+        + `${later} later turns excluded, gitignored)`,
+    );
   } else {
     const { fit, report } = loadGoldSet();
     items = [...fit.tickets, ...report.tickets].map((ticket) => ({
@@ -99,7 +114,12 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exitCode = 1;
-});
+// The idiom three other jobs already use. Without it this module runs on
+// import, so nothing could test the guards inside it — which is how a guard
+// cloned here to close a class inherited the original's absence of tests.
+if (startedAsCommand(import.meta.url, process.argv[1])) {
+  main().catch((err: unknown) => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exitCode = 1;
+  });
+}

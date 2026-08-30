@@ -1,11 +1,14 @@
 // The offline gold report job (method 2, section 4.10, DEC-31).
 //
 // Scores the system on the REPORT half of the gold set only and writes the
-// README numbers as a versioned artifact. The fit half is never read here:
-// this module imports loadGoldHalf('report'), not loadGoldSet, so a fit-half
-// leak needs a code change, not an accident. Fitting happened upstream — the
-// calibration job fits the threshold on the fit half — so every number this
-// job publishes comes from cases no threshold ever saw (DEC-31).
+// README numbers as a versioned artifact. The fit half's CASES are never read
+// here. On the committed corpus this module opens the report half alone. On a
+// real half it also opens the fit file, to prove the two disjoint (DEC-31) —
+// but only through readHalfIdentity, which returns identifiers and whose type
+// has no field that could carry a subject or a body. So a case-level leak
+// still needs a code change and not an accident. Fitting happened upstream —
+// the calibration job fits the threshold on the fit half — so every number
+// this job publishes comes from cases no threshold ever saw (DEC-31).
 //
 // DEC-32 holds at scoring time too: each ticket is compared against its
 // observable disposition (`escalated`), never against a gold intent label.
@@ -15,8 +18,19 @@
 
 import { classifyTicket } from '../classifier/classifier.js';
 import { loadDotEnv } from '../config/env.js';
-import { REPORT_COUNT, goldCaseText, isFirstTurn, loadGoldHalf, loadTaxonomy } from '../fixtures/load.js';
-import type { GoldFile } from '../fixtures/load.js';
+import {
+  GOLD_SOURCES,
+  REPORT_COUNT,
+  assertHalvesDisjoint,
+  goldCaseText,
+  halfDigest,
+  identityOf,
+  isFirstTurn,
+  loadGoldHalf,
+  loadTaxonomy,
+} from '../fixtures/load.js';
+import { selectHalf } from '../fixtures/half-from-env.js';
+import type { GoldFile, HalfIdentity } from '../fixtures/load.js';
 import type { ModelProvider } from '../models/provider.js';
 import { SEED_THRESHOLDS, evaluatePolicy } from '../policy/policy.js';
 import type { AdapterCapabilities, ActionClass, GateThresholds, RiskTier } from '../policy/policy.js';
@@ -59,6 +73,12 @@ export interface GoldReportRunOptions {
    */
   thresholds?: GateThresholds;
   provenance?: ThresholdProvenance;
+  /**
+   * Identifiers of the fit half, for the DEC-31 proof. Required when the
+   * report half is not the shipped corpus; this job never opens the fit
+   * half's cases.
+   */
+  fitIdentity?: HalfIdentity;
   /** Artifact directory override (tests). */
   artifactDir?: URL;
 }
@@ -129,8 +149,10 @@ const ROUTING_ACTION: ActionClass = { isWrite: true, isCustomerVisible: false, i
  * DEC-31 discipline, enforced in order:
  * 1. only the report half enters this function (the CLI loads report.json
  *    alone);
- * 2. the injected half must declare split 'report' and source 'synthetic'
- *    and carry exactly REPORT_COUNT tickets;
+ * 2. the injected half must declare split 'report' and a provenance in the
+ *    closed set. The committed corpus must carry exactly REPORT_COUNT
+ *    tickets; any other half must instead carry the fit half's identifiers,
+ *    and the two are proved disjoint;
  * 3. the artifact records split_used 'report', and the loader refuses any
  *    other value;
  * 4. DEC-39: only first turns are scored, and the artifact records that
@@ -180,7 +202,7 @@ export async function runGoldReportJob(
     throw new Error('runGoldReportJob needs a pinned modelVer (DEC-26)');
   }
 
-  assertReportHalf(reportHalf);
+  assertReportHalf(reportHalf, options.fitIdentity);
 
   // Before the loop, not after it. The loop makes CLASSIFIER_K model calls
   // per report ticket, and the previous pass moved this check ahead of the
@@ -232,7 +254,7 @@ export async function runGoldReportJob(
     generated_at: new Date().toISOString(),
     method: 'human-review',
     scored_by: scorerOf(options.provider),
-    gold_source: 'synthetic',
+    gold_source: reportHalf.source,
     split_used: 'report',
     scope: 'first_turn',
     report_tickets: firstTurns.length,
@@ -244,6 +266,11 @@ export async function runGoldReportJob(
       provenance.source === 'calibration' ? provenance.version : null,
     gate_calibration_scope:
       provenance.source === 'calibration' ? provenance.scope : null,
+    gate_calibration_gold_source:
+      provenance.source === 'calibration' ? provenance.goldSource : null,
+    report_half_digest:
+      options.fitIdentity === undefined ? null : halfDigest(identityOf(reportHalf)),
+    fit_half_digest: options.fitIdentity === undefined ? null : halfDigest(options.fitIdentity),
     action_match: metrics.actionMatch,
     containment: metrics.containment,
     strata: metrics.strata.map((stratum) => ({
@@ -258,7 +285,17 @@ export async function runGoldReportJob(
   return { artifact };
 }
 
-function assertReportHalf(half: GoldFile): void {
+/**
+ * Refuse a half this job must not publish from.
+ *
+ * The size rule describes the corpus this repository generates and publishes
+ * every number from. An adopter publishing on their own labelled history
+ * gets whatever size their sample gave them, and names the fit half's
+ * identifiers so the split is proved. This job never opens the fit half's
+ * cases, mirroring the guarantee the fitting jobs keep in the other
+ * direction.
+ */
+function assertReportHalf(half: GoldFile, fitIdentity: HalfIdentity | undefined): void {
   // The production loader cross-checks these; the injection path must not
   // trust a declared count that disagrees with the array it will score.
   if (half.count !== half.tickets.length) {
@@ -266,24 +303,47 @@ function assertReportHalf(half: GoldFile): void {
       `report half declares ${half.count} tickets but carries ${half.tickets.length}`,
     );
   }
+  // The loader checks this, and the injection path does not go through the
+  // loader. A provenance nothing understands must not reach an artifact that
+  // states it (DEC-18).
+  if (!(GOLD_SOURCES as readonly string[]).includes(half.source)) {
+    throw new Error(
+      `gold report half declares source ${String(half.source)}, `
+        + `expected one of ${GOLD_SOURCES.join(', ')} (DEC-18)`,
+    );
+  }
   if (half.split !== 'report') {
     throw new Error(
       `gold report consumes the report half only, got split '${half.split}' (DEC-31)`,
     );
   }
-  if (half.source !== 'synthetic') {
-    throw new Error('gold report runs on synthetic gold data only (DEC-18)');
+  if (half.source === 'synthetic') {
+    // The committed corpus holds exactly 385 report tickets (DEC-31). Fitting
+    // happens on the other 385; publishing happens here and nowhere else.
+    if (half.count !== REPORT_COUNT) {
+      throw new Error(`report half holds ${half.count} tickets, expected ${REPORT_COUNT}`);
+    }
+  } else if (fitIdentity === undefined) {
+    throw new Error(
+      `a report half of source '${half.source}' needs the fit half's identifiers to prove `
+        + 'the two are disjoint; the gold report never opens the fit half itself (DEC-31)',
+    );
   }
-  // The committed corpus holds exactly 385 report tickets (DEC-31). Fitting
-  // happens on the other 385; publishing happens here and nowhere else.
-  if (half.count !== REPORT_COUNT) {
-    throw new Error(`report half holds ${half.count} tickets, expected ${REPORT_COUNT}`);
+  // Unconditional: see the note on the same check in calibration/run.ts. A
+  // half read by path carries no cross-half guarantee, whatever it declares.
+  if (fitIdentity !== undefined) {
+    assertHalvesDisjoint(identityOf(half), fitIdentity);
   }
 }
 
 // CLI entry: `pnpm run gold-report` executes dist/goldreport/run.js over the
 // committed fixture corpus with the offline stub model. No network, no
 // database, no API key (DEC-18).
+//
+// GOLD_REPORT_PATH publishes from a labelled half held outside the
+// repository instead; GOLD_FIT_PATH must then name the other half, whose
+// identifiers alone prove the two disjoint (DEC-31). The artifact goes to
+// stdout, so every progress line here goes to stderr.
 //
 // Reproducible from a clean checkout, which carries no calibration artifact:
 // the run then scores through the documented seeds and the artifact records
@@ -296,13 +356,28 @@ async function main(): Promise<void> {
   const { ReplayStubProvider } = await import('../replay/fake-model.js');
   // The published numbers depend on the gate they were scored through, so the
   // job reads the same artifact the runtime reads and records which one.
-  const { thresholds, provenance } = await resolveThresholds();
+  // stdout carries the artifact and nothing else, so the resolver's startup
+  // line goes to stderr like every other progress line here. Its default sink
+  // is stdout, which put a JSON object in front of the artifact and made the
+  // command's output unparseable.
+  const { thresholds, provenance } = await resolveThresholds({
+    log: (entry) => { console.error(JSON.stringify(entry)); },
+  });
+  const selected = selectHalf('report');
+  if (selected.half !== undefined) {
+    console.error(
+      `report half: ${String(selected.path)} (${selected.half.count} cases, `
+        + `source ${selected.half.source})`,
+    );
+  }
   const { artifact } = await runGoldReportJob({
     provider: new ReplayStubProvider(),
     promptVer: 'classify-p1',
     modelVer: STUB_MODEL_VER,
     thresholds,
     provenance,
+    ...(selected.half === undefined ? {} : { reportHalf: selected.half }),
+    ...(selected.counterpart === undefined ? {} : { fitIdentity: selected.counterpart }),
   });
   console.log(JSON.stringify(artifact, null, 2));
 }

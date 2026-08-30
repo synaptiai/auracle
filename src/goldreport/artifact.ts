@@ -16,6 +16,8 @@ import {
   readArtifactText,
 } from '../artifacts/versioned.js';
 import type { ArtifactFile } from '../artifacts/versioned.js';
+import { GOLD_SOURCES } from '../fixtures/load.js';
+import type { GoldSource } from '../fixtures/load.js';
 
 /** Names this artifact kind in every fault message. */
 const LABEL = 'gold report';
@@ -49,8 +51,15 @@ export interface GoldReportArtifact {
    * must check this field first.
    */
   scored_by: 'stub' | 'model';
-  /** DEC-18: the shipped gold set is synthetic only. */
-  gold_source: 'synthetic';
+  /**
+   * Where the half this run consumed came from (DEC-18).
+   *
+   * A closed set. The shipped corpus is synthetic and every number this
+   * repository publishes is measured on it. An adopter fitting on their own
+   * labelled history records 'real', so a reader never has to infer which
+   * data a number covers.
+   */
+  gold_source: GoldSource;
   /** DEC-31: every number below comes from the report half only. */
   split_used: 'report';
   /**
@@ -83,6 +92,26 @@ export interface GoldReportArtifact {
    * reader who saw only one of the two would attribute the number wrongly.
    */
   gate_calibration_scope: string | null;
+  /**
+   * Which data the threshold was fitted on. Null when seeded.
+   *
+   * `gold_source` above names the half this report SCORED. The threshold may
+   * come from a fit over different data — an adopter can publish on their own
+   * report half against a gate fitted on their own fit half, and a reader
+   * must be able to see both provenances rather than assume they match.
+   */
+  gate_calibration_gold_source: GoldSource | null;
+  /**
+   * Names the exact case sets this run proved disjoint (DEC-31).
+   *
+   * Null when no counterpart was named, which is the committed corpus. A
+   * reader compares these against the calibration artifact's own pair. If the
+   * two runs were proved against different sets, the gate in force was fitted
+   * against a half this report never saw, and the proof recorded here does
+   * not cover it.
+   */
+  report_half_digest: string | null;
+  fit_half_digest: string | null;
   action_match: RateWithInterval;
   containment: RateWithInterval;
   /** Indication-only risk-tier slices; never publishable (section 4.10). */
@@ -127,7 +156,11 @@ export function validateGoldReportArtifact(raw: unknown): GoldReportArtifact {
     raw['scored_by'] === 'stub' || raw['scored_by'] === 'model',
     "artifact.scored_by is not 'stub' or 'model' (section 4.10)",
   );
-  assert(raw['gold_source'] === 'synthetic', 'artifact.gold_source is not synthetic (DEC-18)');
+  const goldSource = raw['gold_source'];
+  assert(
+    typeof goldSource === 'string' && (GOLD_SOURCES as readonly string[]).includes(goldSource),
+    `artifact.gold_source is ${String(goldSource)}, expected one of ${GOLD_SOURCES.join(', ')} (DEC-18)`,
+  );
   // DEC-31 as code: an artifact reporting any other split must not load.
   assert(raw['split_used'] === 'report', 'artifact.split_used is not the report half (DEC-31)');
   // Same guard shape as split_used: an artifact claiming another population
@@ -160,6 +193,12 @@ export function validateGoldReportArtifact(raw: unknown): GoldReportArtifact {
       `artifact.gate_calibration_scope is ${String(raw['gate_calibration_scope'])}, `
         + `expected one of ${CALIBRATION_SCOPES.join(', ')}`,
     );
+    assert(
+      typeof raw['gate_calibration_gold_source'] === 'string'
+        && (GOLD_SOURCES as readonly string[]).includes(raw['gate_calibration_gold_source']),
+      `artifact.gate_calibration_gold_source is ${String(raw['gate_calibration_gold_source'])}, `
+        + `expected one of ${GOLD_SOURCES.join(', ')}`,
+    );
   } else {
     // A seeded run names no version. A number here would claim a fit that
     // never produced this number.
@@ -168,6 +207,31 @@ export function validateGoldReportArtifact(raw: unknown): GoldReportArtifact {
       raw['gate_calibration_scope'] === null,
       'artifact.gate_calibration_scope is set on a seeded run',
     );
+    assert(
+      raw['gate_calibration_gold_source'] === null,
+      'artifact.gate_calibration_gold_source is set on a seeded run',
+    );
+  }
+  for (const field of ['report_half_digest', 'fit_half_digest'] as const) {
+    const value = raw[field];
+    assert(
+      value === null || (typeof value === 'string' && /^[0-9a-f]{16}$/.test(value)),
+      `artifact.${field} is neither null nor a digest`,
+    );
+  }
+  // Null means the committed corpus, whose two halves the loader cross-checks.
+  // A run on real history has no such guarantee, so it must name the pair it
+  // proved. Without this an artifact could declare real provenance with the
+  // proof absent, and the startup resolver would adopt that threshold — the
+  // very field that would reveal the gap asserting the opposite (DEC-31).
+  if (goldSource !== 'synthetic') {
+    for (const field of ['report_half_digest', 'fit_half_digest'] as const) {
+      assert(
+        raw[field] !== null,
+        `artifact.${field} is null on a ${String(goldSource)} run; a half that is not the `
+          + 'committed corpus must name the pair it proved disjoint (DEC-31)',
+      );
+    }
   }
   assertRateWithInterval(raw['action_match'], 'action_match');
   assertRateWithInterval(raw['containment'], 'containment');

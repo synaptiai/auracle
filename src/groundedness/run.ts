@@ -3,8 +3,12 @@
 // Runs the real gate over every labelled draft in the fit half, then fits the
 // two coverage thresholds on what it measured against what was true.
 //
-// The report half is never read here: this module imports loadGoldHalf, not
-// loadGoldSet, so a leak needs a code change and not an accident (DEC-31).
+// The report half's CASES are never read here. On the committed corpus this
+// module opens the fit half alone. On a real half it also opens the report
+// file, to prove the two disjoint (DEC-31) — but only through
+// readHalfIdentity, which returns identifiers and whose type has no field
+// that could carry a subject or a body. So a case-level leak still needs a
+// code change and not an accident.
 //
 // The job refuses more readily than it emits. A corpus whose classes do not
 // separate produces a threshold any candidate would satisfy, and the fit
@@ -22,8 +26,17 @@ import {
   writeGroundednessArtifact,
 } from './artifact.js';
 import type { GroundednessArtifact } from './artifact.js';
-import { loadDocuments, loadGoldHalf } from '../fixtures/load.js';
-import type { GoldFile, GoldTicket } from '../fixtures/load.js';
+import {
+  GOLD_SOURCES,
+  assertHalvesDisjoint,
+  halfDigest,
+  identityOf,
+  label,
+  loadDocuments,
+  loadGoldHalf,
+} from '../fixtures/load.js';
+import { selectHalf } from '../fixtures/half-from-env.js';
+import type { GoldFile, GoldSource, GoldTicket, HalfIdentity } from '../fixtures/load.js';
 import type { ModelProvider } from '../models/provider.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
@@ -35,6 +48,12 @@ const DEFAULT_PROMPT_VER = 'ground-p1';
 
 export interface GroundednessRunOptions {
   provider: ModelProvider;
+  /**
+   * Identifiers of the report half, for the DEC-31 proof. Required when the
+   * fit half is not the shipped corpus; this job never opens the report
+   * half's cases.
+   */
+  reportIdentity?: HalfIdentity;
   /** Defaults to fixtures/gold/fit.json. The runner asserts the split (DEC-31). */
   fitHalf?: GoldFile;
   promptVer?: string;
@@ -57,10 +76,18 @@ export async function scoreDraft(
   bodies: ReadonlyMap<string, string>,
   provider: ModelProvider,
   pins: { promptVer: string; modelVer: string },
+  /**
+   * The half's provenance, so a fault names a real case by digest (DEC-18).
+   *
+   * Required. A default here would let a call site forget it and leak a real
+   * Message-ID with every test still green, which is worse than no parameter
+   * at all: the type system would stop saying anything.
+   */
+  source: GoldSource,
 ): Promise<CoverageSample> {
   const claims = ticket.claims ?? [];
   if (claims.length === 0) {
-    throw new Error(`gold case ${ticket.ticket_id} carries no claims, so it has no coverage`);
+    throw new Error(`gold case ${label(ticket.ticket_id, source)} carries no claims, so it has no coverage`);
   }
   // The gate reads the retrieved text, which here is the documents the claims
   // cite. Every claim of one draft is tested against the same set, as the
@@ -68,7 +95,12 @@ export async function scoreDraft(
   const retrievedTexts = [...new Set(claims.map((c) => c.doc_id))].map((id) => {
     const body = bodies.get(id);
     if (body === undefined) {
-      throw new Error(`gold case ${ticket.ticket_id} cites unknown document ${id}`);
+      // The document id is the adopter's own on a real half, so it is named
+      // by digest too. loadDocuments enforces the shipped DOC-SYN- prefixes,
+      // so this is the first fault a real fit half hits.
+      throw new Error(
+        `gold case ${label(ticket.ticket_id, source)} cites unknown document ${label(id, source)}`,
+      );
     }
     return body;
   });
@@ -110,7 +142,7 @@ export async function runGroundednessJob(
   const targetPrecision = options.targetPrecision ?? DEFAULT_TARGET_PRECISION;
   const targetNpv = options.targetNpv ?? DEFAULT_TARGET_NPV;
 
-  assertFitHalf(fitHalf);
+  assertFitHalf(fitHalf, options.reportIdentity);
 
   // Before the loop, not after it: the loop makes one model call per claim,
   // and a directory fault found afterwards throws away a run already paid for.
@@ -118,12 +150,32 @@ export async function runGroundednessJob(
   await assertGroundednessDirUsable(dir);
 
   const bodies = new Map(loadDocuments().map((d) => [d.doc_id, d.body]));
+  // A case with no labelled claims cannot be scored, and on a real half most
+  // cases will be unlabelled at first. Counting them keeps the same
+  // count-what-you-drop discipline the export follows, and an upfront refusal
+  // names the cause: without it a half with no labels died deep inside the
+  // fitter with "needs both classes", which points at the wrong thing.
   const drafts = fitHalf.tickets.filter((t) => (t.claims ?? []).length > 0);
+  const unlabelled = fitHalf.tickets.length - drafts.length;
+  if (unlabelled > 0) {
+    console.warn(
+      `${unlabelled} of ${fitHalf.tickets.length} fit-half cases carry no labelled claims `
+        + 'and are not scored (DEC-07)',
+    );
+  }
+  if (drafts.length === 0) {
+    throw new Error(
+      `the fit half carries no labelled claims across ${fitHalf.tickets.length} cases; `
+        + 'the coverage gate is fitted against per-claim ground truth (DEC-07)',
+    );
+  }
   const scored = options.limit === undefined ? drafts : drafts.slice(0, options.limit);
 
   const samples: CoverageSample[] = [];
   for (const ticket of scored) {
-    samples.push(await scoreDraft(ticket, bodies, options.provider, { promptVer, modelVer }));
+    samples.push(
+      await scoreDraft(ticket, bodies, options.provider, { promptVer, modelVer }, fitHalf.source),
+    );
   }
 
   const fit = fitCoverageThresholds(samples, { targetPrecision, targetNpv });
@@ -133,7 +185,10 @@ export async function runGroundednessJob(
     artifact: 'groundedness-thresholds',
     version,
     fitted_at: new Date().toISOString(),
-    gold_source: 'synthetic',
+    gold_source: fitHalf.source,
+    fit_half_digest: options.reportIdentity === undefined ? null : halfDigest(identityOf(fitHalf)),
+    report_half_digest:
+      options.reportIdentity === undefined ? null : halfDigest(options.reportIdentity),
     split_used: 'fit',
     fit_drafts: samples.length,
     prompt_ver: promptVer,
@@ -158,15 +213,40 @@ export async function runGroundednessJob(
   return { artifact, samples };
 }
 
-function assertFitHalf(half: GoldFile): void {
+/**
+ * Refuse a half this job must not fit on. Same rule as the agreement fit.
+ *
+ * A synthetic half draws its DEC-31 proof from the committed corpus, whose
+ * two halves the loader cross-checks. A real half has no such guarantee, so
+ * the caller names the report half's identifiers and this refuses without
+ * them. The job never opens the report half's cases.
+ */
+function assertFitHalf(half: GoldFile, reportIdentity: HalfIdentity | undefined): void {
   if (half.count !== half.tickets.length) {
     throw new Error(`fit half declares ${half.count} tickets but carries ${half.tickets.length}`);
+  }
+  // The loader checks this, and the injection path does not go through the
+  // loader. A provenance nothing understands must not reach an artifact that
+  // states it (DEC-18).
+  if (!(GOLD_SOURCES as readonly string[]).includes(half.source)) {
+    throw new Error(
+      `groundedness fitting half declares source ${String(half.source)}, `
+        + `expected one of ${GOLD_SOURCES.join(', ')} (DEC-18)`,
+    );
   }
   if (half.split !== 'fit') {
     throw new Error(`groundedness fitting consumes the fit half only, got '${half.split}' (DEC-31)`);
   }
-  if (half.source !== 'synthetic') {
-    throw new Error('groundedness fitting runs on synthetic gold data only (DEC-18)');
+  if (half.source !== 'synthetic' && reportIdentity === undefined) {
+    throw new Error(
+      `a fit half of source '${half.source}' needs the report half's identifiers to prove `
+        + 'the two are disjoint; groundedness fitting never opens the report half itself (DEC-31)',
+    );
+  }
+  // Unconditional: see the note on the same check in calibration/run.ts. A
+  // half read by path carries no cross-half guarantee, whatever it declares.
+  if (reportIdentity !== undefined) {
+    assertHalvesDisjoint(identityOf(half), reportIdentity);
   }
 }
 
@@ -199,9 +279,18 @@ async function main(): Promise<void> {
     return;
   }
 
+  const selected = selectHalf('fit');
+  if (selected.half !== undefined) {
+    console.log(
+      `fit half: ${String(selected.path)} (${selected.half.count} cases, source ${selected.half.source})`,
+    );
+  }
+
   const { artifact } = await runGroundednessJob({
     provider: new OpenRouterProvider({ apiKey, ...dataGuaranteeOption() }),
     modelVer,
+    ...(selected.half === undefined ? {} : { fitHalf: selected.half }),
+    ...(selected.counterpart === undefined ? {} : { reportIdentity: selected.counterpart }),
     ...(limit === undefined ? {} : { limit }),
   });
   console.log(

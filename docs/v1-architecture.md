@@ -714,6 +714,60 @@ A follow-up body is also drawn from five fixed strings, so later turns repeat
 each other. Treat a multi-turn number from synthetic data as an upper bound,
 and re-fit on real labelled history before you publish one.
 
+Real labelled history now reaches all three jobs (DEC-18, DEC-31). A gold
+half declares its provenance, and the set is closed: `synthetic` or `real`.
+Each artifact records the provenance of the half it consumed, and each
+process logs it at startup beside the version. So a reader never infers which
+data a gate number covers.
+
+The identifier rules of the shipped corpus bind a half that claims to be it.
+An adopter's cases carry their own identifiers. Every other rule binds both
+halves, and the exact size of 385 binds the shipped corpus alone.
+
+A real half brings no split guarantee with it. The loader cross-checks the
+two committed halves; nothing cross-checks two files on an operator's disk.
+So a job that consumes a real half refuses to run until the caller names the
+other half. It takes identifiers from that half and reads none of its cases.
+That keeps the structural guarantee: a leak needs a code change.
+
+The check refuses a shared conversation as well as a shared case. Two turns of
+one thread carry two identifiers.
+
+The export models turns now. It emits one record per customer turn and orders
+them by each message's own stated time. A thread whose messages state no
+readable time falls back to delivery order, and the export reports every
+fallback. An agent reply hangs off the turn it answered, as the ledger does.
+
+Mail ingress marks every inbound message as the customer, because the live
+path reads an inbox. So the export cannot read the author to tell the two
+sides apart. The operator declares the support addresses instead. Undeclared,
+an export records the customer's half of each conversation and says so.
+
+Each artifact records the two case sets a run proved disjoint, as a digest of
+their identifiers. The proof happens once inside one run and nothing else
+would remember it. An operator fits against one report half. That operator
+then publishes against a pruned fit half that no longer overlaps. Every check
+passes, and the gate in force came from a fit that did overlap. A reader
+compares the two artifacts and sees which sets each run used.
+
+The check refuses halves of different sizes, of different provenance, or of
+the same split. DEC-31 splits one gold set into two halves, and each of those
+faults describes something that is not that split.
+
+One limit stands, and the runbook states it. The check compares identifiers
+exactly. An archive that changes the case of a message identifier defeats it.
+A message identifier is case sensitive, so a loose match refuses halves that
+are genuinely disjoint.
+
+One gate reaches real history further than the other. The agreement fit and
+the gold report read a real half end to end. The coverage fit reads a real
+half, but it resolves every cited document against the shipped fixture set.
+An adopter's claims cite their own documents, so the job refuses them. It
+names the case and the document by digest. Loading a real knowledge base into that job is not in this work.
+
+This repository still publishes synthetic numbers only. Nothing real is
+committed, and no run here has produced an artifact from real history.
+
 **Article 50(2) for text is not verified.** See paragraph 4.9.
 
 **Feedback clusters are manual in V1.** At test-bed volume, automatic clusters

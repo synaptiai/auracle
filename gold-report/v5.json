@@ -14,6 +14,9 @@
   "gate_source": "seed",
   "gate_calibration_version": null,
   "gate_calibration_scope": null,
+  "gate_calibration_gold_source": null,
+  "report_half_digest": null,
+  "fit_half_digest": null,
   "action_match": {
     "rate": 0.7909407665505227,
     "successes": 227,

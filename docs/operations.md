@@ -402,9 +402,12 @@ the loader again.
 
 The split discipline holds (DEC-31). Calibration reads only the fit half. The
 gold report reads only the report half. A threshold picked on the report cases
-inflates every published number. Each job imports exactly one half, so a leak
-needs a code change and cannot happen by accident. Never fit and publish on
-the same cases.
+inflates every published number. Never fit and publish on the same cases.
+
+On the committed corpus each job opens exactly one half. On halves of your own
+history each job also opens the other file, to prove the two are disjoint. It
+reads identifiers from that file and never a case. So a case-level leak still
+needs a code change and cannot happen by accident.
 
 Calibration needs `OPENROUTER_API_KEY`. It classifies each fit-half ticket
 through the classifier port. Replay needs no network access. The induction job
@@ -435,17 +438,41 @@ the repository.
 
 Set `CORPUS_FETCH_CMD` to a mailbox reader command. It prints one JSON
 object per line. Each object holds a `sourceId` and the full RFC 5322 text
-in `rfc5322Text`. Emit inbound customer messages only. Agent replies merge
-into thread bodies and skew the induction. Then run:
+in `rfc5322Text`.
+
+Emit both sides of each thread. The export models turns now, so an agent
+reply becomes the reply to the turn it answered (DEC-37). Set
+`CORPUS_AGENT_ADDRESSES` to your support addresses, separated by commas.
+Mail ingress marks every inbound message as the customer. Without this list
+the export cannot tell the two sides apart.
 
 ```sh
-CORPUS_FETCH_CMD='node fetch-mailbox.mjs' pnpm run export-corpus
+CORPUS_FETCH_CMD='node fetch-mailbox.mjs' \
+CORPUS_AGENT_ADDRESSES='support@acme.example,help@acme.example' \
+pnpm run export-corpus
 ```
 
-The command feeds every message through the IMAP poller path. It merges each
-thread into one ticket, marks it `intent: 'unlabeled'` and writes
-`corpus/history-<date>.json`. A message that fails normalization is excluded
-and reported.
+The command feeds every message through the IMAP poller path. It writes one
+record per customer turn to `corpus/history-<date>.json`. It refuses any other
+output directory, because the file holds real customer text (DEC-18). Records of one
+thread share a `conversation_id` and count from turn 1. Each record carries
+`intent: 'unlabeled'` until you label it.
+
+Turn order comes from each message's own Date header. The header must state a
+zone. A date without one resolves against the clock of the machine you run the
+export on. That is a fact about the machine and not about the message, so it
+counts as unreadable.
+
+A thread where one message states no readable date falls back to delivery
+order. The export
+reports every fallback, and it reports every message it dropped: a message
+with no body text, a message from neither party, and an agent message that
+precedes every customer turn. Read those counts. They name what the corpus
+does not hold.
+
+Leave `CORPUS_AGENT_ADDRESSES` unset and the export records the customer's
+half of each conversation. It warns when you do. A threshold fitted on half a
+conversation covers a prompt the runtime never sends.
 
 ### Step 2: Run induction on the corpus (machine)
 
@@ -455,8 +482,17 @@ OPENROUTER_API_KEY=<your-key> \
 pnpm run induce -- corpus/taxonomy-candidates-real.json
 ```
 
-The job embeds each thread and clusters the embeddings. A model gives each
-cluster a name. Its output is a candidate list only.
+The job embeds each first turn and clusters the embeddings. A model gives
+each cluster a name. Its output is a candidate list only.
+
+Later turns are excluded. A follow-up names no topic of its own. A cluster of
+follow-ups therefore spends one of the 25 intents on a group no person can
+name (DEC-10). The job prints how many turns it excluded.
+
+A corpus file written before the export modeled turns fails to load. The
+message says a record names no conversation. Run Step 1 again to replace the
+file. Older exports hold no turn structure and nothing can add it after the
+fact.
 
 ### Step 3: Review the candidate clusters (human)
 
@@ -480,13 +516,71 @@ handled the thread. Then record the `escalated`, `macro_applied`,
 These labels replace the placeholders that the exporter wrote. Split the
 labeled sample into fit and report halves of equal size (DEC-31).
 
-### Step 6: Calibrate on the fit half (deferred)
+### Step 6: Fit and publish on your own halves (machine)
 
-Calibration on a real labeled fit half does not work yet. The calibration
-job accepts a synthetic fit half of 385 tickets only (DEC-18). Real-half
-calibration needs a provenance-aware change to that job. That change is
-follow-up work outside this loop. Until then the operator keeps the labeled
-halves under `corpus/` and never commits them.
+Write the two labeled halves as `corpus/fit.json` and `corpus/report.json`.
+Each file holds `split`, `source`, `count` and `tickets`. Set `source` to
+`real` in the file and in every record. Keep both files under `corpus/`.
+That directory is gitignored, and a labeled half never enters the repository
+(DEC-18).
+
+Name both halves on every command. The job you run reads one of them. It takes
+identifiers from the other to prove the two are disjoint (DEC-31), and reads
+none of that half's cases.
+A job that gets one path without the other refuses to run.
+
+```sh
+export GOLD_FIT_PATH=corpus/fit.json
+export GOLD_REPORT_PATH=corpus/report.json
+
+CALIBRATION_MODEL_VER=<model> pnpm run calibrate
+GROUNDEDNESS_MODEL_VER=<model> pnpm run fit-groundedness
+pnpm run gold-report
+```
+
+The exported file carries a provenance block. It records every counter and it
+names each conversation whose turn order the mailbox decided. Read that list
+before you label: those turn numbers are a guess.
+
+`pnpm run fit-groundedness` needs one more thing than the other two. It
+resolves each cited document against the shipped fixture set, so a real half
+whose claims cite your own documents is refused. The refusal names the case
+and the document by digest, not in the clear (DEC-18). That job stays on
+synthetic data until a real knowledge base reaches it.
+
+Each job prints the half it read and its provenance. Each artifact records
+that provenance, so a number always names the data behind it. Restart the
+consumers to adopt a new threshold, then read the `gate_thresholds_fitted`
+line and check that `gold_source` says `real`.
+
+The overlap check compares identifiers exactly. An archive that changed the
+case of a message identifier defeats it. A message identifier is case
+sensitive, so a loose match would refuse halves that are genuinely disjoint.
+
+The jobs also do not check where you keep the two halves. The export refuses
+to write outside `corpus/`; reading is your own path to name.
+
+The jobs refuse an overlap. Two halves that share a case fail, and so do two
+that share a conversation: a thread split across the halves would fit and
+publish on one customer's problem.
+
+The size rule of the shipped corpus does not apply here. Your halves hold
+whatever size your labeled sample yields. They must be equal, as DEC-31 asks.
+The jobs refuse a pair of different sizes.
+
+A conversation may not straddle the halves, so an odd case total never splits.
+Hold a whole conversation back from the larger half until the two match.
+Keep the held-back cases; they join the next split.
+
+Each artifact records a digest of both case sets. Compare the digests of your
+calibration artifact and your gold report. Two runs that name different sets prove
+different data, and the report does not cover the gate.
+
+Keep the two files unchanged between the fit and the report. Pruning a half
+between runs passes every check and invalidates the pair.
+
+The published numbers in this repository stay synthetic. Your artifacts
+describe your deployment and nobody else's. Never commit one.
 
 
 ## 7. Observability
@@ -511,9 +605,16 @@ Run `pnpm run calibrate` to produce the next one, then restart the consumers.
 A running process never re-reads the artifact, so a fit takes effect at the
 next start.
 
-Only the agreement number has a job that fits it. The two coverage numbers
-stay at their seeds. The gates are independent, so fitting one moves neither
-value of the other (DEC-05).
+Both gates have a job that fits them: `pnpm run calibrate` and
+`pnpm run fit-groundedness`. Only the agreement number reaches the runtime
+through this line. The two coverage numbers stay at their seeds even after a
+coverage artifact exists, because no code reads one. Running
+`pnpm run fit-groundedness` therefore moves no gate. The gates are
+independent, so fitting one moves neither value of the other (DEC-05).
+
+The `gold_source` field on that line names the data behind the number. It
+reads `synthetic` for the shipped corpus and `real` for a half of your own
+history.
 
 A corrupt artifact stops the process. It does not fall back to the seeds. A
 truncated write must not read as "not calibrated yet" behind a gate that still

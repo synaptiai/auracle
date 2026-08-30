@@ -32,6 +32,7 @@ import { runGoldReportJob } from './run.js';
 import { SEED_THRESHOLDS, makeThresholds } from '../policy/policy.js';
 import { FakeProvider } from '../models/fake.js';
 import { isFirstTurn, loadGoldHalf } from '../fixtures/load.js';
+import { halfDigest, identityOf } from '../fixtures/load.js';
 import type { GoldFile, GoldTicket } from '../fixtures/load.js';
 
 function tempDirUrl(): URL {
@@ -298,9 +299,209 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
     ).rejects.toThrow(/expected 385/);
   });
 
-  it('rejects non-synthetic halves (DEC-18)', async () => {
+  // DEC-39: the gold report scores first turns only. Every runner case
+  // injects an all-first-turn half, so the filter itself was never
+  // exercised — and removing it moves a PUBLISHED number with the whole
+  // suite green (report_tickets 287 -> 385, action match 0.7909 -> 0.7948).
+  // A branch that states a number takes on the number.
+  it('scores first turns only, and counts only what it scored (DEC-39)', async () => {
+    const { half, steps } = makeScriptedReportHalf();
+    // The second case becomes turn 2 of the first case's conversation, so
+    // the half still holds 385 cases but only 384 first turns. Removing the
+    // filter moves a PUBLISHED number with the whole suite green:
+    // report_tickets 287 -> 385, action match 0.7909 -> 0.7948. A branch
+    // that states a number takes on the number.
+    const conversation = 'CONV-SYN-R000';
+    const tickets = half.tickets.map((ticket, i) => {
+      if (i === 0) return { ...ticket, conversation_id: conversation, turn_number: 1 };
+      if (i === 1) return { ...ticket, conversation_id: conversation, turn_number: 2 };
+      return ticket;
+    });
+    const dir = tempDirUrl();
+    try {
+      const { artifact } = await runGoldReportJob({
+        provider: new FakeProvider(steps),
+        taxonomy: TEST_TAXONOMY,
+        reportHalf: { ...half, tickets },
+        artifactDir: dir,
+        modelVer: 'test-stub',
+      });
+      expect(artifact.report_tickets).toBe(384);
+      expect(artifact.scope).toBe('first_turn');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes from a labelled half of real history, naming the provenance', async () => {
+    const { half, steps } = makeScriptedReportHalf();
+    const real: GoldFile = {
+      ...half,
+      source: 'real',
+      tickets: half.tickets.map((ticket) => ({ ...ticket, source: 'real' })),
+    };
+    const dir = tempDirUrl();
+    try {
+      const { artifact } = await runGoldReportJob({
+        provider: new FakeProvider(steps),
+        taxonomy: TEST_TAXONOMY,
+        reportHalf: real,
+        fitIdentity: identityOf({
+          split: 'fit', source: 'real', count: real.tickets.length,
+          tickets: real.tickets.map((t, i) => ({
+            ...t, ticket_id: `fit-${i}@example.test`, conversation_id: `fit-${i}@example.test`,
+          })),
+        }),
+        artifactDir: dir,
+        modelVer: 'test-stub',
+      });
+      expect(artifact.gold_source).toBe('real');
+      expect(artifact.report_tickets).toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a half whose declared count disagrees with its tickets', async () => {
     const { half } = makeScriptedReportHalf();
-    half.source = 'production';
+    await expect(
+      runGoldReportJob({
+        provider: new FakeProvider([]),
+        taxonomy: TEST_TAXONOMY,
+        reportHalf: { ...half, count: 9 },
+        artifactDir: tempDirUrl(),
+        modelVer: 'test-stub',
+      }),
+    ).rejects.toThrow(/declares 9 tickets but carries 385/);
+  });
+
+  it('refuses a real report half with no fit half to prove the split against (DEC-31)', async () => {
+    const { half } = makeScriptedReportHalf();
+    await expect(
+      runGoldReportJob({
+        provider: new FakeProvider([]),
+        taxonomy: TEST_TAXONOMY,
+        reportHalf: { ...half, source: 'real', tickets: half.tickets.map((t) => ({ ...t, source: 'real' })) },
+        artifactDir: tempDirUrl(),
+        modelVer: 'test-stub',
+      }),
+    ).rejects.toThrow(/fit half/);
+  });
+
+  // The proof was per-invocation and bound to nothing. An operator could
+  // calibrate against report half B, then publish against a pruned fit half
+  // that no longer overlaps B, and every check would pass while the gate in
+  // force came from a fit that did overlap. The digests let a reader see that
+  // the two runs were proved against different sets.
+  // The writer had no case either: replacing it with the constant null
+  // passed once the validator assert above was disabled.
+  it('records the provenance of the gate it published against', async () => {
+    const { half, steps } = makeScriptedReportHalf();
+    const dir = tempDirUrl();
+    try {
+      const { artifact } = await runGoldReportJob({
+        provider: new FakeProvider(steps),
+        taxonomy: TEST_TAXONOMY,
+        reportHalf: half,
+        thresholds: makeThresholds({ agreement: 0.75, groundednessBlock: 0.7, groundednessReview: 0.8 }),
+        provenance: { source: 'calibration', version: 4, scope: 'all_turns', goldSource: 'real' },
+        artifactDir: dir,
+        modelVer: 'test-stub',
+      });
+      // The gate came from a fit on real history while this report scored a
+      // synthetic half. A reader must see both, not assume they match.
+      expect(artifact.gate_calibration_gold_source).toBe('real');
+      expect(artifact.gold_source).toBe('synthetic');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('records the exact pair it proved disjoint', async () => {
+    const { half, steps } = makeScriptedReportHalf();
+    const real: GoldFile = {
+      ...half, source: 'real', tickets: half.tickets.map((t) => ({ ...t, source: 'real' })),
+    };
+    const fitIdentity = identityOf({
+      split: 'fit', source: 'real', count: real.tickets.length,
+      tickets: real.tickets.map((t, i) => ({
+        ...t, ticket_id: `fit-${i}@example.test`, conversation_id: `fit-${i}@example.test`,
+      })),
+    });
+    const dir = tempDirUrl();
+    try {
+      const { artifact } = await runGoldReportJob({
+        provider: new FakeProvider(steps),
+        taxonomy: TEST_TAXONOMY,
+        reportHalf: real,
+        fitIdentity,
+        artifactDir: dir,
+        modelVer: 'test-stub',
+      });
+      expect(artifact.fit_half_digest).toBe(halfDigest(fitIdentity));
+      expect(artifact.report_half_digest).toBe(halfDigest(identityOf(real)));
+      // Two different halves must not share a digest, or the record proves
+      // nothing about which sets a run consumed.
+      expect(artifact.fit_half_digest).not.toBe(artifact.report_half_digest);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('records no pair when it read the committed corpus, which the loader cross-checks', async () => {
+    const { half, steps } = makeScriptedReportHalf();
+    const dir = tempDirUrl();
+    try {
+      const { artifact } = await runGoldReportJob({
+        provider: new FakeProvider(steps),
+        taxonomy: TEST_TAXONOMY,
+        reportHalf: half,
+        artifactDir: dir,
+        modelVer: 'test-stub',
+      });
+      expect(artifact.fit_half_digest).toBeNull();
+      expect(artifact.report_half_digest).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // F3: this suite stayed green when the bypass was reinstated, because its
+  // overlap cases all used a 'real' half — the branch the bypass never took.
+  it('checks a supplied fit identity even when the half declares synthetic (DEC-31)', async () => {
+    const { half } = makeScriptedReportHalf();
+    await expect(
+      runGoldReportJob({
+        provider: new FakeProvider([]),
+        taxonomy: TEST_TAXONOMY,
+        reportHalf: half,
+        fitIdentity: identityOf({ ...half, split: 'fit' }),
+        artifactDir: tempDirUrl(),
+        modelVer: 'test-stub',
+      }),
+    ).rejects.toThrow(/appears in both halves/);
+  });
+
+  it('refuses a real report half that overlaps its fit half (DEC-31)', async () => {
+    const { half } = makeScriptedReportHalf();
+    const real: GoldFile = {
+      ...half, source: 'real', tickets: half.tickets.map((t) => ({ ...t, source: 'real' })),
+    };
+    await expect(
+      runGoldReportJob({
+        provider: new FakeProvider([]),
+        taxonomy: TEST_TAXONOMY,
+        reportHalf: real,
+        fitIdentity: identityOf({ ...real, split: 'fit' }),
+        artifactDir: tempDirUrl(),
+        modelVer: 'test-stub',
+      }),
+    ).rejects.toThrow(/appears in both halves/);
+  });
+
+  it('rejects a provenance outside the closed set (DEC-18)', async () => {
+    const { half } = makeScriptedReportHalf();
+    half.source = 'production' as GoldFile['source'];
     await expect(
       runGoldReportJob({
         provider: new FakeProvider([]),
@@ -341,6 +542,9 @@ function makeArtifact(version: number): GoldReportArtifact {
       gate_source: 'seed',
       gate_calibration_version: null,
       gate_calibration_scope: null,
+      gate_calibration_gold_source: null,
+      report_half_digest: null,
+      fit_half_digest: null,
       gate_agreement: 0.6,
       action_match: {
         rate: 362 / 385,
@@ -510,7 +714,7 @@ describe('the artifact names the provenance of its gate (DEC-13, DEC-31)', () =>
   it('records the calibration version that produced its gate', async () => {
     const { artifact } = await runWith({
       thresholds: makeThresholds({ ...SEED_THRESHOLDS, agreement: 0.72 }),
-      provenance: { source: 'calibration', version: 7, scope: 'all_turns' },
+      provenance: { source: 'calibration', version: 7, scope: 'all_turns', goldSource: 'synthetic' },
     });
 
     expect(artifact.gate_source).toBe('calibration');
@@ -544,6 +748,57 @@ describe('the artifact names the provenance of its gate (DEC-13, DEC-31)', () =>
     ).toThrow(/gate_calibration_version/);
   });
 
+  // Its two siblings each carry negative cases; this field's guard was
+  // cloned from them and its cases were not. Writer and both validator
+  // branches could be deleted with the whole suite green.
+  it('refuses a provenance outside the closed set (DEC-18)', () => {
+    expect(() => validateGoldReportArtifact({ ...makeArtifact(1), gold_source: 'production' }))
+      .toThrow(/gold_source is production, expected one of synthetic, real/);
+  });
+
+  it('refuses a digest that is neither null nor a digest', () => {
+    for (const field of ['fit_half_digest', 'report_half_digest'] as const) {
+      expect(() => validateGoldReportArtifact({ ...makeArtifact(1), [field]: 'not-a-digest' }))
+        .toThrow(new RegExp(field));
+    }
+  });
+
+  it('refuses a calibrated gate whose provenance is outside the closed set', () => {
+    expect(() =>
+      validateGoldReportArtifact({
+        ...makeArtifact(1),
+        gate_source: 'calibration',
+        gate_calibration_version: 3,
+        gate_calibration_scope: 'all_turns',
+        gate_calibration_gold_source: 'production',
+      }),
+    ).toThrow(/gate_calibration_gold_source/);
+  });
+
+  it('refuses a calibrated gate that names no provenance', () => {
+    expect(() =>
+      validateGoldReportArtifact({
+        ...makeArtifact(1),
+        gate_source: 'calibration',
+        gate_calibration_version: 3,
+        gate_calibration_scope: 'all_turns',
+        gate_calibration_gold_source: null,
+      }),
+    ).toThrow(/gate_calibration_gold_source/);
+  });
+
+  it('refuses a seeded gate that names a provenance', () => {
+    // A provenance here credits a fit that did not produce this number,
+    // exactly as a version would.
+    expect(() =>
+      validateGoldReportArtifact({
+        ...makeArtifact(1),
+        gate_source: 'seed',
+        gate_calibration_gold_source: 'real',
+      }),
+    ).toThrow(/gate_calibration_gold_source/);
+  });
+
   it('refuses an unknown gate_source', () => {
     expect(() =>
       validateGoldReportArtifact({ ...makeArtifact(1), gate_source: 'guess' }),
@@ -554,6 +809,25 @@ describe('the artifact names the provenance of its gate (DEC-13, DEC-31)', () =>
 // The repository ships one published artifact and README quotes its numbers.
 // Adding a required field to the validator silently invalidated it: nothing
 // loads it in production, so no test noticed until a reader tried.
+describe('the DEC-31 proof a real run must carry', () => {
+  // Null digests mean the committed corpus. A real run has no such
+  // guarantee, so an artifact declaring real provenance with no proved pair
+  // would publish numbers whose split nobody checked.
+  it('refuses a real artifact that names no proved pair', () => {
+    expect(() => validateGoldReportArtifact({ ...makeArtifact(1), gold_source: 'real' }))
+      .toThrow(/must name the pair it proved disjoint/);
+  });
+
+  it('accepts a real artifact that names one', () => {
+    expect(() => validateGoldReportArtifact({
+      ...makeArtifact(1),
+      gold_source: 'real',
+      fit_half_digest: 'a1b2c3d4e5f60718',
+      report_half_digest: 'f0e1d2c3b4a59687',
+    })).not.toThrow();
+  });
+});
+
 describe('the committed gold report artifact', () => {
   it('validates against the validator this repository ships', () => {
     const url = new URL('../../gold-report/v5.json', import.meta.url);
@@ -584,7 +858,7 @@ describe('the report half is scored through the resolved gate (DEC-31)', () => {
       promptVer: 'classify-p1',
       modelVer: 'test-stub',
       thresholds: makeThresholds({ ...SEED_THRESHOLDS, agreement }),
-      provenance: { source: 'calibration', version: 2, scope: 'all_turns' },
+      provenance: { source: 'calibration', version: 2, scope: 'all_turns', goldSource: 'synthetic' },
     });
   }
 
@@ -610,7 +884,7 @@ describe('the report half is scored through the resolved gate (DEC-31)', () => {
 describe('a seeded provenance must carry the seed value (DEC-31)', () => {
   function runWithThresholds(
     overrides: Partial<Record<string, number>>,
-    provenance?: { source: 'calibration'; version: number; scope: 'all_turns' },
+    provenance?: { source: 'calibration'; version: number; scope: 'all_turns'; goldSource: 'synthetic' | 'real' },
   ): ReturnType<typeof runGoldReportJob> {
     const { half, steps } = makeScriptedReportHalf();
     return runGoldReportJob({
@@ -646,7 +920,7 @@ describe('a seeded provenance must carry the seed value (DEC-31)', () => {
     await expect(
       runWithThresholds(
         { [field]: value },
-        { source: 'calibration', version: 3, scope: 'all_turns' },
+        { source: 'calibration', version: 3, scope: 'all_turns', goldSource: 'synthetic' },
       ),
     ).rejects.toThrow(new RegExp(`non-seed ${field}`));
   });
@@ -693,6 +967,7 @@ describe('a seeded provenance must carry the seed value (DEC-31)', () => {
         gate_source: 'calibration',
         gate_calibration_version: 2,
         gate_calibration_scope: null,
+      gate_calibration_gold_source: null,
       }),
     ).toThrow(/gate_calibration_scope/);
   });
@@ -712,7 +987,7 @@ describe('the offline stub leaves no room for a threshold to bind', () => {
       artifactDir: tempDirUrl(),
       modelVer: 'test-stub',
       thresholds: makeThresholds({ ...SEED_THRESHOLDS, agreement: 0.99 }),
-      provenance: { source: 'calibration', version: 1, scope: 'all_turns' },
+      provenance: { source: 'calibration', version: 1, scope: 'all_turns', goldSource: 'synthetic' },
     });
     const seeded = await runGoldReportJob({
       provider: new FakeProvider([...makeScriptedReportHalf().steps]),

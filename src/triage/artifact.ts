@@ -18,6 +18,8 @@ import {
   readArtifactText,
 } from '../artifacts/versioned.js';
 import type { ArtifactFile } from '../artifacts/versioned.js';
+import { GOLD_SOURCES, label } from '../fixtures/load.js';
+import type { GoldSource } from '../fixtures/load.js';
 
 /** Names this artifact kind in every fault message. */
 const LABEL = 'triage';
@@ -46,8 +48,15 @@ export interface TriageArtifact {
    * numbers must go to the gold report, never here.
    */
   role: 'selection';
-  /** DEC-18: shipped runs consume synthetic cases only. */
-  gold_source: 'synthetic';
+  /**
+   * Where the cases came from (DEC-18).
+   *
+   * A closed set, like every other artifact's. Shipped runs consume the
+   * synthetic corpus; a run over injected cases from an adopter's own traffic
+   * records 'real'. Hardcoding the literal made an injected case set claim to
+   * be synthetic, which is the one thing this field exists to prevent.
+   */
+  gold_source: GoldSource;
   /** Cases the judge reviewed. */
   cases_reviewed: number;
   /** Cases the judge selected. Equal to selections.length by construction. */
@@ -112,7 +121,11 @@ export function validateTriageArtifact(raw: unknown): TriageArtifact {
   );
   assert(raw['method'] === 'judge-triage', "artifact.method is not 'judge-triage' (section 4.10)");
   assert(raw['role'] === 'selection', "artifact.role is not 'selection' (DEC-09)");
-  assert(raw['gold_source'] === 'synthetic', 'artifact.gold_source is not synthetic (DEC-18)');
+  const goldSource = raw['gold_source'];
+  assert(
+    typeof goldSource === 'string' && (GOLD_SOURCES as readonly string[]).includes(goldSource),
+    `artifact.gold_source is ${String(goldSource)}, expected one of ${GOLD_SOURCES.join(', ')} (DEC-18)`,
+  );
   assertCount(raw['cases_reviewed'], 'cases_reviewed');
   // A judge may select nothing; zero is a legitimate outcome.
   assert(
@@ -142,7 +155,14 @@ export function validateTriageArtifact(raw: unknown): TriageArtifact {
       `selection ${index} has no ticket_id`,
     );
     const ticketId = selection['ticket_id'] as string;
-    assert(!seen.has(ticketId), `selection ${index} repeats ticket '${ticketId}'`);
+    // Redacted like every other fault that names a case. This PR widened
+    // gold_source to accept 'real', which is what made a raw Message-ID
+    // reachable here — while the same identifier was redacted one file over
+    // in the same commit (DEC-18).
+    assert(
+      !seen.has(ticketId),
+      `selection ${index} repeats ticket ${label(ticketId, goldSource as GoldSource)}`,
+    );
     seen.add(ticketId);
     assert(
       typeof selection['origin'] === 'string' && ORIGINS.has(selection['origin'] as CaseOrigin),

@@ -49,6 +49,13 @@ Invented values are what let this repository stay public.
 Never commit real emails, phone numbers, names or account identifiers.
 Read `fixtures/README.md` before you touch anything under `fixtures/`.
 
+A labeled half drawn from real mailbox history is not a fixture.
+It lives under `corpus/`, which is gitignored, and it never enters a commit.
+The offline jobs read such a half through `GOLD_FIT_PATH` and `GOLD_REPORT_PATH`.
+A half declares its provenance as `synthetic` or `real`, and every artifact
+records which one it consumed.
+Never commit a half, an artifact or a report produced from real history.
+
 Respect the fit/report split discipline (DEC-31).
 You fit thresholds on the fit half of the gold set only.
 You report published numbers from the report half only.

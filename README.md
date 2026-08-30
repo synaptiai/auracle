@@ -133,6 +133,15 @@ This repository ships no retention job and no purge job.
 You are the data controller, so you own the retention period and the erasure
 path. Plan both before you carry real traffic.
 
+**Labeled real history lives outside this repository (DEC-18, DEC-31).**
+The offline jobs accept a labeled half drawn from your own mailbox.
+Such a half holds real customer text, so it stays under `corpus/`.
+That directory is gitignored and must stay that way.
+Every number this repository publishes is measured on the synthetic corpus.
+An artifact fitted on your history records `gold_source: "real"` and belongs
+to your deployment alone.
+You are the data controller, so you own its retention and its erasure.
+
 **The prompt-log path is off by default (section 6).**
 It needs an explicit override.
 If you activate it, you give irrevocable commercial rights to the inputs and the outputs.

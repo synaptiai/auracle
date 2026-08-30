@@ -19,6 +19,8 @@ function makeArtifact(over: Partial<GroundednessArtifact> = {}): GroundednessArt
     version: 1,
     fitted_at: '2026-02-01T09:00:00.000Z',
     gold_source: 'synthetic',
+    fit_half_digest: null,
+    report_half_digest: null,
     split_used: 'fit',
     fit_drafts: 385,
     prompt_ver: 'ground-p1',
@@ -37,6 +39,37 @@ function makeArtifact(over: Partial<GroundednessArtifact> = {}): GroundednessArt
     ...over,
   };
 }
+
+describe('the DEC-31 proof a real run must carry', () => {
+  // Its two siblings got this case in cycle 9; this one did not, and the
+  // sweep that claimed to cover the branch's guards never mutated it. The
+  // non-null rule below is tested, so without this any junk string satisfied
+  // the proof-binding this change argues hardest for.
+  it('refuses a digest that is neither null nor a digest', () => {
+    for (const field of ['fit_half_digest', 'report_half_digest'] as const) {
+      expect(() => validateGroundednessArtifact(makeArtifact({ [field]: 'not-a-digest' })))
+        .toThrow(new RegExp(field));
+      expect(() => validateGroundednessArtifact(makeArtifact({ [field]: 'ABCDEF0123456789' })))
+        .toThrow(new RegExp(field));
+    }
+  });
+
+  // Null digests mean the committed corpus, whose halves the loader
+  // cross-checks. A real run has no such guarantee, so an artifact declaring
+  // real provenance with no proved pair would be a threshold nobody checked.
+  it('refuses a real artifact that names no proved pair', () => {
+    expect(() => validateGroundednessArtifact(makeArtifact({ gold_source: 'real' })))
+      .toThrow(/must name the pair it proved disjoint/);
+  });
+
+  it('accepts a real artifact that names one', () => {
+    expect(() => validateGroundednessArtifact(makeArtifact({
+      gold_source: 'real',
+      fit_half_digest: 'a1b2c3d4e5f60718',
+      report_half_digest: 'f0e1d2c3b4a59687',
+    }))).not.toThrow();
+  });
+});
 
 describe('groundedness artifact (DEC-05, DEC-18, DEC-31)', () => {
   it('round-trips through its own directory', async () => {

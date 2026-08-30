@@ -13,6 +13,7 @@
 // A case is one turn. Both halves hold 385 cases, and a conversation never
 // straddles them.
 
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import type { ConversationTurn } from '../coordinator/coordinator.js';
@@ -23,6 +24,17 @@ export const INTENT_CAP = 25;
 
 const RISK_TIERS = ['low', 'medium', 'high'] as const;
 export type RiskTier = (typeof RISK_TIERS)[number];
+
+/**
+ * Where a gold half's cases came from (DEC-18).
+ *
+ * A closed set, so a half cannot name a provenance no reader understands and
+ * no artifact can record one. 'synthetic' is the corpus this repository
+ * ships and publishes every number from. 'real' is an adopter's own labelled
+ * history, which lives outside the repository and never enters it.
+ */
+export const GOLD_SOURCES = ['synthetic', 'real'] as const;
+export type GoldSource = (typeof GOLD_SOURCES)[number];
 
 const DOC_KINDS = ['document', 'canonical_resolution'] as const;
 export type DocumentKind = (typeof DOC_KINDS)[number];
@@ -75,9 +87,10 @@ export interface GoldTicket {
   subject: string;
   body: string;
   /**
-   * DEC-35: the conversation this case belongs to. Every synthetic fixture
-   * carries one. A real-corpus record does not, because the exporter folds a
-   * whole thread into one record and models no turns yet.
+   * DEC-35: the conversation this case belongs to. Every case carries one,
+   * synthetic or real: the corpus export models turns and its validator
+   * requires both fields. Optional in the type because the field arrived
+   * after the schema did, and the validators are where it is required.
    */
   conversation_id?: string;
   /** DEC-39: the turn this case records, counting from 1. */
@@ -113,8 +126,10 @@ export interface GoldTicket {
  * valid label, and section 6 requires the agreement threshold to be re-fitted
  * on multi-turn data.
  *
- * An absent `turn_number` counts as a first turn. Every synthetic fixture
- * carries one; a real-corpus record does not until the exporter models turns.
+ * An absent `turn_number` counts as a first turn. That branch is defensive
+ * only: the type leaves the field optional, and every validator that admits
+ * a case to a gold half or a corpus file now requires it. A record reaching
+ * this function without one has bypassed a validator.
  */
 export function isFirstTurn(ticket: GoldTicket): boolean {
   return ticket.turn_number === undefined || ticket.turn_number === 1;
@@ -182,7 +197,7 @@ export type GoldSplit = 'fit' | 'report';
 
 export interface GoldFile {
   split: GoldSplit;
-  source: string;
+  source: GoldSource;
   count: number;
   tickets: GoldTicket[];
 }
@@ -246,9 +261,176 @@ export function loadTaxonomy(): Taxonomy {
   return raw as unknown as Taxonomy;
 }
 
-/** Load one half of the gold set. */
-export function loadGoldHalf(split: GoldSplit): GoldFile {
-  return validateGoldHalf(readJson(`gold/${split}.json`), split);
+/**
+ * What went wrong reading a file, without quoting what the file held.
+ *
+ * A filesystem fault names the path, which is the operator's own and safe. A
+ * parse fault is reported by kind and position only: the position is what an
+ * editor needs, and the surrounding text is the customer's. Node embeds a
+ * window of the input in a JSON SyntaxError, so a trailing comma in a
+ * hand-written half would otherwise put a body on stderr (DEC-18).
+ */
+export function describeReadFault(err: unknown): string {
+  if (!(err instanceof Error)) return 'unknown fault';
+  if (err instanceof SyntaxError) {
+    const position = /at position (\d+)/.exec(err.message)?.[1];
+    const line = /line (\d+) column (\d+)/.exec(err.message);
+    const where = line !== null
+      ? `line ${String(line[1])} column ${String(line[2])}`
+      : position !== undefined ? `position ${position}` : 'an unreported position';
+    return `the file is not valid JSON, at ${where} (content withheld, DEC-18)`;
+  }
+  return err.message;
+}
+
+/**
+ * Load one half of the gold set.
+ *
+ * Without a path this reads the committed synthetic corpus. With one it
+ * reads the named file, so an adopter can point a job at their own labelled
+ * half. That half lives outside the repository and never enters it (DEC-18);
+ * the `corpus/` directory is gitignored for exactly this.
+ *
+ * The same rules apply either way. A path buys a different file, never a
+ * weaker check, and a fault names the file it read.
+ */
+export function loadGoldHalf(split: GoldSplit, path?: string): GoldFile {
+  if (path === undefined) return validateGoldHalf(readJson(`gold/${split}.json`), split);
+  // Read and parse faults carry no path of their own: a directory gives
+  // 'EISDIR: illegal operation on a directory, read' and malformed JSON gives
+  // a position. Two halves reach a job by path, so an operator could not tell
+  // which one was bad, or that the fault was a file at all.
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (err: unknown) {
+    // Never the parse message. Node embeds a window of the input in a JSON
+    // SyntaxError, and these two files hold real cases that a person
+    // hand-writes, so a trailing comma puts a customer's body on stderr
+    // (DEC-18). The export guards its own parse for this reason; the guard
+    // belongs on every parse of real data, not on the one its author was
+    // looking at.
+    throw new Error(
+      `cannot read the gold ${split} half at ${path}: ${describeReadFault(err)}`,
+    );
+  }
+  return validateGoldHalf(raw, split, path);
+}
+
+/**
+ * The identifiers of one half, and nothing else.
+ *
+ * DEC-31 needs the two halves proved disjoint, and only a caller naming both
+ * can prove it. A fitting job must never open the report half's cases: the
+ * structural guarantee that a report-half leak needs a code change is worth
+ * more than any check. So this opens the file and validates it in full — an
+ * identity taken from a file nobody validated would prove nothing — and
+ * RETURNS identifiers alone. No subject and no body crosses to the caller,
+ * and the returned shape has no field that could carry one. "The file is
+ * never read" would be the wrong claim; this is the one that holds.
+ */
+export interface HalfIdentity {
+  readonly split: GoldSplit;
+  readonly source: GoldSource;
+  readonly ticketIds: ReadonlySet<string>;
+  readonly conversationIds: ReadonlySet<string>;
+}
+
+/**
+ * A stable name for the exact case set of one half.
+ *
+ * The disjointness check happens once, inside one job run, and then nothing
+ * remembers it. So an operator could calibrate against report half B, then
+ * publish against a pruned fit half A' that no longer overlaps B, and every
+ * check would pass while the gate in force came from a fit that did overlap.
+ * Recording this digest in both artifacts lets a reader compare the two runs
+ * and see that they were proved against different sets.
+ *
+ * Ticket ids only, sorted, so the value does not depend on file order. Ids
+ * are already identifiers; no case text enters the digest.
+ */
+export function halfDigest(identity: HalfIdentity): string {
+  const ids = [...identity.ticketIds].sort().join('\n');
+  return createHash('sha256').update(ids).digest('hex').slice(0, 16);
+}
+
+export function identityOf(half: GoldFile): HalfIdentity {
+  return {
+    split: half.split,
+    source: half.source,
+    ticketIds: new Set(half.tickets.map((ticket) => ticket.ticket_id)),
+    conversationIds: new Set(
+      half.tickets
+        .map((ticket) => ticket.conversation_id)
+        .filter((id): id is string => id !== undefined),
+    ),
+  };
+}
+
+export function readHalfIdentity(path: string, split: GoldSplit): HalfIdentity {
+  return identityOf(loadGoldHalf(split, path));
+}
+
+/**
+ * Refuse two halves that share a case or a conversation (DEC-31).
+ *
+ * A conversation on both sides is the subtler leak. Two turns of one thread
+ * are two cases with two identifiers, so a case-level check passes, and a
+ * threshold would still be fitted and published on one customer's problem.
+ */
+export function assertHalvesDisjoint(a: HalfIdentity, b: HalfIdentity): void {
+  assert(a.split !== b.split, `both halves declare split ${a.split} (DEC-31)`);
+  // Both halves must describe one body of data. Without this an operator can
+  // pair their own fit half with a copy of the shipped report half: SYN- ids
+  // never collide with real ones, so the proof passes trivially and the
+  // artifact records a real fit proved against a set nobody publishes from.
+  assert(
+    a.source === b.source,
+    `the halves declare different provenance, ${a.source} and ${b.source} (DEC-18, DEC-31)`,
+  );
+  for (const id of b.ticketIds) {
+    assert(!a.ticketIds.has(id), `ticket ${label(id, a.source)} appears in both halves (DEC-31)`);
+  }
+  for (const id of b.conversationIds) {
+    assert(
+      !a.conversationIds.has(id),
+      `conversation ${label(id, a.source)} appears in both halves (DEC-31)`,
+    );
+  }
+  // Last, because an overlap is the graver fault and must be the one an
+  // operator is told about first. Reporting the size mismatch ahead of it
+  // sent them off to trim a half before they learned of the leak.
+  //
+  // DEC-31 splits one gold set into two halves and publishes from the half
+  // that fitted nothing. Halves of different sizes are not that split. A set
+  // with an odd number of cases, or whose conversations admit no equal
+  // partition, cannot be split this way at all: hold a conversation back
+  // until the two sides match.
+  assert(
+    a.ticketIds.size === b.ticketIds.size,
+    `the halves hold ${a.ticketIds.size} and ${b.ticketIds.size} cases; DEC-31 splits one `
+      + 'gold set into two halves of equal size. Hold a whole conversation back from the '
+      + 'larger half until the two match; a conversation may not straddle them.',
+  );
+}
+
+/**
+ * An identifier a fault message may carry.
+ *
+ * A synthetic identifier is generated and means nothing outside this
+ * repository, so it is printed. A real one is a Message-ID: it embeds the
+ * customer's domain and often a local part their system minted, and a fault
+ * reaches a terminal and a CI log where DEC-18 says such a value may not go.
+ * An operator matches the digest against their own file.
+ *
+ * Every fault that names a case goes through this. An earlier version applied
+ * it at the two sites its author had in mind and claimed the class; the
+ * validators reached from `loadGoldHalf` and from the corpus loader kept
+ * printing the raw value, which is the commonest fault path of all.
+ */
+export function label(id: string, source: GoldSource): string {
+  if (source === 'synthetic') return id;
+  return `with id digest ${createHash('sha256').update(id).digest('hex').slice(0, 12)}`;
 }
 
 /**
@@ -258,17 +440,24 @@ export function loadGoldHalf(split: GoldSplit): GoldFile {
  * corpus without writing one to disk. Same shape as
  * `validateCalibrationArtifact`: the loader is a thin read around it.
  */
-export function validateGoldHalf(raw: unknown, split: GoldSplit): GoldFile {
-  assert(isRecord(raw), `${split}.json is not an object`);
-  assert(raw['split'] === split, `gold/${split}.json declares split ${String(raw['split'])}`);
-  assert(raw['source'] === 'synthetic', `gold/${split}.json is not marked synthetic`);
+export function validateGoldHalf(raw: unknown, split: GoldSplit, fileName?: string): GoldFile {
+  // Named fileName, not label: `label` is the redaction helper this function's
+  // own ticket loop depends on, and shadowing it here would be silent.
+  const name = fileName ?? `gold/${split}.json`;
+  assert(isRecord(raw), `${name} is not an object`);
+  assert(raw['split'] === split, `${name} declares split ${String(raw['split'])}`);
+  const source = raw['source'];
+  assert(
+    typeof source === 'string' && (GOLD_SOURCES as readonly string[]).includes(source),
+    `${name} declares source ${String(source)}, expected one of ${GOLD_SOURCES.join(', ')}`,
+  );
   const tickets = raw['tickets'];
-  assert(Array.isArray(tickets), `gold/${split}.json tickets is not an array`);
-  assert(tickets.length > 0, `gold/${split}.json has no tickets`);
-  for (const ticket of tickets) validateTicket(ticket);
+  assert(Array.isArray(tickets), `${name} tickets is not an array`);
+  assert(tickets.length > 0, `${name} has no tickets`);
+  for (const ticket of tickets) validateTicket(ticket, source as GoldSource);
   const file = raw as unknown as GoldFile;
-  assert(file.count === file.tickets.length, `gold/${split}.json count does not match its tickets`);
-  assertConversations(file, split);
+  assert(file.count === file.tickets.length, `${name} count does not match its tickets`);
+  assertConversations(file, name);
   return file;
 }
 
@@ -278,29 +467,12 @@ export function loadGoldSet(): { fit: GoldFile; report: GoldFile } {
   const report = loadGoldHalf('report');
   assert(fit.count === FIT_COUNT, `fit half holds ${fit.count} tickets, expected ${FIT_COUNT}`);
   assert(report.count === REPORT_COUNT, `report half holds ${report.count} tickets, expected ${REPORT_COUNT}`);
-  const fitIds = new Set(fit.tickets.map((t) => t.ticket_id));
-  for (const ticket of report.tickets) {
-    assert(!fitIds.has(ticket.ticket_id), `ticket ${ticket.ticket_id} appears in both halves`);
-  }
-  // A conversation that straddled the halves would put one thread on both
-  // sides of the split, which is the leak DEC-31 forbids.
-  const fitConversations = new Set(fit.tickets.map((t) => t.conversation_id));
-  for (const ticket of report.tickets) {
-    assert(
-      !fitConversations.has(ticket.conversation_id),
-      `conversation ${String(ticket.conversation_id)} appears in both halves (DEC-31)`,
-    );
-  }
+  // One rule, one place. The real path proves the same thing through the same
+  // function, so a change to what "disjoint" means reaches both.
+  assertHalvesDisjoint(identityOf(fit), identityOf(report));
   return { fit, report };
 }
 
-/**
- * Field-level checks shared by the synthetic gold set and any file that
- * reuses the GoldFile schema (for example the real-corpus exporter in
- * src/corpus). Source and id-prefix rules are NOT checked here: each
- * consumer keeps its own. The synthetic loaders below keep their DEC-18
- * guards; the corpus loader asserts source 'imap'.
- */
 /**
  * A case's per-claim ground truth (DEC-07).
  *
@@ -344,8 +516,25 @@ function validateClaims(ticket: Record<string, unknown>, id: string): void {
   }
 }
 
-export function validateTicketFields(ticket: Record<string, unknown>): void {
-  const id = typeof ticket['ticket_id'] === 'string' ? ticket['ticket_id'] : '<missing>';
+/**
+ * Field-level checks shared by the synthetic gold set and any file that
+ * reuses the GoldFile schema, such as the real-corpus exporter.
+ *
+ * Identifier-prefix rules are not checked here: they describe the shipped
+ * corpus, and each consumer keeps its own. The provenance IS taken, because
+ * every fault below names a case and a real identifier must be redacted
+ * (DEC-18).
+ */
+export function validateTicketFields(
+  ticket: Record<string, unknown>,
+  /**
+   * Required, for the reason `scoreDraft` states: a default lets a call site
+   * forget it and leak a real identifier with every test still green.
+   */
+  source: GoldSource,
+): void {
+  const rawId = typeof ticket['ticket_id'] === 'string' ? ticket['ticket_id'] : '<missing>';
+  const id = label(rawId, source);
   assert(typeof ticket['intent'] === 'string', `ticket ${id} has no intent`);
   assert(typeof ticket['queue'] === 'string' && ticket['queue'].length > 0, `ticket ${id} has no queue`);
   assert(typeof ticket['subject'] === 'string' && ticket['subject'].length > 0, `ticket ${id} has no subject`);
@@ -371,20 +560,41 @@ export function validateTicketFields(ticket: Record<string, unknown>): void {
  *
  * The conversation fields live here, not in `validateTicketFields`, for the
  * reason that function's own comment gives: the shared validator keeps only
- * what every consumer shares. The real-corpus exporter models no turns yet,
- * and a record that carried a fabricated `turn_number: 1` would state
- * something about real history that nobody checked.
+ * what every consumer shares. The corpus loader checks the same two fields
+ * with its own rules, because a corpus file is not a gold half and its
+ * identifiers follow no prefix convention.
  */
-function validateTicket(value: unknown): void {
+function validateTicket(value: unknown, source: GoldSource): void {
   assert(isRecord(value), 'ticket is not an object');
-  assert(typeof value['ticket_id'] === 'string' && value['ticket_id'].startsWith('SYN-'), 'ticket_id must start with SYN-');
-  const id = String(value['ticket_id']);
-  assert(value['source'] === 'synthetic', `ticket ${id} is not marked synthetic`);
+  const rawId = value['ticket_id'];
+  assert(typeof rawId === 'string' && rawId.length > 0, 'ticket has no ticket_id');
+  // Redacted like every other fault that names a case. Cycle 2 threaded the
+  // provenance into this function and applied it to what it delegates to,
+  // leaving this function's own five messages raw — the same instance-not-
+  // class slip the label() comment above describes.
+  const id = label(rawId, source);
+  // The SYN- prefixes describe the corpus this repository generates, so they
+  // bind a half that claims to be it. An adopter's labelled history carries
+  // their own identifiers; holding it to the generator's naming would refuse
+  // every real half for a reason that says nothing about its correctness.
+  if (source === 'synthetic') {
+    assert(id.startsWith('SYN-'), 'ticket_id must start with SYN-');
+  }
+  assert(
+    value['source'] === source,
+    `ticket ${id} declares source ${String(value['source'])}, but its half declares ${source}`,
+  );
   const conversationId = value['conversation_id'];
   assert(
-    typeof conversationId === 'string' && conversationId.startsWith('CONV-SYN-'),
-    `ticket ${id} conversation_id must start with CONV-SYN- (DEC-35)`,
+    typeof conversationId === 'string' && conversationId.length > 0,
+    `ticket ${id} names no conversation (DEC-35)`,
   );
+  if (source === 'synthetic') {
+    assert(
+      conversationId.startsWith('CONV-SYN-'),
+      `ticket ${id} conversation_id must start with CONV-SYN- (DEC-35)`,
+    );
+  }
   const turnNumber = value['turn_number'];
   assert(
     typeof turnNumber === 'number' && Number.isInteger(turnNumber) && turnNumber >= 1,
@@ -395,7 +605,7 @@ function validateTicket(value: unknown): void {
     reply === undefined || (typeof reply === 'string' && reply.length > 0),
     `ticket ${id} agent_reply is present but empty`,
   );
-  validateTicketFields(value);
+  validateTicketFields(value, source);
 }
 
 /**
@@ -416,11 +626,15 @@ function sameDisposition(a: Disposition, b: Disposition): boolean {
   );
 }
 
-function assertConversations(file: GoldFile, split: GoldSplit): void {
+function assertConversations(file: GoldFile, name: string): void {
+  const named = (id: string): string => label(id, file.source);
   const ids = new Set<string>();
   const byConversation = new Map<string, GoldTicket[]>();
   for (const ticket of file.tickets) {
-    assert(!ids.has(ticket.ticket_id), `gold/${split}.json repeats ticket ${ticket.ticket_id}`);
+    assert(
+      !ids.has(ticket.ticket_id),
+      `${name} repeats ticket ${label(ticket.ticket_id, file.source)}`,
+    );
     ids.add(ticket.ticket_id);
     const conversationId = ticket.conversation_id ?? '';
     const existing = byConversation.get(conversationId);
@@ -433,33 +647,41 @@ function assertConversations(file: GoldFile, split: GoldSplit): void {
     numbers.forEach((number, index) => {
       assert(
         number === index + 1,
-        `conversation ${conversationId} numbers its turns ${numbers.join(',')}, expected 1..${numbers.length}`,
+        `conversation ${named(conversationId)} numbers its turns ${numbers.join(',')}, expected 1..${numbers.length}`,
       );
     });
     const first = turns.find((turn) => turn.turn_number === 1);
-    assert(first !== undefined, `conversation ${conversationId} has no first turn`);
+    assert(first !== undefined, `conversation ${named(conversationId)} has no first turn`);
     for (const turn of turns) {
       assert(
         turn.intent === first.intent && turn.queue === first.queue,
-        `conversation ${conversationId} changes intent or queue between turns`,
+        `conversation ${named(conversationId)} changes intent or queue between turns`,
       );
       assert(
         sameDisposition(turn.disposition, first.disposition),
-        `conversation ${conversationId} changes its disposition between turns`,
+        `conversation ${named(conversationId)} changes its disposition between turns`,
       );
     }
     // Exactly the turns another turn follows carry a reply. The thread ends
     // without one, because the reply to the last turn is what a run would
     // produce. A missing reply on an earlier turn would silently drop the
     // agent half of the history the prompts read (DEC-37).
+    //
+    // This binds the generated corpus, where the reply is authored beside the
+    // turn and its absence is a generator fault. It cannot bind real history:
+    // whether an agent answered in writing is a fact about a mailbox, not a
+    // rule a half can obey. A thread resolved by telephone records no reply,
+    // and refusing it would state something false about the archive. The
+    // export reports how much of each conversation it captured instead.
+    if (file.source !== 'synthetic') continue;
     const lastNumber = Math.max(...numbers);
     for (const turn of turns) {
       const isLast = turn.turn_number === lastNumber;
       assert(
         (turn.agent_reply === undefined) === isLast,
         isLast
-          ? `conversation ${conversationId} records a reply to its last turn`
-          : `conversation ${conversationId} turn ${String(turn.turn_number)} has a later turn but no agent_reply`,
+          ? `conversation ${named(conversationId)} records a reply to its last turn`
+          : `conversation ${named(conversationId)} turn ${String(turn.turn_number)} has a later turn but no agent_reply`,
       );
     }
   }

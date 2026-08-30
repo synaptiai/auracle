@@ -27,6 +27,7 @@ import { runCalibrationJob } from './run.js';
 import { FakeProvider } from '../models/fake.js';
 import type { FakeStep } from '../models/fake.js';
 import type { ClassifierTaxonomy } from '../classifier/classifier.js';
+import { FIT_COUNT, halfDigest, identityOf } from '../fixtures/load.js';
 import type { GoldFile, GoldTicket } from '../fixtures/load.js';
 
 function repeat(count: number, make: (i: number) => AgreementSample): AgreementSample[] {
@@ -151,6 +152,24 @@ function makeTicket(intent: string): GoldTicket {
     subject: `${intent} case ${ticketSeq}`,
     body: `synthetic body for ${intent} case ${ticketSeq}`,
   };
+}
+
+/** A case as an adopter's own labelled half carries it: their ids, their provenance. */
+function realTicket(intent: string, id: string): GoldTicket {
+  return {
+    ...makeTicket(intent),
+    ticket_id: id,
+    source: 'real',
+    conversation_id: id,
+    turn_number: 1,
+  };
+}
+
+/** Nine unanimous, correct samples per ticket: the classifier stub's shape. */
+function scriptUnanimous(tickets: readonly GoldTicket[]): { text: string }[] {
+  return tickets.flatMap((ticket) =>
+    Array.from({ length: 9 }, () => ({ text: ticket.intent })),
+  );
 }
 
 /**
@@ -302,6 +321,135 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
     }
   });
 
+  // The size rule describes the corpus this repository generates. An
+  // adopter's labelled half is whatever size their history gave them, and
+  // refusing it for not being 385 would say nothing about its correctness.
+  // Its two sibling jobs each have this case; this one did not, so the guard
+  // at the boundary the injection path bypasses was unproven here.
+  it('refuses a provenance outside the closed set (DEC-18)', async () => {
+    const dir = tempDirUrl();
+    try {
+      await expect(
+        runCalibrationJob({
+          provider: new FakeProvider([]),
+          taxonomy: TAXONOMY,
+          fitHalf: {
+            split: 'fit', source: 'production' as GoldFile['source'], count: 1,
+            tickets: [realTicket('refund-request', 'a@example.test')],
+          },
+          artifactDir: dir,
+          ...PIN,
+        }),
+      ).rejects.toThrow(/expected one of synthetic, real/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts a labelled half from real history, of any size', async () => {
+    const dir = tempDirUrl();
+    try {
+      const tickets = [
+        realTicket('refund-request', 'a@example.test'),
+        realTicket('refund-request', 'b@example.test'),
+      ];
+      const result = await runCalibrationJob({
+        provider: new FakeProvider(scriptUnanimous(tickets)),
+        taxonomy: TAXONOMY,
+        fitHalf: { split: 'fit', source: 'real', count: 2, tickets },
+        // Equal size, as DEC-31 asks and assertHalvesDisjoint now enforces.
+        reportIdentity: identityOf({
+          split: 'report', source: 'real', count: 2,
+          tickets: [
+            realTicket('refund-request', 'y@example.test'),
+            realTicket('refund-request', 'z@example.test'),
+          ],
+        }),
+        artifactDir: dir,
+        ...PIN,
+      });
+      expect(result.artifact.gold_source).toBe('real');
+      expect(result.artifact.fit_tickets).toBe(2);
+      // The digests were computed and never asserted, so swapping the two
+      // expressions passed. They must name the two sets, and differ.
+      expect(result.artifact.fit_half_digest).toBe(halfDigest(identityOf({
+        split: 'fit', source: 'real', count: 2, tickets,
+      })));
+      expect(result.artifact.report_half_digest).not.toBe(result.artifact.fit_half_digest);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A fitting job cannot see the report half, so nothing inside it can prove
+  // the split. It refuses to fit rather than publish a threshold whose
+  // disjointness nobody checked.
+  it('refuses a real half with no report half to prove the split against (DEC-31)', async () => {
+    const dir = tempDirUrl();
+    try {
+      const tickets = [realTicket('refund-request', 'a@example.test')];
+      await expect(
+        runCalibrationJob({
+          provider: new FakeProvider([]),
+          taxonomy: TAXONOMY,
+          fitHalf: { split: 'fit', source: 'real', count: 1, tickets },
+          artifactDir: dir,
+          ...PIN,
+        }),
+      ).rejects.toThrow(/report half/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a real half that overlaps its report half (DEC-31)', async () => {
+    const dir = tempDirUrl();
+    try {
+      const shared = realTicket('refund-request', 'a@example.test');
+      await expect(
+        runCalibrationJob({
+          provider: new FakeProvider([]),
+          taxonomy: TAXONOMY,
+          fitHalf: { split: 'fit', source: 'real', count: 1, tickets: [shared] },
+          reportIdentity: identityOf({
+            split: 'report', source: 'real', count: 1, tickets: [{ ...shared }],
+          }),
+          artifactDir: dir,
+          ...PIN,
+        }),
+      ).rejects.toThrow(/appears in both halves/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The bypass an adversarial review found: a file read by path that
+  // declares itself synthetic. loadGoldHalf(split, path) cross-checks
+  // nothing, so the "committed corpus" justification for skipping the proof
+  // does not hold here. The caller had already supplied the report half's
+  // identifiers and the guard threw them away.
+  it('checks a supplied report identity even when the half declares synthetic (DEC-31)', async () => {
+    const dir = tempDirUrl();
+    try {
+      const tickets = Array.from({ length: FIT_COUNT }, () => makeTicket('refund-request'));
+      await expect(
+        runCalibrationJob({
+          provider: new FakeProvider([]),
+          taxonomy: TAXONOMY,
+          fitHalf: { split: 'fit', source: 'synthetic', count: FIT_COUNT, tickets },
+          // The same cases, declared as the other half.
+          reportIdentity: identityOf({
+            split: 'report', source: 'synthetic', count: FIT_COUNT, tickets,
+          }),
+          artifactDir: dir,
+          ...PIN,
+        }),
+      ).rejects.toThrow(/appears in both halves/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a half whose declared count disagrees with its tickets', async () => {
     const dir = tempDirUrl();
     try {
@@ -422,6 +570,18 @@ describe('runCalibrationJob over a conversation (DEC-37, DEC-39)', () => {
 });
 
 describe('calibration artifact round-trip', () => {
+  // The digest shape had no negative case in either job: a value that is
+  // neither null nor a digest loaded clean, so the field could carry
+  // anything while claiming to name the pair a run proved.
+  it('refuses a digest that is neither null nor a digest', () => {
+    for (const field of ['fit_half_digest', 'report_half_digest'] as const) {
+      expect(() => validateCalibrationArtifact({ ...BASE, [field]: 'not-a-digest' }))
+        .toThrow(new RegExp(field));
+      expect(() => validateCalibrationArtifact({ ...BASE, [field]: 'ABCDEF0123456789' }))
+        .toThrow(new RegExp(field));
+    }
+  });
+
   const BASE: CalibrationArtifact = {    artifact: 'agreement-threshold',
     version: 1,
     fitted_at: '2026-02-01T00:00:00.000Z',
@@ -429,6 +589,8 @@ describe('calibration artifact round-trip', () => {
     split_used: 'fit',
     scope: 'first_turn',
     fit_tickets: 385,
+    fit_half_digest: null,
+    report_half_digest: null,
     prompt_ver: 'classify-p1',
     model_ver: 'test-model',
     target_precision: 0.985,

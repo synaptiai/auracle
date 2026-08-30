@@ -24,7 +24,7 @@ import {
   writeTriageArtifact,
 } from './artifact.js';
 import type { TriageArtifact } from './artifact.js';
-import { goldSetCases, runTriageJob } from './run.js';
+import { goldSetCases, runTriageJob, summariseForStdout } from './run.js';
 import { goldCaseText, loadGoldSet, loadTaxonomy, FIT_COUNT, REPORT_COUNT } from '../fixtures/load.js';
 
 function tempDirUrl(): URL {
@@ -152,6 +152,7 @@ describe('triage run', () => {
       const { artifact } = await runTriageJob({
         judge: stubJudge(),
         cases,
+        goldSource: 'synthetic',
         artifactDir: dir,
       });
 
@@ -176,10 +177,93 @@ describe('triage run', () => {
       const { artifact } = await runTriageJob({
         judge: stubJudge(),
         cases: [makeCase()],
+        goldSource: 'synthetic',
         artifactDir: dir,
       });
       expect(artifact.prompt_ver.length).toBeGreaterThan(0);
       expect(artifact.model_ver).toBe('replay-stub');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The provenance of injected cases is knowable only to the caller. The
+  // field defaulted to 'real', so a caller injecting synthetic-derived cases
+  // published an artifact falsely claiming real provenance — while the doc
+  // beside it called the field required.
+  it('refuses injected cases that declare no provenance (DEC-18)', async () => {
+    await expect(
+      runTriageJob({ judge: stubJudge(), cases: [makeCase()], artifactDir: tempDirUrl() }),
+    ).rejects.toThrow(/needs goldSource with injected cases/);
+  });
+
+  // Survived mutation in cycle 4: correct only by accident.
+  it('names a real case by digest when a judge selects it without a reason', async () => {
+    const judge = { async review() { return { selected: true, reason: '' }; } } as never;
+    const real = { ...makeCase(), ticketId: 'msg@customer-domain.example' };
+    const call = runTriageJob({
+      judge, cases: [real], goldSource: 'real',
+      prompt_ver: 'p', model_ver: 'm', artifactDir: tempDirUrl(),
+    });
+    await expect(call).rejects.toThrow(/id digest [0-9a-f]{12}/);
+    await expect(call).rejects.not.toThrow(/customer-domain\.example/);
+  });
+
+  function makeArtifactShape() {
+    return {
+      artifact: 'judge-triage' as const,
+      version: 1,
+      generated_at: '2025-01-01T00:00:00.000Z',
+      method: 'judge-triage' as const,
+      role: 'selection' as const,
+      gold_source: 'synthetic' as const,
+      cases_reviewed: 2,
+      cases_selected: 1,
+      prompt_ver: 'triage-p1',
+      model_ver: 'replay-stub',
+      selections: [{ ticket_id: 't-1', origin: 'report', reason: 'uncertain' }],
+    };
+  }
+
+  // This PR widened gold_source to accept 'real', which is what made a raw
+  // Message-ID reachable in the validator — while redacting the same
+  // identifier one file over in the same commit.
+  it('refuses a provenance outside the closed set (DEC-18)', () => {
+    expect(() => validateTriageArtifact({ ...makeArtifactShape(), gold_source: 'production' }))
+      .toThrow(/gold_source is production, expected one of synthetic, real/);
+  });
+
+  it('names a repeated real selection by digest, never in the clear', () => {
+    const selection = { ticket_id: 'msg@customer-domain.example', origin: 'report', reason: 'why' };
+    const call = () => validateTriageArtifact({
+      ...makeArtifactShape(),
+      gold_source: 'real',
+      cases_selected: 2,
+      selections: [selection, { ...selection }],
+    });
+    expect(call).toThrow(/id digest [0-9a-f]{12}/);
+    expect(call).not.toThrow(/customer-domain\.example/);
+  });
+
+  // selections carry a case id and a model-written sentence about the
+  // customer's problem. The artifact is on gitignored disk either way;
+  // stdout is a terminal and a CI log.
+  it('withholds real selections from stdout, and prints a synthetic artifact whole', () => {
+    const shape = makeArtifactShape();
+    const real = summariseForStdout({ ...shape, gold_source: 'real' } as never);
+    expect(real).toContain('withheld');
+    expect(real).not.toContain('customer-domain.example');
+    const synthetic = summariseForStdout(shape as never);
+    expect(JSON.parse(synthetic)).toMatchObject({ gold_source: 'synthetic' });
+  });
+
+  it('records the provenance the caller declared', async () => {
+    const dir = tempDirUrl();
+    try {
+      const { artifact } = await runTriageJob({
+        judge: stubJudge(), cases: [makeCase()], goldSource: 'real', artifactDir: dir,
+      });
+      expect(artifact.gold_source).toBe('real');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -190,7 +274,7 @@ describe('triage run', () => {
       review: async () => ({ selected: true, reason: 'always' }),
     };
     await expect(
-      runTriageJob({ judge: anonymousJudge, cases: [makeCase()], artifactDir: tempDirUrl() }),
+      runTriageJob({ judge: anonymousJudge, cases: [makeCase()], goldSource: 'synthetic', artifactDir: tempDirUrl() }),
     ).rejects.toThrow('DEC-26');
   });
 
@@ -198,7 +282,7 @@ describe('triage run', () => {
     const dir = tempDirUrl();
     try {
       expect(await nextVersion(dir)).toBe(1);
-      await runTriageJob({ judge: stubJudge(), cases: [makeCase()], artifactDir: dir });
+      await runTriageJob({ judge: stubJudge(), cases: [makeCase()], goldSource: 'synthetic', artifactDir: dir });
       expect(await nextVersion(dir)).toBe(2);
       const loaded = await loadTriageArtifact(undefined, dir);
       expect(loaded?.version).toBe(1);

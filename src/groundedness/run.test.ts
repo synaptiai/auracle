@@ -2,11 +2,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { FakeProvider } from '../models/fake.js';
-import { runGroundednessJob } from './run.js';
+import { runGroundednessJob, scoreDraft } from './run.js';
 import { loadGoldHalf } from '../fixtures/load.js';
+import { identityOf } from '../fixtures/load.js';
 import type { GoldFile, GoldTicket } from '../fixtures/load.js';
 
 const tempDir = (): URL => pathToFileURL(mkdtempSync(join(tmpdir(), 'auracle-gjob-')));
@@ -187,6 +188,20 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
     }
   }, 30_000);
 
+  // Pre-existing, but this branch made the size rule conditional on a
+  // synthetic half — so on the real path this is now the only check on a
+  // declared count. The calibration twin has a case; these two did not.
+  it('refuses a half whose declared count disagrees with its tickets', async () => {
+    await expect(
+      runGroundednessJob({
+        provider: new FakeProvider([]),
+        fitHalf: { ...half([draft('A', 1, 0)]), count: 9 },
+        modelVer: 'test-stub',
+        artifactDir: tempDir(),
+      }),
+    ).rejects.toThrow(/declares 9 tickets but carries 1/);
+  });
+
   it('refuses the report half (DEC-31)', async () => {
     await expect(
       runGroundednessJob({
@@ -198,15 +213,189 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
     ).rejects.toThrow(/fit half only/);
   });
 
-  it('refuses a non-synthetic half (DEC-18)', async () => {
+  it('refuses a provenance outside the closed set (DEC-18)', async () => {
     await expect(
       runGroundednessJob({
         provider: new FakeProvider([]),
-        fitHalf: { ...half([draft('A', 1, 0)]), source: 'production' },
+        fitHalf: { ...half([draft('A', 1, 0)]), source: 'production' as GoldFile['source'] },
+        modelVer: 'test-stub',
+        artifactDir: tempDir(),
+        reportIdentity: identityOf({
+          split: 'report', source: 'real', count: 1,
+          tickets: [{ ...draft('Z', 1, 0), source: 'real' as const }],
+        }),
+      }),
+    ).rejects.toThrow(/expected one of synthetic, real/);
+  });
+
+  // A synthetic half draws its DEC-31 proof from the committed corpus. A real
+  // one has no such guarantee, so the job refuses to fit rather than publish
+  // a threshold whose disjointness nobody checked.
+  it('refuses a real half with no report half to prove the split against (DEC-31)', async () => {
+    await expect(
+      runGroundednessJob({
+        provider: new FakeProvider([]),
+        fitHalf: { ...half([draft('A', 1, 0)]), source: 'real' },
         modelVer: 'test-stub',
         artifactDir: tempDir(),
       }),
-    ).rejects.toThrow(/synthetic/);
+    ).rejects.toThrow(/report half/);
+  });
+
+  it('refuses a real half that overlaps its report half (DEC-31)', async () => {
+    const shared = draft('A', 1, 0);
+    await expect(
+      runGroundednessJob({
+        provider: new FakeProvider([]),
+        fitHalf: { split: 'fit', source: 'real', count: 1, tickets: [shared] },
+        modelVer: 'test-stub',
+        artifactDir: tempDir(),
+        reportIdentity: identityOf({ split: 'report', source: 'real', count: 1, tickets: [{ ...shared }] }),
+      }),
+    ).rejects.toThrow(/appears in both halves/);
+  });
+
+  it('fits on a labelled half from real history and records the provenance', async () => {
+    const tickets = [
+      ...Array.from({ length: 6 }, (_, i) => draft(`G-${i}`, 6, 0)),
+      ...Array.from({ length: 6 }, (_, i) => draft(`B-${i}`, 2, 4)),
+      ...Array.from({ length: 6 }, (_, i) => draft(`V-${i}`, 4, 2)),
+    ].map((ticket) => ({ ...ticket, source: 'real' as const }));
+    const misses = new Map(tickets.filter((t) => t.ticket_id.startsWith('V-')).map((t) => [t.ticket_id, 1]));
+    const dir = tempDir();
+    try {
+      const { artifact } = await runGroundednessJob({
+        provider: new FakeProvider(scriptFor(tickets, misses)),
+        fitHalf: { split: 'fit', source: 'real', count: tickets.length, tickets },
+        modelVer: 'test-stub',
+        artifactDir: dir,
+        // Equal size, as DEC-31 asks and assertHalvesDisjoint now enforces.
+        reportIdentity: identityOf({
+          split: 'report', source: 'real', count: tickets.length,
+          tickets: tickets.map((t, i) => ({ ...t, ticket_id: `R-${i}`, conversation_id: `R-${i}` })),
+        }),
+      });
+      expect(artifact.gold_source).toBe('real');
+      expect(artifact.block).toBeLessThan(artifact.review);
+      // F4: the coverage fit records the pair it proved, like the other two.
+      expect(artifact.fit_half_digest).toMatch(/^[0-9a-f]{16}$/);
+      expect(artifact.report_half_digest).toMatch(/^[0-9a-f]{16}$/);
+      expect(artifact.fit_half_digest).not.toBe(artifact.report_half_digest);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // F3: the DEC-31 bypass regression was pinned in the agreement fit only.
+  // Reinstating the early return here left this suite green, so the same
+  // defect could return in this job unnoticed.
+  it('checks a supplied report identity even when the half declares synthetic (DEC-31)', async () => {
+    const tickets = [draft('A', 1, 0)];
+    await expect(
+      runGroundednessJob({
+        provider: new FakeProvider([]),
+        fitHalf: { split: 'fit', source: 'synthetic', count: 1, tickets },
+        reportIdentity: identityOf({ split: 'report', source: 'synthetic', count: 1, tickets }),
+        modelVer: 'test-stub',
+        artifactDir: tempDir(),
+      }),
+    ).rejects.toThrow(/appears in both halves/);
+  });
+
+  // These redactions survived mutation in cycle 4: they were correct only by
+  // accident. This is the first fault a real fit half hits, because
+  // loadDocuments enforces the shipped DOC-SYN- prefixes.
+  it('names a real case and its cited document by digest, never in the clear', async () => {
+    const real: GoldTicket = {
+      ...draft('A', 1, 0),
+      ticket_id: 'msg@customer-domain.example',
+      source: 'real',
+      claims: [{ text: 'x', doc_id: 'THEIR-OWN-DOC-1', supported: true, grade: null }],
+    };
+    await expect(
+      scoreDraft(real, new Map(), new FakeProvider([]), { promptVer: 'p', modelVer: 'm' }, 'real'),
+    ).rejects.toThrow(/id digest [0-9a-f]{12}/);
+    await expect(
+      scoreDraft(real, new Map(), new FakeProvider([]), { promptVer: 'p', modelVer: 'm' }, 'real'),
+    ).rejects.not.toThrow(/customer-domain\.example/);
+    await expect(
+      scoreDraft(real, new Map(), new FakeProvider([]), { promptVer: 'p', modelVer: 'm' }, 'real'),
+    ).rejects.not.toThrow(/THEIR-OWN-DOC-1/);
+  });
+
+  // The direct-call case above proves scoreDraft redacts. It does not prove
+  // the JOB hands it the half's real provenance — and that wiring is what
+  // the register promises for the adopter path.
+  it('passes the half provenance through the job, not just to a direct call', async () => {
+    const real: GoldTicket = {
+      ...draft('A', 1, 0),
+      ticket_id: 'msg@customer-domain.example',
+      conversation_id: 'msg@customer-domain.example',
+      source: 'real',
+      claims: [{ text: 'x', doc_id: 'THEIR-OWN-DOC-1', supported: true, grade: null }],
+    };
+    const call = runGroundednessJob({
+      provider: new FakeProvider([]),
+      fitHalf: { split: 'fit', source: 'real', count: 1, tickets: [real] },
+      reportIdentity: identityOf({
+        split: 'report', source: 'real', count: 1,
+        tickets: [{ ...real, ticket_id: 'other@example.test', conversation_id: 'other@example.test' }],
+      }),
+      modelVer: 'test-stub',
+      artifactDir: tempDir(),
+    });
+    await expect(call).rejects.toThrow(/id digest [0-9a-f]{12}/);
+    await expect(call).rejects.not.toThrow(/customer-domain\.example/);
+  });
+
+  it('names a synthetic case plainly', async () => {
+    const synth: GoldTicket = {
+      ...draft('A', 1, 0),
+      claims: [{ text: 'x', doc_id: 'DOC-SYN-999', supported: true, grade: null }],
+    };
+    await expect(
+      scoreDraft(synth, new Map(), new FakeProvider([]), { promptVer: 'p', modelVer: 'm' }, 'synthetic'),
+    ).rejects.toThrow(/DOC-SYN-999/);
+  });
+
+  // Both added by this branch, neither covered: the refusal exists so a half
+  // with no labels names its own cause instead of dying inside the fitter
+  // with "needs both classes", and the warning is what tells an operator how
+  // much of their half was not scored.
+  it('refuses a half that carries no labelled claims, naming the cause (DEC-07)', async () => {
+    const bare = { ...draft('A', 1, 0) };
+    delete (bare as { claims?: unknown }).claims;
+    await expect(
+      runGroundednessJob({
+        provider: new FakeProvider([]),
+        fitHalf: half([bare]),
+        modelVer: 'test-stub',
+        artifactDir: tempDir(),
+      }),
+    ).rejects.toThrow(/carries no labelled claims across 1 cases/);
+  });
+
+  it('reports how many cases carry no labelled claims', async () => {
+    const labelled = Array.from({ length: 6 }, (_, i) => draft(`G-${i}`, 6, 0))
+      .concat(Array.from({ length: 6 }, (_, i) => draft(`B-${i}`, 2, 4)))
+      .concat(Array.from({ length: 6 }, (_, i) => draft(`V-${i}`, 4, 2)));
+    const bare = { ...draft('Z', 1, 0) };
+    delete (bare as { claims?: unknown }).claims;
+    const misses = new Map(labelled.filter((t) => t.ticket_id.startsWith('V-')).map((t) => [t.ticket_id, 1]));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const dir = tempDir();
+    try {
+      await runGroundednessJob({
+        provider: new FakeProvider(scriptFor(labelled, misses)),
+        fitHalf: half([...labelled, bare]),
+        modelVer: 'test-stub',
+        artifactDir: dir,
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('1 of 19 fit-half cases'));
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('needs a pinned model version (DEC-26)', async () => {
