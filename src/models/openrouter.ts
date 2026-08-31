@@ -1,3 +1,4 @@
+import { UnreadableAnswerError } from './provider.js';
 import type {
   ChatRequest,
   ChatResult,
@@ -57,6 +58,14 @@ function usdToMicros(usd: number): number {
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null) {
+    // Untyped. A body that does not parse to an object is a malformed
+    // response rather than an answer this module could not read, and a
+    // gateway artifact belongs with the transport failures the queue retries.
+    //
+    // This helper reads the transport envelope AND parts of the answer, so
+    // the two call sites that read the answer use `shapedRecord` below. An
+    // earlier revert typed neither and put two adjacent embed shapes on
+    // opposite sides of the line.
     throw new Error('OpenRouter returned a non-object response');
   }
   return value as Record<string, unknown>;
@@ -66,6 +75,20 @@ function asRecord(value: unknown): Record<string, unknown> {
 interface UsageShape {
   usage: TokenUsage | null;
   usdCost: number | null;
+}
+
+/**
+ * Reads a record out of the answer, not out of the envelope.
+ *
+ * A choice that carries no `message`, or an embedding item that is not an
+ * object, is a response shape this module cannot read: typed, so the run ends
+ * instead of cycling the queue's retry ceiling (DEC-30).
+ */
+function shapedRecord(value: unknown, shape: string, what: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) {
+    throw new UnreadableAnswerError(`OpenRouter ${what}`, shape);
+  }
+  return value as Record<string, unknown>;
 }
 
 function parseUsage(raw: unknown): UsageShape {
@@ -120,6 +143,11 @@ async function postJson(
   return asRecord(JSON.parse(text));
 }
 
+// A response whose shape this module cannot read is a fault the provider will
+// reproduce, so it is typed and escalates. A transport failure, a timeout and
+// an HTTP status are transient and stay untyped, so the queue still retries
+// them (DEC-30).
+
 /**
  * The one model provider (DEC-16). Speaks OpenRouter's OpenAI-compatible
  * HTTP API directly. Every result records the served model id next to the
@@ -165,20 +193,67 @@ export class OpenRouterProvider implements ModelProvider {
     const response = await postJson(this.config, '/chat/completions', body);
     const choices = response.choices;
     if (!Array.isArray(choices) || choices.length === 0) {
-      throw new Error('OpenRouter chat response has no choices');
+      throw new UnreadableAnswerError('OpenRouter chat response has no choices', 'no-choices');
     }
-    const message = asRecord(
-      asRecord(choices[0]!).message as unknown,
+    const message = shapedRecord(
+      shapedRecord(choices[0], 'no-choice', 'choice is not an object').message,
+      'no-message',
+      'chat choice carries no message',
     );
-    const content = message.content;
-    if (typeof content !== 'string') {
-      throw new Error('OpenRouter chat choice has no text content');
+    // Truncation is decided first, and before the shape of the content, because
+    // the worst truncation has no content at all: a model that spends the whole
+    // budget reasoning returns a null content with finish_reason 'length'. That
+    // is the only truncation this repository has actually observed, and an
+    // earlier ordering of these two checks reported it as an untyped fault that
+    // no caller could tell from a protocol error. It then propagated uncaught,
+    // which is the defect the typed fault exists to remove (DEC-30).
+    //
+    // The usage is parsed first so the fault can carry the spend. A truncated
+    // call exhausted its budget by definition, so it is the most expensive call
+    // of the run, and dropping its cost understates the run (DEC-25).
+    const parsed = parseUsage(response.usage);
+    const finishReason = asRecord(choices[0]!).finish_reason;
+    if (finishReason === 'length') {
+      // DEC-25 refuses to report a cost of zero as though it were measured,
+      // and the fault must stay typed: every handler discriminates on this
+      // type, so an untyped throw here skips the compose catch, the gate
+      // catch, the meter's credit and the fitting job's drop, and the run
+      // never terminates. The two rules meet by saying the spend is unknown
+      // rather than by saying it is zero, or by saying nothing at all.
+      const known = parsed.usdCost !== null;
+      throw new UnreadableAnswerError(
+        `the model stopped at the answer budget of ${String(call.maxOutputTokens ?? 'unset')} `
+          + `tokens for ${call.modelVer}; the answer is incomplete and is not a result`
+          + (known ? '' : '; the provider reported no cost for it (DEC-25)'),
+        'truncated',
+        known ? usdToMicros(parsed.usdCost as number) : 0,
+        !known,
+      );
     }
 
-    const parsed = parseUsage(response.usage);
+    const content = message.content;
+    if (typeof content !== 'string') {
+      // Typed like its neighbours. A content filter, a provider error, or a
+      // reasoning model that emits only a reasoning field all land here on a
+      // finish reason other than 'length', and an untyped throw skips every
+      // handler and leaves the run non-terminal (DEC-30).
+      throw new UnreadableAnswerError(
+        'OpenRouter chat choice has no text content',
+        'no-content',
+        parsed.usdCost === null ? 0 : usdToMicros(parsed.usdCost),
+        parsed.usdCost === null,
+      );
+    }
     if (parsed.usdCost === null || parsed.usage === null) {
-      throw new Error(
+      // Typed, for the same reason the truncated branch above is: a response
+      // shape the provider will reproduce is not transient, and an untyped
+      // throw here skips every handler and leaves the run non-terminal. The
+      // cost is unknown rather than zero (DEC-25, DEC-30).
+      throw new UnreadableAnswerError(
         'OpenRouter chat response carries no usage.cost; refusing to report zero (DEC-25)',
+        'no-cost',
+        0,
+        true,
       );
     }
     const servedModelVer =
@@ -212,17 +287,23 @@ export class OpenRouterProvider implements ModelProvider {
     const response = await postJson(this.config, '/embeddings', body);
     const data = response.data;
     if (!Array.isArray(data)) {
-      throw new Error('OpenRouter embeddings response has no data array');
+      throw new UnreadableAnswerError(
+        'OpenRouter embeddings response has no data array',
+        'no-data',
+      );
     }
     const vectors = data.map((item) => {
-      const record = asRecord(item);
+      const record = shapedRecord(item, 'no-item', 'embedding item is not an object');
       const embedding = record.embedding;
       if (!Array.isArray(embedding)) {
-        throw new Error('OpenRouter embedding item has no vector');
+        throw new UnreadableAnswerError('OpenRouter embedding item has no vector', 'no-vector');
       }
       return embedding.map((component) => {
         if (typeof component !== 'number') {
-          throw new Error('OpenRouter embedding vector has a non-number component');
+          throw new UnreadableAnswerError(
+            'OpenRouter embedding vector has a non-number component',
+            'bad-vector',
+          );
         }
         return component;
       });
@@ -230,7 +311,12 @@ export class OpenRouterProvider implements ModelProvider {
 
     const parsed = parseUsage(response.usage);
     if (parsed.usage === null) {
-      throw new Error('OpenRouter embeddings response carries no usage (DEC-25)');
+      throw new UnreadableAnswerError(
+        'OpenRouter embeddings response carries no usage (DEC-25)',
+        'no-usage',
+        0,
+        true,
+      );
     }
     let usdCost = parsed.usdCost;
     if (usdCost === null) {

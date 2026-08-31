@@ -9,9 +9,9 @@
 // - TICKET_DEADLINE_MS    per-ticket clock budget in milliseconds (DEC-25,
 //                         default: 60000)
 // - OPENROUTER_API_KEY    provider credential
-// - MODEL_VER             chat model pin (default: stealth/ox-alpha)
-// - EMBED_MODEL_VER       embedding model pin for retrieval (stealth chat
-//                         models do not embed; default: openai/text-embedding-3-small)
+// - MODEL_VER             chat model pin (default: z-ai/glm-5.3-flash)
+// - EMBED_MODEL_VER       embedding model pin for retrieval (the chat model
+//                         does not embed; default: openai/text-embedding-3-small)
 // - PROMPT_VER            prompt version pin (default: consumer-prompt-v1)
 // - ACTION_CLASS          action class each run executes (default: route_ticket)
 // - ACTION_DELIVERY       delivery rule: at_most_once | at_least_once
@@ -48,7 +48,7 @@ import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.
 import type { EgressAdapter } from '../adapters/types.js';
 import { resolveThresholds } from '../calibration/resolve.js';
 import { actionProfileFromEnv } from '../config/action-profile.js';
-import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
+import { loadDotEnv, dataGuaranteeOption, DEFAULT_CHAT_MODEL_VER } from '../config/env.js';
 import { requireDbUrl } from '../db/config.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { claimPartition, startConsumer } from './consumer.js';
@@ -134,11 +134,11 @@ async function main(): Promise<void> {
     egress,
     pins: {
       promptVer: process.env['PROMPT_VER'] ?? 'consumer-prompt-v1',
-      // stealth/ox-alpha is the user-approved starting chat model. Override
-      // with MODEL_VER.
-      modelVer: process.env['MODEL_VER'] ?? 'stealth/ox-alpha',
+      // The default lives in one place, beside the guarantee it carries.
+      // Override with MODEL_VER.
+      modelVer: process.env['MODEL_VER'] ?? DEFAULT_CHAT_MODEL_VER,
     },
-    // Embeddings are a separate pin: stealth chat models do not embed, so the
+    // Embeddings are a separate pin: the chat model does not embed, so the
     // retrieval query embeds through its own model (EMBED_MODEL_VER).
     embedModelVer: process.env['EMBED_MODEL_VER'] ?? 'openai/text-embedding-3-small',
     // Rolling per-ticket clock: the getter re-reads at each check, so a

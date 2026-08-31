@@ -346,6 +346,67 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
     }
   });
 
+  it('records the attrition it fitted through, and refuses above the ceiling', async () => {
+    const dir = tempDirUrl();
+    try {
+      // Twenty cases, one of them carrying a single unreadable sample: 5 per
+      // cent, at the ceiling and not above it.
+      const tickets = Array.from({ length: 20 }, (_, i) =>
+        realTicket('refund-request', `c${i}@example.test`),
+      );
+      const script = scriptUnanimous(tickets) as { text?: string; finishReason?: string }[];
+      script[0] = { finishReason: 'length' };
+      const { artifact } = await runCalibrationJob({
+        provider: new FakeProvider(script),
+        taxonomy: TAXONOMY,
+        fitHalf: { split: 'fit', source: 'real', count: 20, tickets },
+        reportIdentity: identityOf({
+          split: 'report', source: 'real', count: 20,
+          tickets: Array.from({ length: 20 }, (_, i) =>
+            realTicket('refund-request', `d${i}@example.test`)),
+        }),
+        artifactDir: dir,
+        ...PIN,
+      });
+      // The values, not merely the fields: without these the whole feature
+      // can be deleted and the suite does not notice.
+      expect(artifact.unreadable_samples).toBe(1);
+      expect(artifact.tickets_with_unreadable).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to fit when too many cases carry an unreadable sample', async () => {
+    const dir = tempDirUrl();
+    try {
+      const tickets = Array.from({ length: 12 }, (_, i) =>
+        realTicket('refund-request', `e${i}@example.test`),
+      );
+      const script = scriptUnanimous(tickets) as { text?: string; finishReason?: string }[];
+      // One case of twelve is 8.3 per cent: above this ceiling and below a
+      // looser one. Two of ten passes a ceiling three times too wide, so that
+      // rate alone left the constant's value unpinned.
+      script[0] = { finishReason: 'length' };
+      await expect(
+        runCalibrationJob({
+          provider: new FakeProvider(script),
+          taxonomy: TAXONOMY,
+          fitHalf: { split: 'fit', source: 'real', count: 12, tickets },
+          reportIdentity: identityOf({
+            split: 'report', source: 'real', count: 12,
+            tickets: Array.from({ length: 12 }, (_, i) =>
+              realTicket('refund-request', `f${i}@example.test`)),
+          }),
+          artifactDir: dir,
+          ...PIN,
+        }),
+      ).rejects.toThrow(/ceiling/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('accepts a labelled half from real history, of any size', async () => {
     const dir = tempDirUrl();
     try {
@@ -573,6 +634,27 @@ describe('calibration artifact round-trip', () => {
   // The digest shape had no negative case in either job: a value that is
   // neither null nor a digest loaded clean, so the field could carry
   // anything while claiming to name the pair a run proved.
+  it('refuses an attrition count that is not a count', () => {
+    // A published threshold must state the evidence it was missing: unreadable
+    // samples lowered agreement without being a judgement.
+    expect(() => validateCalibrationArtifact({ ...BASE, unreadable_samples: -1 })).toThrow(
+      /unreadable_samples/,
+    );
+    expect(() => validateCalibrationArtifact({ ...BASE, unreadable_samples: 1.5 })).toThrow(
+      /unreadable_samples/,
+    );
+  });
+
+  it('starts against an artifact written before the attrition count existed', () => {
+    // The one field rule that accepts absence. This artifact is read at
+    // startup by every daemon, and refusing an older one would stop the
+    // system over a number the job now records — the blocking chain this
+    // repository removed, rebuilt in a different key.
+    const raw = { ...BASE } as Record<string, unknown>;
+    delete raw['unreadable_samples'];
+    expect(() => validateCalibrationArtifact(raw)).not.toThrow();
+  });
+
   it('refuses a digest that is neither null nor a digest', () => {
     for (const field of ['fit_half_digest', 'report_half_digest'] as const) {
       expect(() => validateCalibrationArtifact({ ...BASE, [field]: 'not-a-digest' }))
@@ -589,6 +671,7 @@ describe('calibration artifact round-trip', () => {
     split_used: 'fit',
     scope: 'first_turn',
     fit_tickets: 385,
+    unreadable_samples: 0,
     fit_half_digest: null,
     report_half_digest: null,
     prompt_ver: 'classify-p1',

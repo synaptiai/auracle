@@ -23,8 +23,9 @@ function makeArtifact(over: Partial<GroundednessArtifact> = {}): GroundednessArt
     report_half_digest: null,
     split_used: 'fit',
     fit_drafts: 385,
+    faulted_drafts: 0,
     prompt_ver: 'ground-p1',
-    model_ver: 'stealth/ox-alpha',
+    model_ver: 'z-ai/glm-5.3-flash',
     target_precision: 0.985,
     target_npv: 0.9,
     block: 0.6,
@@ -45,6 +46,17 @@ describe('the DEC-31 proof a real run must carry', () => {
   // sweep that claimed to cover the branch's guards never mutated it. The
   // non-null rule below is tested, so without this any junk string satisfied
   // the proof-binding this change argues hardest for.
+  it('refuses an artifact that does not say how many drafts it dropped', () => {
+    // A published threshold must state its attrition: a reader cannot tell
+    // 385 of 385 from 366 of 385 without it.
+    const raw = makeArtifact() as unknown as Record<string, unknown>;
+    delete raw['faulted_drafts'];
+    expect(() => validateGroundednessArtifact(raw)).toThrow(/faulted_drafts/);
+    expect(() => validateGroundednessArtifact({ ...makeArtifact(), faulted_drafts: -1 })).toThrow(
+      /faulted_drafts/,
+    );
+  });
+
   it('refuses a digest that is neither null nor a digest', () => {
     for (const field of ['fit_half_digest', 'report_half_digest'] as const) {
       expect(() => validateGroundednessArtifact(makeArtifact({ [field]: 'not-a-digest' })))

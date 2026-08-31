@@ -196,7 +196,7 @@ The ledger holds all state. No component keeps state outside the ledger.
 CREATE TABLE run (
   run_id       uuid PRIMARY KEY,
   ticket_id    text    NOT NULL,
-  partition    integer NOT NULL,   -- DEC-27: hash(ticket_id) % N
+  partition    integer NOT NULL,   -- DEC-36: hash(conversation_id) % N
   epoch        bigint  NOT NULL,   -- DEC-28: fencing token
   state        text    NOT NULL,
   prompt_ver   text    NOT NULL,
@@ -231,9 +231,14 @@ CREATE TABLE outbox (
 ```
 
 **Partitions.** The system removes the concurrency. It does not control the
-concurrency. `hash(ticket_id)` gives the partition. One consumer owns each
-partition. Therefore two runs on one ticket cannot occur together. The cost is a
-procedure to rebalance the partitions at each deployment.
+concurrency. `hash(conversation_id)` gives the partition, and the ticket id
+serves when a run has no conversation. One consumer owns each partition, so
+two runs on one conversation cannot occur together.
+
+Two runs on one ticket still can, when one of them carries no conversation and
+hashes elsewhere. The fencing epoch below covers that case, because it is
+keyed on the ticket. The cost is a procedure to rebalance the partitions at
+each deployment.
 
 **The fencing epoch.** During a rebalance, two consumers can own one partition
 for a short time. Each write carries its epoch. The `ticket_epoch` table records
@@ -799,7 +804,10 @@ Item 6 was a schema migration procedure for adopters.
 in `schema_version`.
 
 Item 7 was a correction for head-of-line delay in a
-partition. `db/005_run_timing.sql` adds the columns the latency report reads.
+partition. `db/005_run_timing.sql` adds the timing columns such a correction
+needs. Nothing reads them yet. The service time of a run is the difference
+between its finish and its creation, and the wait is the difference between
+its pickup and its arrival.
 
 ### 7.1 Where the V2 design documents live
 

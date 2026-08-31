@@ -19,6 +19,11 @@ Three commands define the contract. Each must exit 0.
 | `pnpm test` | Runs every test. All tests must pass. |
 | `pnpm run lint` | Runs ESLint. No findings may appear. |
 
+A job that calls a model reads `MODEL_VER`, and the default is
+`z-ai/glm-5.3-flash`. That model reasons before it answers, and the provider
+bills the reasoning against the answer budget. So a call that expects a short
+answer still allows room for the reasoning before it.
+
 Run all three before you open a pull request.
 Paste the output of each command into the pull request description.
 State the exit code next to each output.

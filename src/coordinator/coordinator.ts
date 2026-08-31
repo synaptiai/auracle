@@ -32,6 +32,7 @@ import {
   type FencedOutboxInput,
 } from '../ledger/insert.js';
 import { deriveIdemKey } from '../ledger/keys.js';
+import { UnreadableAnswerError } from '../models/provider.js';
 import type { ModelProvider, PinnedVersions } from '../models/provider.js';
 import { SEED_THRESHOLDS, evaluatePolicy } from '../policy/policy.js';
 import type { AdapterCapabilities, GateThresholds, RiskTier } from '../policy/policy.js';
@@ -97,7 +98,7 @@ export interface CoordinatorDeps {
   pins: PinnedVersions;
   /**
    * Model pin for the retrieval embedding, separate from pins.modelVer:
-   * stealth chat models do not embed, so the query vector may come from a
+   * the chat model does not embed, so the query vector may come from a
    * different model. Falls back to pins.modelVer when absent.
    */
   embedModelVer?: string;
@@ -196,7 +197,17 @@ export type EscalationReason =
   | 'policy_escalated'
   | 'park_unresolved'
   /** The egress refused the action and a retry can never clear it. */
-  | 'egress_refused';
+  | 'egress_refused'
+  /** The coverage judge answered, and the answer carried no verdict. */
+  | 'gate_unreadable'
+  /** The composer answered, and the answer carried neither a draft nor an abstain. */
+  | 'composer_unreadable'
+  /** Every classifier sample was unreadable, so agreement measured nothing. */
+  | 'classifier_unreadable'
+  /** Samples were readable and named no intent this taxonomy holds. */
+  | 'classifier_no_label'
+  /** The embedder answered with something the retriever could not read. */
+  | 'retriever_unreadable';
 
 export type CoordinateOutcome =
   | { runId: string; outcome: 'resolved' }
@@ -227,12 +238,33 @@ function meterProvider(provider: ModelProvider): {
   return {
     provider: {
       async complete(call) {
-        const result = await provider.complete(call);
+        let result;
+        try {
+          result = await provider.complete(call);
+        } catch (error) {
+          // A refused call still cost money. A truncated one exhausted its
+          // answer budget by definition, so it is the most expensive call of
+          // the run, and metering only the calls that returned understated
+          // the run by its largest one (DEC-25). Counting it here covers
+          // every caller, including the classifier, which reads an
+          // unreadable sample as a vote against agreement and moves on.
+          if (error instanceof UnreadableAnswerError) costMicros += error.costMicros;
+          throw error;
+        }
         costMicros += result.costMicros;
         return result;
       },
       async embed(call) {
-        const result = await provider.embed(call);
+        let result;
+        try {
+          result = await provider.embed(call);
+        } catch (error) {
+          // The same credit the chat path takes. An embed fault carries zero
+          // today, but an asymmetry here would silently swallow a real number
+          // the moment one carried it (DEC-25).
+          if (error instanceof UnreadableAnswerError) costMicros += error.costMicros;
+          throw error;
+        }
         costMicros += result.costMicros;
         return result;
       },
@@ -404,16 +436,46 @@ export async function coordinateTicket(
   if (earlyLimit !== null) return stopEscalated(earlyLimit);
 
   await journalStart('classify');
-  const classification = await classifyTicket(meter.provider, {
-    taxonomy: deps.taxonomy,
-    ticketText: input.ticketText,
-    history: input.history ?? [],
-    ...deps.pins,
-  });
+  let classification;
+  try {
+    classification = await classifyTicket(meter.provider, {
+      taxonomy: deps.taxonomy,
+      ticketText: input.ticketText,
+      history: input.history ?? [],
+      ...deps.pins,
+    });
+  } catch (error) {
+    // The third fault path, and the one the metering fix left unpersisted:
+    // the meter counted every truncated sample and nothing wrote the total to
+    // the run, because this step had no catch. It also went round the retry
+    // ceiling, which nine truncated samples reproduce on every pass.
+    if (error instanceof UnreadableAnswerError) {
+      progress.stepsUsed++;
+      await journalFinish('classify', 'failed', {
+        shape: error.shape,
+        ...(error.costUnknown ? { costUnknown: true } : {}),
+        error: error.message,
+      });
+      // The shape decides the reason. Samples that answered with labels this
+      // taxonomy does not hold is a taxonomy or prompt fault, and sending an
+      // operator to check the answer budget for it wastes their time.
+      return stopEscalated(
+        error.shape === 'no-label' ? 'classifier_no_label' : 'classifier_unreadable',
+      );
+    }
+    throw error;
+  }
   progress.stepsUsed++;
   await journalFinish('classify', 'done', {
     intentId: classification.intentId,
     agreement: classification.agreement,
+    // An agreement depressed by samples nobody could read is not the same
+    // number as one the model actually disagreed on, and this is the one path
+    // where a customer is waiting. Recorded beside it, not instead of it.
+    ...(classification.unreadableSamples > 0
+      ? { unreadableSamples: classification.unreadableSamples }
+      : {}),
+    ...(classification.costUnknown ? { costUnknown: true } : {}),
   });
   const classified = await transitionOrStop('classified');
   if (classified !== null) return classified;
@@ -425,14 +487,36 @@ export async function coordinateTicket(
 
   await journalStart('retrieve');
   const embedModelVer = deps.embedModelVer ?? deps.pins.modelVer;
-  const embedded = await meter.provider.embed({
-    input: [input.ticketText],
-    ...deps.pins,
-    modelVer: embedModelVer,
-  });
+  let embedded;
+  try {
+    embedded = await meter.provider.embed({
+      input: [input.ticketText],
+      ...deps.pins,
+      modelVer: embedModelVer,
+    });
+  } catch (error) {
+    // The fourth step that reads a model answer, and the last one with no
+    // catch. A response shape the provider will reproduce is not transient,
+    // so it ends the run here rather than going round the queue's ceiling.
+    if (error instanceof UnreadableAnswerError) {
+      progress.stepsUsed++;
+      await journalFinish('retrieve', 'failed', {
+        shape: error.shape,
+        ...(error.costUnknown ? { costUnknown: true } : {}),
+        error: error.message,
+      });
+      return stopEscalated('retriever_unreadable');
+    }
+    throw error;
+  }
   const queryVector = embedded.vectors[0];
   if (queryVector === undefined) {
-    throw new Error('embedder returned no vector for the retrieval query');
+    progress.stepsUsed++;
+    await journalFinish('retrieve', 'failed', {
+      shape: 'no-vector',
+      error: 'embedder returned no vector for the retrieval query',
+    });
+    return stopEscalated('retriever_unreadable');
   }
   const docs: RetrievedDoc[] = await hybridSearch(
     deps.pool,
@@ -456,10 +540,28 @@ export async function coordinateTicket(
   if (composeLimit !== null) return stopEscalated(composeLimit);
 
   await journalStart('compose');
-  const composed = await composeAnswer(
-    { question: input.ticketText, docs, history: input.history ?? [] },
-    { provider: meter.provider, ...deps.pins },
-  );
+  let composed;
+  try {
+    composed = await composeAnswer(
+      { question: input.ticketText, docs, history: input.history ?? [] },
+      { provider: meter.provider, ...deps.pins },
+    );
+  } catch (error) {
+    // An abstain is a determination and escalates below with its own reason.
+    // An unreadable answer is a fault, and it must not borrow that reason.
+    if (error instanceof UnreadableAnswerError) {
+      // The meter already counted the faulting call's spend (DEC-25). The
+      // step still happened, so it still counts.
+      progress.stepsUsed++;
+      await journalFinish('compose', 'failed', {
+        shape: error.shape,
+        ...(error.costUnknown ? { costUnknown: true } : {}),
+        error: error.message,
+      });
+      return stopEscalated('composer_unreadable');
+    }
+    throw error;
+  }
   progress.stepsUsed++;
   await journalFinish('compose', composed.abstained ? 'abstained' : 'done', {
     abstained: composed.abstained,
@@ -484,13 +586,32 @@ export async function coordinateTicket(
   // Every claim here already carries a citation the composer resolved to a
   // retrieved document (DEC-07), so the coverage denominator is fixed by the
   // composer rather than chosen by a second model call.
-  const grounded = await checkGroundedness(
-    {
-      claims: composed.claims.map((claim) => claim.text),
-      retrievedTexts: docs.map((doc) => doc.body),
-    },
-    { provider: meter.provider, versions: deps.pins },
-  );
+  let grounded;
+  try {
+    grounded = await checkGroundedness(
+      {
+        claims: composed.claims.map((claim) => claim.text),
+        retrievedTexts: docs.map((doc) => doc.body),
+      },
+      { provider: meter.provider, versions: deps.pins },
+    );
+  } catch (error) {
+    // A fault, not a verdict, and not transient: the judge runs at
+    // temperature 0, so the retry ceiling would spend a full pipeline run per
+    // scan and file an orphan run each time, then abandon. Finish the step and
+    // escalate here, so the run reaches a terminal state, the spend reaches
+    // the ledger, and an operator sees the reason (DEC-25, DEC-30).
+    if (error instanceof UnreadableAnswerError) {
+      progress.stepsUsed++;
+      await journalFinish('gate', 'failed', {
+        shape: error.shape,
+        ...(error.costUnknown ? { costUnknown: true } : {}),
+        error: error.message,
+      });
+      return stopEscalated('gate_unreadable');
+    }
+    throw error;
+  }
   const intent = deps.taxonomy.intents.find((i) => i.id === classification.intentId);
   if (intent === undefined) {
     throw new Error(

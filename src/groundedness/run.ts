@@ -16,6 +16,7 @@
 // section 6 keeps its caveat when it happens.
 
 import { checkGroundedness } from './groundedness.js';
+import { UnreadableAnswerError } from '../models/provider.js';
 import { fitCoverageThresholds } from './fit.js';
 import type { CoverageSample } from './fit.js';
 import {
@@ -45,6 +46,21 @@ import { pathToFileURL } from 'node:url';
 export const DEFAULT_TARGET_PRECISION = 0.985;
 export const DEFAULT_TARGET_NPV = 0.9;
 const DEFAULT_PROMPT_VER = 'ground-p1';
+
+/**
+ * How many drafts the judge may fail to score before the run is meaningless.
+ *
+ * A policy choice, not a fitted number. The one measurement this repository
+ * holds saw no faulted draft in fifty-two against the pinned model, which
+ * bounds the rate loosely and cannot justify a ceiling on its own. Five in a
+ * hundred leaves room for a rare fault and none for a systemic one.
+ *
+ * Attrition is not free even below the ceiling: a judge that faults more
+ * often on long drafts drops the negatives that set the block threshold, and
+ * the surviving sample then flatters the fit. The artifact records the count
+ * so a reader can see how much of the half was dropped.
+ */
+const MAX_FAULTED_SHARE = 0.05;
 
 export interface GroundednessRunOptions {
   provider: ModelProvider;
@@ -171,11 +187,40 @@ export async function runGroundednessJob(
   }
   const scored = options.limit === undefined ? drafts : drafts.slice(0, options.limit);
 
+  // One unreadable answer must not discard a whole fitting run. The runtime
+  // escalates such a draft because a customer is waiting on it; this job is
+  // offline and its correct answer is to drop the draft it could not score and
+  // say how many it dropped. A systemic fault still fails: above the ceiling
+  // the sample no longer represents the half, and a threshold fitted on it
+  // would carry a confidence the data does not support.
   const samples: CoverageSample[] = [];
+  const faulted: string[] = [];
   for (const ticket of scored) {
-    samples.push(
-      await scoreDraft(ticket, bodies, options.provider, { promptVer, modelVer }, fitHalf.source),
+    try {
+      samples.push(
+        await scoreDraft(ticket, bodies, options.provider, { promptVer, modelVer }, fitHalf.source),
+      );
+    } catch (error) {
+      if (!(error instanceof UnreadableAnswerError)) throw error;
+      faulted.push(label(ticket.ticket_id, fitHalf.source));
+    }
+  }
+  if (faulted.length > 0) {
+    const share = faulted.length / scored.length;
+    if (share > MAX_FAULTED_SHARE) {
+      throw new Error(
+        `the coverage judge returned an unreadable answer on ${faulted.length} of `
+          + `${scored.length} drafts, above the ${MAX_FAULTED_SHARE} ceiling; the scored `
+          + 'sample no longer represents the half (DEC-07)',
+      );
+    }
+    console.warn(
+      `dropped ${faulted.length} of ${scored.length} drafts the judge could not score: `
+        + faulted.join(', '),
     );
+  }
+  if (samples.length === 0) {
+    throw new Error('the coverage judge scored no draft at all (DEC-07)');
   }
 
   const fit = fitCoverageThresholds(samples, { targetPrecision, targetNpv });
@@ -191,6 +236,7 @@ export async function runGroundednessJob(
       options.reportIdentity === undefined ? null : halfDigest(options.reportIdentity),
     split_used: 'fit',
     fit_drafts: samples.length,
+    faulted_drafts: faulted.length,
     prompt_ver: promptVer,
     model_ver: modelVer,
     target_precision: targetPrecision,
@@ -294,7 +340,8 @@ async function main(): Promise<void> {
     ...(limit === undefined ? {} : { limit }),
   });
   console.log(
-    `fitted coverage thresholds v${artifact.version} on ${artifact.fit_drafts} drafts: `
+    `fitted coverage thresholds v${artifact.version} on ${artifact.fit_drafts} drafts `
+      + `(${artifact.faulted_drafts} dropped unscored): `
       + `block ${artifact.block} (npv ${artifact.block_npv.toFixed(3)}), `
       + `review ${artifact.review} (precision ${artifact.review_precision.toFixed(3)}, `
       + `coverage ${artifact.review_coverage.toFixed(3)})`,

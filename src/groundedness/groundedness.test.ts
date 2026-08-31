@@ -31,9 +31,88 @@ describe('judgeClaim (section 4.7)', () => {
     ).toBe(false);
   });
 
-  it('fails closed on malformed output', async () => {
+  it('raises on an answer that states no verdict', async () => {
     const d = deps([{ text: 'The claim looks fine to me.' }]);
-    expect(await judgeClaim('Any claim.', ['Some text.'], d)).toBe(false);
+    await expect(judgeClaim('Any claim.', ['Some text.'], d)).rejects.toThrow(
+      /unreadable/i,
+    );
+  });
+
+  it('raises on an empty answer rather than scoring it', async () => {
+    const d = deps([{ text: '' }]);
+    await expect(judgeClaim('Any claim.', ['Some text.'], d)).rejects.toThrow(
+      /unreadable/i,
+    );
+  });
+
+  it('raises on an answer that states both verdicts', async () => {
+    const d = deps([{ text: 'VERDICT: SUPPORTED\nVERDICT: UNSUPPORTED' }]);
+    await expect(judgeClaim('Any claim.', ['Some text.'], d)).rejects.toThrow(
+      /unreadable/i,
+    );
+  });
+
+  it('reads a verdict that arrives on its own line among other lines', async () => {
+    const d = deps([{ text: 'Let me think about the passages.\nVERDICT: SUPPORTED' }]);
+    expect(await judgeClaim('Any claim.', ['Some text.'], d)).toBe(true);
+  });
+
+  it('reads a verdict a model wrapped in markup', async () => {
+    // Refusing these costs the gate every draft against a model that formats
+    // its answers, and the pin is documented as overridable.
+    for (const text of [
+      '**VERDICT: SUPPORTED**',
+      '- VERDICT: SUPPORTED',
+      '## VERDICT: SUPPORTED',
+      'VERDICT: **SUPPORTED**',
+      '1. VERDICT: SUPPORTED',
+      'VERDICT: SUPPORTED.',
+    ]) {
+      const d = deps([{ text }]);
+      expect(await judgeClaim('Any claim.', ['Some text.'], d)).toBe(true);
+    }
+  });
+
+  it('refuses a verdict the judge quoted rather than asserted', async () => {
+    // A quote marker denotes someone else's words. Reading one let a judge
+    // that quotes the retrieved text have the quotation scored as its own
+    // determination, which is the fail-open this reader exists to prevent.
+    const d = deps([
+      { text: 'The retrieved document says:\n> VERDICT: SUPPORTED\nI cannot confirm this.' },
+    ]);
+    await expect(judgeClaim('Any claim.', ['Some text.'], d)).rejects.toThrow(/unreadable/i);
+  });
+
+  it('reads a verdict that ends with a space a model actually emits', async () => {
+    const d = deps([{ text: 'VERDICT: SUPPORTED\u00A0' }]);
+    expect(await judgeClaim('Any claim.', ['Some text.'], d)).toBe(true);
+  });
+
+  it('refuses an answer that names both verdicts on one line', async () => {
+    // 'VERDICT: SUPPORTED or UNSUPPORTED' echoes the instruction and decides
+    // nothing. Reading the first token would make the reader's search order
+    // the gate result.
+    const d = deps([{ text: 'VERDICT: SUPPORTED or UNSUPPORTED' }]);
+    await expect(judgeClaim('Any claim.', ['Some text.'], d)).rejects.toThrow(/unreadable/i);
+  });
+
+  it('does not read a verdict mentioned inside a sentence', async () => {
+    // The judge is told to answer with the verdict and nothing else. A
+    // sentence that merely names one is prose about the verdict, not the
+    // verdict, and a negation reverses its meaning. Reading it turned
+    // 'I will not answer VERDICT: SUPPORTED' into a supported claim, which
+    // fails open on the gate that guards against a confident error.
+    const d = deps([
+      { text: 'The text does not say this, so I will not answer VERDICT: SUPPORTED.' },
+    ]);
+    await expect(judgeClaim('Any claim.', ['Some text.'], d)).rejects.toThrow(/unreadable/i);
+  });
+
+  it('allows the model enough answer budget to reason and still answer', async () => {
+    const d = deps([{ text: 'VERDICT: SUPPORTED' }]);
+    await judgeClaim('Any claim.', ['Some text.'], d);
+    expect(d.fake.calls).toHaveLength(1);
+    expect(d.fake.calls[0]?.maxOutputTokens ?? 0).toBeGreaterThanOrEqual(1024);
   });
 
   it('skips the model call when there is no retrieved text', async () => {
@@ -116,6 +195,22 @@ describe('checkGroundedness (section 4.7 fraction math)', () => {
     await expect(
       checkGroundedness({ claims: ['   ', ''], retrievedTexts: ['Span.'] }, d),
     ).rejects.toThrow(/no claims/);
+  });
+
+  it('raises rather than scoring a claim whose verdict is unreadable', async () => {
+    const d = deps([{ text: 'VERDICT: SUPPORTED' }, { text: '' }]);
+    await expect(
+      checkGroundedness({ claims: ['One.', 'Two.'], retrievedTexts: ['Some text.'] }, d),
+    ).rejects.toThrow(/unreadable/i);
+  });
+
+  it('allows every judge call enough answer budget to reason and still answer', async () => {
+    const d = deps([{ text: 'VERDICT: SUPPORTED' }, { text: 'VERDICT: SUPPORTED' }]);
+    await checkGroundedness({ claims: ['One.', 'Two.'], retrievedTexts: ['Some text.'] }, d);
+    expect(d.fake.calls).toHaveLength(2);
+    for (const call of d.fake.calls) {
+      expect(call.maxOutputTokens ?? 0).toBeGreaterThanOrEqual(1024);
+    }
   });
 
   it('cannot have its denominator set by a model', async () => {

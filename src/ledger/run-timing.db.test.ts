@@ -1,6 +1,6 @@
 // Run timing columns (V2 open item 7) — db/005_run_timing.sql.
 //
-// Proves the three columns the Phase 2 latency report reads:
+// Proves the three columns a latency correction would read:
 //   queue wait   = created_at - enqueued_at
 //   service time = finished_at - created_at
 //

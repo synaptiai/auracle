@@ -26,3 +26,14 @@ export function loadDotEnv(file = '.env'): void {
 export function dataGuaranteeOption(): { dataGuarantee?: { zdrOnly: true } } {
   return process.env['AURACLE_ZDR_ONLY'] === '1' ? { dataGuarantee: { zdrOnly: true } } : {};
 }
+
+/**
+ * The chat model every entrypoint pins when `MODEL_VER` is unset (DEC-26).
+ *
+ * One place, so the runbook can state it and a test can bind the two. The
+ * previous default was retired by the provider, and nothing failed until an
+ * operator's first model call did. This model reasons before it answers, and
+ * the provider bills that reasoning against the answer budget, so a caller
+ * that expects a short answer must still allow room for it.
+ */
+export const DEFAULT_CHAT_MODEL_VER = 'z-ai/glm-5.3-flash';

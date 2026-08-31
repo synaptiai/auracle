@@ -216,6 +216,27 @@ function makeMixedAgreementReportHalf(): { half: GoldFile; steps: { text: string
 }
 
 describe('runGoldReportJob (section 4.10, DEC-31)', () => {
+  it('records the samples it could not read, so a published number says so', async () => {
+    const dir = tempDirUrl();
+    try {
+      const { half, steps } = makeScriptedReportHalf();
+      // One truncated sample on the first case; every other answers as scripted.
+      const script = [{ finishReason: 'length' }, ...steps.slice(1)];
+      const { artifact } = await runGoldReportJob({
+        provider: new FakeProvider(script),
+        taxonomy: TEST_TAXONOMY,
+        reportHalf: half,
+        artifactDir: dir,
+        promptVer: 'classify-p1',
+        modelVer: 'test-stub',
+      });
+      // The value, not the field. Deleting the accumulation left the suite green.
+      expect(artifact.unreadable_samples).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('scores only report-half tickets and publishes the expected numbers', async () => {
     const dir = tempDirUrl();
     try {

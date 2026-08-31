@@ -69,6 +69,18 @@ export interface GoldReportArtifact {
   scope: 'first_turn';
   /** Number of report-half tickets scored. */
   report_tickets: number;
+  /**
+   * Samples that yielded no readable answer across the scored half, out of
+   * K per case. A refusal and an empty answer both count.
+   *
+   * A published number that was depressed by unreadable samples must say so.
+   * Optional for the same reason the calibration field is: an artifact
+   * published before this field existed must still read.
+   *
+   * No case count beside it, unlike the calibration artifact: that one bounds
+   * a ceiling on cases, and this job has no ceiling to bound.
+   */
+  unreadable_samples?: number;
   /** DEC-26 pins in force during the run. */
   prompt_ver: string;
   model_ver: string;
@@ -172,6 +184,14 @@ export function validateGoldReportArtifact(raw: unknown): GoldReportArtifact {
       raw['report_tickets'] > 0,
     'artifact.report_tickets is not a positive integer',
   );
+  if (raw['unreadable_samples'] !== undefined) {
+    assert(
+      typeof raw['unreadable_samples'] === 'number'
+        && Number.isInteger(raw['unreadable_samples'])
+        && raw['unreadable_samples'] >= 0,
+      'artifact.unreadable_samples is not a count',
+    );
+  }
   assert(typeof raw['prompt_ver'] === 'string' && raw['prompt_ver'].length > 0, 'artifact.prompt_ver is missing');
   assert(typeof raw['model_ver'] === 'string' && raw['model_ver'].length > 0, 'artifact.model_ver is missing');
   const gate = raw['gate_agreement'];

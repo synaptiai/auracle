@@ -213,6 +213,12 @@ export async function runGoldReportJob(
   await assertGoldReportDirUsable(dir);
 
   const scores = [];
+  // The published half records its attrition for the same reason the fit half
+  // does. A truncated sample lowers agreement without being a judgement, and
+  // a published number that was depressed that way must say so. The shipped
+  // report scores through the offline stub, which cannot truncate, so this is
+  // zero here and meaningful for an adopter scoring against a real model.
+  let unreadableSamples = 0;
   for (const ticket of firstTurns) {
     const classification = await classifyTicket(options.provider, {
       taxonomy,
@@ -221,6 +227,7 @@ export async function runGoldReportJob(
       modelVer,
       ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
     });
+    unreadableSamples += classification.unreadableSamples;
     const tier = taxonomy.intents.find(
       (intent) => intent.id === classification.intentId,
     )?.risk_tier;
@@ -258,6 +265,7 @@ export async function runGoldReportJob(
     split_used: 'report',
     scope: 'first_turn',
     report_tickets: firstTurns.length,
+    unreadable_samples: unreadableSamples,
     prompt_ver: promptVer,
     model_ver: modelVer,
     gate_agreement: thresholds.agreement,

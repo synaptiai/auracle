@@ -12,6 +12,7 @@ import {
   slugifyIntentId,
 } from './taxonomy-induction.js';
 import type { HistoryItem, InductionInput } from './taxonomy-induction.js';
+import { UnreadableAnswerError } from '../models/provider.js';
 import { FakeProvider } from '../models/fake.js';
 import type { RecordedCall } from '../models/fake.js';
 
@@ -153,6 +154,24 @@ describe('induceTaxonomy (section 4.11 pipeline, fake model)', () => {
     // Step 5: the 'other' group survives for examination.
     expect(result.other.size).toBe(1);
     expect(result.other.sample_item_ids).toEqual(['SYN-6']);
+  });
+
+  it('raises when the naming model returns no label', async () => {
+    const provider = scriptedProvider(['', 'Login trouble']);
+    // The type, not only the message: an untyped error carrying the same
+    // words would satisfy a message match and reach no handler.
+    await expect(
+      induceTaxonomy(provider, input({ maxClusters: 3, minClusterSize: 2 })),
+    ).rejects.toBeInstanceOf(UnreadableAnswerError);
+  });
+
+  it('allows the naming call enough answer budget to reason and still answer', async () => {
+    const provider = scriptedProvider(['Refund request', 'Login trouble']);
+    await induceTaxonomy(provider, input({ maxClusters: 3, minClusterSize: 2 }));
+    expect(chatCalls(provider.calls)).toHaveLength(2);
+    for (const call of chatCalls(provider.calls)) {
+      expect(call.maxOutputTokens ?? 0).toBeGreaterThanOrEqual(1024);
+    }
   });
 
   it('sends cluster examples to the naming prompt', async () => {

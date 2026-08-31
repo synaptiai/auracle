@@ -191,6 +191,89 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
   // Pre-existing, but this branch made the size rule conditional on a
   // synthetic half — so on the real path this is now the only check on a
   // declared count. The calibration twin has a case; these two did not.
+  it('drops the drafts the judge could not score and keeps fitting', async () => {
+    const tickets = [
+      ...Array.from({ length: 12 }, (_, i) => draft(`G-${i}`, 3, 0)),
+      ...Array.from({ length: 6 }, (_, i) => draft(`U-${i}`, 1, 2)),
+      ...Array.from({ length: 6 }, (_, i) => draft(`V-${i}`, 4, 2)),
+    ];
+    const misses = new Map(
+      tickets.filter((t) => t.ticket_id.startsWith('V-')).map((t) => [t.ticket_id, 1]),
+    );
+    // One more draft, whose first claim comes back with no verdict. The whole
+    // run used to abort there and discard every draft scored before it.
+    const faulting = draft('F-0', 3, 0);
+    // The judge aborts on that draft's first claim, so it consumes one entry
+    // and the entries for the drafts before it stay aligned.
+    const script = [...scriptFor(tickets, misses), { text: '' }];
+    const dir = tempDir();
+    try {
+      const { artifact } = await runGroundednessJob({
+        provider: new FakeProvider(script),
+        fitHalf: half([...tickets, faulting]),
+        modelVer: 'test-stub',
+        artifactDir: dir,
+      });
+      // The 24 scorable drafts are fitted; the one that faulted is dropped.
+      expect(artifact.fit_drafts).toBe(24);
+      // And the artifact says so. Without this the field can report zero and
+      // the published threshold hides its own attrition.
+      expect(artifact.faulted_drafts).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses at a rate that a wider ceiling would have allowed', async () => {
+    // Two faults in twenty-six is 7.7 per cent: above the ceiling this job
+    // sets and below a looser one. Without this case the constant's value is
+    // decorative — the only other guard case drives the rate to 100 per cent,
+    // which any ceiling below one would refuse.
+    const tickets = [
+      ...Array.from({ length: 12 }, (_, i) => draft(`G-${i}`, 3, 0)),
+      ...Array.from({ length: 6 }, (_, i) => draft(`U-${i}`, 1, 2)),
+      ...Array.from({ length: 6 }, (_, i) => draft(`V-${i}`, 4, 2)),
+    ];
+    const misses = new Map(
+      tickets.filter((t) => t.ticket_id.startsWith('V-')).map((t) => [t.ticket_id, 1]),
+    );
+    const faulting = [draft('F-0', 3, 0), draft('F-1', 3, 0)];
+    const script = [...scriptFor(tickets, misses), { text: '' }, { text: '' }];
+    const dir = tempDir();
+    try {
+      await expect(
+        runGroundednessJob({
+          provider: new FakeProvider(script),
+          fitHalf: half([...tickets, ...faulting]),
+          modelVer: 'test-stub',
+          artifactDir: dir,
+        }),
+      ).rejects.toThrow(/ceiling/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to fit when the judge fails on too many drafts', async () => {
+    // Every draft faults. A threshold fitted on nothing carries a confidence
+    // the data does not support, so the job refuses rather than emitting one.
+    const tickets = Array.from({ length: 12 }, (_, i) => draft(`G-${i}`, 3, 0));
+    const script = tickets.flatMap((t) => (t.claims ?? []).map(() => ({ text: '' })));
+    const dir = tempDir();
+    try {
+      await expect(
+        runGroundednessJob({
+          provider: new FakeProvider(script),
+          fitHalf: half(tickets),
+          modelVer: 'test-stub',
+          artifactDir: dir,
+        }),
+      ).rejects.toThrow(/ceiling/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a half whose declared count disagrees with its tickets', async () => {
     await expect(
       runGroundednessJob({

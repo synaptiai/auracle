@@ -482,6 +482,70 @@ describe('section 4.3 partition consumer', () => {
     );
     expect(escalated.rows).toHaveLength(1);
     expect(escalated.rows[0]?.reason).toContain('intake_abandoned');
+
+    // DEC-28: the abandonment write carries the ticket's fence, not a literal
+    // zero. Zero is below every live fence, so the ledger's own insert path
+    // would refuse it, and two owners racing a rebalance could each file one.
+    const fenced = await pool.query<{ epoch: string; fence: string | null }>(
+      `SELECT r.epoch::text AS epoch, te.epoch::text AS fence
+         FROM run r LEFT JOIN ticket_epoch te ON te.ticket_id = r.ticket_id
+        WHERE r.ticket_id = $1 AND r.prompt_ver = 'intake'`,
+      [ticketId],
+    );
+    // A fence row exists here and the write sits on it. Asserting only
+    // `epoch === fence` would pass vacuously at zero, so the value is named.
+    expect(Number(fenced.rows[0]?.epoch)).toBeGreaterThan(0);
+    expect(fenced.rows[0]?.epoch).toBe(fenced.rows[0]?.fence);
+  });
+
+  // Two owners can hold one partition through a rebalance, and the poll takes
+  // no claim, so both can read the same message and both can reach the
+  // ceiling. Serialising on the fence alone still let both file: they write at
+  // equal epochs, which the ledger accepts, and `run` carries no unique
+  // constraint on (ticket_id, epoch). Deleting the intake row first makes that
+  // row the claim — whoever deletes it files, and the loser files nothing.
+  //
+  // A comment on the guard said a test for it passed with the guard removed.
+  // That was wrong, and it left a DEC-28 guard shipping with no cover at all.
+  // The race is narrow, so the assertion runs it repeatedly rather than once.
+  it('files one abandonment when two owners scan one message at the ceiling', async () => {
+    const ROUNDS = 8;
+    for (let round = 0; round < ROUNDS; round++) {
+      const ticketId = `T-${randomUUID().slice(0, 8)}`;
+      await enqueueTicket(
+        pool,
+        { ticketId, messageId: `race-${round}@example.test`, ticketText: 'Always throws.' },
+        PARTITION_COUNT,
+      );
+      const filed = await pool.query<{ partition: number }>(
+        'SELECT partition FROM intake WHERE ticket_id = $1',
+        [ticketId],
+      );
+      const partition = filed.rows[0]!.partition;
+
+      // A ceiling of one abandons on the first scan, so both owners reach the
+      // abandonment path from the same poll instead of one of them retrying.
+      const options = { ...optionsFor([partition]), maxIntakeAttempts: 1 };
+      // Started together and awaited together. Awaiting the first would let it
+      // commit before the second polls, which is the single-owner path the
+      // suite already covers.
+      const scans = await Promise.all([
+        processQueuedTickets(makeDeps([], 'owner-a'), options),
+        processQueuedTickets(makeDeps([], 'owner-b'), options),
+      ]);
+
+      // One filed run, and one reported abandonment. The loser returned
+      // silently while still pushing 'abandoned', so one message was counted
+      // as two in every scan summary an operator reads.
+      const abandoned = scans.flat().filter((r) => r.outcome === 'abandoned');
+      expect(abandoned, `round ${round} counted the abandonment twice`).toHaveLength(1);
+
+      const filedRuns = await pool.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM run WHERE ticket_id = $1 AND prompt_ver = 'intake'",
+        [ticketId],
+      );
+      expect(filedRuns.rows[0]?.n, `round ${round} filed more than one run`).toBe(1);
+    }
   });
 
   // The invariant that makes DEC-38 safe, and the one nothing covered.

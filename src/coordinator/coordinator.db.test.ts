@@ -458,6 +458,212 @@ describe('section 4.3 run coordinator', () => {
     });
   });
 
+  it('escalates a run whose every classifier sample was unreadable, and keeps the spend', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    // Nine truncated samples. Agreement measured nothing, so this is the
+    // absence of a measurement rather than a low one.
+    // Unknown cost on every sample: the provider refused each call and
+    // reported no price for it.
+    const script: FakeStep[] = Array.from({ length: 9 }, () => ({
+      finishReason: 'length',
+      costUnknown: true,
+    }));
+    const deps = makeDeps(script);
+
+    const result = await coordinateTicket(deps, autoInput(ticketId, 1n));
+
+    expect(result.outcome).toBe('escalated');
+    if (result.outcome === 'escalated') expect(result.reason).toBe('classifier_unreadable');
+    expect(await runState(result.runId)).toBe('escalated');
+    const steps = await journalRows(result.runId);
+    const classify = steps.find((s) => s.step_id === 'classify');
+    expect(classify?.status).toBe('failed');
+    // DEC-25: the run says the spend is unknown rather than reporting it as
+    // measured. Without this the branch is unreachable from any test.
+    expect(classify?.result).toMatchObject({ shape: 'truncated', costUnknown: true });
+    const runRow = await pool.query<{ cost_micros: string; steps_used: number }>(
+      'SELECT cost_micros, steps_used FROM run WHERE run_id = $1',
+      [result.runId],
+    );
+    expect(Number(runRow.rows[0]?.cost_micros)).toBe(0);
+    expect(runRow.rows[0]?.steps_used).toBe(1);
+  });
+
+  it('escalates a run whose embedder answered something unreadable (DEC-30)', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    // Nine good samples, then an embed the provider refused. Scripting an
+    // empty vector list instead landed on the no-vector branch and never
+    // entered the catch this case is named for.
+    const script: FakeStep[] = [
+      ...Array.from({ length: 9 }, () => ({ text: 'password_reset' })),
+      { shape: 'no-data' },
+    ];
+    const deps = makeDeps(script);
+
+    const result = await coordinateTicket(deps, autoInput(ticketId, 1n));
+
+    expect(result.outcome).toBe('escalated');
+    if (result.outcome === 'escalated') expect(result.reason).toBe('retriever_unreadable');
+    expect(await runState(result.runId)).toBe('escalated');
+    const steps = await journalRows(result.runId);
+    const retrieve = steps.find((s) => s.step_id === 'retrieve');
+    expect(retrieve?.status).toBe('failed');
+    expect(retrieve?.result).toMatchObject({ shape: 'no-data' });
+  });
+
+  it('bills a refused embedding the provider still charged for (DEC-25)', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    // The chat path credits a refused call. The embed path was written to
+    // match and nothing held it there: deleting the credit left every case
+    // green, because an embed fault carried nothing in any of them. This one
+    // carries a cent, so the credit is the only thing that reaches the ledger.
+    const script: FakeStep[] = [
+      ...Array.from({ length: 9 }, () => ({ text: 'password_reset' })),
+      { shape: 'no-data', costMicros: ONE_CENT_IN_MICROS },
+    ];
+
+    const result = await coordinateTicket(makeDeps(script), autoInput(ticketId, 1n));
+
+    expect(result.outcome).toBe('escalated');
+    if (result.outcome === 'escalated') expect(result.reason).toBe('retriever_unreadable');
+    // Nine classifier samples at a cent each, plus the cent the refused
+    // embedding cost. Without the credit this reads nine and the spend the
+    // provider actually billed goes missing from the run.
+    const runRow = await pool.query<{ cost_micros: string }>(
+      'SELECT cost_micros FROM run WHERE run_id = $1',
+      [result.runId],
+    );
+    expect(Number(runRow.rows[0]?.cost_micros)).toBe(10 * ONE_CENT_IN_MICROS);
+  });
+
+  it('escalates a run whose embedder returned no vector at all', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    // The other retrieve branch: the call returned, and carried nothing.
+    const script: FakeStep[] = [
+      ...Array.from({ length: 9 }, () => ({ text: 'password_reset' })),
+      { vectors: [] },
+    ];
+    const result = await coordinateTicket(makeDeps(script), autoInput(ticketId, 1n));
+    expect(result.outcome).toBe('escalated');
+    if (result.outcome === 'escalated') expect(result.reason).toBe('retriever_unreadable');
+    const steps = await journalRows(result.runId);
+    // The shape alone passed with the journal's `error` field deleted, so it
+    // proved only that a shape was written. An operator reading this row is
+    // told which call came back empty; the shape names the class and the
+    // sentence names the call.
+    expect(steps.find((s) => s.step_id === 'retrieve')?.result).toMatchObject({
+      shape: 'no-vector',
+      error: 'embedder returned no vector for the retrieval query',
+    });
+  });
+
+  it('escalates a taxonomy fault by its own reason, not as a budget fault', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    // Nine readable samples, every one naming an intent this taxonomy does
+    // not hold. Sending an operator to check the answer budget for this
+    // wastes their time.
+    const script: FakeStep[] = Array.from({ length: 9 }, () => ({ text: 'not-an-intent' }));
+    const deps = makeDeps(script);
+
+    const result = await coordinateTicket(deps, autoInput(ticketId, 1n));
+
+    expect(result.outcome).toBe('escalated');
+    if (result.outcome === 'escalated') expect(result.reason).toBe('classifier_no_label');
+    const steps = await journalRows(result.runId);
+    expect(steps.find((s) => s.step_id === 'classify')?.result).toMatchObject({
+      shape: 'no-label',
+    });
+  });
+
+  it('records the attrition beside an agreement it depressed', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    // One unreadable sample of nine. The run proceeds; the journal says the
+    // agreement it recorded was measured on eight answers, not nine.
+    const script: FakeStep[] = [
+      { finishReason: 'length', costUnknown: true },
+      ...Array.from({ length: 8 }, () => ({ text: 'password_reset' })),
+      { vectors: [VEC] },
+      { text: '[doc:d1] Open the account settings page and choose reset password.' },
+      { text: 'VERDICT: SUPPORTED' },
+    ];
+    const deps = makeDeps(script);
+
+    const result = await coordinateTicket(deps, autoInput(ticketId, 1n));
+
+    const steps = await journalRows(result.runId);
+    expect(steps.find((s) => s.step_id === 'classify')?.result).toMatchObject({
+      unreadableSamples: 1,
+      costUnknown: true,
+    });
+  });
+
+  it('escalates a run whose composer answered nothing, apart from an abstain (DEC-30)', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const script: FakeStep[] = [
+      ...Array.from({ length: 9 }, () => ({ text: 'password_reset' })),
+      { vectors: [VEC] },
+      { text: '' },
+    ];
+    const deps = makeDeps(script);
+
+    const result = await coordinateTicket(deps, autoInput(ticketId, 1n));
+
+    expect(result.outcome).toBe('escalated');
+    // Not composer_abstained: the model made no determination to report.
+    if (result.outcome === 'escalated') expect(result.reason).toBe('composer_unreadable');
+    expect(await runState(result.runId)).toBe('escalated');
+    const steps = await journalRows(result.runId);
+    expect(steps.find((s) => s.step_id === 'compose')?.status).toBe('failed');
+  });
+
+  it('escalates a run whose coverage judge answered with no verdict (DEC-30)', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    // Nine agreeing samples, a document, a cited draft, then a judge answer
+    // that carries no verdict. That answer used to score as unsupported, so
+    // coverage read 0.0 and the run reported a confident block. It is a fault,
+    // not a measurement.
+    const script: FakeStep[] = [
+      ...Array.from({ length: 9 }, () => ({ text: 'password_reset' })),
+      { vectors: [VEC] },
+      { text: '[doc:d1] Open the account settings page and choose reset password.' },
+      // A real truncation, not an empty string. The fake used to model no stop
+      // reason at all, so every consumer test drove this guard with a shape
+      // the provider never produces.
+      { finishReason: 'length' },
+    ];
+    const deps = makeDeps(script);
+
+    const result = await coordinateTicket(deps, autoInput(ticketId, 1n));
+
+    expect(result.outcome).toBe('escalated');
+    if (result.outcome === 'escalated') expect(result.reason).toBe('gate_unreadable');
+    // Terminal, so the queue does not retry a deterministic fault, and the
+    // escalations view can see it.
+    expect(await runState(result.runId)).toBe('escalated');
+
+    const steps = await journalRows(result.runId);
+    const gate = steps.find((s) => s.step_id === 'gate');
+    expect(gate?.status).toBe('failed');
+    expect(gate?.result).toMatchObject({ shape: 'truncated' });
+    expect(steps.find((s) => s.step_id === 'escalate')?.result).toMatchObject({
+      reason: 'gate_unreadable',
+    });
+
+    // DEC-25: the exact spend, not merely a positive one. Eleven chat calls
+    // bill a cent each — nine classifier samples, one compose and the judge
+    // call that faulted; the embed bills nothing in the fake. Without the
+    // faulting call this reads ten, so the assertion sees its cost going
+    // missing. A 'greater than zero' assertion passes on the classifier
+    // samples alone and cannot.
+    const runRow = await pool.query<{ cost_micros: string; steps_used: number }>(
+      'SELECT cost_micros, steps_used FROM run WHERE run_id = $1',
+      [result.runId],
+    );
+    expect(Number(runRow.rows[0]?.cost_micros)).toBe(11 * ONE_CENT_IN_MICROS);
+    // classify, retrieve, compose, and the gate step that failed.
+    expect(runRow.rows[0]?.steps_used).toBe(4);
+  });
+
   it('escalates on the step limit without error and keeps the partial work (DEC-25)', async () => {
     const ticketId = 'T-' + randomUUID().slice(0, 8);
     const deps = makeDeps(happyScript(), { maxSteps: 2 });

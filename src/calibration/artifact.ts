@@ -76,6 +76,25 @@ export interface CalibrationArtifact {
   /** Number of fit-half tickets the fit consumed. */
   fit_tickets: number;
   /**
+   * Samples that yielded no readable answer across the fit, out of K per
+   * case. A refusal by the provider and an empty answer both count.
+   *
+   * A published threshold must say how much of its evidence was missing.
+   * These samples lowered agreement without being a judgement, so a reader
+   * needs the count to tell a strict model from a small answer budget.
+   *
+   * Optional only for an artifact written before the field existed, so a
+   * daemon holding one still starts. Every fit this code performs writes it.
+   */
+  unreadable_samples?: number;
+  /**
+   * Fit cases carrying at least one unreadable sample.
+   *
+   * The number the ceiling actually bounds. The sample count alone cannot say
+   * how much of the half was affected, because K samples belong to one case.
+   */
+  tickets_with_unreadable?: number;
+  /**
    * Names the exact case sets this run proved disjoint (DEC-31).
    *
    * Null when no counterpart was named, which is the committed corpus, whose
@@ -133,6 +152,22 @@ export function validateCalibrationArtifact(raw: unknown): CalibrationArtifact {
     typeof raw['fit_tickets'] === 'number' && Number.isInteger(raw['fit_tickets']) && raw['fit_tickets'] > 0,
     'artifact.fit_tickets is not a positive integer',
   );
+  // Absent is allowed, and only here. Every other field rule refuses what it
+  // does not understand, but this one is read at startup by every daemon
+  // (resolveThresholds -> loadCalibrationArtifact -> here), and an adopter
+  // holding an artifact fitted before this field existed must still start.
+  // Refusing it would rebuild the blocking chain this repository removed: a
+  // threshold that its own loader rejects stops the system rather than the
+  // job. Present and malformed is still refused, and the job always writes it.
+  for (const field of ['unreadable_samples', 'tickets_with_unreadable'] as const) {
+    if (raw[field] === undefined) continue;
+    assert(
+      typeof raw[field] === 'number'
+        && Number.isInteger(raw[field])
+        && (raw[field] as number) >= 0,
+      `artifact.${field} is not a count`,
+    );
+  }
   for (const field of ['report_half_digest', 'fit_half_digest'] as const) {
     const value = raw[field];
     assert(

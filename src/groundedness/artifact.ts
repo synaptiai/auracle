@@ -65,6 +65,15 @@ export interface GroundednessArtifact {
   split_used: 'fit';
   /** Drafts the fit consumed. */
   fit_drafts: number;
+  /**
+   * Drafts the judge could not score, which the fit therefore never saw.
+   *
+   * A published threshold must say how much of its half it dropped. Attrition
+   * is not spread evenly: a judge that faults more often on long drafts drops
+   * the negatives that set the block threshold, and the surviving sample then
+   * flatters the fit.
+   */
+  faulted_drafts: number;
   /** DEC-26 pins in force during the run. */
   prompt_ver: string;
   model_ver: string;
@@ -134,6 +143,12 @@ export function validateGroundednessArtifact(raw: unknown): GroundednessArtifact
   assert(
     typeof raw['fit_drafts'] === 'number' && Number.isInteger(raw['fit_drafts']) && raw['fit_drafts'] > 0,
     'artifact.fit_drafts is not a positive integer',
+  );
+  assert(
+    typeof raw['faulted_drafts'] === 'number'
+      && Number.isInteger(raw['faulted_drafts'])
+      && raw['faulted_drafts'] >= 0,
+    'artifact.faulted_drafts is not a count',
   );
   for (const field of ['prompt_ver', 'model_ver'] as const) {
     assert(typeof raw[field] === 'string' && (raw[field] as string).length > 0, `artifact.${field} is missing`);

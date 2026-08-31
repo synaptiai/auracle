@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { FakeProvider } from './fake.js';
+import { UnreadableAnswerError } from './provider.js';
 import { OpenRouterProvider } from './openrouter.js';
 import { assertSamplingTemperature } from './provider.js';
 import type { DataGuarantee } from './provider.js';
@@ -219,6 +220,235 @@ describe('OpenRouterProvider (injected fetch, no live calls)', () => {
     expect(capturedBody!.provider).toEqual({ zdr: true, data_collection: 'deny' });
   });
 
+  it('refuses a truncated completion instead of returning the part that arrived', async () => {
+    // The pinned models reason before they answer and the provider bills that
+    // reasoning against the answer budget, so an exhausted budget returns a
+    // partial answer or none at all with finish_reason 'length'. Returning it
+    // let each caller infer truncation from the shape of the text, and every
+    // caller inferred it differently.
+    const { fetchImpl } = makeFetch({
+      ...chatResponse,
+      choices: [
+        { finish_reason: 'length', message: { role: 'assistant', content: 'VERDICT: SUPP' } },
+      ],
+    });
+    const provider = new OpenRouterProvider({ apiKey: 'k', fetchImpl });
+    await expect(
+      provider.complete({
+        messages: [{ role: 'user', content: 'hi' }],
+        temperature: 0,
+        maxOutputTokens: 16,
+        promptVer: 'p',
+        modelVer: 'm',
+      }),
+    ).rejects.toBeInstanceOf(UnreadableAnswerError);
+  });
+
+  it('refuses a truncation that carries no content at all', async () => {
+    // The worst truncation: the model spent the whole budget reasoning and
+    // returned no content. This is the only truncation this repository has
+    // observed, and it must read as the same typed fault as a partial answer,
+    // not as a protocol error no caller can classify.
+    const { fetchImpl } = makeFetch({
+      ...chatResponse,
+      choices: [{ finish_reason: 'length', message: { role: 'assistant', content: null } }],
+    });
+    const provider = new OpenRouterProvider({ apiKey: 'k', fetchImpl });
+    await expect(
+      provider.complete({
+        messages: [{ role: 'user', content: 'hi' }],
+        temperature: 0,
+        maxOutputTokens: 16,
+        promptVer: 'p',
+        modelVer: 'm',
+      }),
+    ).rejects.toBeInstanceOf(UnreadableAnswerError);
+  });
+
+  it('carries the spend of the call it refused (DEC-25)', async () => {
+    const { fetchImpl } = makeFetch({
+      ...chatResponse,
+      choices: [{ finish_reason: 'length', message: { role: 'assistant', content: null } }],
+    });
+    const provider = new OpenRouterProvider({ apiKey: 'k', fetchImpl });
+    const caught = await provider
+      .complete({
+        messages: [{ role: 'user', content: 'hi' }],
+        temperature: 0,
+        maxOutputTokens: 16,
+        promptVer: 'p',
+        modelVer: 'm',
+      })
+      .catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(UnreadableAnswerError);
+    // usage.cost 0.000841 -> 841 micro-dollars.
+    expect((caught as UnreadableAnswerError).costMicros).toBe(841);
+  });
+
+  it('keeps a truncated call typed when the provider reports no cost (DEC-25)', async () => {
+    // Every handler discriminates on the type. An untyped throw here skipped
+    // the compose catch, the gate catch, the meter's credit and the fitting
+    // job's drop, and the run never terminated. DEC-25 is honoured by saying
+    // the spend is unknown, not by abandoning the fault type.
+    const { usage: _drop, ...noUsage } = chatResponse;
+    const { fetchImpl } = makeFetch({
+      ...noUsage,
+      choices: [{ finish_reason: 'length', message: { role: 'assistant', content: null } }],
+    });
+    const provider = new OpenRouterProvider({ apiKey: 'k', fetchImpl });
+    await expect(
+      provider.complete({
+        messages: [{ role: 'user', content: 'hi' }],
+        temperature: 0,
+        maxOutputTokens: 16,
+        promptVer: 'p',
+        modelVer: 'm',
+      }),
+    ).rejects.toBeInstanceOf(UnreadableAnswerError);
+  });
+
+  it('says the spend is unknown rather than reporting it as zero (DEC-25)', async () => {
+    // Asserted on what the provider throws, not on a constructor. An earlier
+    // version built the error itself and checked that a parameter property
+    // stored its argument, which tests the language and not this module.
+    const { usage: _drop, ...noUsage } = chatResponse;
+    const { fetchImpl } = makeFetch({
+      ...noUsage,
+      choices: [{ finish_reason: 'length', message: { role: 'assistant', content: null } }],
+    });
+    const caught = await new OpenRouterProvider({ apiKey: 'k', fetchImpl })
+      .complete({
+        messages: [{ role: 'user', content: 'hi' }],
+        temperature: 0,
+        maxOutputTokens: 16,
+        promptVer: 'p',
+        modelVer: 'm',
+      })
+      .then(() => null)
+      .catch((e: unknown) => e as UnreadableAnswerError);
+    expect(caught).toBeInstanceOf(UnreadableAnswerError);
+    expect(caught?.costUnknown).toBe(true);
+    expect(caught?.costMicros).toBe(0);
+  });
+
+  it('reports a known cost as known', async () => {
+    const { fetchImpl } = makeFetch({
+      ...chatResponse,
+      choices: [{ finish_reason: 'length', message: { role: 'assistant', content: null } }],
+    });
+    const caught = await new OpenRouterProvider({ apiKey: 'k', fetchImpl })
+      .complete({
+        messages: [{ role: 'user', content: 'hi' }],
+        temperature: 0,
+        maxOutputTokens: 16,
+        promptVer: 'p',
+        modelVer: 'm',
+      })
+      .then(() => null)
+      .catch((e: unknown) => e as UnreadableAnswerError);
+    expect(caught).toBeInstanceOf(UnreadableAnswerError);
+    expect(caught?.costUnknown).toBe(false);
+    expect(caught?.costMicros).toBe(841);
+  });
+
+  it('types a missing cost on a finish reason that is not length (DEC-25, DEC-30)', async () => {
+    // The two tests named for this behaviour both set finish_reason 'length',
+    // which returns at the truncated branch above and never reaches this code.
+    // Reverting this throw to an untyped Error left the whole suite green.
+    const { usage: _drop, ...noUsage } = chatResponse;
+    const { fetchImpl } = makeFetch({
+      ...noUsage,
+      choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'hello' } }],
+    });
+    const caught = await new OpenRouterProvider({ apiKey: 'k', fetchImpl })
+      .complete({ messages: [{ role: 'user', content: 'hi' }], temperature: 0,
+        promptVer: 'p', modelVer: 'm' })
+      .then(() => null)
+      .catch((e: unknown) => e as UnreadableAnswerError);
+    expect(caught).toBeInstanceOf(UnreadableAnswerError);
+    expect(caught?.shape).toBe('no-cost');
+    expect(caught?.costUnknown).toBe(true);
+  });
+
+  it('types a response whose choice carries no text at all (DEC-30)', async () => {
+    const { fetchImpl } = makeFetch({
+      ...chatResponse,
+      choices: [{ finish_reason: 'content_filter', message: { role: 'assistant' } }],
+    });
+    const caught = await new OpenRouterProvider({ apiKey: 'k', fetchImpl })
+      .complete({ messages: [{ role: 'user', content: 'hi' }], temperature: 0,
+        promptVer: 'p', modelVer: 'm' })
+      .then(() => null)
+      .catch((e: unknown) => e as UnreadableAnswerError);
+    expect(caught).toBeInstanceOf(UnreadableAnswerError);
+    expect(caught?.shape).toBe('no-content');
+    // The provider priced this call, so the fault carries what it cost.
+    expect(caught?.costMicros).toBe(841);
+  });
+
+  it('types every chat response shape it cannot read (DEC-30)', async () => {
+    // Seven shapes were typed in one commit and two got cases. A typed fault
+    // with no case is the class that has produced a finding in three cycles.
+    const cases: [string, unknown][] = [
+      ['no-choices', { ...chatResponse, choices: [] }],
+      // A choice carrying a streaming delta, or an error object where the
+      // message belongs. Typing this went missing in a revert.
+      ['no-message', { ...chatResponse, choices: [{ finish_reason: 'stop' }] }],
+      // A choice that is not an object at all. This shape shipped typed, with
+      // a runbook row and no case, while both its siblings had one. Reverting
+      // it to the untyped envelope reader leaves every other case here green,
+      // so the case is the only thing that holds the split.
+      ['no-choice', { ...chatResponse, choices: [42] }],
+    ];
+    for (const [shape, body] of cases) {
+      const { fetchImpl } = makeFetch(body);
+      const caught = await new OpenRouterProvider({ apiKey: 'k', fetchImpl })
+        .complete({ messages: [{ role: 'user', content: 'hi' }], temperature: 0,
+          promptVer: 'p', modelVer: 'm' })
+        .then(() => null)
+        .catch((e: unknown) => e as UnreadableAnswerError);
+      expect(caught, shape).toBeInstanceOf(UnreadableAnswerError);
+      expect(caught?.shape).toBe(shape);
+    }
+  });
+
+  it('types every embeddings response shape it cannot read (DEC-30)', async () => {
+    const usage = { prompt_tokens: 1, total_tokens: 1, cost: 0.0001 };
+    const cases: [string, unknown][] = [
+      ['no-data', { usage }],
+      ['no-item', { data: [42], usage }],
+      ['no-vector', { data: [{}], usage }],
+      ['bad-vector', { data: [{ embedding: [1, 'x'] }], usage }],
+      ['no-usage', { data: [{ embedding: [1, 2] }] }],
+    ];
+    for (const [shape, body] of cases) {
+      const { fetchImpl } = makeFetch(body);
+      const caught = await new OpenRouterProvider({ apiKey: 'k', fetchImpl })
+        .embed({ input: ['hi'], promptVer: 'p', modelVer: 'm' })
+        .then(() => null)
+        .catch((e: unknown) => e as UnreadableAnswerError);
+      expect(caught, shape).toBeInstanceOf(UnreadableAnswerError);
+      expect(caught?.shape).toBe(shape);
+    }
+  });
+
+  it('returns a completion that stopped on its own', async () => {
+    const { fetchImpl } = makeFetch({
+      ...chatResponse,
+      choices: [
+        { finish_reason: 'stop', message: { role: 'assistant', content: 'the routed intent' } },
+      ],
+    });
+    const provider = new OpenRouterProvider({ apiKey: 'k', fetchImpl });
+    const result = await provider.complete({
+      messages: [{ role: 'user', content: 'hi' }],
+      temperature: 0,
+      promptVer: 'p',
+      modelVer: 'm',
+    });
+    expect(result.text).toBe('the routed intent');
+  });
+
   it('refuses to report zero when OpenRouter omits usage.cost', async () => {
     const noCost = {
       choices: [{ message: { role: 'assistant', content: 'x' } }],
@@ -234,7 +464,7 @@ describe('OpenRouterProvider (injected fetch, no live calls)', () => {
         promptVer: 'p@1',
         modelVer: 'm@1',
       }),
-    ).rejects.toThrow(/usage\.cost/);
+    ).rejects.toBeInstanceOf(UnreadableAnswerError);
   });
 
   it('does not log prompts by default, and only logs under the explicit override', async () => {

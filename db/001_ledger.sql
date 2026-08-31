@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS run (
 );
 
 COMMENT ON TABLE run IS 'One row per run. The ledger holds all state; no component keeps state outside the ledger (DEC-04).';
-COMMENT ON COLUMN run.partition IS 'DEC-27: one consumer owns each partition, so two runs on one ticket cannot occur together. DEC-36 made the key the conversation id; a run with no conversation still keys on the ticket id.';
+COMMENT ON COLUMN run.partition IS 'DEC-36: hash(conversation_id) % N, and the ticket id when a run has no conversation. One consumer owns each partition, so two runs on one conversation cannot occur together; the ticket-keyed fencing epoch of DEC-28 covers a ticket whose runs hash to different partitions.';
 COMMENT ON COLUMN run.epoch IS 'DEC-28: fencing token. The ledger refuses each write whose epoch is lower than the highest accepted epoch.';
 COMMENT ON COLUMN run.prompt_ver IS 'DEC-26: pinned prompt version for this run.';
 COMMENT ON COLUMN run.model_ver IS 'DEC-26: pinned model version for this run.';

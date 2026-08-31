@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { FakeProvider, ONE_CENT_IN_MICROS } from '../models/fake.js';
+import { UnreadableAnswerError } from '../models/provider.js';
 import type { RetrievedDoc } from '../retriever/types.js';
 import { composeAnswer } from './composer.js';
 
@@ -88,6 +89,40 @@ describe('composeAnswer (section 4.7, DEC-07)', () => {
     expect(result.draft).toBeNull();
     // DEC-23: the abstain signal reports the documents that need a review.
     expect(result.staleDocuments.map((d) => d.docId)).toEqual(['stale-1']);
+  });
+
+  it('raises rather than abstaining when the model answers nothing', async () => {
+    // An empty answer is not a decision to abstain. The model reasons before
+    // it answers and the provider bills that reasoning against the answer
+    // budget, so an exhausted budget returns nothing at all. Recording that as
+    // an abstain reported a cite-or-abstain determination the model never made.
+    const provider = new FakeProvider([{ text: '   ' }]);
+    // Typed, not matched on message text: a ReferenceError naming the class
+    // would satisfy a message match and prove nothing.
+    await expect(
+      composeAnswer({ question: 'Where is my refund?', docs: [doc()] }, deps(provider)),
+    ).rejects.toBeInstanceOf(UnreadableAnswerError);
+  });
+
+  it('allows the model enough answer budget to reason and still draft', async () => {
+    const provider = new FakeProvider([
+      { text: '[doc:doc-1] Refunds post within five business days.' },
+    ]);
+    await composeAnswer({ question: 'Where is my refund?', docs: [doc()] }, deps(provider));
+    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls[0]?.maxOutputTokens ?? 0).toBeGreaterThanOrEqual(2048);
+  });
+
+  it('abstains on prose, because cite-or-abstain is the rule that fired', async () => {
+    // Not a fault. DEC-07 makes cite-or-abstain all or nothing, so a claim the
+    // composer could not cite is the rule working. Only an empty answer
+    // determines nothing, and that raises.
+    const provider = new FakeProvider([{ text: 'I think the refund policy is five days.' }]);
+    const result = await composeAnswer(
+      { question: 'Where is my refund?', docs: [doc()] },
+      deps(provider),
+    );
+    expect(result.abstained).toBe(true);
   });
 
   it('abstains when a citation names an unknown docId', async () => {

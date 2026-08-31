@@ -5,6 +5,7 @@
 // composer abstains. An abstain is a correct output, not an error. It is also
 // the least expensive way to find a gap in the knowledge.
 
+import { UnreadableAnswerError } from '../models/provider.js';
 import type { ChatMessage, ModelProvider } from '../models/provider.js';
 
 import type { ConversationTurn } from '../coordinator/coordinator.js';
@@ -65,8 +66,15 @@ const SYSTEM_PROMPT = [
   'Never state a claim that no document supports.',
 ].join('\n');
 
-/** Keeps a reply well inside a customer-sized draft. */
-const MAX_OUTPUT_TOKENS = 512;
+/**
+ * Answer budget for one compose call.
+ *
+ * Room for the reasoning the provider bills against this budget, and then a
+ * customer-sized draft after it. The pinned default spent up to 610 tokens
+ * reasoning about a far smaller judge prompt, and this prompt carries the
+ * retrieved documents and the conversation history before the draft begins.
+ */
+const MAX_OUTPUT_TOKENS = 2048;
 
 const ABSTAIN = 'ABSTAIN';
 
@@ -103,6 +111,18 @@ export async function composeAnswer(
     promptVer: deps.promptVer,
     modelVer: deps.modelVer,
   });
+
+  // An empty answer is not a decision to abstain. ABSTAIN is a determination
+  // the model states; nothing at all is an exhausted budget or a dropped
+  // completion, and recording it as an abstain reported a cite-or-abstain
+  // verdict the model never gave (DEC-07, DEC-30).
+  if (completion.text.trim() === '') {
+    throw new UnreadableAnswerError(
+      'the composer received an unreadable answer (empty); an abstain is a determination '
+        + 'and an empty answer is not one (DEC-07)',
+      'empty',
+    );
+  }
 
   const parsed = parseClaims(completion.text, input.docs);
   if (!parsed.ok) {
@@ -144,9 +164,16 @@ type Parsed =
   | { ok: false };
 
 /**
+ * Reads the answer as a cited draft or an abstain.
+ *
  * DEC-07 as code: every non-empty line must be a claim with a marker that
  * resolves to a retrieved docId. One uncited line, one unknown docId, or an
  * explicit ABSTAIN fails the whole draft.
+ *
+ * A line the reader cannot resolve is not an unreadable answer. Cite-or-abstain
+ * is all or nothing, so a claim the composer could not cite is exactly the
+ * rule firing, and an abstain is the determination it produces. The one answer
+ * that determines nothing is the empty one, refused above before this runs.
  */
 function parseClaims(text: string, docs: RetrievedDoc[]): Parsed {
   if (text.trim().toUpperCase() === ABSTAIN) return { ok: false };
@@ -161,6 +188,9 @@ function parseClaims(text: string, docs: RetrievedDoc[]): Parsed {
     if (match === null) return { ok: false };
     const { 1: docId, 2: claimText } = match;
     if (docId === undefined || claimText === undefined) return { ok: false };
+    // A citation naming a document that was not retrieved is a claim the
+    // composer could not ground, which is the cite-or-abstain rule doing its
+    // work rather than an unreadable answer.
     if (!knownIds.has(docId)) return { ok: false };
     claims.push({ text: claimText.trim(), docId });
   }

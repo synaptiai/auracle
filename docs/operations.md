@@ -165,8 +165,8 @@ The consumer reads this configuration:
 | `CONSUMER_INTERVAL_MS` | Milliseconds between scans. | 5000 |
 | `TICKET_DEADLINE_MS` | Per-ticket clock budget (DEC-25). | 60000 |
 | `PARTITION_COUNT` | Partition count for hashing (DEC-27). | 8 |
-| `MODEL_VER` | Chat model pin. Overridable at any time. | `stealth/ox-alpha` |
-| `EMBED_MODEL_VER` | Embedding model pin for retrieval. Stealth chat models do not embed, so this pin is separate. | `openai/text-embedding-3-small` |
+| `MODEL_VER` | Chat model pin. Overridable at any time. | `z-ai/glm-5.3-flash` |
+| `EMBED_MODEL_VER` | Embedding model pin for retrieval. The chat model does not embed, so this pin is separate. | `openai/text-embedding-3-small` |
 | `PROMPT_VER` | Prompt version pin (DEC-26). | `consumer-prompt-v1` |
 | `ACTION_CLASS` | Action class each run executes. | `route_ticket` |
 | `ACTION_DELIVERY` | Delivery rule: `at_most_once` or `at_least_once`. | `at_most_once` |
@@ -369,6 +369,14 @@ that you pass.
 |---------|------|
 | `pnpm run calibrate` | Fits the global agreement threshold on the fit half of the gold set. Writes `calibration/vN.json`, the next version. |
 | `pnpm run fit-groundedness` | Fits the two coverage thresholds on the fit half. Writes `groundedness/vN.json`. Needs `OPENROUTER_API_KEY` and `GROUNDEDNESS_MODEL_VER`. |
+
+Each fitting artifact states how much of its half it could not read.
+`groundedness/vN.json` carries `faulted_drafts`, the drafts it dropped.
+`calibration/vN.json` carries `unreadable_samples` and
+`tickets_with_unreadable`, the samples that yielded no answer and the cases
+they fell in. The gold report carries `unreadable_samples` for the same
+reason. A number fitted or published through unreadable answers is not the
+same number as one measured on answers, so each job says which it is.
 | `pnpm run replay` | Runs the action-match replay over the fixture corpus. Uses the offline stub model. Needs no network and no database. Prints the report as JSON. |
 | `pnpm run gold-report` | Scores the report half of the gold set. Writes `gold-report/vN.json`, the next version. |
 | `pnpm run triage` | Selects cases for human review with the offline judge. Writes `triage/vN.json`, the next version. |
@@ -411,7 +419,8 @@ needs a code change and cannot happen by accident.
 
 Calibration needs `OPENROUTER_API_KEY`. It classifies each fit-half ticket
 through the classifier port. Replay needs no network access. The induction job
-also needs the key. It accepts optional `CHAT_MODEL_VER` and `EMBED_MODEL_VER`
+also needs the key. It accepts optional `CHAT_MODEL_VER` (default
+`openai/gpt-4o-mini`) and `EMBED_MODEL_VER`
 values.
 
 The induction output is a candidate list only.
@@ -741,10 +750,45 @@ The first copy may have arrived, so a resend can act twice.
 The run waits in the approval path (DEC-30).
 A state of `escalated` means the run stopped and waits for a person.
 
-The journal shows the partial work and names the cause. The causes are a limit
-on cost, steps or clock time. A relay that cannot send escalates too. So does a
-queued message that failed `MAX_INTAKE_ATTEMPTS` times, which the journal
-reports as `intake_abandoned`.
+The journal shows the partial work and names the cause. Every cause the
+coordinator can record appears below. A queued message that failed
+`MAX_INTAKE_ATTEMPTS` times also escalates, which the journal reports as
+`intake_abandoned`.
+
+| Reason | What happened | What you do |
+|---|---|---|
+| `limit_cost` | The run reached its cost budget. | Read the journal for the step that spent it. Raise the budget or fix the prompt. |
+| `limit_steps` | The run reached its step budget. | Look for a loop between steps. |
+| `limit_clock` | The run reached its deadline. | Check provider latency and the deadline setting. |
+| `composer_abstained` | The composer could not cite every claim. | A knowledge gap. Write or correct the document. |
+| `policy_escalated` | A gate or the policy rules sent the action to a person. | Read the draft and decide. |
+| `park_unresolved` | An approval could not be parked. | Check the egress adapter. |
+| `egress_refused` | The egress refused, and a retry can never clear it. | Fix the target system or the action. |
+| `classifier_unreadable` | Every classifier sample came back unreadable, so agreement measured nothing. | An answer budget too small for the model. Check `MODEL_VER` and the budget it needs. |
+| `classifier_no_label` | Samples were readable and named no intent this taxonomy holds. | A taxonomy or prompt fault, not a budget one. Compare the answers against `fixtures/taxonomy.json`. |
+| `retriever_unreadable` | The embedder answered with something the retriever could not read. | Check the embedding model pin and the provider response. |
+| `composer_unreadable` | The composer answered nothing at all. | The same cause, on the compose step. |
+| `gate_unreadable` | The coverage judge answered with no verdict. | The same cause, on the gate step. |
+
+Four of these name a model answer this system could not read:
+`classifier_unreadable`, `retriever_unreadable`, `composer_unreadable` and
+`gate_unreadable`. They are not a verdict and not an abstain, so the run stops
+rather than record one. `classifier_no_label` is not one of them: those
+samples were readable.
+
+The journal entry carries the shape of the fault, and `costUnknown` when the
+provider reported no cost for the call it refused. The shapes are `truncated`
+(the answer budget ran out), `no-content` (the response carried no text),
+`no-cost`, `no-usage`, `no-choices`, `no-choice`, `no-message`, `no-data`,
+`no-item`, `no-vector` and `bad-vector` (the response had a shape this system
+cannot read), `empty` (the
+model answered nothing), `no-verdict` and `conflicting` (the judge named no
+verdict, or two), and `no-label` (no sample named a known intent).
+
+The classifier samples nine times, so one run can meet several shapes.
+It names the shape that the most samples reported.
+A tie breaks on the shape name.
+So the order the provider answered in never decides your remedy.
 
 ## 8. The phase model
 

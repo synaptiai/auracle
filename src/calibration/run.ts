@@ -70,6 +70,19 @@ export interface CalibrationRunOptions {
 }
 
 export const DEFAULT_TARGET_PRECISION = 0.985;
+
+/**
+ * How many fit cases may carry an unreadable sample before the fit is
+ * measuring the answer budget rather than the model.
+ *
+ * Not the same rule the coverage job applies. That job drops a draft it could
+ * not score, so the draft never reaches the fit. This job keeps the case and
+ * fits on it, because a case with eight readable samples still measured
+ * something; the ceiling bounds how much depressed evidence may enter, and
+ * does not remove it. A reader of the artifact needs the count for that
+ * reason, not despite it.
+ */
+const MAX_DEPRESSED_SHARE = 0.05;
 const DEFAULT_PROMPT_VER = 'classify-p1';
 
 export interface CalibrationRunResult {
@@ -114,7 +127,13 @@ export async function runCalibrationJob(
   // bare message would fit a threshold for a prompt the runtime never sends.
   const histories = conversationHistories(fitHalf.tickets);
 
+  // A ticket whose samples were unreadable enters the fit with a depressed
+  // agreement, so the threshold is fitted on the provider's answer budget and
+  // not on the model's judgement. The coverage job records its own attrition
+  // for the same reason, by a different rule; this one must not stay silent.
   const samples: { agreement: number; correct: boolean }[] = [];
+  let unreadableSamples = 0;
+  let ticketsWithUnreadable = 0;
   for (const ticket of fitHalf.tickets) {
     const result = await classifyTicket(options.provider, {
       taxonomy,
@@ -126,10 +145,26 @@ export async function runCalibrationJob(
         ? {}
         : { temperature: options.temperature }),
     });
+    unreadableSamples += result.unreadableSamples;
+    if (result.unreadableSamples > 0) ticketsWithUnreadable++;
     samples.push({
       agreement: result.agreement,
       correct: normalize(result.intentId) === normalize(ticket.intent),
     });
+  }
+  if (ticketsWithUnreadable > 0) {
+    const share = ticketsWithUnreadable / fitHalf.tickets.length;
+    if (share > MAX_DEPRESSED_SHARE) {
+      throw new Error(
+        `${ticketsWithUnreadable} of ${fitHalf.tickets.length} fit cases carry an unreadable `
+          + `sample, above the ${MAX_DEPRESSED_SHARE} ceiling; the agreement this would fit on `
+          + 'is the answer budget and not the model (DEC-13)',
+      );
+    }
+    console.warn(
+      `${unreadableSamples} samples across ${ticketsWithUnreadable} cases were unreadable `
+        + 'and counted against agreement',
+    );
   }
 
   const fit = fitAgreementThreshold(samples, { targetPrecision });
@@ -143,6 +178,8 @@ export async function runCalibrationJob(
     split_used: 'fit',
     scope: scopeOf(fitHalf),
     fit_tickets: fitHalf.tickets.length,
+    unreadable_samples: unreadableSamples,
+    tickets_with_unreadable: ticketsWithUnreadable,
     fit_half_digest: options.reportIdentity === undefined ? null : halfDigest(identityOf(fitHalf)),
     report_half_digest:
       options.reportIdentity === undefined ? null : halfDigest(options.reportIdentity),
@@ -279,7 +316,9 @@ async function main(): Promise<void> {
     ...(targetPrecision === undefined ? {} : { targetPrecision }),
   });
   console.log(
-    `fitted global agreement threshold v${artifact.version}: ${artifact.threshold} ` +
+    `fitted global agreement threshold v${artifact.version} `
+      + `(${artifact.tickets_with_unreadable ?? 0} of ${artifact.fit_tickets} cases carried an `
+      + `unreadable sample): ${artifact.threshold} ` +
       `(precision ${artifact.precision_at_threshold}, coverage ${artifact.coverage_at_threshold}, ` +
       `${Math.round(artifact.interval.confidence * 100)}% CI [${artifact.interval.lower.toFixed(3)}, ${artifact.interval.upper.toFixed(3)}])`,
   );

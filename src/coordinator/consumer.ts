@@ -1,10 +1,12 @@
 // Partition consumer (section 4.3, DEC-27, DEC-28) — the runtime half of the
 // partition design that no code owned before this module.
 //
-//   - DEC-27: the queue is partitioned by hash(ticket_id) % N and one
-//     consumer owns each partition. This module polls only its assigned
-//     partitions, so two runs on one ticket cannot occur together in normal
-//     operation.
+//   - DEC-27 and DEC-36: the queue is partitioned by hash(conversation_id) %
+//     N, or by the ticket id when a run has no conversation, and one consumer
+//     owns each partition. This module polls only its assigned partitions, so
+//     two runs on one conversation cannot occur together. Two runs on one
+//     ticket still can, when one of them carries no conversation and hashes
+//     elsewhere; the ticket-keyed fencing epoch covers that case.
 //   - DEC-28: every write carries a fencing epoch that only increases per
 //     ticket. Each pickup reads ticket_epoch and uses highest + 1. The
 //     rebalance procedure (claimPartition) bumps every fence in a partition
@@ -118,7 +120,14 @@ export type ConsumerScanOutcome =
   | { ticketId: string; outcome: Awaited<ReturnType<typeof coordinateTicket>>['outcome'] }
   | { ticketId: string; outcome: 'error'; error: string }
   /** The message failed MAX_INTAKE_ATTEMPTS times and left the queue. */
-  | { ticketId: string; outcome: 'abandoned'; error: string };
+  | { ticketId: string; outcome: 'abandoned'; error: string }
+  /**
+   * Another owner claimed the same message during a rebalance and filed the
+   * abandonment. This scan did nothing. Reporting 'abandoned' here counted one
+   * message as two, which is the same overstatement the single filed run
+   * exists to prevent.
+   */
+  | { ticketId: string; outcome: 'not_claimed' };
 
 /**
  * Failed attempts a queued message gets before it leaves the queue.
@@ -151,6 +160,11 @@ async function recordAttempt(pool: Pool, ticketId: string, messageId: string): P
  * reason names the failure. Dropping the row alone would lose the message
  * silently, which is the failure this whole path exists to prevent.
  */
+/**
+ * Files the abandonment, and reports whether this caller was the one to file
+ * it. Two owners can reach here for one message; only the owner that deletes
+ * the intake row files, so only that owner may report an abandonment.
+ */
 async function abandonMessage(
   pool: Pool,
   attempts: number,
@@ -161,17 +175,60 @@ async function abandonMessage(
     conversationId: string | null;
   },
   reason: string,
-): Promise<void> {
+): Promise<boolean> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // DEC-28: this write carries an epoch, and it takes the ticket's current
+    // fence rather than a literal zero. Zero is below every live fence, so
+    // the ledger's own insert path would refuse it, and two owners racing
+    // during a rebalance could each file an abandonment for one message.
+    //
+    // The fence is read FOR UPDATE and is not advanced. Advancing it would
+    // fence out a run still in flight on this ticket, and abandoning an
+    // intake row is not a claim on the ticket.
+    // The row is materialised first. `FOR UPDATE` on a ticket that has no
+    // fence row locks nothing, and a message abandoned before any pickup is
+    // exactly the case with no row — so the lock that serialises two owners
+    // would have been absent precisely when it was needed. Zero is the floor
+    // the ledger already treats as "no epoch accepted yet", so creating it
+    // refuses nothing that was previously accepted.
+    await client.query(
+      'INSERT INTO ticket_epoch (ticket_id, epoch) VALUES ($1, 0) ON CONFLICT DO NOTHING',
+      [polled.ticketId],
+    );
+    const fence = await client.query<{ epoch: string }>(
+      'SELECT epoch::text AS epoch FROM ticket_epoch WHERE ticket_id = $1 FOR UPDATE',
+      [polled.ticketId],
+    );
+    const epoch = fence.rows[0]?.epoch ?? '0';
+    // The intake row is the token. Two owners can poll one message during a
+    // rebalance — the poll takes no claim — and both can reach the ceiling,
+    // so serialising on the fence alone still let both file: they write at
+    // equal epochs, which the ledger accepts, and `run` has no unique
+    // constraint on (ticket_id, epoch). Whoever deletes the row files the
+    // run; the loser deletes nothing and files nothing.
+    //
+    // Covered: two scans started together on one partition at a ceiling of
+    // one, repeated, counting the runs filed for the message. With the
+    // DELETE moved back after the inserts the count reaches two. An earlier
+    // comment here claimed a test for this passed with the guard removed;
+    // that was wrong, and it left the guard shipping with no cover.
+    const claimed = await client.query(
+      'DELETE FROM intake WHERE ticket_id = $1 AND message_id = $2',
+      [polled.ticketId, polled.messageId],
+    );
+    if (claimed.rowCount === 0) {
+      await client.query('COMMIT');
+      return false;
+    }
     const run = await client.query<{ run_id: string }>(
       `INSERT INTO run (run_id, ticket_id, partition, epoch, state,
                         prompt_ver, model_ver, deadline_at, finished_at, conversation_id)
-       VALUES (gen_random_uuid(), $1, $2, 0, 'escalated',
+       VALUES (gen_random_uuid(), $1, $2, $4, 'escalated',
                'intake', 'intake', now(), now(), $3)
        RETURNING run_id`,
-      [polled.ticketId, polled.partition, polled.conversationId],
+      [polled.ticketId, polled.partition, polled.conversationId, epoch],
     );
     // The escalations view reads its reason from this step, so the operator
     // sees why the message was abandoned and not merely that it vanished.
@@ -183,11 +240,8 @@ async function abandonMessage(
         JSON.stringify({ reason: `intake_abandoned after ${attempts} attempts: ${reason}` }),
       ],
     );
-    await client.query('DELETE FROM intake WHERE ticket_id = $1 AND message_id = $2', [
-      polled.ticketId,
-      polled.messageId,
-    ]);
     await client.query('COMMIT');
+    return true;
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -312,12 +366,31 @@ export async function processQueuedTickets(
       const attempts = await recordAttempt(deps.pool, polled.ticketId, polled.messageId);
       const ceiling = options.maxIntakeAttempts ?? MAX_INTAKE_ATTEMPTS;
       if (attempts >= ceiling) {
-        await abandonMessage(deps.pool, attempts, polled, errorMessage(error));
-        results.push({
-          ticketId: polled.ticketId,
-          outcome: 'abandoned',
-          error: errorMessage(error),
-        });
+        // The abandonment gets its own guard. It throws from inside this
+        // catch, so the same catch cannot see it, and a database fault here
+        // aborted the whole polled batch — the opposite of the isolation this
+        // block promises. Every other message in the batch is unrelated to
+        // this one's failure and must still be attempted.
+        let filed: boolean;
+        try {
+          filed = await abandonMessage(deps.pool, attempts, polled, errorMessage(error));
+        } catch (abandonError) {
+          // The message stays queued and meets the ceiling again next scan,
+          // so this path retries without bound. The ceiling stops bounding it
+          // deliberately: the ledger is the thing that failed, and a message
+          // dropped because the ledger blinked leaves no record anywhere.
+          results.push({
+            ticketId: polled.ticketId,
+            outcome: 'error',
+            error: `abandonment failed: ${errorMessage(abandonError)}`,
+          });
+          continue;
+        }
+        results.push(
+          filed
+            ? { ticketId: polled.ticketId, outcome: 'abandoned', error: errorMessage(error) }
+            : { ticketId: polled.ticketId, outcome: 'not_claimed' },
+        );
         continue;
       }
       results.push({

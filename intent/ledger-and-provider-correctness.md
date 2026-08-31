@@ -5,8 +5,8 @@
 The relay moved a run to `escalated` without stamping `finished_at`. That
 state is terminal, and `db/005_run_timing.sql` says a terminal state carries
 the stamp. Service time is `finished_at - created_at`, so every run the
-relay escalated dropped out of the latency report. Those runs are the ones
-the report most needs.
+relay escalated could not be measured for service time. Those runs are the
+ones such a measurement most needs.
 
 The coordinator recomputed the run's partition from its own
 `PARTITION_COUNT`. Enqueue and consume read that variable independently.
@@ -32,8 +32,8 @@ each fix and watching the test fail.
 
 ## Affected users and systems
 
-Anyone reading the latency report. Any deployment whose partition counts
-drift. Any run whose provider stalls.
+Anyone measuring service time from the ledger. Any deployment whose partition
+counts drift. Any run whose provider stalls.
 
 ## Constraints
 

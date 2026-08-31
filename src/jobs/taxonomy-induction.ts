@@ -13,6 +13,7 @@
 // 25-entry cap, so this job emits at most INTENT_CAP - 1 named candidates
 // plus the 'other' group.
 
+import { UnreadableAnswerError } from '../models/provider.js';
 import type { ModelProvider } from '../models/provider.js';
 
 export { INTENT_CAP } from '../fixtures/load.js';
@@ -67,6 +68,15 @@ export interface CandidateTaxonomy {
 }
 
 const NAMING_TEMPERATURE = 0.2;
+/**
+ * Answer budget for one naming call.
+ *
+ * A reasoning model spends its reasoning inside this budget. At 32 tokens the
+ * pinned default returned an empty answer, which became a candidate intent
+ * with an empty label and a fallback id. The curated taxonomy would then
+ * carry a name no person wrote.
+ */
+const NAMING_MAX_OUTPUT_TOKENS = 1024;
 const SAMPLES_PER_CLUSTER = 8;
 const TEXT_SNIPPET_CHARS = 300;
 const MAX_KMEANS_ITERATIONS = 100;
@@ -209,13 +219,28 @@ export async function induceTaxonomy(
     const named = await provider.complete({
       messages: buildNamingPrompt(members.length, input.items, representatives),
       temperature: NAMING_TEMPERATURE,
-      maxOutputTokens: 32,
+      maxOutputTokens: NAMING_MAX_OUTPUT_TOKENS,
       promptVer: input.promptVer,
       modelVer: input.chatModelVer,
     });
     costMicros += named.costMicros;
 
     const label = named.text.trim().replace(/\s+/g, ' ');
+    // An empty answer is not a name. Slugging it yields the 'intent' fallback
+    // and a candidate whose label is blank, so a truncated call would enter
+    // the curated taxonomy as a nameless intent.
+    if (label === '') {
+      // Carries the embedding spend and every naming call made before this
+      // one, so a failed run still reports what it cost (DEC-25). This job
+      // aborts where its two siblings tolerate and count: a taxonomy missing
+      // a cluster is not usable, so there is nothing to bound.
+      throw new UnreadableAnswerError(
+        'taxonomy induction received no label for a cluster; a cluster is never '
+          + 'named by an unreadable answer (section 4.11)',
+        'empty',
+        costMicros,
+      );
+    }
     candidates.push({
       id: uniqueIntentId(slugifyIntentId(label), usedIds),
       label,

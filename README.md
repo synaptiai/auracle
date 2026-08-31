@@ -125,6 +125,12 @@ You choose the data position with the provider and you document your choice.
 Set `AURACLE_ZDR_ONLY=1` to ask the provider for zero retention on every call.
 Absence means off, which DEC-17 requires: it rejects forcing the setting.
 
+**The default chat model answers under that setting (DEC-26).**
+The default is `z-ai/glm-5.3-flash`, and `MODEL_VER` overrides it.
+Not every model offers a zero-retention endpoint.
+A model that offers none fails the call, so the setting never degrades to
+silent retention. You own the pin and the position it implies.
+
 **The ledger stores customer message text (DEC-17, DEC-19).**
 `turn.body_text` holds each inbound message and `turn.approved_reply_text`
 holds the reply a person approved. Both live for the life of the conversation.

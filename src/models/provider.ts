@@ -97,3 +97,46 @@ export function assertSamplingTemperature(temperature: number): void {
     );
   }
 }
+
+/**
+ * The model answered, and the answer carries nothing the caller can read.
+ *
+ * A fault, not a determination. The pinned models reason before they answer
+ * and the provider bills that reasoning against the answer budget, so an
+ * exhausted budget returns an empty answer rather than an error. Scoring that
+ * emptiness as a verdict, or as a decision to abstain, reported a
+ * determination the model never made. An unknown outcome escalates (DEC-30).
+ *
+ * Typed so a caller can tell it from a transient failure. These calls run at
+ * temperature 0, so the same prompt reproduces the same unreadable answer, and
+ * a retry ceiling sized for a transient fault would spend a full pipeline run
+ * per attempt.
+ */
+export class UnreadableAnswerError extends Error {
+  constructor(
+    message: string,
+    /** Which way the answer failed to read, for the operator. */
+    readonly shape: string,
+    /**
+     * What the faulting call cost, in micro-dollars (DEC-25).
+     *
+     * A truncated call exhausted its answer budget by definition, so it is the
+     * most expensive call of a run. Throwing without it understated the run by
+     * its largest single call.
+     */
+    readonly costMicros = 0,
+    /**
+     * True when the provider reported no cost for the faulting call.
+     *
+     * DEC-25 refuses to report a cost of zero as if it were measured. So the
+     * run records that the spend is unknown rather than recording nothing:
+     * an earlier attempt threw an untyped error here, which no caller could
+     * tell from a protocol failure, and the run then never terminated at all.
+     * A run that ends and says its spend is unknown beats a run that hangs.
+     */
+    readonly costUnknown = false,
+  ) {
+    super(message);
+    this.name = 'UnreadableAnswerError';
+  }
+}

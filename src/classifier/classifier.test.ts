@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { CLASSIFIER_K, classifyTicket, GATE_AGREEMENT } from './classifier.js';
 import type { ClassifierTaxonomy } from './classifier.js';
 import { FakeProvider } from '../models/fake.js';
-import type { RecordedCall } from '../models/fake.js';
+import { UnreadableAnswerError } from '../models/provider.js';
+import type { FakeStep, RecordedCall } from '../models/fake.js';
 
 const TAXONOMY: ClassifierTaxonomy = {
   intents: [
@@ -20,6 +21,153 @@ function chatCalls(calls: readonly RecordedCall[]): RecordedCall[] {
 }
 
 describe('classifyTicket (section 4.5, DEC-05)', () => {
+  it('counts an unreadable sample against agreement instead of failing the ticket', async () => {
+    // One truncated sample of nine is one sample. The denominator stays K
+    // (section 4.5), so it counts against agreement exactly as a sample
+    // naming no valid intent does. Failing the ticket would discard the eight
+    // samples that answered.
+    const script = [
+      { finishReason: 'length' },
+      ...Array.from({ length: 8 }, () => ({ text: 'refund-request' })),
+    ];
+    const result = await classifyTicket(new FakeProvider(script), {
+      taxonomy: TAXONOMY,
+      ticketText: 'I want a refund',
+      ...PIN,
+    });
+    expect(result.intentId).toBe('refund-request');
+    expect(result.agreement).toBeCloseTo(8 / 9, 6);
+  });
+
+  it('reads an empty answer as unreadable, not as a label outside the taxonomy', async () => {
+    // The composer and the judge both raise on this string. Counting it as a
+    // vote hid it from the attrition count the calibration ceiling reads.
+    const script = [
+      { text: '' },
+      ...Array.from({ length: 8 }, () => ({ text: 'refund-request' })),
+    ];
+    const result = await classifyTicket(new FakeProvider(script), {
+      taxonomy: TAXONOMY,
+      ticketText: 'I want a refund',
+      ...PIN,
+    });
+    expect(result.unreadableSamples).toBe(1);
+    expect(result.agreement).toBeCloseTo(8 / 9, 6);
+  });
+
+  it('names the cause of the fault, not how often it happened', async () => {
+    // Nine accounting faults are not a budget fault. Keying the shape on the
+    // count reported these as 'truncated', and the runbook then sent an
+    // operator to check the answer budget.
+    const noCost = { finishReason: 'length', costUnknown: true, shape: 'no-cost' } as const;
+    const script = Array.from({ length: 9 }, () => noCost);
+    const caught = await classifyTicket(new FakeProvider(script), {
+      taxonomy: TAXONOMY,
+      ticketText: 'I want a refund',
+      ...PIN,
+    })
+      .then(() => null)
+      .catch((e: unknown) => e as UnreadableAnswerError);
+    expect(caught).toBeInstanceOf(UnreadableAnswerError);
+    expect(caught?.shape).toBe('no-cost');
+  });
+
+  it('calls a blank answer empty, not a budget fault', async () => {
+    // 'truncated' sends an operator to raise the answer budget. A model that
+    // answered nothing did not run out of budget.
+    //
+    // Eight blanks and one truncated sample, not nine blanks. With nine the
+    // case proves nothing: no blank would enter the tally, the run would fall
+    // to the `?? 'empty'` fallback, and the assertion would hold with the
+    // counting deleted. The mix makes the tally the only thing that decides.
+    const script = [
+      ...Array.from({ length: 8 }, () => ({ text: '' })),
+      { finishReason: 'length' } as const,
+    ];
+    const caught = await classifyTicket(new FakeProvider(script), {
+      taxonomy: TAXONOMY, ticketText: 'I want a refund', ...PIN,
+    }).then(() => null).catch((e: unknown) => e as UnreadableAnswerError);
+    expect(caught?.shape).toBe('empty');
+  });
+
+  it('names the same cause however the provider ordered the samples', async () => {
+    // The shape was read off a first-seen list, so one blank arriving before
+    // eight truncated samples reported 'empty' and the same nine reordered
+    // reported 'truncated'. The runbook sends an operator to a different
+    // remedy for each, so the answer order chose the remedy.
+    const blank = { text: '' } as const;
+    const truncated = { finishReason: 'length' } as const;
+    const shapeOf = async (script: readonly FakeStep[]) =>
+      (await classifyTicket(new FakeProvider([...script]), {
+        taxonomy: TAXONOMY, ticketText: 'I want a refund', ...PIN,
+      }).then(() => null).catch((e: unknown) => e as UnreadableAnswerError))?.shape;
+
+    const eightTruncated = Array.from({ length: 8 }, () => truncated);
+    expect(await shapeOf([blank, ...eightTruncated])).toBe('truncated');
+    expect(await shapeOf([...eightTruncated, blank])).toBe('truncated');
+
+    // A tie is reachable, and counting alone left the ordering dependence
+    // intact exactly there. Four of each, plus one sample naming no intent
+    // this taxonomy holds so the run still faults with nothing to count.
+    const tie = [
+      ...Array.from({ length: 4 }, () => blank),
+      ...Array.from({ length: 4 }, () => truncated),
+      { text: 'not-an-intent' } as const,
+    ];
+    expect(await shapeOf(tie)).toBe('empty');
+    expect(await shapeOf([...tie].reverse())).toBe('empty');
+  });
+
+  it('calls it a taxonomy fault only when every sample was readable', async () => {
+    // Eight budget faults and one stray label is not a taxonomy fault, and
+    // its own runbook row says the samples were readable.
+    const script = [
+      ...Array.from({ length: 8 }, () => ({ finishReason: 'length' })),
+      { text: 'not-an-intent' },
+    ];
+    const mixed = await classifyTicket(new FakeProvider(script), {
+      taxonomy: TAXONOMY, ticketText: 'I want a refund', ...PIN,
+    }).then(() => null).catch((e: unknown) => e as UnreadableAnswerError);
+    expect(mixed?.shape).toBe('truncated');
+
+    const allReadable = await classifyTicket(
+      new FakeProvider(Array.from({ length: 9 }, () => ({ text: 'not-an-intent' }))),
+      { taxonomy: TAXONOMY, ticketText: 'I want a refund', ...PIN },
+    ).then(() => null).catch((e: unknown) => e as UnreadableAnswerError);
+    expect(allReadable?.shape).toBe('no-label');
+  });
+
+  it('faults when no sample yields a label, whatever the mix of causes', async () => {
+    // Eight truncated and one stray label. An earlier version typed only the
+    // all-unreadable case, so this threw an error no caller could catch.
+    const script = [
+      ...Array.from({ length: 8 }, () => ({ finishReason: 'length' })),
+      { text: 'not-an-intent-in-this-taxonomy' },
+    ];
+    await expect(
+      classifyTicket(new FakeProvider(script), {
+        taxonomy: TAXONOMY,
+        ticketText: 'I want a refund',
+        ...PIN,
+      }),
+    ).rejects.toBeInstanceOf(UnreadableAnswerError);
+  });
+
+  it('allows each sample enough answer budget to reason and still answer', async () => {
+    const provider = new FakeProvider(
+      Array.from({ length: 9 }, () => ({ text: 'refund-request' })),
+    );
+    await classifyTicket(provider, {
+      taxonomy: TAXONOMY,
+      ticketText: 'I want a refund',
+      ...PIN,
+    });
+    expect(chatCalls(provider.calls)).toHaveLength(9);
+    for (const call of chatCalls(provider.calls)) {
+      expect(call.maxOutputTokens ?? 0).toBeGreaterThanOrEqual(1024);
+    }
+  });
+
   it('samples exactly CLASSIFIER_K = 9 times', async () => {
     const provider = new FakeProvider(
       Array.from({ length: CLASSIFIER_K }, () => ({ text: 'refund-request' })),
@@ -196,7 +344,7 @@ describe('classifyTicket (section 4.5, DEC-05)', () => {
         ticketText: 'anything',
         ...PIN,
       }),
-    ).rejects.toThrow(/no valid intent label/);
+    ).rejects.toThrow(/no intent label in 9 classifier samples/);
   });
 
   it('rejects an empty taxonomy before any call', async () => {

@@ -3,7 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 export interface FencedRunInput {
   runId: string;
   ticketId: string;
-  /** DEC-27: hash(ticket_id) % N. */
+  /** DEC-36: hash(conversation_id) % N, or the ticket id when a run has none. */
   partition: number;
   /** DEC-28: fencing token. Must not decrease per ticket. */
   epoch: bigint;

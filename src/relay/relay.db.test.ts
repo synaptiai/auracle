@@ -313,7 +313,7 @@ describe('section 4.4 outbox relay', () => {
     expect(await runState(idemKey)).toBe('escalated');
     // 'escalated' is terminal, so the service time must be measurable. The
     // relay used to move the state without the stamp, which dropped every
-    // escalated run out of the latency report (db/005_run_timing.sql).
+    // escalated run out of any latency measurement (db/005_run_timing.sql).
     expect(await runFinishedAt(idemKey)).toBeInstanceOf(Date);
 
     // A later scan finds nothing pending: escalation is terminal for the
