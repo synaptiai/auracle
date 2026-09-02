@@ -1,0 +1,50 @@
+{
+  "artifact": "groundedness-thresholds",
+  "version": 2,
+  "fitted_at": "2026-09-02T01:54:46.161Z",
+  "gold_source": "synthetic",
+  "fit_half_digest": null,
+  "report_half_digest": null,
+  "split_used": "fit",
+  "fit_drafts": 1043,
+  "faulted_drafts": 19,
+  "cost_micros": 170780,
+  "cost_unknown": true,
+  "prompt_ver": "ground-p1",
+  "model_ver": "z-ai/glm-5.3-flash",
+  "target_precision": 0.985,
+  "target_npv": 0.9,
+  "block": 0.75,
+  "block_npv": 0.9472222222222222,
+  "block_drafts": 360,
+  "block_interval": {
+    "confidence": 0.95,
+    "lower": 0.9190458567486823,
+    "upper": 0.9659549923675417
+  },
+  "review": 1,
+  "review_precision": 1,
+  "review_coverage": 0.4784276126558006,
+  "review_interval": {
+    "confidence": 0.95,
+    "lower": 0.9923604970248407,
+    "upper": 1
+  },
+  "by_grade": [
+    {
+      "grade": "absent",
+      "drafts": 159,
+      "mean_coverage": 0.6734800838574424
+    },
+    {
+      "grade": "off_topic",
+      "drafts": 126,
+      "mean_coverage": 0.682275132275132
+    },
+    {
+      "grade": "unstated_detail",
+      "drafts": 234,
+      "mean_coverage": 0.6497863247863243
+    }
+  ]
+}

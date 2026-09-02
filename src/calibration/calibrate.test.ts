@@ -34,31 +34,98 @@ function repeat(count: number, make: (i: number) => AgreementSample): AgreementS
   return Array.from({ length: count }, (_, i) => make(i));
 }
 
+// Some job cases drive twenty real cases, to inspect attrition accounting and
+// the real-history path. The shipped floor of 0.985 is read against a 95
+// percent interval and needs 253 samples above the threshold, so a floor those
+// fixtures can reach stands in: twenty perfect samples reach 0.8389 and
+// nineteen reach 0.8318. The floor itself is covered below, at the sizes it
+// needs.
+const SMALL_FLOOR = { targetPrecision: 0.8 } as const;
+
+/**
+ * For the case that proves a real half of any size is accepted.
+ *
+ * It carries two cases, and a perfect pair reaches 0.3424. The size rule is
+ * what that case tests; the floor only has to be reachable so the run gets
+ * past the fit and on to the digests it asserts.
+ */
+const TINY_FLOOR = { targetPrecision: 0.3 } as const;
+
+describe('the agreement floor is a floor, not a point estimate', () => {
+  // The twin of the defect the coverage fit carried. Both searches compute a
+  // Wilson interval, record it in their artifact, and read a point estimate
+  // when they choose. A point estimate holds no sample size, so five samples
+  // that happen to agree read 1.000 and clear any floor.
+  //
+  // This search maximises coverage, so it prefers a wide band and the fault
+  // is rarer here than at the coverage block end. It is not absent: when the
+  // only band that clears the floor is a narrow one at the top, that band
+  // wins however few samples it holds.
+  it('refuses a threshold that only a handful of samples support', () => {
+    const samples = [
+      // Five unanimous and correct. Perfect precision on five samples.
+      ...Array.from({ length: 5 }, () => ({ agreement: 1, correct: true })),
+      // A wide band the floor rejects outright, so the narrow one is the only
+      // candidate left.
+      ...Array.from({ length: 50 }, (_, i) => ({ agreement: 0.5, correct: i < 25 })),
+    ];
+    expect(() => fitAgreementThreshold(samples, { targetPrecision: 0.985 }))
+      .toThrow(/no agreement threshold/);
+  });
+
+  it('takes a band whose lower bound holds the floor', () => {
+    const samples = [
+      ...Array.from({ length: 300 }, () => ({ agreement: 1, correct: true })),
+      ...Array.from({ length: 50 }, (_, i) => ({ agreement: 0.5, correct: i < 25 })),
+    ];
+    const fit = fitAgreementThreshold(samples, { targetPrecision: 0.985 });
+    expect(fit.threshold).toBe(1);
+    expect(fit.interval.lower).toBeGreaterThanOrEqual(0.985);
+    expect(fit.passed).toBe(300);
+  });
+
+  // A floor the sample cannot reach is a refusal, and the message says how
+  // many samples the floor needs rather than leaving a caller to guess.
+  it('names the support the floor needs when it refuses', () => {
+    const samples = Array.from({ length: 20 }, () => ({ agreement: 1, correct: true }));
+    expect(() => fitAgreementThreshold(samples, { targetPrecision: 0.985 }))
+      .toThrow(/253/);
+  });
+});
+
 describe('fitAgreementThreshold (DEC-13)', () => {
   it('picks the lowest threshold whose precision reaches the floor', () => {
+    // The tiers keep their proportions and grow to what the floor needs. The
+    // floor is read against the interval's lower bound, so twenty samples at
+    // 19 of 20 reach 0.764 and could never hold 0.9 however the point
+    // estimate read.
     const samples = [
-      // 10 easy tickets: unanimous and correct.
-      ...repeat(10, () => ({ agreement: 1, correct: true })),
-      // 10 medium tickets: 8/9 agree, 9 of 10 correct.
-      ...repeat(10, (i) => ({ agreement: 8 / 9, correct: i < 9 })),
-      // 10 hard tickets: 7/9 agree, 5 of 10 correct.
-      ...repeat(10, (i) => ({ agreement: 7 / 9, correct: i < 5 })),
+      // 200 easy tickets: unanimous and correct.
+      ...repeat(200, () => ({ agreement: 1, correct: true })),
+      // 200 medium tickets: 8/9 agree, 180 of 200 correct.
+      ...repeat(200, (i) => ({ agreement: 8 / 9, correct: i < 180 })),
+      // 200 hard tickets: 7/9 agree, 100 of 200 correct.
+      ...repeat(200, (i) => ({ agreement: 7 / 9, correct: i < 100 })),
     ];
 
     const fit = fitAgreementThreshold(samples, { targetPrecision: 0.9 });
 
-    // 7/9 passes all 30 at precision 24/30; 8/9 passes 20 at 19/20 = 0.95;
-    // 1 passes 10 at precision 1. Max coverage above the floor is at 8/9.
+    // 7/9 passes all 600 at precision 480/600; 8/9 passes 400 at 380/400 =
+    // 0.95, whose lower bound is 0.925; 1 passes 200 at precision 1. Max
+    // coverage above the floor is at 8/9.
     expect(fit.threshold).toBeCloseTo(8 / 9);
-    expect(fit.precision).toBeCloseTo(19 / 20);
-    expect(fit.coverage).toBeCloseTo(20 / 30);
-    expect(fit.passed).toBe(20);
+    expect(fit.precision).toBeCloseTo(380 / 400);
+    expect(fit.coverage).toBeCloseTo(400 / 600);
+    expect(fit.passed).toBe(400);
   });
 
   it('emits exactly one global threshold with a sane interval', () => {
+    // Sized for its floor. The floor is read against the interval's lower
+    // bound, and ten samples reach 0.5656 at their very best, so the earlier
+    // pair of fives cleared 0.8 on a point estimate alone.
     const samples = [
-      ...repeat(5, () => ({ agreement: 1, correct: true })),
-      ...repeat(5, (i) => ({ agreement: 6 / 9, correct: i < 4 })),
+      ...repeat(300, () => ({ agreement: 1, correct: true })),
+      ...repeat(300, (i) => ({ agreement: 6 / 9, correct: i % 5 !== 0 })),
     ];
 
     const fit = fitAgreementThreshold(samples, { targetPrecision: 0.8 });
@@ -74,7 +141,7 @@ describe('fitAgreementThreshold (DEC-13)', () => {
   it('throws when no threshold reaches the precision floor', () => {
     const samples = repeat(6, (i) => ({ agreement: 1 - i / 9, correct: false }));
     expect(() => fitAgreementThreshold(samples, { targetPrecision: 0.9 })).toThrow(
-      /precision 0\.9/,
+      /lower bound holds 0\.9/,
     );
   });
 
@@ -107,7 +174,7 @@ describe('wilsonInterval', () => {
       [1, 5],
       [19, 20],
       [20, 20],
-      [385, 770],
+      [FIT_COUNT, FIT_COUNT * 2],
     ] as const) {
       const interval = wilsonInterval(successes, n);
       expect(interval.lower).toBeGreaterThanOrEqual(0);
@@ -173,18 +240,22 @@ function scriptUnanimous(tickets: readonly GoldTicket[]): { text: string }[] {
 }
 
 /**
- * Script a full 385-ticket fit half:
- * - 200 tickets unanimous and correct (agreement 1);
- * - 100 tickets at 8/9 agreement, 90 correct and 10 wrong-modal;
- * - 85 tickets at 5/9 agreement, all wrong-modal.
+ * Script a full fit half, at the committed FIT_COUNT:
+ * - 552 tickets unanimous and correct (agreement 1);
+ * - 276 tickets at 8/9 agreement, 248 correct and 28 wrong-modal;
+ * - 234 tickets at 5/9 agreement, all wrong-modal.
  * The script returns the provider steps plus the matching gold half.
+ *
+ * The proportions are those of the earlier 385-case half, scaled with the
+ * corpus. The 8/9 tier still holds a precision under the floor, so the fit
+ * is still forced onto the unanimous tier, which is what these cases test.
  */
 function scriptedFitHalf(): { steps: FakeStep[]; half: GoldFile } {
   const OTHER = 'shipping-status';
   const groups = [
-    { count: 200, intent: 'refund-request', agree: 9, correctCount: 200 },
-    { count: 100, intent: 'payment-failure', agree: 8, correctCount: 90 },
-    { count: 85, intent: 'general-question', agree: 5, correctCount: 0 },
+    { count: 552, intent: 'refund-request', agree: 9, correctCount: 552 },
+    { count: 276, intent: 'payment-failure', agree: 8, correctCount: 248 },
+    { count: 234, intent: 'general-question', agree: 5, correctCount: 0 },
   ] as const;
 
   const steps: FakeStep[] = [];
@@ -258,13 +329,13 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
         expect(fitTexts.has(call.messages?.[1]?.content ?? '')).toBe(true);
       }
 
-      // Threshold selection on this distribution: the 8/9 tier passes 300
-      // tickets but holds only 290 correct, precision 0.967 < 0.985, so the
+      // Threshold selection on this distribution: the 8/9 tier passes 828
+      // tickets but holds only 800 correct, precision 0.966 < 0.985, so the
       // floor forces the unanimous tier.
       expect(artifact.threshold).toBe(1);
       expect(artifact.precision_at_threshold).toBe(1);
-      expect(artifact.coverage_at_threshold).toBeCloseTo(200 / 385);
-      expect(artifact.fit_tickets).toBe(385);
+      expect(artifact.coverage_at_threshold).toBeCloseTo(552 / FIT_COUNT);
+      expect(artifact.fit_tickets).toBe(FIT_COUNT);
       expect(artifact.split_used).toBe('fit');
       // Every scripted case is a first turn, so the recorded scope says so.
       expect(artifact.scope).toBe('first_turn');
@@ -296,7 +367,7 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
     }
   });
 
-  it('requires exactly the committed 385 fit tickets (DEC-31)', async () => {
+  it('requires exactly the committed fit-half size (DEC-31)', async () => {
     const dir = tempDirUrl();
     try {
       // Internally consistent half (count matches tickets) so the
@@ -304,8 +375,8 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
       const shortHalf = {
         split: 'fit',
         source: 'synthetic',
-        count: 384,
-        tickets: Array.from({ length: 384 }, () => makeTicket('refund-request')),
+        count: FIT_COUNT - 1,
+        tickets: Array.from({ length: FIT_COUNT - 1 }, () => makeTicket('refund-request')),
       } as unknown as GoldFile;
       await expect(
         runCalibrationJob({
@@ -315,7 +386,7 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
           artifactDir: dir,
           ...PIN,
         }),
-      ).rejects.toThrow(/expected 385/);
+      ).rejects.toThrow(new RegExp(`expected ${FIT_COUNT}`));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -323,7 +394,7 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
 
   // The size rule describes the corpus this repository generates. An
   // adopter's labelled half is whatever size their history gave them, and
-  // refusing it for not being 385 would say nothing about its correctness.
+  // refusing it for not being the committed size would say nothing about it.
   // Its two sibling jobs each have this case; this one did not, so the guard
   // at the boundary the injection path bypasses was unproven here.
   it('refuses a provenance outside the closed set (DEC-18)', async () => {
@@ -367,6 +438,7 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
         }),
         artifactDir: dir,
         ...PIN,
+        ...SMALL_FLOOR,
       });
       // The values, not merely the fields: without these the whole feature
       // can be deleted and the suite does not notice.
@@ -428,6 +500,7 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
         }),
         artifactDir: dir,
         ...PIN,
+        ...TINY_FLOOR,
       });
       expect(result.artifact.gold_source).toBe('real');
       expect(result.artifact.fit_tickets).toBe(2);
@@ -515,7 +588,7 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
     const dir = tempDirUrl();
     try {
       const { half } = scriptedFitHalf();
-      const lyingHalf = { ...half, count: 385, tickets: half.tickets.slice(0, 10) };
+      const lyingHalf = { ...half, count: FIT_COUNT, tickets: half.tickets.slice(0, 10) };
       await expect(
         runCalibrationJob({
           provider: new FakeProvider([]),
@@ -524,7 +597,7 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
           artifactDir: dir,
           ...PIN,
         }),
-      ).rejects.toThrow(/declares 385 tickets but carries 10/);
+      ).rejects.toThrow(new RegExp(`declares ${FIT_COUNT} tickets but carries 10`));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -556,7 +629,7 @@ describe('runCalibrationJob over a conversation (DEC-37, DEC-39)', () => {
   /**
    * Turns the first two cases of the scripted half into one two-turn
    * conversation, leaving the remaining 383 as first turns. The provider
-   * script is untouched: the job still classifies 385 cases in the same
+   * script is untouched: the job still classifies FIT_COUNT cases in the same
    * order, so every scripted vote still lands on the case it was written for.
    */
   function withOneConversation(): { steps: FakeStep[]; half: GoldFile } {
@@ -622,7 +695,7 @@ describe('runCalibrationJob over a conversation (DEC-37, DEC-39)', () => {
 
       // DEC-39 binds the jobs that score a disposition. This one scores a
       // label, which a later turn carries, so nothing is dropped.
-      expect(artifact.fit_tickets).toBe(385);
+      expect(artifact.fit_tickets).toBe(FIT_COUNT);
       expect(artifact.scope).toBe('all_turns');
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -670,7 +743,7 @@ describe('calibration artifact round-trip', () => {
     gold_source: 'synthetic',
     split_used: 'fit',
     scope: 'first_turn',
-    fit_tickets: 385,
+    fit_tickets: FIT_COUNT,
     unreadable_samples: 0,
     fit_half_digest: null,
     report_half_digest: null,

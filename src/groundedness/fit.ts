@@ -15,7 +15,7 @@
 // that do not separate is a number any candidate would satisfy, and shipping
 // one would replace an honest caveat with false authority.
 
-import { wilsonInterval } from '../calibration/calibrate.js';
+import { minimumSupport, wilsonInterval } from '../calibration/calibrate.js';
 import type { FitInterval } from '../calibration/calibrate.js';
 
 /** One scored draft: what the judge measured, and what was true. */
@@ -90,16 +90,20 @@ export function fitCoverageThresholds(
   if (review === null) {
     throw new Error(
       `measured coverage does not separate a grounded draft from an ungrounded one: `
-        + `${describeOverlap(samples)}. No threshold reaches precision ${options.targetPrecision}, `
-        + 'so any value would pass and the fit would measure nothing',
+        + `${describeOverlap(samples)}. No threshold reaches a precision whose 95 percent `
+        + `lower bound holds ${options.targetPrecision}, so either the classes overlap or the `
+        + `sample is too small: a perfect sample of n reaches n / (n + z squared), which needs `
+        + `${minimumSupport(options.targetPrecision)} drafts above the threshold`,
     );
   }
 
   const block = fitBlock(samples, candidates, options.targetNpv);
   if (block === null) {
     throw new Error(
-      `no coverage threshold reaches a negative predictive value of ${options.targetNpv}; `
-        + 'nothing can be escalated without escalating a grounded draft',
+      `no coverage threshold reaches a negative predictive value whose 95 percent lower bound `
+        + `holds ${options.targetNpv}; either nothing can be escalated without escalating a `
+        + `grounded draft, or too few drafts sit below any candidate: a perfect sample of n `
+        + `reaches n / (n + z squared), which needs ${minimumSupport(options.targetNpv)} drafts below`,
     );
   }
 
@@ -149,7 +153,19 @@ function fitReview(
     if (passed.length === 0) continue;
     const correct = passed.filter((s) => s.grounded).length;
     const precision = correct / passed.length;
-    if (precision < targetPrecision) continue;
+    const interval = wilsonInterval(correct, passed.length);
+    // The floor is tested against the interval's lower bound, not the point
+    // estimate. A point estimate has no sample size in it: three drafts that
+    // happen to agree read 1.000 and clear any floor, and the first live run
+    // fitted the block end on exactly three. Both ends computed this interval,
+    // wrote it into the artifact, and never read it, so the artifact recorded
+    // the evidence that its own threshold was unsupported.
+    //
+    // A perfect sample reaches n / (n + z squared), so the floor also sets a
+    // minimum support: 253 drafts for a precision of 0.985, 35 for a negative
+    // predictive value of 0.9. A sample that cannot reach the floor produces a
+    // refusal, which is a result and not a failure.
+    if (interval.lower < targetPrecision) continue;
     const coverage = passed.length / samples.length;
     if (best === null || coverage > best.coverage) {
       best = {
@@ -158,7 +174,7 @@ function fitReview(
         coverage,
         passed: passed.length,
         total: samples.length,
-        interval: wilsonInterval(correct, passed.length),
+        interval,
       };
     }
   }
@@ -193,7 +209,12 @@ function fitBlock(
     if (below.length === 0) continue;
     const ungrounded = below.filter((s) => !s.grounded).length;
     const npv = ungrounded / below.length;
-    if (npv < targetNpv) continue;
+    const interval = wilsonInterval(ungrounded, below.length);
+    // The lower bound, for the reason given in fitReview. This end is where
+    // the point estimate did the damage: candidates ascend from near zero and
+    // this search takes the lowest that qualifies, so it lands on the smallest
+    // support the data allows every time, not merely sometimes.
+    if (interval.lower < targetNpv) continue;
     if (best === null || threshold < best.threshold) {
       best = {
         threshold,
@@ -201,7 +222,7 @@ function fitBlock(
         share: below.length / samples.length,
         blocked: below.length,
         total: samples.length,
-        interval: wilsonInterval(ungrounded, below.length),
+        interval,
       };
     }
   }

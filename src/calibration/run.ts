@@ -209,9 +209,9 @@ function scopeOf(half: GoldFile): CalibrationScope {
  * Refuse a half this job must not fit on.
  *
  * The split rule and the shape rule bind every half. The size rule does not:
- * 385 describes the corpus this repository generates, and an adopter's
+ * The size describes the corpus this repository generates, and an adopter's
  * labelled half is whatever size their history gave them. Refusing it for
- * not being 385 would say nothing about its correctness.
+ * not being that size would say nothing about its correctness.
  *
  * What replaces the size rule is the DEC-31 proof. A synthetic half gets it
  * from the committed corpus, whose two halves the loader cross-checks. A
@@ -242,7 +242,7 @@ function assertFitHalf(half: GoldFile, reportIdentity: HalfIdentity | undefined)
     );
   }
   if (half.source === 'synthetic') {
-    // The committed corpus holds exactly 385 fit tickets (DEC-31).
+    // The committed corpus holds exactly FIT_COUNT fit tickets (DEC-31).
     if (half.count !== FIT_COUNT) {
       throw new Error(`fit half holds ${half.count} tickets, expected ${FIT_COUNT}`);
     }
@@ -255,7 +255,7 @@ function assertFitHalf(half: GoldFile, reportIdentity: HalfIdentity | undefined)
   // Unconditional. An earlier version returned here for a synthetic half, on
   // the ground that the loader cross-checks the committed corpus. That ground
   // does not hold for a file read by path: `loadGoldHalf(split, path)` checks
-  // nothing across halves, so a file declaring `synthetic` with 385 SYN- ids
+  // nothing across halves, so a file declaring `synthetic` with that many SYN- ids
   // took the fit through with the caller's proof in hand and unused. A
   // counterpart the caller supplied is a counterpart this must check.
   if (reportIdentity !== undefined) {

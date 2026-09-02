@@ -293,7 +293,7 @@ describe('triage run', () => {
 });
 
 describe('the default case source is the full synthetic gold set', () => {
-  it('carries both halves, 770 cases, each tagged with its split', () => {
+  it('carries both halves, every case tagged with its split', () => {
     const cases = goldSetCases();
     expect(cases.length).toBe(FIT_COUNT + REPORT_COUNT);
     expect(cases.filter((c) => c.origin === 'fit').length).toBe(FIT_COUNT);
@@ -403,7 +403,7 @@ describe('the triage directory obeys the shared scan', () => {
   });
 
   it('checks the directory before the judge reviews every case', async () => {
-    // 770 cases reviewed, then thrown away by a stray file. The check moved
+    // The whole gold set reviewed, then thrown away by a stray file. The check moved
     // ahead of the loop.
     let reviewed = 0;
     const judge: TriageJudge = {

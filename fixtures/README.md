@@ -12,8 +12,8 @@ See DEC-18.
   risk tier per DEC-13. A high-risk intent never reaches the automatic path,
   whatever the gate values say. The `other` group stays in the list per
   section 4.11, so unmatched tickets have a target label.
-- `gold/fit.json`. The fit half of the gold set. It holds 385 synthetic cases.
-- `gold/report.json`. The report half of the gold set. It also holds 385
+- `gold/fit.json`. The fit half of the gold set. It holds 1062 synthetic cases.
+- `gold/report.json`. The report half of the gold set. It also holds 1062
   synthetic cases.
 - `documents.json`. Help-center documents and canonical resolutions for the
   retrieval index per DEC-22. Approved resolutions record how people actually
@@ -22,18 +22,17 @@ See DEC-18.
 
 ## Split discipline
 
-The gold set holds 770 cases. You fit on the fit half only. You report each
+The gold set holds 2124 cases. You fit on the fit half only. You report each
 published number from the report half only. One case never serves both tasks.
 A threshold picked on the cases that you later report on inflates the result.
 See DEC-31.
 
-The strata are the intents. Each intent holds 30 or 31 cases. The split divides
+The strata are the intents. Each intent holds 84 or 85 cases. The split divides
 each stratum as evenly as possible between the halves. Each half contains every
 intent, so every risk tier appears in both halves.
 
 A stratum counts case records. The scored population is smaller, because the
-replay and the gold report read first turns only. Each intent opens 9 to 14
-threads per half. Read a stratum count from the artifact of the run, never
+replay and the gold report read first turns only. Each intent opens roughly 30 threads per half. Read a stratum count from the artifact of the run, never
 from this file.
 
 ## Conversations
@@ -50,6 +49,64 @@ belongs to the whole thread. See DEC-39. The calibration job scores a
 prediction against the intent label of the case, which every turn carries, so
 it fits on every turn and records that population in its artifact.
 
+## Claims
+
+Each case carries a `claims` array. It is the ground truth the coverage fit
+reads. A claim names the document it is tested against, and says whether that
+document supports it. An unsupported claim carries a grade.
+
+- `off_topic`. The claim belongs to another document entirely.
+- `absent`. The claim is plausible here, and the document says nothing of it.
+- `unstated_detail`. A specific the document gestures at and never states.
+
+The last grade is the one that matters. A judge that cannot separate it
+protects nothing on the automatic path. So the fitting job reports coverage per
+grade, and it refuses a separation that the easy grades alone produce.
+
+The two halves draw from disjoint sentence pools. Each document carries a fit
+block and a report block, and the report sentence paraphrases its fit
+counterpart. A judge sensitive to one wording therefore moves one half only,
+and the report half can disagree with the fit half instead of repeating it. The
+loader refuses a corpus where one sentence reaches both halves, and it names
+that sentence by digest rather than printing it.
+
+A paraphrase pair tests one fact twice. So a judge that mis-reads the fact
+itself, rather than one wording of it, still moves both halves together. That
+limit stands.
+
+Both halves hold the same number of fully grounded drafts, 531 of 1062.
+Precision counts grounded drafts above a threshold against all drafts above it.
+A half holding more of them is the easier one, and a precision published from
+it reads high. The loader tests that gap with an equivalence test, so the
+halves must show the gap is small rather than merely fail to prove it real.
+Two one-sided tests at 5 percent put the whole interval for the difference
+inside a margin of 5 points. The interval is Agresti-Caffo corrected, so a
+half where every draft is grounded cannot pass on a collapsed interval.
+
+## Checking these counts yourself
+
+Every count above is a property of the committed files. Read them back:
+
+```sh
+node -e "
+const fs = require('node:fs');
+for (const half of ['fit', 'report']) {
+  const g = JSON.parse(fs.readFileSync('fixtures/gold/' + half + '.json', 'utf8'));
+  const drafts = g.tickets.filter((t) => (t.claims ?? []).length > 0);
+  const sentences = new Set(drafts.flatMap((t) => t.claims.map((c) => c.text)));
+  const grounded = drafts.filter((t) => t.claims.every((c) => c.supported)).length;
+  console.log(half, 'cases', g.tickets.length, 'drafts', drafts.length,
+    'sentences', sentences.size, 'grounded', grounded);
+}
+const docs = JSON.parse(fs.readFileSync('fixtures/documents.json', 'utf8')).documents;
+console.log('documents', docs.length, 'kinds', new Set(docs.map((d) => d.kind)).size);
+"
+```
+
+The two halves must report 156 sentences each and 531 grounded drafts each,
+and the two sentence sets must not intersect. That is 312 sentences over 39
+documents.
+
 ## Ticket schema
 
 Each ticket object carries these fields.
@@ -65,6 +122,7 @@ Each ticket object carries these fields.
 - `agent_reply`. The invented reply that answered this turn. The last turn of a
   thread carries none, because no reply followed it. A later turn's prompt
   carries the earlier turns and their replies, per DEC-37.
+- `claims`. The per-claim ground truth described above.
 
 A disposition records an observable result of the work. The fields are
 `escalated`, `macro_applied`, `refund_issued` and `first_reply_minutes`. Action

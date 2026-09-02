@@ -29,15 +29,74 @@ function bad(n: number, coverage: number, grade = 'off_topic'): CoverageSample[]
  * which is what makes a review band exist at all.
  */
 function realistic(): CoverageSample[] {
+  // Sized for the floor it is fitted against. A precision floor of 0.985 is
+  // tested on the interval's lower bound, and a perfect sample reaches
+  // n / (n + 3.8416), so nothing under 253 drafts can hold it however clean it
+  // is. The earlier version offered 40 and passed only because the search read
+  // a point estimate, which is the defect these sets now exercise.
   return [
-    ...clean(40),
-    ...bad(20, 0.4),
-    ...bad(10, 0.6),
-    // Ten the judge scored well despite an unsupported claim. These are what
-    // the review band is for.
-    ...bad(10, 0.9),
+    ...clean(280),
+    ...bad(140, 0.4),
+    ...bad(70, 0.6),
+    // Drafts the judge scored well despite an unsupported claim. These are
+    // what the review band is for.
+    ...bad(70, 0.9),
   ];
 }
+
+describe('a floor is a floor, not a point estimate', () => {
+  // The first live run fitted block at 0.333 on three drafts. Its negative
+  // predictive value read 1.000 and its own recorded interval read 0.4385 to
+  // 1, against a floor of 0.9. The search took the point estimate and never
+  // read the interval it wrote into the artifact.
+  //
+  // The bias is structural, not bad luck. Candidates ascend from near zero and
+  // the block search takes the lowest that qualifies, so it lands on the
+  // smallest support the data allows, every time.
+  it('refuses a block threshold that only a handful of drafts support', () => {
+    const samples: CoverageSample[] = [
+      // Three ungrounded drafts far below everything else. The old rule took
+      // this band: lowest candidate, three drafts, a point estimate of 1.000.
+      ...bad(3, 0.05),
+      // The band that actually carries evidence.
+      ...bad(100, 0.2),
+      ...bad(50, 0.6),
+      ...clean(300),
+    ];
+    const fit = fitCoverageThresholds(samples, { targetPrecision: 0.9, targetNpv: 0.9 });
+    // A perfect three gives a lower bound of 0.4385, so no floor of 0.9 can
+    // rest on it. The search must walk past that band to one that holds.
+    expect(fit.block.threshold).toBe(0.6);
+    expect(fit.block.blocked).toBe(103);
+    expect(fit.block.interval.lower).toBeGreaterThanOrEqual(0.9);
+    expect(fit.block.blocked).toBeGreaterThanOrEqual(35);
+  });
+
+  it('refuses a review threshold that only a handful of drafts support', () => {
+    const samples: CoverageSample[] = [
+      ...clean(300),
+      ...bad(50, 0.6),
+      ...bad(100, 0.2),
+      ...bad(3, 0.05),
+    ];
+    const fit = fitCoverageThresholds(samples, { targetPrecision: 0.9, targetNpv: 0.9 });
+    expect(fit.review.interval.lower).toBeGreaterThanOrEqual(0.9);
+    // 350 drafts sit at or above 0.6 and 300 of them are grounded, a point
+    // estimate of 0.857 whose lower bound is 0.817. The old rule would have
+    // taken it, because it maximises coverage and cleared the point estimate.
+    expect(fit.review.threshold).toBe(1);
+  });
+
+  // A floor the sample cannot reach is a refusal, not a lower floor. The
+  // corpus this repository shipped could not reach 0.985 at any threshold:
+  // its largest all-correct band held 172 drafts, and a perfect n reaches
+  // only n/(n+3.8416), which needs 253.
+  it('refuses outright when no threshold can reach the floor', () => {
+    const samples: CoverageSample[] = [...clean(40), ...bad(40, 0.5)];
+    expect(() => fitCoverageThresholds(samples, { targetPrecision: 0.985, targetNpv: 0.9 }))
+      .toThrow(/does not separate|no coverage threshold/);
+  });
+});
 
 describe('fitCoverageThresholds (DEC-05, section 4.7)', () => {
   it('fits review as the lowest coverage holding the precision floor', () => {
@@ -75,15 +134,15 @@ describe('fitCoverageThresholds (DEC-05, section 4.7)', () => {
     // band. Without the floor, block would take 0.1 and escalate a good draft.
     const shared = [
       { coverage: 0.05, grounded: true, grade: null },
-      ...Array.from({ length: 10 }, () => ({ coverage: 0.1, grounded: false, grade: 'absent' })),
-      ...bad(5, 0.9),
-      ...clean(30),
+      ...Array.from({ length: 100 }, () => ({ coverage: 0.1, grounded: false, grade: 'absent' })),
+      ...bad(50, 0.9),
+      ...clean(300),
     ];
 
     const fit = fitCoverageThresholds(shared, { targetPrecision: 0.985, targetNpv: 0.9 });
 
     expect(fit.block.threshold).toBe(0.9);
-    expect(fit.block.blocked).toBe(11);
+    expect(fit.block.blocked).toBe(101);
     expect(fit.block.npv).toBeGreaterThanOrEqual(0.9);
     expect(fit.block.threshold).toBeLessThan(fit.review.threshold);
   });
@@ -92,9 +151,9 @@ describe('fitCoverageThresholds (DEC-05, section 4.7)', () => {
     // Every candidate's band mixes the classes, so nothing can be escalated
     // without escalating a grounded draft.
     const mixed = [
-      ...Array.from({ length: 10 }, () => ({ coverage: 0.3, grounded: true, grade: null })),
-      ...Array.from({ length: 10 }, () => ({ coverage: 0.3, grounded: false, grade: 'absent' })),
-      ...clean(20),
+      ...Array.from({ length: 100 }, () => ({ coverage: 0.3, grounded: true, grade: null })),
+      ...Array.from({ length: 100 }, () => ({ coverage: 0.3, grounded: false, grade: 'absent' })),
+      ...clean(300),
     ];
 
     expect(() => fitCoverageThresholds(mixed, { targetPrecision: 0.985, targetNpv: 0.9 })).toThrow(
@@ -107,7 +166,7 @@ describe('fitCoverageThresholds (DEC-05, section 4.7)', () => {
     // That is not noise; it means no draft was ambiguous, and section 4.7
     // needs three outcomes.
     expect(() =>
-      fitCoverageThresholds([...clean(20), ...bad(20, 0.5)], {
+      fitCoverageThresholds([...clean(300), ...bad(300, 0.5)], {
         targetPrecision: 0.985,
         targetNpv: 0.9,
       }),
@@ -118,9 +177,12 @@ describe('fitCoverageThresholds (DEC-05, section 4.7)', () => {
     // Two independent searches over one score do not guarantee the order, and
     // an inverted pair leaves no review band at all.
     expect(() =>
-      fitCoverageThresholds([...clean(5), ...bad(5, 0.99)], {
+      // Review takes 0.99, where 400 drafts pass and 300 are grounded, a
+      // lower bound of 0.705 against a floor of 0.5. Block can only reach its
+      // own floor at 1.0, where the 100 ungrounded drafts sit below.
+      fitCoverageThresholds([...clean(300), ...bad(100, 0.99)], {
         targetPrecision: 0.5,
-        targetNpv: 0.99,
+        targetNpv: 0.9,
       }),
     ).toThrow(/block .* exceeds review|cannot order/);
   });
@@ -154,18 +216,19 @@ describe('fitCoverageThresholds (DEC-05, section 4.7)', () => {
     // A fit that holds only on the easy grade is a fit that measured nothing
     // about the hard one. The per-grade figures make that visible.
     const fit = fitCoverageThresholds(
-      [...clean(30), ...bad(10, 0.1, 'off_topic'), ...bad(10, 0.5, 'absent'), ...bad(10, 0.8, 'unstated_detail')],
+      [...clean(300), ...bad(100, 0.1, 'off_topic'), ...bad(100, 0.5, 'absent'),
+        ...bad(100, 0.8, 'unstated_detail')],
       { targetPrecision: 0.985, targetNpv: 0.9 },
     );
 
     // Grades in a stable order, with their own counts. The mean is compared
-    // with a tolerance: summing ten 0.1 values gives 0.09999999999999999, and
+    // with a tolerance: summing many 0.1 values drifts from 0.1, and
     // an exact match here would pin a floating-point artefact rather than the
     // behaviour. The job reports the raw mean, as the other artifacts do.
     expect(fit.byGrade.map((g) => [g.grade, g.drafts])).toEqual([
-      ['absent', 10],
-      ['off_topic', 10],
-      ['unstated_detail', 10],
+      ['absent', 100],
+      ['off_topic', 100],
+      ['unstated_detail', 100],
     ]);
     expect(fit.byGrade.map((g) => g.meanCoverage)).toEqual([
       expect.closeTo(0.5, 10),

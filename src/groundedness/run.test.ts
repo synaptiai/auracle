@@ -5,8 +5,9 @@ import { pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import { FakeProvider } from '../models/fake.js';
+import type { ModelProvider } from '../models/provider.js';
 import { runGroundednessJob, scoreDraft } from './run.js';
-import { loadGoldHalf } from '../fixtures/load.js';
+import { FIT_COUNT, loadGoldHalf } from '../fixtures/load.js';
 import { identityOf } from '../fixtures/load.js';
 import type { GoldFile, GoldTicket } from '../fixtures/load.js';
 
@@ -38,6 +39,45 @@ function draft(id: string, supported: number, unsupported: number, grade = 'abse
     body: 'Body',
     claims,
   };
+}
+
+/**
+ * Floors these plumbing cases can actually reach.
+ *
+ * The shipped floors are read against a 95 percent interval, so 0.985 needs
+ * 253 drafts above the threshold and 0.9 needs 35 below. These fixtures are a
+ * dozen drafts with hand-chosen coverage values, built to make one figure
+ * distinguishable from another, and scaling them by twenty-six to reach the
+ * shipped floors would destroy the property each was written to test. The
+ * floors are lowered to what a dozen drafts support instead: a perfect six
+ * reaches 0.6098 and a perfect twelve reaches 0.7576.
+ *
+ * `fit.test.ts` covers the floors themselves at the sizes they need.
+ */
+const SMALL_FLOORS = { targetPrecision: 0.6, targetNpv: 0.6 } as const;
+
+/**
+ * A provider that fails the transport a fixed number of times, then delegates.
+ *
+ * Not an UnreadableAnswerError: that is an answer the provider will reproduce,
+ * and the job already drops such a draft and counts it. This is the other kind
+ * of fault, a connection that did not complete.
+ */
+class FlakyTransport implements ModelProvider {
+  failures: number;
+  constructor(private readonly inner: ModelProvider, failures: number) {
+    this.failures = failures;
+  }
+  async complete(call: Parameters<ModelProvider['complete']>[0]) {
+    if (this.failures > 0) {
+      this.failures -= 1;
+      throw new TypeError('fetch failed');
+    }
+    return this.inner.complete(call);
+  }
+  async embed(call: Parameters<ModelProvider['embed']>[0]) {
+    return this.inner.embed(call);
+  }
 }
 
 function half(tickets: GoldTicket[]): GoldFile {
@@ -87,6 +127,7 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
         provider: new FakeProvider(scriptFor(tickets, misses)),
         fitHalf: half(tickets),
         modelVer: 'test-stub',
+        ...SMALL_FLOORS,
         artifactDir: dir,
       });
 
@@ -171,8 +212,14 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
         fitHalf: half(tickets),
         modelVer: 'test-stub',
         artifactDir: dir,
-        targetPrecision: 0.9,
-        targetNpv: 0.8,
+        // Floors this fixture can reach. The four figures must stay pairwise
+        // distinct, which needs the awkward bands to survive, and the floors
+        // are read against a 95 percent interval: 16 of 17 gives a lower bound
+        // of 0.7302 and 4 of 5 gives 0.3755. Raising either floor above those
+        // does not make the fixture stricter, it deletes the band the case
+        // exists to inspect.
+        targetPrecision: 0.7,
+        targetNpv: 0.35,
       });
 
       expect(artifact.review).toBeCloseTo(5 / 6, 10);
@@ -191,6 +238,144 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
   // Pre-existing, but this branch made the size rule conditional on a
   // synthetic half — so on the real path this is now the only check on a
   // declared count. The calibration twin has a case; these two did not.
+  // A four-hour run over the committed fit half died on `fetch failed` after
+  // roughly 3900 calls, and every scored draft went with it. The job holds no
+  // checkpoint, so a connection that drops once costs the whole run.
+  //
+  // A judging call reads; it delivers nothing and changes nothing outside this
+  // process. So repeating one duplicates no effect, and DEC-30 does not reach
+  // it: that rule governs a delivery whose state is unknown.
+  it('retries a transport fault instead of discarding the run', async () => {
+    const tickets = [
+      ...Array.from({ length: 12 }, (_, i) => draft(`G-${i}`, 3, 0)),
+      ...Array.from({ length: 6 }, (_, i) => draft(`U-${i}`, 1, 2)),
+      ...Array.from({ length: 6 }, (_, i) => draft(`V-${i}`, 4, 2)),
+    ];
+    const misses = new Map(
+      tickets.filter((t) => t.ticket_id.startsWith('V-')).map((t) => [t.ticket_id, 1]),
+    );
+    const dir = tempDir();
+    try {
+      const { artifact } = await runGroundednessJob({
+        provider: new FlakyTransport(new FakeProvider(scriptFor(tickets, misses)), 1),
+        fitHalf: half(tickets),
+        modelVer: 'test-stub',
+        artifactDir: dir,
+        ...SMALL_FLOORS,
+        retryDelayMs: 0,
+      });
+      // The run completed, and the retried draft is scored rather than dropped.
+      expect(artifact.fit_drafts).toBe(24);
+      expect(artifact.faulted_drafts).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  // A transport that never recovers still fails the run. A retry that never
+  // gives up is a hang, and an operator waiting on a four-hour job cannot see
+  // the difference between the two.
+  it('gives up on a transport that never recovers', async () => {
+    const tickets = Array.from({ length: 4 }, (_, i) => draft(`G-${i}`, 3, 0));
+    const dir = tempDir();
+    try {
+      await expect(runGroundednessJob({
+        provider: new FlakyTransport(new FakeProvider([]), 99),
+        fitHalf: half(tickets),
+        modelVer: 'test-stub',
+        artifactDir: dir,
+        ...SMALL_FLOORS,
+        retryDelayMs: 0,
+      })).rejects.toThrow(/fetch failed/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  // Three runs over a full half died and each discarded every draft scored
+  // before it. The retry rides out a short outage; nothing rode out a long
+  // one, and nothing survived a killed shell at all.
+  it('continues an interrupted run instead of paying for it twice', async () => {
+    const tickets = [
+      ...Array.from({ length: 12 }, (_, i) => draft(`G-${i}`, 3, 0)),
+      ...Array.from({ length: 6 }, (_, i) => draft(`U-${i}`, 1, 2)),
+      ...Array.from({ length: 6 }, (_, i) => draft(`V-${i}`, 4, 2)),
+    ];
+    const misses = new Map(
+      tickets.filter((t) => t.ticket_id.startsWith('V-')).map((t) => [t.ticket_id, 1]),
+    );
+    const dir = tempDir();
+    const resumeFile = join(mkdtempSync(join(tmpdir(), 'auracle-resume-job-')), 'r.jsonl');
+    try {
+      // The first attempt dies partway: the script runs out and the provider
+      // throws, which is not an UnreadableAnswerError and so ends the run.
+      // Cut on a draft boundary, at six G drafts of three claims each, so the
+      // second attempt's script starts where a draft starts.
+      const full = scriptFor(tickets, misses);
+      await expect(runGroundednessJob({
+        provider: new FakeProvider(full.slice(0, 18)),
+        fitHalf: half(tickets),
+        modelVer: 'test-stub',
+        artifactDir: dir,
+        ...SMALL_FLOORS,
+        retryDelayMs: 0,
+        resumeFile,
+      })).rejects.toThrow();
+
+      // The second attempt is given only what the first did not consume, so
+      // it can only finish by resuming. A run that started over would exhaust
+      // this script and throw.
+      const provider = new FakeProvider(full.slice(18));
+      const { artifact } = await runGroundednessJob({
+        provider,
+        fitHalf: half(tickets),
+        modelVer: 'test-stub',
+        artifactDir: dir,
+        ...SMALL_FLOORS,
+        retryDelayMs: 0,
+        resumeFile,
+      });
+      expect(artifact.fit_drafts).toBe(24);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(resumeFile, { force: true });
+    }
+  }, 30_000);
+
+  // The artifact must carry what the run spent (DEC-25, AC6). Deleting the two
+  // lines that write it left the whole groundedness suite green: the only
+  // assertion on those fields read the committed reference file, which does
+  // not change when the code that writes it is removed.
+  it('records what the run spent, and whether that figure is a total', async () => {
+    const tickets = [
+      ...Array.from({ length: 12 }, (_, i) => draft(`G-${i}`, 3, 0)),
+      ...Array.from({ length: 6 }, (_, i) => draft(`U-${i}`, 1, 2)),
+      ...Array.from({ length: 6 }, (_, i) => draft(`V-${i}`, 4, 2)),
+    ];
+    const misses = new Map(
+      tickets.filter((t) => t.ticket_id.startsWith('V-')).map((t) => [t.ticket_id, 1]),
+    );
+    const dir = tempDir();
+    try {
+      const { artifact } = await runGroundednessJob({
+        provider: new FakeProvider(scriptFor(tickets, misses)),
+        fitHalf: half(tickets),
+        modelVer: 'test-stub',
+        ...SMALL_FLOORS,
+        artifactDir: dir,
+      });
+      // Every claim of every draft is one judge call, and the fake bills a
+      // cent each. Derived from the corpus, not pinned to what the code
+      // happens to return.
+      const calls = tickets.reduce((n, t) => n + (t.claims ?? []).length, 0);
+      expect(artifact.cost_micros).toBe(calls * 10_000);
+      // No draft faulted and no transport retried, so the figure is exact.
+      expect(artifact.cost_unknown).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it('drops the drafts the judge could not score and keeps fitting', async () => {
     const tickets = [
       ...Array.from({ length: 12 }, (_, i) => draft(`G-${i}`, 3, 0)),
@@ -212,6 +397,7 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
         provider: new FakeProvider(script),
         fitHalf: half([...tickets, faulting]),
         modelVer: 'test-stub',
+        ...SMALL_FLOORS,
         artifactDir: dir,
       });
       // The 24 scorable drafts are fitted; the one that faulted is dropped.
@@ -246,6 +432,7 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
           provider: new FakeProvider(script),
           fitHalf: half([...tickets, ...faulting]),
           modelVer: 'test-stub',
+        ...SMALL_FLOORS,
           artifactDir: dir,
         }),
       ).rejects.toThrow(/ceiling/i);
@@ -291,6 +478,7 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
         provider: new FakeProvider([]),
         fitHalf: { ...half([draft('A', 1, 0)]), split: 'report' as 'fit' },
         modelVer: 'test-stub',
+        ...SMALL_FLOORS,
         artifactDir: tempDir(),
       }),
     ).rejects.toThrow(/fit half only/);
@@ -302,6 +490,7 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
         provider: new FakeProvider([]),
         fitHalf: { ...half([draft('A', 1, 0)]), source: 'production' as GoldFile['source'] },
         modelVer: 'test-stub',
+        ...SMALL_FLOORS,
         artifactDir: tempDir(),
         reportIdentity: identityOf({
           split: 'report', source: 'real', count: 1,
@@ -320,6 +509,7 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
         provider: new FakeProvider([]),
         fitHalf: { ...half([draft('A', 1, 0)]), source: 'real' },
         modelVer: 'test-stub',
+        ...SMALL_FLOORS,
         artifactDir: tempDir(),
       }),
     ).rejects.toThrow(/report half/);
@@ -332,17 +522,23 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
         provider: new FakeProvider([]),
         fitHalf: { split: 'fit', source: 'real', count: 1, tickets: [shared] },
         modelVer: 'test-stub',
+        ...SMALL_FLOORS,
         artifactDir: tempDir(),
         reportIdentity: identityOf({ split: 'report', source: 'real', count: 1, tickets: [{ ...shared }] }),
       }),
     ).rejects.toThrow(/appears in both halves/);
   });
 
+  // Two hundred drafts a side, where the cases above use a dozen. The
+  // grounded-share guard is an equivalence test, so a half must be large
+  // enough to show its share is close to the other's; eighteen drafts cannot
+  // show that of anything and are refused before the fit is reached. That is
+  // the guard working: a half this small cannot support a threshold either.
   it('fits on a labelled half from real history and records the provenance', async () => {
     const tickets = [
-      ...Array.from({ length: 6 }, (_, i) => draft(`G-${i}`, 6, 0)),
-      ...Array.from({ length: 6 }, (_, i) => draft(`B-${i}`, 2, 4)),
-      ...Array.from({ length: 6 }, (_, i) => draft(`V-${i}`, 4, 2)),
+      ...Array.from({ length: 200 }, (_, i) => draft(`G-${i}`, 6, 0)),
+      ...Array.from({ length: 200 }, (_, i) => draft(`B-${i}`, 2, 4)),
+      ...Array.from({ length: 200 }, (_, i) => draft(`V-${i}`, 4, 2)),
     ].map((ticket) => ({ ...ticket, source: 'real' as const }));
     const misses = new Map(tickets.filter((t) => t.ticket_id.startsWith('V-')).map((t) => [t.ticket_id, 1]));
     const dir = tempDir();
@@ -351,11 +547,19 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
         provider: new FakeProvider(scriptFor(tickets, misses)),
         fitHalf: { split: 'fit', source: 'real', count: tickets.length, tickets },
         modelVer: 'test-stub',
+        ...SMALL_FLOORS,
         artifactDir: dir,
         // Equal size, as DEC-31 asks and assertHalvesDisjoint now enforces.
+        // The sentences differ too: a report half that reuses the fit half's
+        // claims cannot corroborate it, so the same check refuses that as well.
         reportIdentity: identityOf({
           split: 'report', source: 'real', count: tickets.length,
-          tickets: tickets.map((t, i) => ({ ...t, ticket_id: `R-${i}`, conversation_id: `R-${i}` })),
+          tickets: tickets.map((t, i) => ({
+            ...t,
+            ticket_id: `R-${i}`,
+            conversation_id: `R-${i}`,
+            claims: (t.claims ?? []).map((c) => ({ ...c, text: `report ${i} ${c.text}` })),
+          })),
         }),
       });
       expect(artifact.gold_source).toBe('real');
@@ -380,6 +584,7 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
         fitHalf: { split: 'fit', source: 'synthetic', count: 1, tickets },
         reportIdentity: identityOf({ split: 'report', source: 'synthetic', count: 1, tickets }),
         modelVer: 'test-stub',
+        ...SMALL_FLOORS,
         artifactDir: tempDir(),
       }),
     ).rejects.toThrow(/appears in both halves/);
@@ -410,19 +615,34 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
   // the JOB hands it the half's real provenance — and that wiring is what
   // the register promises for the adopter path.
   it('passes the half provenance through the job, not just to a direct call', async () => {
-    const real: GoldTicket = {
-      ...draft('A', 1, 0),
-      ticket_id: 'msg@customer-domain.example',
-      conversation_id: 'msg@customer-domain.example',
+    // Six hundred drafts a side, where this case once used one. The
+    // grounded-share guard is an equivalence test, and a one-draft half cannot
+    // demonstrate closeness, so it now refuses before the run reaches the
+    // document fault this case is named for. Every draft is grounded on both
+    // sides, which is the boundary the Agresti-Caffo correction covers.
+    const realAt = (i: number): GoldTicket => ({
+      ...draft(`A-${i}`, 1, 0),
+      ticket_id: `msg-${i}@customer-domain.example`,
+      conversation_id: `msg-${i}@customer-domain.example`,
       source: 'real',
-      claims: [{ text: 'x', doc_id: 'THEIR-OWN-DOC-1', supported: true, grade: null }],
-    };
+      claims: [{ text: `fit sentence ${i}`, doc_id: 'THEIR-OWN-DOC-1', supported: true, grade: null }],
+    });
+    const fitTickets = Array.from({ length: 600 }, (_, i) => realAt(i));
     const call = runGroundednessJob({
       provider: new FakeProvider([]),
-      fitHalf: { split: 'fit', source: 'real', count: 1, tickets: [real] },
+      fitHalf: { split: 'fit', source: 'real', count: fitTickets.length, tickets: fitTickets },
       reportIdentity: identityOf({
-        split: 'report', source: 'real', count: 1,
-        tickets: [{ ...real, ticket_id: 'other@example.test', conversation_id: 'other@example.test' }],
+        split: 'report', source: 'real', count: fitTickets.length,
+        tickets: fitTickets.map((t, i) => ({
+          ...t,
+          ticket_id: `other-${i}@example.test`,
+          conversation_id: `other-${i}@example.test`,
+          // Sentences of their own, so the halves pass the disjointness check
+          // and the run reaches the document fault this case is named for.
+          claims: [{
+            text: `report sentence ${i}`, doc_id: 'THEIR-OWN-DOC-1', supported: true, grade: null,
+          }],
+        })),
       }),
       modelVer: 'test-stub',
       artifactDir: tempDir(),
@@ -453,6 +673,7 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
         provider: new FakeProvider([]),
         fitHalf: half([bare]),
         modelVer: 'test-stub',
+        ...SMALL_FLOORS,
         artifactDir: tempDir(),
       }),
     ).rejects.toThrow(/carries no labelled claims across 1 cases/);
@@ -472,6 +693,7 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
         provider: new FakeProvider(scriptFor(labelled, misses)),
         fitHalf: half([...labelled, bare]),
         modelVer: 'test-stub',
+        ...SMALL_FLOORS,
         artifactDir: dir,
       });
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('1 of 19 fit-half cases'));
@@ -506,6 +728,7 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
         provider: new FakeProvider(blind),
         fitHalf: half(tickets),
         modelVer: 'test-stub',
+        ...SMALL_FLOORS,
         artifactDir: tempDir(),
       }),
     ).rejects.toThrow(/does not separate/);
@@ -523,6 +746,7 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
         provider,
         fitHalf: half([draft('A', 1, 1)]),
         modelVer: 'test-stub',
+        ...SMALL_FLOORS,
         artifactDir: dir,
       }),
     ).rejects.toThrow(/not a versioned artifact/);
@@ -535,6 +759,6 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
     // The corpus must actually carry claims, or the job would score nothing.
     const labelled = loadGoldHalf('fit').tickets.filter((t) => (t.claims ?? []).length > 0);
 
-    expect(labelled).toHaveLength(385);
+    expect(labelled).toHaveLength(FIT_COUNT);
   });
 });

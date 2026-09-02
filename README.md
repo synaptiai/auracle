@@ -37,7 +37,9 @@ One ticket moves through these steps.
 6. The composer writes the answer with citations or abstains (DEC-07).
    An abstain is a correct output: it beats an answer with no source.
 7. The groundedness check tests each claim against the retrieved sources (DEC-07).
-   Coverage below 0.70 blocks an automatic write. Below 0.80 it sends that write to a person.
+   Coverage below the block threshold stops an automatic write. Below the review threshold a person sees it.
+   The seeds are 0.70 and 0.80. `pnpm run fit-groundedness` fits the pair, and a process that holds a fit runs that pair instead.
+   This repository's own fit reads 0.75 and 1.00, and it does not travel: see `groundedness/reference-v2.json`.
    The two thresholds never decide a customer reply, because a reply already needs approval (DEC-12).
 8. The policy engine applies the gates and the risk tier of the intent.
 9. Internal writes leave through the transactional outbox and the relay sends them.
@@ -171,7 +173,7 @@ Never commit real emails, phone numbers, names or account identifiers.
 
 ## Published numbers
 
-The published numbers live in `gold-report/v5.json`.
+The published numbers live in `gold-report/v7.json`.
 They exercise the pipeline. They do not measure answer quality.
 The artifact says so itself: `scored_by` reads `stub`.
 
@@ -189,8 +191,8 @@ It scores first turns only, and records that scope (DEC-39).
 Numbers from the fitting cases flatter the system, so reporting uses untouched cases.
 The fit half never touches a published number.
 
-The report half holds 385 cases and 287 of them open a conversation.
-The numbers below cover those 287 cases.
+The report half holds 1062 cases and 815 of them open a conversation.
+The numbers below cover those 815 cases.
 A later turn carries the disposition of the whole thread, so it grades no
 single decision.
 
@@ -201,8 +203,8 @@ Both halves changed, and the two numbers moved for both reasons at once.
 The source corpus is fully synthetic (DEC-18).
 Run `pnpm run gold-report` to regenerate it.
 
-- Action match: 0.791. Interval 0.740 to 0.834. 287 cases.
-- Containment: 0.801. Interval 0.751 to 0.843. 287 cases.
+- Action match: 0.793. Interval 0.763 to 0.819. 815 cases.
+- Containment: 0.805. Interval 0.776 to 0.831. 815 cases.
 
 The artifact records an agreement gate threshold of 0.60.
 
@@ -216,9 +218,42 @@ on. The `scope` field names the population this report scored, which DEC-39
 fixes at first turns. The two can differ.
 
 A fitted threshold does not move these rates. The offline stub answers every
-sample of one ticket alike, so agreement is 1.0 on all 287 scored cases and no
+sample of one ticket alike, so agreement is 1.0 on all 815 scored cases and no
 threshold below 1.0 changes a decision. The gate is wired and it binds at
 runtime. This corpus cannot show it.
+
+## The coverage gate, measured
+
+The second gate has been fitted and then measured on the half that fitted
+nothing (DEC-31). Both runs used `z-ai/glm-5.3-flash`.
+
+`pnpm run fit-groundedness` chose the pair on the fit half: block 0.75 and
+review 1.00. Two full passes produced that same pair, and the second reports a
+spend of at least 0.1708 US dollars over 1043 drafts.
+`pnpm run report-groundedness` then measured the pair on the report half, over
+1053 drafts.
+
+- Block: negative predictive value 0.9847. Interval 0.9647 to 0.9935. 327 drafts.
+- Review: precision 0.9923. Interval 0.9804 to 0.9970. 520 drafts.
+
+Read the review interval. Its lower bound is below the 0.985 target the fit
+aims at. Four drafts of 520 scored full coverage and still carried a claim the
+sources do not support.
+
+The measured precision, 0.9923, is above the target. The interval is too wide
+to prove that. At this error rate the proof needs 1050 drafts above the gate
+and this half offers 520. So the gate is not shown to fail, and it is not
+shown to hold.
+
+No threshold fixes that. Review is already 1.00 and nothing is stricter, so
+the residual is the judge's error. Plan for roughly 8 automatic writes in a
+thousand acting on an unsupported claim, and size the blast radius of an
+internal write accordingly.
+
+The fit does not ship as a live artifact. `groundedness/` is ignored, because
+a committed fit would move your gate to a number fitted on this repository's
+synthetic corpus. `groundedness/reference-v2.json` is a tracked copy you can
+read. No loader finds it. Fit your own.
 
 Action match scores the routing decision against observable dispositions (DEC-32).
 A disposition records what actually happened, for example a refund or an escalation.
@@ -236,6 +271,6 @@ A judge shares the failures of the system it tests.
 It is weakest where the evaluation matters most, so its output is a review queue only.
 The numbers for the README come from `pnpm run gold-report` alone.
 
-On the synthetic 770-case gold set this job is a demonstration, not a tool.
+On the synthetic 2124-case gold set this job is a demonstration, not a tool.
 It earns its keep when real volume exists to triage.
 Inject live cases through `runTriageJob`; each case records its origin.

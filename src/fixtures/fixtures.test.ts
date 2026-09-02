@@ -2,7 +2,7 @@
 //
 // Decisions obeyed: DEC-18 (no real-looking data, no email-shaped strings),
 // DEC-22 (documents + canonical resolutions), DEC-23 (owner + review_by on
-// each document), DEC-31 (385 fit / 385 report, no overlap), section 4.10
+// each document), DEC-31 (equal halves, no overlap), section 4.10
 // (strata present in both halves), section 4.11 ('other' group kept).
 
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -25,6 +25,7 @@ import {
   loadGoldSet,
   loadTaxonomy,
   assertHalvesDisjoint,
+  claimDigest,
   halfDigest,
   identityOf,
   loadGoldHalf,
@@ -57,7 +58,45 @@ describe('taxonomy', () => {
 describe('gold set', () => {
   const { fit, report } = loadGoldSet();
 
-  it('splits 770 cases into disjoint halves of 385', () => {
+  // A half missing a grade lets the fitting job's separation check pass on the
+  // easy negatives alone, which is the one thing that check exists to catch.
+  // The hardest grade is the one that matters: a judge that cannot separate an
+  // unstated detail from a stated one protects nothing on the automatic path.
+  it('keeps every unsupported grade in both halves', () => {
+    for (const half of [fit, report]) {
+      const grades = new Set(
+        half.tickets.flatMap((t) => (t.claims ?? []).filter((c) => !c.supported).map((c) => c.grade)),
+      );
+      expect([...grades].sort(), `${half.split} half`).toEqual(
+        ['absent', 'off_topic', 'unstated_detail'],
+      );
+    }
+  });
+
+  // The two halves ask the judge disjoint sentences, so a judge sensitive to
+  // one wording moves one half and the disagreement is visible. Before this
+  // the halves shared all 56 sentences and the report half could only repeat
+  // the fit half (DEC-31).
+  it('asks the two halves disjoint claim sentences (DEC-31)', () => {
+    const textsOf = (half: GoldFile) =>
+      new Set(half.tickets.flatMap((t) => (t.claims ?? []).map((c) => claimDigest(c.text))));
+    const fitTexts = textsOf(fit);
+    const reportTexts = textsOf(report);
+    expect(fitTexts.size).toBeGreaterThan(0);
+    expect([...reportTexts].filter((d) => fitTexts.has(d))).toEqual([]);
+  });
+
+  // Precision counts grounded drafts above a threshold against every draft
+  // above it. The halves held 167 and 195 of 385, which the equivalence
+  // test rejects, and the register asked the reader to compensate for it.
+  it('holds the same number of fully grounded drafts in each half', () => {
+    const groundedIn = (half: GoldFile) =>
+      half.tickets.filter((t) => (t.claims ?? []).length > 0
+        && (t.claims ?? []).every((c) => c.supported)).length;
+    expect(groundedIn(fit)).toBe(groundedIn(report));
+  });
+
+  it('splits the corpus into two disjoint halves of equal size', () => {
     expect(fit.count).toBe(FIT_COUNT);
     expect(report.count).toBe(REPORT_COUNT);
     expect(fit.tickets.length).toBe(FIT_COUNT);
@@ -321,7 +360,15 @@ describe('the gold-half validator rejects a broken corpus', () => {
     try {
       const fitPath = join(dir, 'fit.json');
       const reportPath = join(dir, 'report.json');
-      writeFileSync(fitPath, JSON.stringify(realHalf([realTurn()])));
+      // The claim carries a name and an account number, so the key guard
+      // below tests something: a member holding the sentence itself, rather
+      // than its digest, would show them here.
+      writeFileSync(fitPath, JSON.stringify(realHalf([realTurn({
+        claims: [{
+          text: 'Ada Lovelace asked us to close account 44812.',
+          doc_id: 'DOC-SYN-001', supported: true, grade: null,
+        }],
+      })])));
       writeFileSync(
         reportPath,
         JSON.stringify({
@@ -336,7 +383,18 @@ describe('the gold-half validator rejects a broken corpus', () => {
       const reportIdentity = readHalfIdentity(reportPath, 'report');
       // Identifiers alone. No case text crosses into a fitting job.
       expect(fitIdentity.ticketIds.has('order-4471@example.test')).toBe(true);
-      expect(Object.keys(fitIdentity)).toEqual(['split', 'source', 'ticketIds', 'conversationIds']);
+      expect(Object.keys(fitIdentity)).toEqual([
+        'split', 'source', 'ticketIds', 'conversationIds',
+        'claimDigests', 'groundedDrafts', 'draftsWithClaims',
+      ]);
+      // The three members added for the coverage split carry a digest and two
+      // counts. A claim sentence is free text with no safe printable form, so
+      // none of it may reach an identity a fault message reads (DEC-18).
+      expect(fitIdentity.claimDigests.size).toBe(1);
+      for (const digest of fitIdentity.claimDigests) expect(digest).toMatch(/^[0-9a-f]{12}$/);
+      const asText = JSON.stringify([...fitIdentity.claimDigests]);
+      expect(asText).not.toContain('Ada Lovelace');
+      expect(asText).not.toContain('44812');
       expect(() => assertHalvesDisjoint(fitIdentity, reportIdentity)).not.toThrow();
 
       const shared = join(dir, 'shared.json');
@@ -393,6 +451,120 @@ describe('the gold-half validator rejects a broken corpus', () => {
     const different = identityOf({ split: 'fit', source: 'real', count: 3, tickets: [a, b, realTurn({ ticket_id: 'd@example.test', conversation_id: 'd@example.test' })] });
     expect(halfDigest(different)).not.toBe(halfDigest(forward));
     expect(halfDigest(forward)).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  // A sentence on both sides is the leak the ticket and conversation checks
+  // cannot see. Two halves can hold disjoint cases and still ask the judge the
+  // same 56 sentences, and then a judge that mis-reads one of them depresses
+  // both halves alike. The report half stops corroborating the fit half and
+  // merely repeats it (DEC-31).
+  it('refuses halves that share a claim sentence (DEC-31)', () => {
+    const shared = { text: 'The article explains renewal dates.', doc_id: 'DOC-SYN-001', supported: true, grade: null };
+    const fit = identityOf({
+      split: 'fit', source: 'synthetic', count: 1,
+      tickets: [turn({ claims: [shared] })],
+    });
+    const report = identityOf({
+      split: 'report', source: 'synthetic', count: 1,
+      tickets: [turn({ ticket_id: 'SYN-000002', conversation_id: 'CONV-SYN-000002', claims: [shared] })],
+    });
+    expect(() => assertHalvesDisjoint(fit, report)).toThrow(/claim sentence/);
+  });
+
+  // On a real half a claim sentence is the customer's own text, or an agent's
+  // words about their account. It reaches a terminal and a CI log, which is
+  // exactly where DEC-18 says such a value may not go. So the sentence is
+  // named by digest, like every other case value, and never printed.
+  it('names a shared claim sentence by digest, never in full', () => {
+    const secret = { text: 'Ada Lovelace at ada@customer-domain.example asked to close account 44812.', doc_id: 'DOC-SYN-001', supported: true, grade: null };
+    const fit = identityOf({
+      split: 'fit', source: 'real', count: 1,
+      tickets: [realTurn({ claims: [secret] })],
+    });
+    const report = identityOf({
+      split: 'report', source: 'real', count: 1,
+      tickets: [realTurn({ ticket_id: 'other@customer-domain.example', conversation_id: 'other@customer-domain.example', claims: [secret] })],
+    });
+    const call = () => assertHalvesDisjoint(fit, report);
+    expect(call).toThrow(/claim sentence digest [0-9a-f]{12}/);
+    expect(call).not.toThrow(/Ada Lovelace/);
+    expect(call).not.toThrow(/customer-domain/);
+    expect(call).not.toThrow(/44812/);
+  });
+
+  // Precision counts grounded drafts above a threshold against all drafts
+  // above it, so a half holding more grounded drafts is the easier one and a
+  // precision published from it reads high. The guard is an equivalence test:
+  // the halves must show the gap is SMALL, which is a different claim from a
+  // significance test's "the gap is not proven real".
+  describe('the grounded-share equivalence guard (DEC-31)', () => {
+    const grounded = (i: number, split: 'fit' | 'report') => turn({
+      ticket_id: `SYN-${split}-${i}`, conversation_id: `CONV-${split}-${i}`,
+      claims: [{ text: `supported ${split} ${i}`, doc_id: 'DOC-SYN-001', supported: true, grade: null }],
+    });
+    const ungrounded = (i: number, split: 'fit' | 'report') => turn({
+      ticket_id: `SYN-${split}-${i}`, conversation_id: `CONV-${split}-${i}`,
+      claims: [{ text: `unsupported ${split} ${i}`, doc_id: 'DOC-SYN-001', supported: false, grade: 'absent' }],
+    });
+    const build = (split: 'fit' | 'report', groundedCount: number, n: number) => identityOf({
+      split, source: 'synthetic', count: n,
+      tickets: Array.from({ length: n }, (_, i) =>
+        (i < groundedCount ? grounded : ungrounded)(i, split)),
+    });
+    const pair = (ka: number, na: number, kb: number, nb: number) =>
+      () => { assertHalvesDisjoint(build('fit', ka, na), build('report', kb, nb)); };
+
+    it('refuses a gap that would flatter a published precision', () => {
+      // 20 percent grounded against 60 percent. The report half is far easier.
+      expect(pair(120, 600, 360, 600)).toThrow(/grounded share/);
+    });
+
+    it('accepts halves whose shares are shown to be close', () => {
+      expect(pair(400, 800, 400, 800)).not.toThrow();
+    });
+
+    // The direction a significance test had backwards. Identical shares over a
+    // hundred drafts a side demonstrate nothing about a five point margin: the
+    // interval for the difference is 11.6 points wide. The old test asserted
+    // that such a pair "must be accepted", which is exactly the trivial pass
+    // that let a small half through unchecked. A half this small cannot fit a
+    // threshold either (see minimumSupport), so nothing is lost by refusing.
+    it('refuses halves too small to demonstrate closeness, even at equal shares', () => {
+      expect(pair(50, 100, 50, 100)).toThrow(/not shown to be equally hard/);
+    });
+
+    // The boundary the textbook interval cannot see. At a share of exactly 0
+    // or exactly 1 the plain standard error is zero, so the interval collapses
+    // to a point and ANY size passes — one draft a side "demonstrates
+    // closeness". That is the trivial pass this guard replaced a significance
+    // test to remove, reappearing at the edge of the range.
+    it.each([
+      ['every draft grounded', 1, 1],
+      ['no draft grounded', 0, 0],
+    ])('refuses a one-draft pair where %s', (_name, ka, kb) => {
+      expect(pair(ka, 1, kb, 1)).toThrow(/not shown to be equally hard/);
+    });
+
+    // And the same shares at a real size still pass, so the correction did not
+    // simply refuse everything at the boundary.
+    it('accepts halves that are entirely grounded at a size that shows it', () => {
+      expect(pair(400, 400, 400, 400)).not.toThrow();
+    });
+
+    // And the other direction the old test had backwards: a bigger corpus was
+    // allowed a bigger gap, because a bigger corpus makes a gap significant
+    // rather than making it matter. 400 against 412 of 800 is 1.5 points and
+    // the old test passed it; it is refused here only because 800 drafts a
+    // side cannot yet place it inside five points.
+    it('reads the margin, not the significance', () => {
+      expect(pair(400, 800, 412, 800)).toThrow(/grounded share/);
+    });
+
+    // The pair that motivated the guard. The corpus this repository shipped
+    // held these counts, and section 6 asked the reader to compensate.
+    it('still refuses the halves this repository actually shipped', () => {
+      expect(pair(167, 385, 195, 385)).toThrow(/grounded share/);
+    });
   });
 
   it('refuses halves of different sizes (DEC-31)', () => {
@@ -911,12 +1083,37 @@ describe('no claim is labelled against evidence the judge can see', () => {
         "DOC-SYN-006|This article explains the recovery flow when the second factor and the backup codes are both unavailable.",
         "DOC-SYN-007|This article lists the export formats, the empty-archive causes and the retry rule for partial exports.",
         "DOC-SYN-008|This article shows the cursor parameter, the page size default and the header that reports the next cursor.",
+        "DOC-SYN-009|This article explains the retry schedule after a declined card, the grace period before suspension and how to update a payment method.",
+        "DOC-SYN-010|This article describes upgrades that apply at once, downgrades that wait for the period end and the proration rule that applies to each.",
+        "DOC-SYN-011|This article walks through the first sign-in, inviting colleagues and the setup checklist that appears on the dashboard.",
+        "DOC-SYN-012|This article collects the tasks people ask about most, with the steps for each and a link to the deeper reference.",
+        "DOC-SYN-013|This article sets out the pricing tiers, what each tier includes and how usage above the included amount is charged.",
+        "DOC-SYN-014|This article explains where to report a missing or unclear page, what the report should carry and how the docs team acknowledges it.",
+        "DOC-SYN-015|This article describes the feedback channels, how the product team groups what arrives and what happens to a suggestion that many people send.",
+        "DOC-SYN-016|This article explains what a good bug report carries, how severity is assigned and where to watch for the fix.",
+        "DOC-SYN-017|This article covers the mobile sign-in, the features that differ from the desktop client and the offline behaviour of the app.",
+        "DOC-SYN-018|This article explains when a ticket may be escalated, who reviews an escalation and what the requester is told.",
+        "DOC-SYN-019|This article explains the lines on an invoice, where taxes appear and how a credit note is shown.",
+        "DOC-SYN-020|This article describes enrolling a second factor, replacing a lost device and the recovery codes issued at enrolment.",
+        "DOC-SYN-021|This article covers registering a webhook, the retry policy for a failed delivery and the signature that proves an event came from us.",
+        "DOC-SYN-022|This article explains where the status page lives, how an incident is graded and where past incidents are listed.",
         "RES-SYN-101|Outcome: the billing queue verified the double charge, refunded the duplicate and confirmed the correct renewal date.",
         "RES-SYN-102|Outcome: the accounts queue cleared the blocked send, issued a fresh reset message and confirmed sign-in.",
         "RES-SYN-103|Outcome: the billing queue scheduled closure for the period end and sent the confirmation with the final invoice.",
         "RES-SYN-104|Outcome: the technical queue rotated the stale token, updated the integration scope and stopped the daily drop.",
         "RES-SYN-105|Outcome: the accounts queue matched the timezone offset, rescheduled the digest and verified the delivery slot.",
         "RES-SYN-106|Outcome: the technical queue matched the slowdown to the active incident and attached the ticket to its tracker.",
+        "RES-SYN-107|Outcome: the billing queue confirmed the declined card, took an updated method and cleared the balance.",
+        "RES-SYN-108|Outcome: the billing queue applied the upgrade at once, prorated the remaining period and confirmed the new amount.",
+        "RES-SYN-109|Outcome: the accounts queue walked the customer through the checklist, invited the remaining colleagues and confirmed the workspace was ready.",
+        "RES-SYN-110|Outcome: the general queue explained the tier boundaries, compared the usage on the account and confirmed the tier that fits.",
+        "RES-SYN-111|Outcome: the docs team reproduced the confusion, rewrote the unclear step and published the corrected page.",
+        "RES-SYN-112|Outcome: the technical queue reproduced the fault, graded it minor and released the fix.",
+        "RES-SYN-113|Outcome: the technical queue cleared the stored session, guided a fresh sign-in and confirmed the app worked.",
+        "RES-SYN-114|Outcome: the technical queue traced the rejected events, corrected the signing secret and confirmed delivery resumed.",
+        "RES-SYN-115|Outcome: the general queue recorded the request, linked it to the existing group and told the customer where to follow it.",
+        "RES-SYN-116|Outcome: the technical queue found the interrupted export, ran it again and delivered the complete archive.",
+        "RES-SYN-117|Outcome: the accounts queue verified the requester, ran the deletion and sent the written confirmation.",
       ]
     `);
   });
@@ -947,34 +1144,84 @@ describe('no claim is labelled against evidence the judge can see', () => {
 
     expect(graded).toMatchInlineSnapshot(`
       [
-        "DOC-SYN-001|absent|Invoices are emailed to every account owner each month.",
-        "DOC-SYN-001|unstated_detail|The finance archive keeps invoice copies for seven years.",
-        "DOC-SYN-002|absent|A refund is approved automatically when the plan is annual.",
-        "DOC-SYN-002|unstated_detail|The refund window is longer on an annual plan.",
-        "DOC-SYN-003|absent|A closed subscription is announced to every collaborator.",
-        "DOC-SYN-003|unstated_detail|Stored records are removed fourteen days after closure.",
-        "DOC-SYN-004|absent|A deletion request is refused while an invoice is unpaid.",
-        "DOC-SYN-004|unstated_detail|A deletion request completes within thirty days.",
-        "DOC-SYN-005|absent|Sync errors are reported to the status page automatically.",
-        "DOC-SYN-005|unstated_detail|The reconnect procedure takes two steps.",
-        "DOC-SYN-006|absent|Account recovery requires a photograph of an identity document.",
-        "DOC-SYN-006|unstated_detail|A backup code expires after ten minutes.",
-        "DOC-SYN-007|absent|An export can be scheduled to repeat every week.",
-        "DOC-SYN-007|unstated_detail|The retry rule allows three attempts per export.",
-        "DOC-SYN-008|absent|The list endpoints accept a filter for each custom field.",
-        "DOC-SYN-008|unstated_detail|A cursor stays valid for one hour.",
-        "RES-SYN-101|absent|The customer was offered a discount on the next renewal.",
-        "RES-SYN-101|unstated_detail|The refund reached the customer in three working days.",
-        "RES-SYN-102|absent|The customer changed the address on the account afterwards.",
-        "RES-SYN-102|unstated_detail|The reset message arrived within two minutes.",
-        "RES-SYN-103|absent|The customer exported the account data before closure.",
-        "RES-SYN-103|unstated_detail|The subscription closed on the last day of the month.",
-        "RES-SYN-104|absent|The customer connected a second calendar at the same time.",
-        "RES-SYN-104|unstated_detail|The integration scope now includes write access.",
-        "RES-SYN-105|absent|The customer turned every other notification off.",
-        "RES-SYN-105|unstated_detail|The digest now arrives at eight in the morning.",
-        "RES-SYN-106|absent|The incident was caused by a change to the search index.",
-        "RES-SYN-106|unstated_detail|The incident lasted forty minutes.",
+        "DOC-SYN-001|absent|Every account owner receives a monthly invoice by email.|Invoices are emailed to every account owner each month.",
+        "DOC-SYN-001|unstated_detail|Invoice copies stay in the finance archive for seven years.|The finance archive keeps invoice copies for seven years.",
+        "DOC-SYN-002|absent|A refund is approved automatically when the plan is annual.|An annual plan has its refunds approved without review.",
+        "DOC-SYN-002|unstated_detail|An annual plan carries a longer refund window.|The refund window is longer on an annual plan.",
+        "DOC-SYN-003|absent|A closed subscription is announced to every collaborator.|Every collaborator is told when a subscription closes.",
+        "DOC-SYN-003|unstated_detail|Closure removes the stored records after fourteen days.|Stored records are removed fourteen days after closure.",
+        "DOC-SYN-004|absent|A deletion request is refused while an invoice is unpaid.|An unpaid invoice blocks a deletion request.",
+        "DOC-SYN-004|unstated_detail|A deletion request completes within thirty days.|Deletion finishes inside thirty days.",
+        "DOC-SYN-005|absent|Sync errors are reported to the status page automatically.|The status page picks up sync errors on its own.",
+        "DOC-SYN-005|unstated_detail|Reconnecting is a two-step procedure.|The reconnect procedure takes two steps.",
+        "DOC-SYN-006|absent|Account recovery requires a photograph of an identity document.|Recovery asks for a photo of an identity document.",
+        "DOC-SYN-006|unstated_detail|A backup code expires after ten minutes.|Backup codes stop working after ten minutes.",
+        "DOC-SYN-007|absent|An export can be scheduled to repeat every week.|Weekly repeating exports can be scheduled.",
+        "DOC-SYN-007|unstated_detail|Each export gets three retry attempts.|The retry rule allows three attempts per export.",
+        "DOC-SYN-008|absent|Every custom field can be filtered on the list endpoints.|The list endpoints accept a filter for each custom field.",
+        "DOC-SYN-008|unstated_detail|A cursor stays valid for one hour.|Cursors remain usable for an hour.",
+        "DOC-SYN-009|absent|A failed payment is reported to the account owner by telephone.|The account owner is telephoned when a payment fails.",
+        "DOC-SYN-009|unstated_detail|Suspension follows a grace period of ten days.|The grace period runs for ten days.",
+        "DOC-SYN-010|absent|A billing administrator must approve a plan change.|A plan change requires approval from a billing administrator.",
+        "DOC-SYN-010|unstated_detail|A downgrade can be reversed within the same period.|A downgrade may be reversed during the same period.",
+        "DOC-SYN-011|absent|An administrator can hide the setup checklist.|The setup checklist can be hidden by an administrator.",
+        "DOC-SYN-011|unstated_detail|Seven items make up the setup checklist.|The setup checklist holds seven items.",
+        "DOC-SYN-012|absent|Every supported language has a translation of this article.|The article is translated into every supported language.",
+        "DOC-SYN-012|unstated_detail|Quarterly updates reach the reference.|The reference is updated each quarter.",
+        "DOC-SYN-013|absent|An account keeps its pricing for its lifetime.|Pricing is fixed for the lifetime of an account.",
+        "DOC-SYN-013|unstated_detail|Charging for usage happens at the billing period end.|Usage is charged at the end of the billing period.",
+        "DOC-SYN-014|absent|A documentation report opens a ticket in the public tracker.|The public tracker receives a ticket for each documentation report.",
+        "DOC-SYN-014|unstated_detail|A report is acknowledged inside a working week.|The docs team acknowledges a report within a working week.",
+        "DOC-SYN-015|absent|Feedback is answered personally by the product team.|The product team answers feedback personally.",
+        "DOC-SYN-015|unstated_detail|A suggestion is reviewed at the monthly planning meeting.|Monthly planning reviews each suggestion.",
+        "DOC-SYN-016|absent|A minor bug is fixed in the release after it is reported.|The release after a report carries the fix for a minor bug.",
+        "DOC-SYN-016|unstated_detail|Severity is assigned by the engineer who takes the report.|The engineer taking the report assigns its severity.",
+        "DOC-SYN-017|absent|A fingerprint unlock is available in the mobile app.|The mobile app supports a fingerprint unlock.",
+        "DOC-SYN-017|unstated_detail|Offline changes are merged when the app reconnects.|Reconnecting merges the changes made offline.",
+        "DOC-SYN-018|absent|A separate queue receives an escalated ticket.|An escalation moves the ticket to a separate queue.",
+        "DOC-SYN-018|unstated_detail|The requester is told the name of the reviewer.|The reviewer is named to the requester.",
+        "DOC-SYN-019|absent|An invoice may be issued in a currency the account chooses.|The account may choose the currency of an invoice.",
+        "DOC-SYN-019|unstated_detail|Taxes appear beneath the subtotal.|The subtotal is followed by the taxes.",
+        "DOC-SYN-020|absent|A second factor may be shared between two accounts.|Two accounts may share one second factor.",
+        "DOC-SYN-020|unstated_detail|Enrolment issues the recovery codes a single time.|Recovery codes are issued once at enrolment.",
+        "DOC-SYN-021|absent|A webhook may be paused from the dashboard.|The dashboard can pause a webhook.",
+        "DOC-SYN-021|unstated_detail|A failed delivery is retried with a growing delay.|Retries of a failed delivery grow further apart.",
+        "DOC-SYN-022|absent|Every account owner receives an alert from the status page.|The status page sends an alert to every account owner.",
+        "DOC-SYN-022|unstated_detail|An incident is graded by the share of users it reaches.|The share of users reached decides an incident grade.",
+        "RES-SYN-101|absent|A discount on the next renewal was offered.|The customer was offered a discount on the next renewal.",
+        "RES-SYN-101|unstated_detail|The refund reached the customer in three working days.|Three working days passed before the refund landed.",
+        "RES-SYN-102|absent|Afterwards the account address was changed.|The customer changed the address on the account afterwards.",
+        "RES-SYN-102|unstated_detail|The reset message arrived within two minutes.|Two minutes passed before the reset message arrived.",
+        "RES-SYN-103|absent|Account data was exported before the closure.|The customer exported the account data before closure.",
+        "RES-SYN-103|unstated_detail|The last day of the month was the closing date.|The subscription closed on the last day of the month.",
+        "RES-SYN-104|absent|A second calendar was connected at the same time.|The customer connected a second calendar at the same time.",
+        "RES-SYN-104|unstated_detail|The integration scope now includes write access.|Write access is now part of the integration scope.",
+        "RES-SYN-105|absent|Every other notification was switched off.|The customer turned every other notification off.",
+        "RES-SYN-105|unstated_detail|Eight in the morning is the new digest time.|The digest now arrives at eight in the morning.",
+        "RES-SYN-106|absent|A change to the search index caused the incident.|The incident was caused by a change to the search index.",
+        "RES-SYN-106|unstated_detail|Forty minutes was how long the incident ran.|The incident lasted forty minutes.",
+        "RES-SYN-107|absent|Credit was given while the payment was retried.|The customer was given credit while the payment was retried.",
+        "RES-SYN-107|unstated_detail|The same bank issued the updated card.|The updated method was a card from the same bank.",
+        "RES-SYN-108|absent|A return to the earlier plan was requested.|The customer asked to return to the earlier plan.",
+        "RES-SYN-108|unstated_detail|The following invoice carried the prorated amount.|The prorated amount appeared on the following invoice.",
+        "RES-SYN-109|absent|Data was imported from another product during setup.|The customer imported data from another product during setup.",
+        "RES-SYN-109|unstated_detail|The colleagues accepted their invitations the same day.|The invitations were accepted on the same day.",
+        "RES-SYN-110|absent|The customer moved to that tier immediately.|The customer moved to the confirmed tier immediately.",
+        "RES-SYN-110|unstated_detail|The comparison covered the previous quarter.|The previous quarter was what the comparison covered.",
+        "RES-SYN-111|absent|A credit was given for reporting the error.|The customer was credited for reporting the error.",
+        "RES-SYN-111|unstated_detail|A worked example came with the rewrite.|The rewrite added a worked example.",
+        "RES-SYN-112|absent|The customer tested the fix before it was released.|The fix was tested by the customer before release.",
+        "RES-SYN-112|unstated_detail|The fix reached the mobile client at the same time.|The mobile client received the fix at the same time.",
+        "RES-SYN-113|absent|The app was reinstalled to resolve the fault.|The customer reinstalled the app to resolve the fault.",
+        "RES-SYN-113|unstated_detail|Recovery codes were used for the fresh sign-in.|The fresh sign-in used the recovery codes.",
+        "RES-SYN-114|absent|The customer rotated the secret again after the fix.|The secret was rotated again after the fix.",
+        "RES-SYN-114|unstated_detail|A redelivery followed for the rejected events.|The rejected events were delivered again after the fix.",
+        "RES-SYN-115|absent|The release that follows was to carry the request.|The request was scheduled for the release that follows.",
+        "RES-SYN-115|unstated_detail|Similar requests already sat in the existing group.|The existing group already held similar requests.",
+        "RES-SYN-116|absent|The customer split the export into smaller ranges.|The export was split into smaller ranges.",
+        "RES-SYN-116|unstated_detail|Finishing was faster on the retry than on the attempt before.|The retry finished faster than the attempt before it.",
+        "RES-SYN-117|absent|A copy of the data was requested before deletion.|The customer asked for a copy of the data before deletion.",
+        "RES-SYN-117|unstated_detail|Backups were covered by the deletion as well.|The deletion covered the backups as well.",
       ]
     `);
   });
@@ -1001,20 +1248,45 @@ describe('no claim is labelled against evidence the judge can see', () => {
 
     expect(shipped).toMatchInlineSnapshot(`
       [
-        "DOC-SYN-001|The article covers where past invoice copies are listed.|The article explains renewal dates and proration.",
-        "DOC-SYN-002|The article covers the steps the billing queue follows.|The article lists the refund windows for each plan.",
-        "DOC-SYN-003|The article covers how reactivation works.|The article describes what happens at period-end closure.",
-        "DOC-SYN-004|The article covers how a deletion request is handled.|The article covers the erase window per region.",
-        "DOC-SYN-005|The article covers pause states and error codes such as E-412.|The article covers the reconnect procedure for stalled clients.",
-        "DOC-SYN-006|The article covers the case where the backup codes are unavailable too.|The article explains the recovery flow.",
-        "DOC-SYN-007|The article covers the retry rule for partial exports.|The article lists the export formats and the empty-archive causes.",
-        "DOC-SYN-008|The article covers the header that reports the next cursor.|The article shows the cursor parameter and the page size default.",
-        "RES-SYN-101|The case records a duplicate charge that was refunded.|The case records the correct renewal date being confirmed.",
-        "RES-SYN-102|The case records a blocked send that was cleared.|The case records a fresh reset message that was issued.",
-        "RES-SYN-103|The case records a confirmation sent with the final invoice.|The case records closure scheduled for the period end.",
-        "RES-SYN-104|The case records a stale token that was rotated.|The case records the daily drop being stopped.",
-        "RES-SYN-105|The case records a digest schedule that was corrected.|The case records the delivery slot being verified.",
-        "RES-SYN-106|The case records a slowdown matched to the active incident.|The case records the ticket attached to its tracker.",
+        "DOC-SYN-001|Renewal dates and proration are described here.|The article covers where past invoice copies are listed.|The article explains renewal dates and proration.|This says where the finance archive lists past invoices.",
+        "DOC-SYN-002|Refund windows are given per plan here.|The article covers the steps the billing queue follows.|The article lists the refund windows for each plan.|The billing queue steps for each case are set out.",
+        "DOC-SYN-003|Period-end closure is described here.|Reactivation is explained here too.|The article covers how reactivation works.|The article describes what happens at period-end closure.",
+        "DOC-SYN-004|The article covers how a deletion request is handled.|The article covers the erase window per region.|The erase window is given for each region.|This walks through the deletion policy.",
+        "DOC-SYN-005|A stalled client has a reconnect procedure here.|Pause states and codes such as E-412 are covered.|The article covers pause states and error codes such as E-412.|The article covers the reconnect procedure for stalled clients.",
+        "DOC-SYN-006|It handles backup codes being unavailable as well.|The article covers the case where the backup codes are unavailable too.|The article explains the recovery flow.|The recovery flow is explained here.",
+        "DOC-SYN-007|A partial export has a retry rule here.|The article covers the retry rule for partial exports.|The article lists the export formats and the empty-archive causes.|This lists the export formats and the empty-archive causes.",
+        "DOC-SYN-008|A header carries the next cursor, and it is described.|The article covers the header that reports the next cursor.|The article shows the cursor parameter and the page size default.|The cursor parameter and the default page size are shown.",
+        "DOC-SYN-009|Retries after a declined card are described here.|The article covers how to update a payment method.|The article explains the retry schedule after a declined card.|Updating a payment method is covered here.",
+        "DOC-SYN-010|An upgrade applying at once is described here.|Proration for a downgrade is covered here.|The article covers the proration rule for a downgrade.|The article describes upgrades that apply at once.",
+        "DOC-SYN-011|Signing in for the first time is described here.|The article covers the setup checklist on the dashboard.|The article walks through the first sign-in.|The dashboard setup checklist is covered here.",
+        "DOC-SYN-012|A link to the deeper reference is given here.|Frequently asked tasks are collected here.|The article collects the tasks people ask about most.|The article gives a link to the deeper reference.",
+        "DOC-SYN-013|Charging for usage above the included amount is explained here.|The article explains how usage above the included amount is charged.|The article sets out the pricing tiers.|The pricing tiers are set out here.",
+        "DOC-SYN-014|Acknowledgement by the docs team is covered here.|Reporting an unclear page is explained here.|The article covers how the docs team acknowledges a report.|The article explains where to report an unclear page.",
+        "DOC-SYN-015|Grouping of arriving feedback is covered here.|The article covers how the product team groups what arrives.|The article describes the feedback channels.|The feedback channels are described here.",
+        "DOC-SYN-016|The article covers where to watch for the fix.|The article explains what a good bug report carries.|What a good bug report carries is explained here.|Where to watch for the fix is covered here.",
+        "DOC-SYN-017|How the app behaves offline is described here.|Signing in on mobile is covered here.|The article covers the mobile sign-in.|The article describes the offline behaviour of the app.",
+        "DOC-SYN-018|The article covers who reviews an escalation.|The article explains when a ticket may be escalated.|When a ticket may be escalated is explained here.|Who reviews an escalation is covered here.",
+        "DOC-SYN-019|How a credit note is shown is covered here.|The article covers how a credit note is shown.|The article explains the lines on an invoice.|The lines on an invoice are explained here.",
+        "DOC-SYN-020|Enrolling a second factor is described here.|Replacing a lost device is covered here.|The article covers replacing a lost device.|The article describes enrolling a second factor.",
+        "DOC-SYN-021|Registering a webhook is covered here.|The article covers registering a webhook.|The article describes the signature that proves an event origin.|The signature proving an event origin is described here.",
+        "DOC-SYN-022|The article covers where past incidents are listed.|The article explains where the status page lives.|Where past incidents are listed is covered here.|Where to find the status page is explained here.",
+        "RES-SYN-101|A duplicate charge was refunded in this case.|The case records a duplicate charge that was refunded.|The case records the correct renewal date being confirmed.|The correct renewal date was confirmed here.",
+        "RES-SYN-102|A fresh reset message went out in this case.|The blocked send was cleared here.|The case records a blocked send that was cleared.|The case records a fresh reset message that was issued.",
+        "RES-SYN-103|Closure was scheduled for the period end here.|The case records a confirmation sent with the final invoice.|The case records closure scheduled for the period end.|The confirmation went out with the final invoice.",
+        "RES-SYN-104|A stale token was rotated in this case.|The case records a stale token that was rotated.|The case records the daily drop being stopped.|The daily drop was stopped here.",
+        "RES-SYN-105|The case records a digest schedule that was corrected.|The case records the delivery slot being verified.|The delivery slot was verified here.|The digest schedule was corrected in this case.",
+        "RES-SYN-106|The case records a slowdown matched to the active incident.|The case records the ticket attached to its tracker.|The slowdown was matched to the active incident here.|The ticket was attached to its tracker in this case.",
+        "RES-SYN-107|A declined card was confirmed in this case.|The balance was cleared here.|The case records a declined card that was confirmed.|The case records the balance being cleared.",
+        "RES-SYN-108|An upgrade was applied at once in this case.|The case records an upgrade applied at once.|The case records the new amount being confirmed.|The new amount was confirmed here.",
+        "RES-SYN-109|The case records the customer being walked through the checklist.|The case records the workspace being confirmed ready.|The customer was walked through the checklist here.|The workspace was confirmed ready in this case.",
+        "RES-SYN-110|The case records the fitting tier being confirmed.|The case records the tier boundaries being explained.|The fitting tier was confirmed in this case.|The tier boundaries were explained here.",
+        "RES-SYN-111|The case records the corrected page being published.|The case records the unclear step being rewritten.|The corrected page was published in this case.|The unclear step was rewritten here.",
+        "RES-SYN-112|The case records the fault being reproduced.|The case records the fix being released.|The fault was reproduced here.|The fix was released in this case.",
+        "RES-SYN-113|The app was confirmed working in this case.|The case records the app being confirmed working.|The case records the stored session being cleared.|The stored session was cleared here.",
+        "RES-SYN-114|Delivery was confirmed as resumed in this case.|The case records delivery being confirmed as resumed.|The case records the rejected events being traced.|The rejected events were traced here.",
+        "RES-SYN-115|The case records the customer being told where to follow it.|The case records the request being recorded.|The customer was told where to follow it in this case.|The request was recorded here.",
+        "RES-SYN-116|The case records the complete archive being delivered.|The case records the interrupted export being found.|The complete archive was delivered in this case.|The interrupted export was found here.",
+        "RES-SYN-117|The case records the requester being verified.|The case records the written confirmation being sent.|The requester was verified here.|The written confirmation was sent in this case.",
       ]
     `);
   });

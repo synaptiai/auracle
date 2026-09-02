@@ -6,7 +6,7 @@
 //    widths section 4.10 prices;
 // 2. metric aggregation on synthetic scored tickets;
 // 3. report-half-only discipline: the job refuses anything but the report
-//    half at the declared 385-ticket size and never sees fit-half content;
+//    half at the declared committed size and never sees fit-half content;
 // 4. artifact round-trip and tamper rejection.
 
 import { describe, expect, it } from 'vitest';
@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { wilsonInterval } from '../calibration/calibrate.js';
+import { REPORT_COUNT } from '../fixtures/load.js';
 import {
   aggregateReport,
   scoreTicket,
@@ -62,18 +63,21 @@ describe('Wilson interval math (shared with the calibration job)', () => {
     });
   });
 
-  it('prices a 385-case interval near 3 points at p = 0.9 (section 4.10)', () => {
-    const interval = wilsonInterval(350, 385); // p = 0.909
+  it('prices a full-half interval near 2 points at p = 0.9 (section 4.10)', () => {
+    // Restated at the committed half size. The corpus grew because a
+    // precision floor read against an interval needs support, and the same
+    // growth narrows every published interval: three points became two.
+    const interval = wilsonInterval(966, REPORT_COUNT); // p = 0.9096
     const halfWidth = (interval.upper - interval.lower) / 2;
-    expect(halfWidth).toBeGreaterThan(0.028);
-    expect(halfWidth).toBeLessThan(0.031);
+    expect(halfWidth).toBeGreaterThan(0.016);
+    expect(halfWidth).toBeLessThan(0.019);
   });
 
   it('gives strata-sized samples wider intervals than the full half', () => {
-    // Section 4.10: ~128 cases per tier widen the interval to about five
-    // points; the full half of 385 holds about three.
+    // Section 4.10: a tier of about 128 cases widens the interval to some
+    // five points, where the full half holds about two.
     const stratum = wilsonInterval(118, 128); // p = 0.922
-    const full = wilsonInterval(355, 385); // p = 0.922
+    const full = wilsonInterval(979, REPORT_COUNT); // p = 0.9218
     expect(stratum.upper - stratum.lower).toBeGreaterThan(full.upper - full.lower);
     const stratumHalf = (stratum.upper - stratum.lower) / 2;
     expect(stratumHalf).toBeGreaterThan(0.04);
@@ -139,17 +143,17 @@ const TEST_TAXONOMY = {
 /**
  * A synthetic report half with fully predictable outcomes.
  *
- * Ticket i (0..384): predicted intent cycles low/medium/high, so every
- * sample answers its label unanimously (agreement 1). Policy then sends
- * i % 3 !== 2 down the automatic path and gates the high tier. The observed
- * disposition disagrees exactly when i % 17 === 0, giving 362 matches out
- * of 385 and 257 contained.
+ * Ticket i: predicted intent cycles low/medium/high, so every sample answers
+ * its label unanimously (agreement 1). Policy then sends i % 3 !== 2 down the
+ * automatic path and gates the high tier. The observed disposition disagrees
+ * exactly when i % 17 === 0. The counts follow from REPORT_COUNT, so they are
+ * computed rather than pinned and the half tracks the committed size.
  */
 function makeScriptedReportHalf(): { half: GoldFile; steps: { text: string }[] } {
   const labels = ['a', 'b', 'c'];
   const tickets: GoldTicket[] = [];
   const steps: { text: string }[] = [];
-  for (let i = 0; i < 385; i++) {
+  for (let i = 0; i < REPORT_COUNT; i++) {
     const label = labels[i % 3]!;
     tickets.push({
       ticket_id: `SYN-R${String(i).padStart(3, '0')}`,
@@ -168,7 +172,7 @@ function makeScriptedReportHalf(): { half: GoldFile; steps: { text: string }[] }
     for (let k = 0; k < 9; k++) steps.push({ text: label });
   }
   return {
-    half: { split: 'report', source: 'synthetic', count: 385, tickets },
+    half: { split: 'report', source: 'synthetic', count: REPORT_COUNT, tickets },
     steps,
   };
 }
@@ -186,7 +190,7 @@ function makeMixedAgreementReportHalf(): { half: GoldFile; steps: { text: string
   const labels = ['a', 'b', 'c'];
   const tickets: GoldTicket[] = [];
   const steps: { text: string }[] = [];
-  for (let i = 0; i < 385; i++) {
+  for (let i = 0; i < REPORT_COUNT; i++) {
     const label = labels[i % 3]!;
     const other = labels[(i + 1) % 3]!;
     tickets.push({
@@ -210,12 +214,16 @@ function makeMixedAgreementReportHalf(): { half: GoldFile; steps: { text: string
     }
   }
   return {
-    half: { split: 'report', source: 'synthetic', count: 385, tickets },
+    half: { split: 'report', source: 'synthetic', count: REPORT_COUNT, tickets },
     steps,
   };
 }
 
 describe('runGoldReportJob (section 4.10, DEC-31)', () => {
+  // Scripts a whole report half, so it grew with the corpus: 1062 tickets at
+  // nine samples each, where the earlier half gave 385. Past the default five
+  // seconds on an ordinary machine, and its neighbours already say 30_000 for
+  // the same reason.
   it('records the samples it could not read, so a published number says so', async () => {
     const dir = tempDirUrl();
     try {
@@ -235,7 +243,7 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it('scores only report-half tickets and publishes the expected numbers', async () => {
     const dir = tempDirUrl();
@@ -254,7 +262,7 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
       });
 
       // Nine samples per report ticket, nothing else.
-      expect(provider.calls.filter((c) => c.kind === 'chat')).toHaveLength(385 * 9);
+      expect(provider.calls.filter((c) => c.kind === 'chat')).toHaveLength(REPORT_COUNT * 9);
       // DEC-31: no fit-half content ever reached the provider.
       const serialized = JSON.stringify(provider.calls);
       expect(serialized).not.toContain(fitTicketText);
@@ -267,24 +275,24 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
       expect(artifact.scored_by).toBe('model');
       expect(artifact.split_used).toBe('report');
       expect(artifact.gold_source).toBe('synthetic');
-      expect(artifact.report_tickets).toBe(385);
+      expect(artifact.report_tickets).toBe(REPORT_COUNT);
       expect(artifact.gate_agreement).toBe(0.6);
 
-      // 23 of the 385 tickets sit on a multiple of 17 and mismatch.
-      expect(artifact.action_match.successes).toBe(362);
-      expect(artifact.action_match.total).toBe(385);
+      // 63 of the tickets sit on a multiple of 17 and mismatch, so 999 match.
+      expect(artifact.action_match.successes).toBe(999);
+      expect(artifact.action_match.total).toBe(REPORT_COUNT);
       expect(artifact.action_match.interval.lower).toBeLessThanOrEqual(
         artifact.action_match.rate,
       );
       expect(artifact.action_match.interval.upper).toBeGreaterThanOrEqual(
         artifact.action_match.rate,
       );
-      // High-tier tickets are gated to a person: i % 3 === 2 gives 128.
-      expect(artifact.containment.successes).toBe(257);
-      expect(artifact.containment.total).toBe(385);
+      // High-tier tickets are gated to a person: i % 3 === 2 gives 354.
+      expect(artifact.containment.successes).toBe(708);
+      expect(artifact.containment.total).toBe(REPORT_COUNT);
 
       expect(artifact.strata.map((s) => s.risk_tier)).toEqual(['low', 'medium', 'high']);
-      expect(artifact.strata.map((s) => s.tickets)).toEqual([129, 128, 128]);
+      expect(artifact.strata.map((s) => s.tickets)).toEqual([354, 354, 354]);
       for (const stratum of artifact.strata) {
         expect(stratum.publishable).toBe(false);
       }
@@ -305,10 +313,10 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
     ).rejects.toThrow(/report half only/);
   });
 
-  it('requires exactly the committed 385 report tickets (DEC-31)', async () => {
+  it('requires exactly the committed report-half size (DEC-31)', async () => {
     const short = makeScriptedReportHalf();
-    short.half.tickets.length = 384;
-    short.half.count = 384;
+    short.half.tickets.length = REPORT_COUNT - 1;
+    short.half.count = REPORT_COUNT - 1;
     await expect(
       runGoldReportJob({
         provider: new FakeProvider([]),
@@ -317,7 +325,7 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
         artifactDir: tempDirUrl(),
         modelVer: 'test-stub',
       }),
-    ).rejects.toThrow(/expected 385/);
+    ).rejects.toThrow(new RegExp(`expected ${REPORT_COUNT}`));
   });
 
   // DEC-39: the gold report scores first turns only. Every runner case
@@ -328,7 +336,7 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
   it('scores first turns only, and counts only what it scored (DEC-39)', async () => {
     const { half, steps } = makeScriptedReportHalf();
     // The second case becomes turn 2 of the first case's conversation, so
-    // the half still holds 385 cases but only 384 first turns. Removing the
+    // the half still holds every case but one fewer first turn. Removing the
     // filter moves a PUBLISHED number with the whole suite green:
     // report_tickets 287 -> 385, action match 0.7909 -> 0.7948. A branch
     // that states a number takes on the number.
@@ -347,7 +355,7 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
         artifactDir: dir,
         modelVer: 'test-stub',
       });
-      expect(artifact.report_tickets).toBe(384);
+      expect(artifact.report_tickets).toBe(REPORT_COUNT - 1);
       expect(artifact.scope).toBe('first_turn');
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -393,7 +401,7 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
         artifactDir: tempDirUrl(),
         modelVer: 'test-stub',
       }),
-    ).rejects.toThrow(/declares 9 tickets but carries 385/);
+    ).rejects.toThrow(new RegExp(`declares 9 tickets but carries ${REPORT_COUNT}`));
   });
 
   it('refuses a real report half with no fit half to prove the split against (DEC-31)', async () => {
@@ -436,7 +444,7 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it('records the exact pair it proved disjoint', async () => {
     const { half, steps } = makeScriptedReportHalf();
@@ -851,7 +859,7 @@ describe('the DEC-31 proof a real run must carry', () => {
 
 describe('the committed gold report artifact', () => {
   it('validates against the validator this repository ships', () => {
-    const url = new URL('../../gold-report/v5.json', import.meta.url);
+    const url = new URL('../../gold-report/v7.json', import.meta.url);
     const artifact = validateGoldReportArtifact(
       JSON.parse(readFileSync(url, 'utf8')),
     );
@@ -859,8 +867,16 @@ describe('the committed gold report artifact', () => {
     expect(artifact.split_used).toBe('report');
     expect(artifact.scope).toBe('first_turn');
     // README quotes these two. A change here republishes a number.
-    expect(artifact.action_match.rate).toBeCloseTo(0.791, 3);
-    expect(artifact.containment.rate).toBeCloseTo(0.801, 3);
+    expect(artifact.action_match.rate).toBeCloseTo(0.793, 3);
+    expect(artifact.containment.rate).toBeCloseTo(0.805, 3);
+    // And it names the pair it was scored through, on both gates (DEC-05).
+    // The rates above are identical to the version before these fields
+    // existed, because a routing decision makes no textual claim and its
+    // groundedness is pinned at 1.0 — but the artifact could no longer say so.
+    expect(artifact.gate_source).toBe('seed');
+    expect(artifact.coverage_source).toBe('groundedness');
+    expect(artifact.coverage_block).toBe(0.75);
+    expect(artifact.coverage_review).toBe(1);
   });
 });
 
@@ -906,6 +922,7 @@ describe('a seeded provenance must carry the seed value (DEC-31)', () => {
   function runWithThresholds(
     overrides: Partial<Record<string, number>>,
     provenance?: { source: 'calibration'; version: number; scope: 'all_turns'; goldSource: 'synthetic' | 'real' },
+    coverageProvenance?: { source: 'groundedness'; version: number; goldSource: 'synthetic' | 'real' },
   ): ReturnType<typeof runGoldReportJob> {
     const { half, steps } = makeScriptedReportHalf();
     return runGoldReportJob({
@@ -916,6 +933,7 @@ describe('a seeded provenance must carry the seed value (DEC-31)', () => {
       modelVer: 'test-stub',
       thresholds: makeThresholds({ ...SEED_THRESHOLDS, ...overrides }),
       ...(provenance === undefined ? {} : { provenance }),
+      ...(coverageProvenance === undefined ? {} : { coverageProvenance }),
     });
   }
 
@@ -944,6 +962,132 @@ describe('a seeded provenance must carry the seed value (DEC-31)', () => {
         { source: 'calibration', version: 3, scope: 'all_turns', goldSource: 'synthetic' },
       ),
     ).rejects.toThrow(new RegExp(`non-seed ${field}`));
+  });
+
+  // The arm the commit that changed this guard was FOR, and the arm that had
+  // no case: a moved pair is permitted once a coverage provenance names the
+  // fit behind it. Reverting the guard to its old unconditional refusal left
+  // the whole suite green, so the change that made `pnpm run gold-report` work
+  // again on a machine holding a fit was unproven.
+  it.each([
+    ['groundednessBlock', 0.75],
+    ['groundednessReview', 1],
+  ])('accepts a moved %s when a fit is named, and records it', async (field, value) => {
+    const { artifact } = await runWithThresholds(
+      { [field]: value },
+      undefined,
+      { source: 'groundedness', version: 4, goldSource: 'synthetic' },
+    );
+    expect(artifact.coverage_source).toBe('groundedness');
+    expect(artifact.coverage_fit_version).toBe(4);
+    expect(artifact.coverage_fit_gold_source).toBe('synthetic');
+    expect(artifact[field === 'groundednessBlock' ? 'coverage_block' : 'coverage_review'])
+      .toBe(value);
+    // DEC-05: naming the coverage fit says nothing about the other gate.
+    expect(artifact.gate_source).toBe('seed');
+    expect(artifact.gate_agreement).toBe(SEED_THRESHOLDS.agreement);
+  });
+
+  // And a seeded run still records the pair it ran under, so a reader never
+  // has to infer it from the absence of a field.
+  it('records the seed pair on a run that moved nothing', async () => {
+    const { artifact } = await runWithThresholds({});
+    expect(artifact.coverage_source).toBe('seed');
+    expect(artifact.coverage_block).toBe(SEED_THRESHOLDS.groundednessBlock);
+    expect(artifact.coverage_review).toBe(SEED_THRESHOLDS.groundednessReview);
+    expect(artifact.coverage_fit_version).toBeNull();
+    expect(artifact.coverage_fit_gold_source).toBeNull();
+  });
+
+  // The whole coverage validation block was deletable with the suite green.
+  // Every agreement-side mirror of these rules has a refusal case; the
+  // coverage side had none, in a validator whose stated purpose is stopping a
+  // broken artifact from quietly changing a published number.
+  describe('the coverage half of the validator (DEC-05)', () => {
+    const fitted = {
+      coverage_block: 0.75,
+      coverage_review: 1,
+      coverage_source: 'groundedness' as const,
+      coverage_fit_version: 2,
+      coverage_fit_gold_source: 'synthetic' as const,
+    };
+
+    it('accepts a well-formed fitted record', () => {
+      expect(() => validateGoldReportArtifact({ ...makeArtifact(1), ...fitted })).not.toThrow();
+    });
+
+    it('accepts a well-formed seeded record', () => {
+      expect(() => validateGoldReportArtifact({
+        ...makeArtifact(1),
+        coverage_block: 0.7,
+        coverage_review: 0.8,
+        coverage_source: 'seed',
+        coverage_fit_version: null,
+        coverage_fit_gold_source: null,
+      })).not.toThrow();
+    });
+
+    it('refuses a source outside the closed set', () => {
+      expect(() => validateGoldReportArtifact({ ...makeArtifact(1), ...fitted, coverage_source: 'guess' }))
+        .toThrow(/coverage_source/);
+    });
+
+    it.each([
+      ['coverage_block', 1.5],
+      ['coverage_review', -0.1],
+    ])('refuses %s outside [0, 1]', (field, value) => {
+      expect(() => validateGoldReportArtifact({ ...makeArtifact(1), ...fitted, [field]: value }))
+        .toThrow(new RegExp(`${field} is outside`));
+    });
+
+    // An artifact recording block above review describes a gate the policy
+    // engine refuses to build, so it must not be readable as one.
+    it('refuses a pair whose block exceeds its review', () => {
+      expect(() => validateGoldReportArtifact({
+        ...makeArtifact(1), ...fitted, coverage_block: 0.9, coverage_review: 0.8,
+      })).toThrow(/exceeds/);
+    });
+
+    it('refuses a fitted record naming no version', () => {
+      expect(() => validateGoldReportArtifact({
+        ...makeArtifact(1), ...fitted, coverage_fit_version: null,
+      })).toThrow(/coverage_fit_version is not a positive integer/);
+    });
+
+    it('refuses a fitted record naming no gold source', () => {
+      expect(() => validateGoldReportArtifact({
+        ...makeArtifact(1), ...fitted, coverage_fit_gold_source: null,
+      })).toThrow(/coverage_fit_gold_source/);
+    });
+
+    it.each([
+      ['coverage_fit_version', 3],
+      ['coverage_fit_gold_source', 'synthetic'],
+    ])('refuses a seeded record that sets %s', (field, value) => {
+      expect(() => validateGoldReportArtifact({
+        ...makeArtifact(1),
+        coverage_block: 0.7,
+        coverage_review: 0.8,
+        coverage_source: 'seed',
+        coverage_fit_version: null,
+        coverage_fit_gold_source: null,
+        [field]: value,
+      })).toThrow(new RegExp(`${field} is set on a seeded run`));
+    });
+
+    // The hole the else-branch closes: a pair whose provenance nobody can
+    // read is the undisclosed gate this record exists to prevent.
+    it.each([
+      'coverage_block', 'coverage_review', 'coverage_fit_version', 'coverage_fit_gold_source',
+    ])('refuses %s set with no coverage_source', (field) => {
+      expect(() => validateGoldReportArtifact({ ...makeArtifact(1), [field]: 0.75 }))
+        .toThrow(/provenance is unreadable/);
+    });
+
+    // And an artifact from before these fields existed still reads.
+    it('accepts an artifact carrying none of them', () => {
+      expect(() => validateGoldReportArtifact(makeArtifact(1))).not.toThrow();
+    });
   });
 
   it('refuses a scope outside the closed set', () => {

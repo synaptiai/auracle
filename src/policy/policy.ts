@@ -77,10 +77,16 @@ export type PolicyDecision = 'auto' | 'gated' | 'escalate';
  */
 export const GATE_AGREEMENT = 0.6;
 
-/** Below this, block. Do not send (section 4.7). */
+/**
+ * Seed value from section 4.7. `pnpm run fit-groundedness` refits it (DEC-07).
+ *
+ * Framed as a seed, like GATE_AGREEMENT above. It read as the operative value
+ * for as long as nothing could fit it, and a job now can: a process holding a
+ * coverage artifact runs a different pair and says so at startup.
+ */
 export const GROUNDEDNESS_BLOCK = 0.7;
 
-/** Below this, send to a person for review (section 4.7). */
+/** Seed value from section 4.7, refitted the same way. Below this, a person reviews. */
 export const GROUNDEDNESS_REVIEW = 0.8;
 
 /**

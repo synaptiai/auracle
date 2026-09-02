@@ -41,6 +41,50 @@ function makeArtifact(over: Partial<GroundednessArtifact> = {}): GroundednessArt
   };
 }
 
+// The spend fields (DEC-25, AC6). The whole block was deletable with the
+// groundedness suite green: the only assertions on these fields read the
+// committed reference file, which does not change when the validator does.
+describe('the spend a fit reports', () => {
+  it('accepts a run that recorded an exact total', () => {
+    expect(() => validateGroundednessArtifact({
+      ...makeArtifact(), cost_micros: 170_780, cost_unknown: false,
+    })).not.toThrow();
+  });
+
+  it('accepts a run that recorded a floor', () => {
+    expect(() => validateGroundednessArtifact({
+      ...makeArtifact(), cost_micros: 170_780, cost_unknown: true,
+    })).not.toThrow();
+  });
+
+  // A cost with no qualifier reads as a total, and half of these runs can
+  // only report a floor. Reporting one as the other is what DEC-25 forbids.
+  it('refuses a spend that does not say whether it is a total', () => {
+    expect(() => validateGroundednessArtifact({
+      ...makeArtifact(), cost_micros: 170_780,
+    } as unknown as Parameters<typeof validateGroundednessArtifact>[0]))
+      .toThrow(/without cost_unknown/);
+  });
+
+  it('refuses a qualifier that qualifies nothing', () => {
+    expect(() => validateGroundednessArtifact({
+      ...makeArtifact(), cost_unknown: true,
+    } as unknown as Parameters<typeof validateGroundednessArtifact>[0]))
+      .toThrow(/without cost_micros/);
+  });
+
+  it.each([-1, Number.NaN])('refuses %s as a spend', (value) => {
+    expect(() => validateGroundednessArtifact({
+      ...makeArtifact(), cost_micros: value, cost_unknown: false,
+    })).toThrow(/cost_micros is not a spend/);
+  });
+
+  // An artifact written before the field existed must still read.
+  it('accepts a run that recorded no spend at all', () => {
+    expect(() => validateGroundednessArtifact(makeArtifact())).not.toThrow();
+  });
+});
+
 describe('the DEC-31 proof a real run must carry', () => {
   // Its two siblings got this case in cycle 9; this one did not, and the
   // sweep that claimed to cover the branch's guards never mutated it. The

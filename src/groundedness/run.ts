@@ -16,9 +16,13 @@
 // section 6 keeps its caveat when it happens.
 
 import { checkGroundedness } from './groundedness.js';
-import { UnreadableAnswerError } from '../models/provider.js';
 import { fitCoverageThresholds } from './fit.js';
 import type { CoverageSample } from './fit.js';
+import {
+  DEFAULT_RETRY_DELAY_MS, assertDocumentsResolvable, describeFaultShapes, describeSpend,
+  scoreHalf, scoringDigest,
+} from './scoring.js';
+import { openResume } from './resume.js';
 import {
   assertGroundednessDirUsable,
   defaultGroundednessDir,
@@ -41,9 +45,42 @@ import type { GoldFile, GoldSource, GoldTicket, HalfIdentity } from '../fixtures
 import type { ModelProvider } from '../models/provider.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
+/**
+ * The precision the review threshold must hold, and why.
+ *
+ * A policy choice, not a fitted number, and it needs a reason of its own. The
+ * value coincides with the classifier simulation of paragraph 4.5, at k=9 and
+ * a threshold of 0.6. That is the agreement gate, and DEC-05 keeps the two
+ * gates independent, so a number borrowed from one is no justification for the
+ * other. It is set here on coverage grounds instead.
+ *
+ * The review threshold decides the automatic path for an internal write
+ * (paragraph 4.7). A draft above it executes with no person reading it. So one
+ * minus this floor is the rate at which a write acts on a claim the retrieved
+ * sources do not support.
+ *
+ * Paragraph 4.7 also says this gate is the only defence against a confident
+ * error, because agreement cannot find one. A gate that backstops another gate
+ * must be at least as strict as the gate it backstops, or the backstop is the
+ * weaker link and the pair is only as good as this one. The agreement gate
+ * operates at 0.985, so this floor is 0.985 and could defensibly be higher.
+ *
+ * The floor is read against the lower bound of a 95 percent interval, so it
+ * also sets a minimum support: 253 drafts above the threshold, from
+ * `minimumSupport`. A corpus that cannot offer them produces a refusal.
+ */
 export const DEFAULT_TARGET_PRECISION = 0.985;
+
+/**
+ * The negative predictive value the block threshold must hold.
+ *
+ * Below block a draft is escalated and no person sees it as a draft to
+ * approve, so one minus this floor is the rate at which a grounded draft is
+ * thrown away. That is a cost in work, not in correctness, which is why this
+ * floor sits below the review floor rather than beside it.
+ */
 export const DEFAULT_TARGET_NPV = 0.9;
 const DEFAULT_PROMPT_VER = 'ground-p1';
 
@@ -74,6 +111,10 @@ export interface GroundednessRunOptions {
   fitHalf?: GoldFile;
   promptVer?: string;
   modelVer?: string;
+  /** Overrides DEFAULT_RETRY_DELAY_MS. Tests set it to zero. */
+  retryDelayMs?: number;
+  /** Where a run that dies picks up. Absent means no resume. */
+  resumeFile?: string;
   targetPrecision?: number;
   targetNpv?: number;
   /** Cap the drafts scored. Used to measure separability before a full run. */
@@ -84,6 +125,28 @@ export interface GroundednessRunOptions {
 export interface GroundednessRunResult {
   artifact: GroundednessArtifact;
   samples: CoverageSample[];
+}
+
+/**
+ * One draft's measured coverage beside its ground truth, and what it cost.
+ *
+ * The spend is returned rather than dropped. An earlier version discarded
+ * `costMicros` here, so the job that spends the most money in the repository
+ * was the one job that could not say what it spent (DEC-25).
+ */
+export interface ScoredDraft {
+  readonly sample: CoverageSample;
+  readonly costMicros: number;
+  /**
+   * True when this draft's spend is understated.
+   *
+   * A judge call that raises carries the cost of that call alone. The claims
+   * of the same draft already judged cost money that nothing recorded, and a
+   * transport attempt that never answered may still have been billed. Neither
+   * is knowable from here, so the run says the figure is a floor rather than
+   * reporting a floor as a total.
+   */
+  readonly costUnknown: boolean;
 }
 
 /** One draft's measured coverage beside its ground truth. */
@@ -100,7 +163,7 @@ export async function scoreDraft(
    * at all: the type system would stop saying anything.
    */
   source: GoldSource,
-): Promise<CoverageSample> {
+): Promise<ScoredDraft> {
   const claims = ticket.claims ?? [];
   if (claims.length === 0) {
     throw new Error(`gold case ${label(ticket.ticket_id, source)} carries no claims, so it has no coverage`);
@@ -112,8 +175,9 @@ export async function scoreDraft(
     const body = bodies.get(id);
     if (body === undefined) {
       // The document id is the adopter's own on a real half, so it is named
-      // by digest too. loadDocuments enforces the shipped DOC-SYN- prefixes,
-      // so this is the first fault a real fit half hits.
+      // by digest too. Both jobs resolve every cited document before their
+      // first model call, so neither reaches this; it holds for a direct
+      // caller of `scoreDraft`, which the suite is.
       throw new Error(
         `gold case ${label(ticket.ticket_id, source)} cites unknown document ${label(id, source)}`,
       );
@@ -128,11 +192,17 @@ export async function scoreDraft(
 
   const unsupported = claims.filter((c) => !c.supported);
   return {
-    coverage: measured.groundedness,
-    grounded: unsupported.length === 0,
-    // The hardest grade present decides how the draft is reported: a draft
-    // carrying one easy and one hard negative is not an easy case.
-    grade: unsupported.length === 0 ? null : hardestGrade(unsupported.map((c) => c.grade ?? 'absent')),
+    sample: {
+      coverage: measured.groundedness,
+      grounded: unsupported.length === 0,
+      // The hardest grade present decides how the draft is reported: a draft
+      // carrying one easy and one hard negative is not an easy case.
+      grade: unsupported.length === 0
+        ? null
+        : hardestGrade(unsupported.map((c) => c.grade ?? 'absent')),
+    },
+    costMicros: measured.costMicros,
+    costUnknown: false,
   };
 }
 
@@ -193,25 +263,40 @@ export async function runGroundednessJob(
   // say how many it dropped. A systemic fault still fails: above the ceiling
   // the sample no longer represents the half, and a threshold fitted on it
   // would carry a confidence the data does not support.
-  const samples: CoverageSample[] = [];
-  const faulted: string[] = [];
-  for (const ticket of scored) {
-    try {
-      samples.push(
-        await scoreDraft(ticket, bodies, options.provider, { promptVer, modelVer }, fitHalf.source),
-      );
-    } catch (error) {
-      if (!(error instanceof UnreadableAnswerError)) throw error;
-      faulted.push(label(ticket.ticket_id, fitHalf.source));
-    }
-  }
+  assertDocumentsResolvable(scored, bodies, fitHalf.source);
+
+  const resume = options.resumeFile === undefined ? undefined : await openResume(
+    options.resumeFile,
+    {
+      modelVer,
+      promptVer,
+      split: fitHalf.split,
+      halfDigest: halfDigest(identityOf(fitHalf)),
+      // Digested over the whole labelled set, never over the limited slice.
+      // `limit` exists to measure separability before a full run, and keying
+      // on the slice made the pilot's file describe "different claims" to the
+      // full run that followed — refusing samples that were paid for and
+      // perfectly reusable.
+      inputDigest: scoringDigest(drafts, bodies),
+    },
+  );
+  const { samples, faulted, faultShapes, costMicros, costUnknown } = await scoreHalf(
+    scored,
+    bodies,
+    options.provider,
+    { promptVer, modelVer },
+    fitHalf.source,
+    options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS,
+    resume,
+  );
   if (faulted.length > 0) {
     const share = faulted.length / scored.length;
     if (share > MAX_FAULTED_SHARE) {
+      const shapes = describeFaultShapes(faultShapes);
       throw new Error(
         `the coverage judge returned an unreadable answer on ${faulted.length} of `
           + `${scored.length} drafts, above the ${MAX_FAULTED_SHARE} ceiling; the scored `
-          + 'sample no longer represents the half (DEC-07)',
+          + `sample no longer represents the half (DEC-07). Shapes: ${shapes}`,
       );
     }
     console.warn(
@@ -237,6 +322,8 @@ export async function runGroundednessJob(
     split_used: 'fit',
     fit_drafts: samples.length,
     faulted_drafts: faulted.length,
+    cost_micros: costMicros,
+    cost_unknown: costUnknown,
     prompt_ver: promptVer,
     model_ver: modelVer,
     target_precision: targetPrecision,
@@ -262,10 +349,15 @@ export async function runGroundednessJob(
 /**
  * Refuse a half this job must not fit on. Same rule as the agreement fit.
  *
- * A synthetic half draws its DEC-31 proof from the committed corpus, whose
- * two halves the loader cross-checks. A real half has no such guarantee, so
- * the caller names the report half's identifiers and this refuses without
- * them. The job never opens the report half's cases.
+ * A synthetic half draws its DEC-31 proof from the committed corpus, whose two
+ * halves `loadGoldSet` cross-checks. Note where that happens: this job calls
+ * `loadGoldHalf`, which opens one half and does not cross-check anything. The
+ * committed corpus's proof is carried by the fixture suite, which loads the
+ * set, and by the CI gate that regenerates it — not by this call path.
+ *
+ * A real half has no such guarantee at all, so the caller names the report
+ * half's identifiers and this refuses without them. The job never opens the
+ * report half's cases.
  */
 function assertFitHalf(half: GoldFile, reportIdentity: HalfIdentity | undefined): void {
   if (half.count !== half.tickets.length) {
@@ -337,6 +429,8 @@ async function main(): Promise<void> {
     modelVer,
     ...(selected.half === undefined ? {} : { fitHalf: selected.half }),
     ...(selected.counterpart === undefined ? {} : { reportIdentity: selected.counterpart }),
+    resumeFile: process.env['GROUNDEDNESS_RESUME']
+      ?? fileURLToPath(new URL('resume-fit.jsonl', defaultGroundednessDir())),
     ...(limit === undefined ? {} : { limit }),
   });
   console.log(
@@ -346,6 +440,7 @@ async function main(): Promise<void> {
       + `review ${artifact.review} (precision ${artifact.review_precision.toFixed(3)}, `
       + `coverage ${artifact.review_coverage.toFixed(3)})`,
   );
+  console.log(`  spend: ${describeSpend(artifact.cost_micros, artifact.cost_unknown)}`);
   for (const grade of artifact.by_grade) {
     console.log(`  ${grade.grade}: ${grade.drafts} drafts, mean coverage ${grade.mean_coverage.toFixed(3)}`);
   }

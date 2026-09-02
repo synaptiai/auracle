@@ -26,11 +26,15 @@
 //                         therefore every write gates).
 // - DATABASE_URL          ledger connection (see src/db/config.ts)
 //
-// Gate thresholds come from the highest calibration artifact under
-// <repo>/calibration/. With none present the documented seeds of section 4.5
-// and section 4.7 apply, and startup logs `gate_thresholds_seeded` naming
-// them. A fitted run logs `gate_thresholds_fitted` with the version. Read one
-// of those two lines before you trust a gate number.
+// Each gate takes its own artifact. The agreement number comes from the
+// highest artifact under <repo>/calibration/ and the two coverage numbers
+// from the highest under <repo>/groundedness/. Either may be absent, and then
+// that gate keeps the documented seed of section 4.5 or section 4.7.
+//
+// Startup logs a line per gate, so one fitted gate beside one seeded gate
+// reads correctly: `gate_thresholds_fitted` or `gate_thresholds_seeded` for
+// agreement, and `coverage_thresholds_fitted` or `coverage_thresholds_seeded`
+// for the pair. Read both lines before you trust a gate number.
 //
 // All of the above may live in a ./.env file: every entrypoint loads it at
 // startup when present. An explicit shell env always wins over .env.
@@ -46,7 +50,7 @@ import { Pool } from 'pg';
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.js';
 import type { EgressAdapter } from '../adapters/types.js';
-import { resolveThresholds } from '../calibration/resolve.js';
+import { pinFaults, resolveThresholds } from '../calibration/resolve.js';
 import { actionProfileFromEnv } from '../config/action-profile.js';
 import { loadDotEnv, dataGuaranteeOption, DEFAULT_CHAT_MODEL_VER } from '../config/env.js';
 import { requireDbUrl } from '../db/config.js';
@@ -105,9 +109,17 @@ async function main(): Promise<void> {
   const profile = actionProfileFromEnv();
   const egress = selectEgressAdapter(process.env['EGRESS_ADAPTER'] ?? 'helpdesk');
 
+  const modelVer = process.env['MODEL_VER'] ?? DEFAULT_CHAT_MODEL_VER;
+
   // Resolved once, here, and passed down. The policy engine stays a pure
   // synchronous function, so nothing reads a file inside a gate decision.
-  const { thresholds } = await resolveThresholds();
+  const { thresholds, fittedPins } = await resolveThresholds();
+
+  // Each fitted gate must have been fitted under the pin this process runs.
+  // The rule lives beside the resolver so it has a test; this call site only
+  // decides what to do about it, which is to refuse rather than start.
+  const faults = pinFaults(fittedPins, modelVer);
+  if (faults.length > 0) throw new Error(faults.join(' '));
 
   // fixtures/taxonomy.json is curated by a person (section 4.11 step 4).
   const taxonomyUrl = path.resolve(
@@ -135,8 +147,9 @@ async function main(): Promise<void> {
     pins: {
       promptVer: process.env['PROMPT_VER'] ?? 'consumer-prompt-v1',
       // The default lives in one place, beside the guarantee it carries.
-      // Override with MODEL_VER.
-      modelVer: process.env['MODEL_VER'] ?? DEFAULT_CHAT_MODEL_VER,
+      // Override with MODEL_VER. Read above, because the coverage pair a
+      // fitted artifact installs must have been fitted under this same pin.
+      modelVer,
     },
     // Embeddings are a separate pin: the chat model does not embed, so the
     // retrieval query embeds through its own model (EMBED_MODEL_VER).

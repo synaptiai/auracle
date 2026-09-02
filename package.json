@@ -30,7 +30,8 @@
     "imap": "pnpm run build && node dist/imap/main.js",
     "webhook": "pnpm run build && node dist/intake/webhook-main.js",
     "load-docs": "pnpm run build && node dist/kb/cli.js",
-    "fit-groundedness": "pnpm run build && node dist/groundedness/run.js"
+    "fit-groundedness": "pnpm run build && node dist/groundedness/run.js",
+    "report-groundedness": "pnpm run build && node dist/groundedness/report.js"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^12.1.0",

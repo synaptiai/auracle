@@ -35,7 +35,7 @@ import type { ModelProvider } from '../models/provider.js';
 import { SEED_THRESHOLDS, evaluatePolicy } from '../policy/policy.js';
 import type { AdapterCapabilities, ActionClass, GateThresholds, RiskTier } from '../policy/policy.js';
 import { resolveThresholds } from '../calibration/resolve.js';
-import type { ThresholdProvenance } from '../calibration/resolve.js';
+import type { CoverageProvenance, ThresholdProvenance } from '../calibration/resolve.js';
 import { pathToFileURL } from 'node:url';
 import {
   defaultGoldReportDir,
@@ -73,6 +73,12 @@ export interface GoldReportRunOptions {
    */
   thresholds?: GateThresholds;
   provenance?: ThresholdProvenance;
+  /**
+   * Where the two coverage numbers came from. A separate option from
+   * `provenance` above, and never merged with it: the artifact must let a
+   * reader say which gate was fitted and which was seeded (DEC-05).
+   */
+  coverageProvenance?: CoverageProvenance;
   /**
    * Identifiers of the fit half, for the DEC-31 proof. Required when the
    * report half is not the shipped corpus; this job never opens the fit
@@ -174,26 +180,30 @@ export async function runGoldReportJob(
         + `a seeded run publishes the section 4.5 seed ${SEED_THRESHOLDS.agreement}`,
     );
   }
-  // The coverage pair is checked on BOTH branches, not the seed branch alone.
-  // The artifact records a value for the first gate only, so a moved coverage
-  // threshold would reach the published rates with nothing in the file naming
-  // it — and calling the run 'calibration' does not disclose it either
-  // (DEC-05). No job fits coverage yet, so the seeds are the only honest
-  // value; when one exists this must record the pair beside gate_agreement.
+  // The coverage pair gets the same treatment as the agreement number, and
+  // gets it separately (DEC-05). A moved value is legitimate now that a job
+  // fits one; what must never happen is a moved value the artifact does not
+  // name. An earlier version refused every moved pair outright, because the
+  // artifact recorded no coverage field at all. That refusal outlived its
+  // reason: once the resolver read a fitted pair, `pnpm run gold-report`
+  // stopped working on any machine holding a fit — including the machine that
+  // has to regenerate the published numbers.
+  const coverageProvenance: CoverageProvenance = options.coverageProvenance ?? { source: 'seed' };
   const movedCoverage = COVERAGE_FIELDS.filter(
     (field) => thresholds[field] !== SEED_THRESHOLDS[field],
   );
-  if (movedCoverage.length > 0) {
+  if (coverageProvenance.source === 'seed' && movedCoverage.length > 0) {
     throw new Error(
-      `gold report was given non-seed ${movedCoverage.join(' and ')}; `
-        + 'no job fits a coverage threshold and the artifact records none, '
-        + 'so a moved one would reach the published rates undisclosed (DEC-05)',
+      `gold report was given non-seed ${movedCoverage.join(' and ')} with no coverage `
+        + 'provenance; a seeded run publishes the section 4.7 seeds '
+        + `${SEED_THRESHOLDS.groundednessBlock} and ${SEED_THRESHOLDS.groundednessReview} `
+        + '(DEC-05)',
     );
   }
   const reportHalf = options.reportHalf ?? loadGoldHalf('report');
   // DEC-39: replay scores first turns only. A later turn's disposition
   // reflects the whole conversation, not the decision being scored. The
-  // committed report half holds 385 cases and 287 first turns, so `scope`
+  // committed report half holds 1062 cases and 815 first turns, so `scope`
   // and `report_tickets` below are what a reader must go by.
   const firstTurns = reportHalf.tickets.filter(isFirstTurn);
   const promptVer = options.promptVer ?? DEFAULT_PROMPT_VER;
@@ -276,6 +286,15 @@ export async function runGoldReportJob(
       provenance.source === 'calibration' ? provenance.scope : null,
     gate_calibration_gold_source:
       provenance.source === 'calibration' ? provenance.goldSource : null,
+    // The coverage half of the record, built from its own provenance alone.
+    // Nothing here reads `provenance` and nothing above reads this one.
+    coverage_block: thresholds.groundednessBlock,
+    coverage_review: thresholds.groundednessReview,
+    coverage_source: coverageProvenance.source,
+    coverage_fit_version:
+      coverageProvenance.source === 'groundedness' ? coverageProvenance.version : null,
+    coverage_fit_gold_source:
+      coverageProvenance.source === 'groundedness' ? coverageProvenance.goldSource : null,
     report_half_digest:
       options.fitIdentity === undefined ? null : halfDigest(identityOf(reportHalf)),
     fit_half_digest: options.fitIdentity === undefined ? null : halfDigest(options.fitIdentity),
@@ -326,8 +345,8 @@ function assertReportHalf(half: GoldFile, fitIdentity: HalfIdentity | undefined)
     );
   }
   if (half.source === 'synthetic') {
-    // The committed corpus holds exactly 385 report tickets (DEC-31). Fitting
-    // happens on the other 385; publishing happens here and nowhere else.
+    // The committed corpus holds exactly REPORT_COUNT report tickets (DEC-31).
+    // Fitting happens on the other half; publishing happens here and nowhere else.
     if (half.count !== REPORT_COUNT) {
       throw new Error(`report half holds ${half.count} tickets, expected ${REPORT_COUNT}`);
     }
@@ -368,7 +387,7 @@ async function main(): Promise<void> {
   // line goes to stderr like every other progress line here. Its default sink
   // is stdout, which put a JSON object in front of the artifact and made the
   // command's output unparseable.
-  const { thresholds, provenance } = await resolveThresholds({
+  const { thresholds, provenance, coverageProvenance } = await resolveThresholds({
     log: (entry) => { console.error(JSON.stringify(entry)); },
   });
   const selected = selectHalf('report');
@@ -384,6 +403,7 @@ async function main(): Promise<void> {
     modelVer: STUB_MODEL_VER,
     thresholds,
     provenance,
+    coverageProvenance,
     ...(selected.half === undefined ? {} : { reportHalf: selected.half }),
     ...(selected.counterpart === undefined ? {} : { fitIdentity: selected.counterpart }),
   });

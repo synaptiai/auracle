@@ -12,9 +12,12 @@
 // removes that, drops a model call, and keeps the claim boundaries the
 // composer validated.
 //
-// This module returns the raw fraction of supported claims. The 0.70 block
-// and 0.80 review thresholds are policy concerns (section 4.8) and live in
-// src/policy/policy.ts — never here.
+// This module returns the raw fraction of supported claims. The block and
+// review thresholds are policy concerns (section 4.8) and live in
+// src/policy/policy.ts — never here. It names no threshold value at all: the
+// pair a process runs is the fitted one when a coverage artifact exists and
+// the section 4.7 seed otherwise, and a module that hardcoded either in prose
+// would go stale the first time a fit landed.
 
 import { UnreadableAnswerError } from '../models/provider.js';
 import type { ChatMessage, ModelProvider, PinnedVersions } from '../models/provider.js';

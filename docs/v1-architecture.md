@@ -78,7 +78,7 @@ statement is an implementation detail. You can change it.
 | DEC-28 | A fencing epoch that increases. Check it at insert and at send | Adjust the lease time limit |
 | DEC-29 | Each action class declares its delivery rule | One global at-least-once rule |
 | DEC-30 | If the delivery state is unknown, escalate. Do not retry | Retry blind; abandon blind |
-| DEC-31 | A gold set of 770 cases. Fit on one half. Report the other half | 385 cases with a caveat |
+| DEC-31 | A gold set split in two. Fit on one half. Report the other half | One undivided set with a caveat |
 | DEC-32 | Action match scores the disposition, not the intent label | Silver labels from the induction job |
 | DEC-33 | Add provenance metadata to each generated text | The disclosure text alone |
 | DEC-34 | A write that the system cannot reverse always gates. A gated write with no customer draft parks in the ledger | Gate by risk tier; park it as a helpdesk draft |
@@ -415,12 +415,17 @@ denominator of the fraction a model's choice. A split that returned one line
 scored 1.0 and passed both thresholds. The composer's partition removes that
 failure and costs one model call less.
 
-Use two thresholds:
+Use two thresholds, a block and a review:
 
 | Value | Action |
 |---|---|
-| Below 0.80 | Send to a person for review |
-| Below 0.70 | Block. Do not send |
+| Below the review threshold | Send to a person for review |
+| Below the block threshold | Block. Do not send |
+
+The seeds are 0.80 and 0.70. They are seeds and not the operative pair.
+`pnpm run fit-groundedness` fits the pair on the fit half, and a process
+holding a coverage artifact runs the fitted values. It says which it took at
+startup, so a seeded run and a fitted run are never confused for each other.
 
 The two thresholds decide the automatic path only. A customer reply is
 gated by DEC-12 before the policy engine reads either one.
@@ -444,9 +449,9 @@ if (!capabilities.supportsIdempotencyKey && action.isWrite) return 'gated';
 if (action.isCustomerVisible)                                return 'gated';
 if (action.isWrite && action.isIrreversible)                 return 'gated';
 if (intent.riskTier === 'high')                              return 'gated';
-if (agreement    < GATE_AGREEMENT)                           return 'escalate';
-if (groundedness < 0.70)                                     return 'escalate';
-if (groundedness < 0.80)                                     return 'gated';
+if (agreement    < thresholds.agreement)                     return 'escalate';
+if (groundedness < thresholds.groundednessBlock)             return 'escalate';
+if (groundedness < thresholds.groundednessReview)            return 'gated';
 return 'auto';
 ```
 
@@ -522,22 +527,35 @@ Limit: action match scores the routing only. It cannot show if a reply was good.
 It is sufficient to control merges. It is not sufficient to publish.
 
 **Method 2. Human review.** This method gives the numbers for the README. The
-gold set has 770 cases. Fit the thresholds on one half. Report each published
+gold set is split in two. Fit the thresholds on one half. Report each published
 number from the other half. See DEC-31.
+
+DEC-31 governs the split, not the size. The maintainer ruled the size an
+implementation detail of it, so a corpus may grow and the discipline still
+holds. The set held 770 cases and now holds 2124. It grew because a precision
+floor read against an interval needs support: 0.985 asks for 253 drafts above
+the review threshold, and 770 cases offered 172, so the corpus could never fit
+the gate it exists to fit.
 
 Do not use one set of cases for both tasks. That method is selection on the test
 data. A simulation of 2 000 trials shows the effect. If you select the best of 13
 thresholds on 385 cases, the reported precision increases by approximately
-2.5 points. This is one half of a 5 percent interval. The split removes this
-effect.
+2.5 points. That simulation ran at the earlier half size. The effect shrinks as
+a half grows, and the split removes it at any size.
 
-The cost is a wider interval, approximately 3 percent at p=0.9.
+The cost is a wider interval than an undivided set gives. At the current half
+size that cost is approximately 1.8 points at p=0.9.
 
 The strata need care. DEC-39 scores first turns only, so the report half of
-385 cases yields 287 scored cases. The three risk tiers hold 128, 102 and 57 of
-them. The widest stratum interval is above 11 percent. It was never 5 percent,
-and the split makes it worse. Treat the strata as an indication only and read
-the counts from the artifact, not from this paragraph.
+1062 cases yields 815 scored cases. The three risk tiers hold 361, 295 and 159
+of them.
+
+The widest stratum interval is 15 points wide, on the high tier.
+Widths here are full widths, lower bound to upper bound. The corpus growth
+narrowed this one: at the earlier half size the same tier held 57 cases and
+its interval was 25 points wide. It was never 5 points, and the split still
+makes it worse than an undivided set would. Treat the strata as an indication only
+and read the counts from the artifact, not from this paragraph.
 
 **Method 3. Judge triage.** A model selects the cases that go to a person. It
 does not give the published number. A judge has the same failures as the system
@@ -594,9 +612,9 @@ gated live phase are almost the same system.
 1. Run the induction job on the history.
 2. Curate the taxonomy to 25 intents.
 3. Set a risk tier for each intent.
-4. Label 770 stratified tickets.
-5. Fit the threshold on 385 of them.
-6. Keep 385 for the reports.
+4. Label 2124 stratified tickets.
+5. Fit the threshold on 1062 of them.
+6. Keep 1062 for the reports.
 7. Run action match to get a baseline.
 
 This phase has no risk to a customer. It gives each number that the live system
@@ -656,31 +674,174 @@ is the data controller. One exception applies. The prompt-log path is off by
 default and needs an explicit override. If you make it active, you give irrevocable commercial
 rights to the inputs and the outputs. The discount is 1 percent.
 
-**No threshold has a fit yet.** The agreement threshold and the two
-groundedness thresholds are the seed values of paragraph 4.5 and paragraph 4.7.
-No fitting run in this repository has produced an artifact. Read every gate
-number as a seed until this paragraph says otherwise.
-
-Both gates now have a job that fits them. `pnpm run calibrate` fits the
+**One gate has a fit. The other does not.** `pnpm run calibrate` fits the
 agreement threshold and `pnpm run fit-groundedness` fits the two coverage
 thresholds. Each writes its own artifact, and nothing joins the two: DEC-05
 keeps the gates independent and the second artifact refuses to carry an
 agreement value.
 
-Two limits apply to a coverage fit on this corpus, and neither is a fault of
-the job. Both halves draw their claims from one table of 28 sentences over 14 documents.
-Every sentence the report half asks appears in the fit half. The split still
-removes a selection effect, which is what DEC-31 asks of it. The judge reads
-the whole prompt, and 83 percent of the report half's prompts are new.
+The coverage pair has been fitted, twice. Two full passes over the fit half
+against `z-ai/glm-5.3-flash` produced the same pair: a block threshold of 0.75
+and a review threshold of 1.00. The second run cost 0.1708 US dollars, and the
+job reports that as a floor because 19 faulted drafts carry spend nothing can
+attribute (DEC-25).
 
-It gives no protection against a judge that mis-reads one sentence. That
-sentence depresses both halves alike.
+The shipped fit read 1043 drafts and dropped 19. Its block threshold holds a
+negative predictive value of 0.947 over the 360 drafts below it, with an
+interval from 0.919 to 0.966. Its review threshold holds a precision of 1.000
+over the 499 drafts at or above it, with an interval from 0.992 to 1.000. Both
+floors are read against the lower bound, so neither rests on a point estimate.
 
-The two halves also hold different shares of grounded drafts. The fit half
-holds 43 percent and the report half 51 percent. Precision counts grounded
-drafts above a threshold against all drafts above it. The report half is
-therefore the easier one, and a published precision reads high. Read a number
-from this corpus with that in mind.
+The first run read 1056 drafts, dropped 6, and reached 0.950 and 0.998 on the
+same two measures. The thresholds are what reproduced; the supporting counts
+moved with the attrition, which is what a live provider does.
+
+A review threshold of 1.00 means every claim must be cited or a person reads
+the draft. That is the value the evidence produced, not a value chosen for
+strictness. No lower threshold held the 0.985 precision floor on its interval,
+and the floor is not lowered to make a friendlier number appear. It costs
+coverage: 47.8 percent of drafts reach the automatic path, and the rest go to
+a person.
+
+**The report half was then measured at that pair, and it does not confirm the
+review floor.** DEC-31 exists for this. The numbers above chose the threshold,
+so they carry a selection effect; the numbers below chose nothing.
+
+The run scored 1053 drafts of the report half and dropped 9, which is 0.9
+percent. The block threshold holds a negative predictive value of 0.9847 over
+327 drafts, and its interval runs from 0.9647 to 0.9935. That clears the 0.9
+floor on the lower bound, as the fit half did.
+
+The review threshold holds a precision of 0.9923 over 520 drafts, and its
+interval runs from 0.9804 to 0.9970. The lower bound is below the 0.985 floor.
+The fit half read 0.9889 on the same bound and cleared it.
+
+Read that difference carefully. The fit half made 1 error in 505 drafts on the
+first run and 0 in 499 on the second, against 4 in 520 on the report half.
+
+Test it with Fisher's exact test, not with a two-proportion test. Two
+proportions rest on a normal approximation that fails at counts this small,
+and it fails loudly here: on the second run it returns z = 1.963 against a
+threshold of 1.96, which would call the halves different on the strength of
+rounding. Fisher gives p = 0.37 for the first run and p = 0.12 for the second.
+Neither is evidence of a difference.
+
+The two runs must not be pooled to sharpen this. They scored the same 1062
+drafts, so they are not independent samples of the half, and pooling them
+would inflate the count that decides the answer.
+
+So the honest reading is not that the fit half was flattered.
+
+It is that a floor of 0.985 needs more support than 520 drafts give. The
+support figure the fit job uses, 253 drafts, is what a run with NO errors
+needs: at 253 drafts and no error the lower bound is 0.98504, which clears by
+four ten-thousandths. Neither run was perfect, so neither had the support the
+figure implies.
+
+Note what this does and does not say. The measured precision is 0.9923, which
+is above the floor. The interval around it is too wide to prove that at this
+corpus size. At the observed error rate, 1050 drafts above the review
+threshold would settle it, and the report half offers 520. So the gate is not
+shown to fail its floor. It is not shown to hold it either, and a design
+document must not report the second as the first.
+
+Nothing here can be tightened. The review threshold is already 1.00 and no
+stricter value exists. The 4 drafts were scored at full coverage by the judge
+and carried an unsupported claim anyway, so the residual is the judge's error
+and not the threshold's. Raising the gate cannot remove it, and this is the
+limit an adopter must plan around: at the strictest coverage gate this design
+admits, roughly 8 automatic writes in a thousand still act on a claim the
+sources do not support.
+
+The block threshold is the one with room to move, and it did not need it.
+
+The artifact does not travel. `groundedness/` is ignored, because a committed
+fit would move every adopter's second gate to a number fitted on this
+repository's synthetic corpus. `groundedness/reference-v2.json` is a tracked
+copy so a reader can check these numbers against the file that produced them.
+Its name sits outside the `v<n>.json` shape the version scanner reads, so no
+loader finds it and no checkout adopts it.
+
+The agreement threshold is still the paragraph 4.5 seed. The synthetic corpus
+cannot fit it: the offline stub answers every sample of one ticket alike, so
+agreement is 1.0 on every case and no threshold below 1.0 changes a decision.
+
+Both halves once drew their claims from one table of 56 sentences over 14
+documents. The corpus now carries 312 sentences over 39 documents, 156 to each
+half. Every sentence the report half asked also appeared in the fit half.
+The split removed a selection effect, which is what DEC-31 asks of it. It gave
+no protection against a judge that mis-read one sentence, because that sentence
+depressed both halves alike.
+
+Each document now carries a fit block and a report block. The two halves share
+no sentence, so a judge that mis-reads one wording moves one half only and the
+disagreement is visible. The report sentence paraphrases its fit counterpart
+rather than testing a new fact. So the halves stay matched in difficulty, and a
+precision gap between them means the judge disagreed. It does not mean one pool
+was harder.
+
+The loader refuses a corpus that breaks either rule. A sentence reaching both
+halves is named by digest, never printed, because a sentence on a real half is
+the customer's own text.
+
+The two halves also held different shares of grounded drafts, 43 percent
+against 51 percent. Precision counts grounded drafts above a threshold against
+all drafts above it, so the report half was the easier one and a published
+precision read high. Both halves now hold 531 fully grounded drafts of 1062.
+
+The loader tests that gap with an equivalence test, and not with a
+significance test. The two answer different questions. A significance test
+asks whether a gap is real; the question here is whether a gap is small. They
+come apart in both directions. A gap of 5.5 points over 600 drafts a side is
+not significant and would have passed, while the 7.3 point gap that motivated
+this check is significant over 385 and refused. A larger corpus was allowed a
+larger gap.
+
+So the halves must show the gap is small. Two one-sided tests at 5 percent put
+the whole 90 percent interval for the difference inside a margin of 5 points.
+
+The interval carries the Agresti-Caffo correction, which adds one success and
+one failure to each half before the standard error.
+
+At a share of exactly 0 or exactly 1 the textbook standard error is zero, so
+the interval collapses to a point and any sample size passes. One draft a side
+would then demonstrate closeness, which is the trivial pass this guard
+replaced a significance test to remove. Away from the boundary the two agree
+to four decimal places.
+Sample size now works the right way round. A half too small to demonstrate
+closeness is refused rather than passed by default, and such a half is already
+too small to hold the precision floor. The margin is a stated judgement: 5
+points is where this repository stops asking a reader to compensate.
+
+One limit remains, and it is not a fault of the job. A paraphrase pair tests
+one fact twice. So a judge that mis-reads the fact itself, rather than one
+wording of it, still moves both halves together.
+
+The two floors the coverage fit holds have reasons of their own. The review
+floor is 0.985. One minus that floor is the rate at which an internal write
+acts on a claim the sources do not support, with no person reading it. This
+gate is the only defence against a confident error, so it backstops the
+agreement gate. A backstop must be at least as strict as the gate it backs, and
+the agreement gate operates at 0.985. The value once matched paragraph 4.5 by
+coincidence, and DEC-05 keeps the two gates independent, so a borrowed number
+justified nothing.
+
+The block floor is 0.9. Below block a draft is thrown away and no person reads
+it, so the cost of a miss there is work and not correctness.
+
+The agreement fit reads its floor the same way, and for the same reason. Both
+searches computed an interval, recorded it, and chose on a point estimate. The
+agreement search maximises coverage, so it prefers a wide band and the fault is
+rarer there. It is not absent: where the only band clearing the floor is a
+narrow one at the top, that band won however few samples it held. Sharing the
+rule joins no value between the gates, so DEC-05 stands.
+
+Each floor is read against the lower bound of a 95 percent interval, never a
+point estimate. A point estimate carries no sample size: three drafts that
+agree read 1.000 and clear any floor. The first run of this job fitted the
+block threshold on exactly three drafts, and its own recorded interval read
+0.4385 to 1. So a floor also sets a minimum support, which is 253 drafts for
+0.985 and 35 for 0.9.
 
 The coverage job refuses when the measured classes do not separate. A gold set
 carries per-claim ground truth, so the job knows which drafts were truly
@@ -688,19 +849,25 @@ grounded, and it compares that against what the gate measured. Unsupported
 claims carry a grade, and the artifact reports coverage for each. A separation
 that comes from the easy grades alone protects nothing.
 
-A fitted artifact now reaches the policy engine. Each process resolves its
-gate numbers once at startup and logs which it adopted. A run on the seeds
-logs `gate_thresholds_seeded`; a run on a fit logs `gate_thresholds_fitted`
-and the version. The gold report records the same provenance beside its gate
-value, so a published number names the gate that produced it. The two coverage numbers stay at
-their seeds. The gates are independent, so fitting one moves neither value of
-the other (DEC-05), and no run in this repository has produced a coverage
-artifact yet.
+A fitted artifact reaches the policy engine, and each gate takes its own.
+Every process resolves its gate numbers once at startup and logs a line per
+gate, so one fitted gate beside one seeded gate reads correctly. A seeded
+agreement gate logs `gate_thresholds_seeded` and a fitted one
+`gate_thresholds_fitted` with the version. The coverage pair logs
+`coverage_thresholds_seeded` or `coverage_thresholds_fitted` the same way. The
+gold report records the agreement provenance beside its gate value, so a
+published number names the gate that produced it.
+
+The coverage artifact once had no reader, so the two coverage numbers stayed
+at their seeds however often the job ran. That was the same open loop this
+resolver closed for the other gate, and it is closed now. The gates stay
+independent: two artifacts, read separately, and neither supplies a number to
+the other (DEC-05).
 
 **A fitted threshold cannot move the published numbers.** The gold report runs
 against the offline stub, which answers each sample by matching a phrase. Every
 sample of one ticket therefore agrees, and agreement is 1.0 on every scored
-case. DEC-39 scores the 287 first turns of the report half. No threshold below
+case. DEC-39 scores the 815 first turns of the report half. No threshold below
 1.0 changes a decision. A run at 0.60 and a run at
 0.75 publish the same rates, and only the recorded provenance differs.
 
@@ -727,7 +894,7 @@ data a gate number covers.
 
 The identifier rules of the shipped corpus bind a half that claims to be it.
 An adopter's cases carry their own identifiers. Every other rule binds both
-halves, and the exact size of 385 binds the shipped corpus alone.
+halves, and the exact half size binds the shipped corpus alone.
 
 A real half brings no split guarantee with it. The loader cross-checks the
 two committed halves; nothing cross-checks two files on an operator's disk.

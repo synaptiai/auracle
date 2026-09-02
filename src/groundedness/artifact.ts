@@ -74,6 +74,27 @@ export interface GroundednessArtifact {
    * flatters the fit.
    */
   faulted_drafts: number;
+  /**
+   * What this fit cost, in micro-dollars, across every run that produced it
+   * (DEC-25).
+   *
+   * The job that spends the most money in the repository was the one job that
+   * reported no spend at all: `costMicros` came back from every judge call
+   * and was dropped one frame later. An adopter deciding whether to fit on
+   * their own corpus has no other figure to size the bill by.
+   *
+   * Optional, like the gold report's `unreadable_samples`: an artifact
+   * written before this field existed must still read.
+   */
+  cost_micros?: number;
+  /**
+   * True when `cost_micros` is a floor rather than a total.
+   *
+   * A faulted draft's already-judged claims and an unanswered transport
+   * attempt both cost money that nothing can attribute. Reporting a floor as
+   * a total is the understatement DEC-25 exists to prevent.
+   */
+  cost_unknown?: boolean;
   /** DEC-26 pins in force during the run. */
   prompt_ver: string;
   model_ver: string;
@@ -150,6 +171,25 @@ export function validateGroundednessArtifact(raw: unknown): GroundednessArtifact
       && raw['faulted_drafts'] >= 0,
     'artifact.faulted_drafts is not a count',
   );
+  // The spend and its qualifier travel together. A cost with no qualifier
+  // reads as a total, and half of these runs can only report a floor.
+  if (raw['cost_micros'] !== undefined) {
+    assert(
+      typeof raw['cost_micros'] === 'number'
+        && Number.isFinite(raw['cost_micros'])
+        && raw['cost_micros'] >= 0,
+      'artifact.cost_micros is not a spend',
+    );
+    assert(
+      typeof raw['cost_unknown'] === 'boolean',
+      'artifact.cost_micros is set without cost_unknown, so a floor reads as a total',
+    );
+  } else {
+    assert(
+      raw['cost_unknown'] === undefined,
+      'artifact.cost_unknown is set without cost_micros, so it qualifies nothing',
+    );
+  }
   for (const field of ['prompt_ver', 'model_ver'] as const) {
     assert(typeof raw[field] === 'string' && (raw[field] as string).length > 0, `artifact.${field} is missing`);
   }

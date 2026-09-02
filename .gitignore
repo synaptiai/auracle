@@ -8,11 +8,12 @@ dist/
 
 # Run artifacts on disk, never commit (same rule as triage/v1.json).
 # The exception is the published artifact: README.md quotes its numbers, so
-# it ships with the repository and is tracked.
+# it ships with the repository and is tracked. One version is tracked at a
+# time, and it is the one README names; the negation moves with it.
 # Exclude the directory's contents, not the directory: a negation cannot
 # re-include a file inside an excluded directory.
 /gold-report/*
-!/gold-report/v5.json
+!/gold-report/v7.json
 /triage/
 
 # Calibration artifacts are run output, not source. A committed artifact would
@@ -21,8 +22,17 @@ dist/
 /calibration/
 
 # Groundedness fits are run output too, and a committed one would move every
-# adopter's second gate to a number fitted on somebody else's corpus.
-/groundedness/
+# adopter's second gate to a number fitted on somebody else's corpus. The
+# resume files are ignored for the same reason and one more: they hold a row
+# per scored draft of whatever half was run (DEC-18).
+#
+# One exception, and it is deliberately not an artifact. `reference-v2.json`
+# is a copy of this repository's own fit, tracked so a reader can check the
+# published numbers against the file that produced them. It is named outside
+# the `v<n>.json` shape the version scanner reads, so no loader can find it
+# and no checkout adopts it. src/groundedness/reference.test.ts proves that.
+/groundedness/*
+!/groundedness/reference-v2.json
 .creatumo/MEMORY.md
 
 # Agent session transcripts. Never commit.

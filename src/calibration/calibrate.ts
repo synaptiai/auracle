@@ -85,8 +85,18 @@ export function fitAgreementThreshold(
       }
     }
     const precision = correctPassed / passed;
-    // The floor is a hard constraint, not part of an objective to blend.
-    if (precision < targetPrecision) continue;
+    const interval = wilsonInterval(correctPassed, passed);
+    // The floor is a hard constraint, not part of an objective to blend, and
+    // it is read against the interval's lower bound rather than the point
+    // estimate. A point estimate carries no sample size: five samples that
+    // happen to agree read 1.000 and clear any floor. The coverage fit
+    // carried the same defect and fitted a threshold on three drafts, with
+    // its own recorded interval reading 0.4385 to 1 against a floor of 0.9.
+    //
+    // This search maximises coverage, so it prefers a wide band and the fault
+    // is rarer here. It is not absent: when the only band clearing the floor
+    // is a narrow one at the top, that band won however few samples it held.
+    if (interval.lower < targetPrecision) continue;
     const coverage = passed / samples.length;
     if (best === null || coverage > best.coverage) {
       best = {
@@ -95,15 +105,17 @@ export function fitAgreementThreshold(
         coverage,
         passed,
         total: samples.length,
-        interval: wilsonInterval(correctPassed, passed),
+        interval,
       };
     }
   }
 
   if (best === null) {
     throw new Error(
-      `no agreement threshold reaches precision ${targetPrecision} on ${samples.length} fit samples; ` +
-        'refusing to emit a weaker gate (DEC-13)',
+      `no agreement threshold reaches a precision whose 95 percent lower bound holds ` +
+        `${targetPrecision} on ${samples.length} fit samples; refusing to emit a weaker gate ` +
+        `(DEC-13). A perfect sample of n reaches n / (n + ${(Z_95 * Z_95).toFixed(4)}), so the floor ` +
+        `needs ${minimumSupport(targetPrecision)} samples above the threshold at the least`,
     );
   }
   return best;
@@ -112,8 +124,23 @@ export function fitAgreementThreshold(
 /**
  * Wilson score interval for a binomial proportion. Used over the normal
  * approximation because fit strata are small (section 4.10 warns the strata
- * stay too small to publish at 385 cases).
+ * stay too small to publish at this corpus size).
  */
+/**
+ * The smallest perfect sample that reaches a floor.
+ *
+ * A sample with no errors has p = 1, so the Wilson lower bound collapses to
+ * n / (n + z squared). Nothing smaller reaches the floor however clean it is,
+ * which makes this the honest thing to tell a caller whose set is too small.
+ *
+ * Shared by both fits, like `wilsonInterval` above. It carries no gate value
+ * and no data between them, so DEC-05 is untouched: the two gates still name
+ * their own floors and neither reads the other's.
+ */
+export function minimumSupport(floor: number): number {
+  return Math.ceil((floor * Z_95 * Z_95) / (1 - floor));
+}
+
 export function wilsonInterval(successes: number, n: number): FitInterval {
   if (!(n > 0)) {
     throw new Error('Wilson interval needs at least one observation');

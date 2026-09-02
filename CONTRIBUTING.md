@@ -68,6 +68,30 @@ One case never serves both tasks.
 Selecting a threshold on the same cases that you later report on inflates the result.
 The split keeps the published numbers honest at the cost of a wider interval.
 
+Each half has a job of its own, and neither does the other's work.
+`pnpm run fit-groundedness` chooses the coverage pair and refuses the report half.
+`pnpm run report-groundedness` measures that pair and refuses the fit half.
+One job that could do both would let a single run choose and publish.
+
+The split covers claim sentences too, not only cases.
+Each document carries a fit block and a report block of claims.
+The report sentence paraphrases its fit counterpart and never repeats it.
+So a judge that mis-reads one wording moves one half, and you can see it.
+The loader refuses a corpus where one sentence reaches both halves.
+
+Keep the two halves equally hard.
+They must hold the same share of fully grounded drafts.
+A half with more grounded drafts is the easier one, and its precision reads high.
+The loader runs an equivalence test, and not a significance test.
+The halves must show the gap is small, not merely fail to prove it real.
+A half too small to show that is refused rather than passed by default.
+
+Both coverage jobs checkpoint each draft as it lands.
+A run that dies continues from the file instead of paying for the half again.
+The file is keyed on the model, the prompt, the half and the claims themselves.
+Change any of those and it retires, because its samples answer another question.
+Both jobs report what they spent, and say when that figure is a floor.
+
 A gate number now travels as data, not as a constant in the policy engine.
 
 Never read a threshold inside the engine. It stays a pure synchronous

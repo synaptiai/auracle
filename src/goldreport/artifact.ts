@@ -114,6 +114,41 @@ export interface GoldReportArtifact {
    */
   gate_calibration_gold_source: GoldSource | null;
   /**
+   * The coverage pair the policy applied (DEC-05, DEC-07).
+   *
+   * The published rates are scored through the policy engine, which reads
+   * both gates. An earlier version recorded the agreement gate alone and the
+   * job refused to run at all once a coverage fit existed, because a moved
+   * coverage value would otherwise have reached the published rates with
+   * nothing in the file naming it. Recording the pair is the disclosure that
+   * refusal stood in for, and it is what lets the job run again.
+   *
+   * Named on their own and never joined to the agreement fields: a reader
+   * must be able to say which gate was fitted and which was seeded (DEC-05).
+   *
+   * Optional, like `unreadable_samples`: an artifact published before these
+   * fields existed must still read.
+   */
+  coverage_block?: number;
+  coverage_review?: number;
+  /**
+   * Where the coverage pair came from.
+   *
+   * 'seed' is the documented section 4.7 pair; 'groundedness' names the fit
+   * artifact version that produced it.
+   */
+  coverage_source?: 'seed' | 'groundedness';
+  /** The groundedness artifact version behind the pair. Null when seeded. */
+  coverage_fit_version?: number | null;
+  /**
+   * Which data the pair was fitted on. Null when seeded.
+   *
+   * Separate from `gate_calibration_gold_source` for the same reason that one
+   * is separate from `gold_source`: the two gates can be fitted on different
+   * data, and a reader who saw one figure would attribute the other wrongly.
+   */
+  coverage_fit_gold_source?: GoldSource | null;
+  /**
    * Names the exact case sets this run proved disjoint (DEC-31).
    *
    * Null when no counterpart was named, which is the committed corpus. A
@@ -232,6 +267,64 @@ export function validateGoldReportArtifact(raw: unknown): GoldReportArtifact {
       'artifact.gate_calibration_gold_source is set on a seeded run',
     );
   }
+  // The coverage half of the record (DEC-05). Checked entirely on its own:
+  // nothing above reads a coverage field and nothing here reads an agreement
+  // field, so the two gates cannot become one through the validator.
+  const coverageSource = raw['coverage_source'];
+  if (coverageSource !== undefined) {
+    assert(
+      coverageSource === 'seed' || coverageSource === 'groundedness',
+      `artifact.coverage_source is ${String(coverageSource)}, expected seed or groundedness`,
+    );
+    // The pair travels with its source. A source naming a fit beside no pair
+    // discloses nothing, which is the gap this record exists to close.
+    for (const field of ['coverage_block', 'coverage_review'] as const) {
+      const value = raw[field];
+      assert(
+        typeof value === 'number' && value >= 0 && value <= 1,
+        `artifact.${field} is outside [0, 1]`,
+      );
+    }
+    // Block never exceeds review, exactly as the policy engine requires of
+    // the pair it is given. An artifact recording the reverse would describe
+    // a gate the engine refuses to build.
+    assert(
+      (raw['coverage_block'] as number) <= (raw['coverage_review'] as number),
+      `artifact.coverage_block ${String(raw['coverage_block'])} exceeds `
+        + `coverage_review ${String(raw['coverage_review'])}`,
+    );
+    const coverageVersion = raw['coverage_fit_version'];
+    if (coverageSource === 'groundedness') {
+      assert(
+        typeof coverageVersion === 'number' && Number.isInteger(coverageVersion) && coverageVersion > 0,
+        'artifact.coverage_fit_version is not a positive integer on a fitted run',
+      );
+      assert(
+        typeof raw['coverage_fit_gold_source'] === 'string'
+          && (GOLD_SOURCES as readonly string[]).includes(raw['coverage_fit_gold_source']),
+        `artifact.coverage_fit_gold_source is ${String(raw['coverage_fit_gold_source'])}, `
+          + `expected one of ${GOLD_SOURCES.join(', ')}`,
+      );
+    } else {
+      assert(coverageVersion === null, 'artifact.coverage_fit_version is set on a seeded run');
+      assert(
+        raw['coverage_fit_gold_source'] === null,
+        'artifact.coverage_fit_gold_source is set on a seeded run',
+      );
+    }
+  } else {
+    // An artifact published before these fields existed carries none of them.
+    // A partial record is a different thing: it names a pair whose source
+    // nobody can read, and that is the undisclosed gate all over again.
+    for (const field of [
+      'coverage_block', 'coverage_review', 'coverage_fit_version', 'coverage_fit_gold_source',
+    ] as const) {
+      assert(
+        raw[field] === undefined,
+        `artifact.${field} is set without coverage_source, so its provenance is unreadable`,
+      );
+    }
+  }
   for (const field of ['report_half_digest', 'fit_half_digest'] as const) {
     const value = raw[field];
     assert(
@@ -269,7 +362,7 @@ export function validateGoldReportArtifact(raw: unknown): GoldReportArtifact {
     );
     assertRateWithInterval(stratum['action_match'], `strata[${index}].action_match`);
     assertRateWithInterval(stratum['containment'], `strata[${index}].containment`);
-    // Section 4.10: at 385 cases with three tiers the strata stay too small
+    // Section 4.10: at this corpus size the three tiers stay too small
     // to publish. An artifact that marks one publishable must not load.
     assert(stratum['publishable'] === false, `stratum ${index} claims to be publishable`);
   }

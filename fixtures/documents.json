@@ -173,6 +173,312 @@
       "linked_intents": [
         "status-inquiry"
       ]
+    },
+    {
+      "doc_id": "DOC-SYN-009",
+      "kind": "document",
+      "title": "When a payment fails",
+      "body": "This article explains the retry schedule after a declined card, the grace period before suspension and how to update a payment method.",
+      "url": "https://help.example.com/articles/payment-failures",
+      "owner": "support-docs-team",
+      "review_by": "2026-03-01",
+      "linked_intents": [
+        "payment-failure"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-010",
+      "kind": "document",
+      "title": "Changing your plan",
+      "body": "This article describes upgrades that apply at once, downgrades that wait for the period end and the proration rule that applies to each.",
+      "url": "https://help.example.com/articles/plan-changes",
+      "owner": "support-docs-team",
+      "review_by": "2026-04-01",
+      "linked_intents": [
+        "plan-change-question"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-011",
+      "kind": "document",
+      "title": "Getting started with your workspace",
+      "body": "This article walks through the first sign-in, inviting colleagues and the setup checklist that appears on the dashboard.",
+      "url": "https://help.example.com/articles/onboarding",
+      "owner": "support-ops-team",
+      "review_by": "2026-02-15",
+      "linked_intents": [
+        "onboarding-help"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-012",
+      "kind": "document",
+      "title": "Answers to common how-to questions",
+      "body": "This article collects the tasks people ask about most, with the steps for each and a link to the deeper reference.",
+      "url": "https://help.example.com/articles/how-to",
+      "owner": "support-ops-team",
+      "review_by": "2026-05-01",
+      "linked_intents": [
+        "how-to-question"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-013",
+      "kind": "document",
+      "title": "How pricing works",
+      "body": "This article sets out the pricing tiers, what each tier includes and how usage above the included amount is charged.",
+      "url": "https://help.example.com/articles/pricing",
+      "owner": "support-docs-team",
+      "review_by": "2026-03-15",
+      "linked_intents": [
+        "pricing-question"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-014",
+      "kind": "document",
+      "title": "Reporting a gap in the documentation",
+      "body": "This article explains where to report a missing or unclear page, what the report should carry and how the docs team acknowledges it.",
+      "url": "https://help.example.com/articles/docs-gaps",
+      "owner": "support-ops-team",
+      "review_by": "2026-04-15",
+      "linked_intents": [
+        "documentation-gap"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-015",
+      "kind": "document",
+      "title": "Sending feedback about the product",
+      "body": "This article describes the feedback channels, how the product team groups what arrives and what happens to a suggestion that many people send.",
+      "url": "https://help.example.com/articles/feedback",
+      "owner": "support-ops-team",
+      "review_by": "2026-01-31",
+      "linked_intents": [
+        "feedback-positive",
+        "feature-request"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-016",
+      "kind": "document",
+      "title": "Reporting a minor bug",
+      "body": "This article explains what a good bug report carries, how severity is assigned and where to watch for the fix.",
+      "url": "https://help.example.com/articles/bug-reports",
+      "owner": "platform-docs-team",
+      "review_by": "2026-02-28",
+      "linked_intents": [
+        "bug-minor-report"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-017",
+      "kind": "document",
+      "title": "Using the mobile app",
+      "body": "This article covers the mobile sign-in, the features that differ from the desktop client and the offline behaviour of the app.",
+      "url": "https://help.example.com/articles/mobile-app",
+      "owner": "platform-docs-team",
+      "review_by": "2026-05-01",
+      "linked_intents": [
+        "mobile-app-question"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-018",
+      "kind": "document",
+      "title": "Escalating an unresolved ticket",
+      "body": "This article explains when a ticket may be escalated, who reviews an escalation and what the requester is told.",
+      "url": "https://help.example.com/articles/escalations",
+      "owner": "support-ops-team",
+      "review_by": "2026-03-01",
+      "linked_intents": [
+        "other"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-019",
+      "kind": "document",
+      "title": "Understanding your invoice",
+      "body": "This article explains the lines on an invoice, where taxes appear and how a credit note is shown.",
+      "url": "https://help.example.com/articles/invoice-lines",
+      "owner": "support-docs-team",
+      "review_by": "2026-04-01",
+      "linked_intents": [
+        "invoice-copy-request",
+        "billing-dispute"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-020",
+      "kind": "document",
+      "title": "Two-factor authentication",
+      "body": "This article describes enrolling a second factor, replacing a lost device and the recovery codes issued at enrolment.",
+      "url": "https://help.example.com/articles/two-factor",
+      "owner": "support-ops-team",
+      "review_by": "2026-02-15",
+      "linked_intents": [
+        "account-recovery",
+        "login-trouble"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-021",
+      "kind": "document",
+      "title": "Webhooks and event delivery",
+      "body": "This article covers registering a webhook, the retry policy for a failed delivery and the signature that proves an event came from us.",
+      "url": "https://help.example.com/articles/webhooks",
+      "owner": "platform-docs-team",
+      "review_by": "2026-03-15",
+      "linked_intents": [
+        "integration-failure",
+        "api-usage-question"
+      ]
+    },
+    {
+      "doc_id": "DOC-SYN-022",
+      "kind": "document",
+      "title": "Service status and incident history",
+      "body": "This article explains where the status page lives, how an incident is graded and where past incidents are listed.",
+      "url": "https://help.example.com/articles/status-page",
+      "owner": "platform-docs-team",
+      "review_by": "2026-01-31",
+      "linked_intents": [
+        "status-inquiry"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-107",
+      "kind": "canonical_resolution",
+      "title": "Resolved: failed payment retried and cleared",
+      "body": "Outcome: the billing queue confirmed the declined card, took an updated method and cleared the balance.",
+      "url": "https://help.example.com/resolutions/payment-cleared",
+      "owner": "support-docs-team",
+      "review_by": "2026-03-01",
+      "linked_intents": [
+        "payment-failure"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-108",
+      "kind": "canonical_resolution",
+      "title": "Resolved: plan upgraded with proration applied",
+      "body": "Outcome: the billing queue applied the upgrade at once, prorated the remaining period and confirmed the new amount.",
+      "url": "https://help.example.com/resolutions/plan-upgraded",
+      "owner": "support-docs-team",
+      "review_by": "2026-04-01",
+      "linked_intents": [
+        "plan-change-question"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-109",
+      "kind": "canonical_resolution",
+      "title": "Resolved: onboarding checklist completed",
+      "body": "Outcome: the accounts queue walked the customer through the checklist, invited the remaining colleagues and confirmed the workspace was ready.",
+      "url": "https://help.example.com/resolutions/onboarding-done",
+      "owner": "support-ops-team",
+      "review_by": "2026-02-15",
+      "linked_intents": [
+        "onboarding-help"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-110",
+      "kind": "canonical_resolution",
+      "title": "Resolved: pricing explained and tier confirmed",
+      "body": "Outcome: the general queue explained the tier boundaries, compared the usage on the account and confirmed the tier that fits.",
+      "url": "https://help.example.com/resolutions/pricing-explained",
+      "owner": "support-docs-team",
+      "review_by": "2026-05-01",
+      "linked_intents": [
+        "pricing-question"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-111",
+      "kind": "canonical_resolution",
+      "title": "Resolved: documentation page corrected",
+      "body": "Outcome: the docs team reproduced the confusion, rewrote the unclear step and published the corrected page.",
+      "url": "https://help.example.com/resolutions/docs-corrected",
+      "owner": "support-ops-team",
+      "review_by": "2026-04-15",
+      "linked_intents": [
+        "documentation-gap"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-112",
+      "kind": "canonical_resolution",
+      "title": "Resolved: minor bug fixed and released",
+      "body": "Outcome: the technical queue reproduced the fault, graded it minor and released the fix.",
+      "url": "https://help.example.com/resolutions/bug-released",
+      "owner": "platform-docs-team",
+      "review_by": "2026-02-28",
+      "linked_intents": [
+        "bug-minor-report"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-113",
+      "kind": "canonical_resolution",
+      "title": "Resolved: mobile sign-in restored",
+      "body": "Outcome: the technical queue cleared the stored session, guided a fresh sign-in and confirmed the app worked.",
+      "url": "https://help.example.com/resolutions/mobile-signin",
+      "owner": "platform-docs-team",
+      "review_by": "2026-03-15",
+      "linked_intents": [
+        "mobile-app-question",
+        "login-trouble"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-114",
+      "kind": "canonical_resolution",
+      "title": "Resolved: webhook signature mismatch corrected",
+      "body": "Outcome: the technical queue traced the rejected events, corrected the signing secret and confirmed delivery resumed.",
+      "url": "https://help.example.com/resolutions/webhook-signature",
+      "owner": "platform-docs-team",
+      "review_by": "2026-01-31",
+      "linked_intents": [
+        "integration-failure",
+        "api-usage-question"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-115",
+      "kind": "canonical_resolution",
+      "title": "Resolved: feature request recorded",
+      "body": "Outcome: the general queue recorded the request, linked it to the existing group and told the customer where to follow it.",
+      "url": "https://help.example.com/resolutions/feature-recorded",
+      "owner": "support-ops-team",
+      "review_by": "2026-05-01",
+      "linked_intents": [
+        "feature-request"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-116",
+      "kind": "canonical_resolution",
+      "title": "Resolved: export completed after retry",
+      "body": "Outcome: the technical queue found the interrupted export, ran it again and delivered the complete archive.",
+      "url": "https://help.example.com/resolutions/export-retried",
+      "owner": "platform-docs-team",
+      "review_by": "2026-04-01",
+      "linked_intents": [
+        "export-broken"
+      ]
+    },
+    {
+      "doc_id": "RES-SYN-117",
+      "kind": "canonical_resolution",
+      "title": "Resolved: data deletion completed and confirmed",
+      "body": "Outcome: the accounts queue verified the requester, ran the deletion and sent the written confirmation.",
+      "url": "https://help.example.com/resolutions/deletion-confirmed",
+      "owner": "support-ops-team",
+      "review_by": "2026-02-15",
+      "linked_intents": [
+        "data-deletion-request"
+      ]
     }
   ]
 }

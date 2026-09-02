@@ -369,6 +369,7 @@ that you pass.
 |---------|------|
 | `pnpm run calibrate` | Fits the global agreement threshold on the fit half of the gold set. Writes `calibration/vN.json`, the next version. |
 | `pnpm run fit-groundedness` | Fits the two coverage thresholds on the fit half. Writes `groundedness/vN.json`. Needs `OPENROUTER_API_KEY` and `GROUNDEDNESS_MODEL_VER`. |
+| `pnpm run report-groundedness` | Measures the fitted coverage pair on the report half. Prints precision and negative predictive value with their intervals. Selects nothing and writes no artifact. Needs the same two variables. |
 
 Each fitting artifact states how much of its half it could not read.
 `groundedness/vN.json` carries `faulted_drafts`, the drafts it dropped.
@@ -544,8 +545,29 @@ export GOLD_REPORT_PATH=corpus/report.json
 
 CALIBRATION_MODEL_VER=<model> pnpm run calibrate
 GROUNDEDNESS_MODEL_VER=<model> pnpm run fit-groundedness
+GROUNDEDNESS_MODEL_VER=<model> pnpm run report-groundedness
 pnpm run gold-report
 ```
+
+Run the coverage report after the fit, never before it. It reads the pair from
+the highest groundedness artifact and refuses when none exists. It applies that
+pair to the half that chose nothing, which is what makes the number publishable
+(DEC-31). It refuses the fit half outright.
+
+The two coverage jobs cost about the same. Each makes one model call per claim,
+so a half of this size is some four thousand calls across several hours.
+
+Each job appends every scored draft to a resume file under `groundedness/`.
+A run that dies continues from where it stopped when you start it again.
+Three runs died before this existed and each discarded every draft it had paid
+for: a provider having a bad hour, a connect timeout that outlasted every
+retry, and a killed shell.
+
+The file records a hash of each case identifier, never the identifier (DEC-18).
+Its header names the model, the prompt and the half. A file describing any
+other run is refused rather than mixed in, because samples from two runs
+publish a number from neither. Delete the file to start over, and set
+`GROUNDEDNESS_RESUME` to put it elsewhere.
 
 The exported file carries a provenance block. It records every counter and it
 names each conversation whose turn order the mailbox decided. Read that list
@@ -615,15 +637,35 @@ A running process never re-reads the artifact, so a fit takes effect at the
 next start.
 
 Both gates have a job that fits them: `pnpm run calibrate` and
-`pnpm run fit-groundedness`. Only the agreement number reaches the runtime
-through this line. The two coverage numbers stay at their seeds even after a
-coverage artifact exists, because no code reads one. Running
-`pnpm run fit-groundedness` therefore moves no gate. The gates are
-independent, so fitting one moves neither value of the other (DEC-05).
+`pnpm run fit-groundedness`. Both numbers now reach the runtime. Each gate
+reads its own artifact and keeps its own seed when that artifact is absent.
+So one gate can run fitted beside a gate that runs seeded.
+
+Each gate logs a line of its own at startup. Read `gate_thresholds_fitted` or
+`gate_thresholds_seeded` for the agreement number. Read
+`coverage_thresholds_fitted` or `coverage_thresholds_seeded` for the pair.
+One line covering both gates could not report a mixed state.
+
+The gates stay independent. Neither artifact supplies a number to the other
+gate, and no path joins a coverage value to an agreement value (DEC-05).
 
 The `gold_source` field on that line names the data behind the number. It
 reads `synthetic` for the shipped corpus and `real` for a half of your own
-history.
+history. The `model_ver` and `prompt_ver` fields name the pins the fit ran
+under.
+
+Read those two. The consumer refuses to start when a fitted coverage pair was
+produced under a model that is not the one `MODEL_VER` names.
+
+A threshold is one model's judgement of what coverage means. A model that
+reads claims more generously reaches the same number on weaker evidence.
+So a pair fitted under another pin runs a gate nobody measured (DEC-26).
+
+The refusal does not fall back to the seeds, and that is deliberate.
+The shipped seeds are looser than this repository's own fit.
+Falling back would open the gate wider at the moment it became unjustified.
+Re-fit with `pnpm run fit-groundedness`, or set `MODEL_VER` to the fitted pin.
+`pnpm run report-groundedness` refuses a pin mismatch for the same reason.
 
 A corrupt artifact stops the process. It does not fall back to the seeds. A
 truncated write must not read as "not calibrated yet" behind a gate that still
@@ -785,6 +827,43 @@ cannot read), `empty` (the
 model answered nothing), `no-verdict` and `conflicting` (the judge named no
 verdict, or two), and `no-label` (no sample named a known intent).
 
+The coverage fit retries a transport fault five times before it gives up.
+It waits four times longer after each attempt, because the faults arrive in
+clusters. A run over the whole fit half makes some four thousand calls across
+hours.
+An answer the provider will reproduce is not retried. That draft is dropped
+and counted, and the attrition ceiling decides whether the run still means
+anything.
+
+Both coverage jobs write each draft to a resume file as that draft lands.
+A run that dies continues from there instead of starting over.
+The file records the model, the prompt and the half.
+It also records what the judge was asked, so an edited claim retires it.
+A file from another run is refused rather than mixed in.
+A run that cannot write that file stops rather than carry on uncheckpointed.
+
+Four messages come from that file. Each names its own remedy.
+
+`is held by a running job` means another run already owns the file.
+Both runs would pay for every draft the other has not finished.
+Wait for the first run, or set `GROUNDEDNESS_RESUME` to another path.
+A lock whose owner is gone is taken over, so a crash needs no cleanup.
+
+`ends in a partial line` is the normal message after a killed run.
+The torn line is dropped and every draft before it is kept.
+
+`describes a different run` means the model, prompt or half changed.
+`was scored against different claims` means the corpus changed under them.
+Both refuse rather than mix two runs into one published number.
+Delete the file to start over, once you know which run you want.
+
+`the resume file could not be written` stops the run on a disk fault.
+Fix the disk and start again. The drafts already recorded are still there.
+
+Both jobs report what they spent in micro-dollars.
+A faulted draft and a retried attempt cost money nothing can attribute.
+The figure then says it is a floor and not a total.
+
 The classifier samples nine times, so one run can meet several shapes.
 It names the shape that the most samples reported.
 A tie breaks on the shape name.
@@ -802,8 +881,12 @@ The policy engine sends each customer reply to the gated path.
 everything the live system needs.
 Induce the taxonomy and curate it to a maximum of 25 intents.
 Set a risk tier for each intent.
-Label 770 stratified tickets.
-Fit the threshold on 385 of them and keep the rest for the reports.
+Label the stratified tickets and split them in two equal halves.
+
+Fit the thresholds on one half and keep the other for the reports.
+The shipped synthetic corpus holds 2124 cases, 1062 to each half.
+A half needs enough drafts to hold the precision floor on its interval.
+`scripts/generate-fixtures.mjs` states the sizes the floors imply.
 
 Then run action match for a baseline (DEC-32).
 Action match compares each routing decision with the disposition people

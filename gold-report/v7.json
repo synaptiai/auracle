@@ -1,13 +1,14 @@
 {
   "artifact": "gold-report",
-  "version": 5,
-  "generated_at": "2026-08-29T13:32:54.489Z",
+  "version": 7,
+  "generated_at": "2026-09-01T19:08:12.274Z",
   "method": "human-review",
   "scored_by": "stub",
   "gold_source": "synthetic",
   "split_used": "report",
   "scope": "first_turn",
-  "report_tickets": 287,
+  "report_tickets": 815,
+  "unreadable_samples": 0,
   "prompt_ver": "classify-p1",
   "model_ver": "replay-stub",
   "gate_agreement": 0.6,
@@ -15,49 +16,54 @@
   "gate_calibration_version": null,
   "gate_calibration_scope": null,
   "gate_calibration_gold_source": null,
+  "coverage_block": 0.75,
+  "coverage_review": 1,
+  "coverage_source": "groundedness",
+  "coverage_fit_version": 1,
+  "coverage_fit_gold_source": "synthetic",
   "report_half_digest": null,
   "fit_half_digest": null,
   "action_match": {
-    "rate": 0.7909407665505227,
-    "successes": 227,
-    "total": 287,
+    "rate": 0.7926380368098159,
+    "successes": 646,
+    "total": 815,
     "interval": {
       "confidence": 0.95,
-      "lower": 0.7402069559857811,
-      "upper": 0.8339890361439266
+      "lower": 0.7634629008276032,
+      "upper": 0.8190674472167928
     }
   },
   "containment": {
-    "rate": 0.8013937282229965,
-    "successes": 230,
-    "total": 287,
+    "rate": 0.8049079754601227,
+    "successes": 656,
+    "total": 815,
     "interval": {
       "confidence": 0.95,
-      "lower": 0.7513904001055648,
-      "upper": 0.8434353881485636
+      "lower": 0.7762979331588894,
+      "upper": 0.8306571674240558
     }
   },
   "strata": [
     {
       "risk_tier": "low",
-      "tickets": 128,
+      "tickets": 361,
       "action_match": {
-        "rate": 0.9453125,
-        "successes": 121,
-        "total": 128,
+        "rate": 0.9418282548476454,
+        "successes": 340,
+        "total": 361,
         "interval": {
           "confidence": 0.95,
-          "lower": 0.8914150997002529,
-          "upper": 0.9732597986186536
+          "lower": 0.9127117529054289,
+          "upper": 0.9616406330079728
         }
       },
       "containment": {
         "rate": 1,
-        "successes": 128,
-        "total": 128,
+        "successes": 361,
+        "total": 361,
         "interval": {
           "confidence": 0.95,
-          "lower": 0.9708630437264916,
+          "lower": 0.9894708818643825,
           "upper": 1
         }
       },
@@ -65,24 +71,24 @@
     },
     {
       "risk_tier": "medium",
-      "tickets": 102,
+      "tickets": 295,
       "action_match": {
-        "rate": 0.803921568627451,
-        "successes": 82,
-        "total": 102,
+        "rate": 0.7966101694915254,
+        "successes": 235,
+        "total": 295,
         "interval": {
           "confidence": 0.95,
-          "lower": 0.7164524743574987,
-          "upper": 0.8693293231613177
+          "lower": 0.7470015960389537,
+          "upper": 0.8385931895393105
         }
       },
       "containment": {
         "rate": 1,
-        "successes": 102,
-        "total": 102,
+        "successes": 295,
+        "total": 295,
         "interval": {
           "confidence": 0.95,
-          "lower": 0.9637055378535367,
+          "lower": 0.9871454956890737,
           "upper": 1
         }
       },
@@ -90,25 +96,25 @@
     },
     {
       "risk_tier": "high",
-      "tickets": 57,
+      "tickets": 159,
       "action_match": {
-        "rate": 0.42105263157894735,
-        "successes": 24,
-        "total": 57,
+        "rate": 0.44654088050314467,
+        "successes": 71,
+        "total": 159,
         "interval": {
           "confidence": 0.95,
-          "lower": 0.3018759668275172,
-          "upper": 0.5501985860440057
+          "lower": 0.3714363125029202,
+          "upper": 0.5241676686753693
         }
       },
       "containment": {
         "rate": 0,
         "successes": 0,
-        "total": 57,
+        "total": 159,
         "interval": {
           "confidence": 0.95,
           "lower": 0,
-          "upper": 0.06313883485297894
+          "upper": 0.023590176902824132
         }
       },
       "publishable": false

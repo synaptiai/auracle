@@ -119,7 +119,9 @@ Adapters declare their capabilities, and autonomy adapts to those declarations (
 - The idempotency key comes from the action semantics. It never comes from the run identity (DEC-24, section 3.4).
 - Commit the state change and the outbox insert in one transaction. Treat an insert of zero rows as a distinct result (section 4.2).
 - The relay sends first and sets the status second (section 4.4).
-- Groundedness below 0.70 blocks an automatic write. Below 0.80 it sends the write to a person (DEC-07).
+- Groundedness below the block threshold stops an automatic write. Below the review threshold a person sees it (DEC-07).
+  0.70 and 0.80 are the section 4.7 seeds, not the operative pair. `pnpm run fit-groundedness` fits one,
+  and a process holding a coverage artifact runs the fitted pair and logs `coverage_thresholds_fitted`.
   The thresholds never decide a customer reply. Such a reply already needs approval (DEC-12), and the
   policy engine returns that verdict before it reads either threshold.
 - Customer replies always need approval and a non-empty `disclosure` field (DEC-12, DEC-14).

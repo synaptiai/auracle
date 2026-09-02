@@ -7,7 +7,7 @@
 //
 // Decisions obeyed: DEC-18 (synthetic only), DEC-13 (risk tier per intent),
 // DEC-22 (documents + canonical resolutions), DEC-23 (owner + review_by),
-// DEC-31 (770 cases, 385 fit / 385 report), section 4.11 (<=25 intents,
+// DEC-31 (2124 cases, 1062 fit / 1062 report), section 4.11 (<=25 intents,
 // 'other' group kept).
 
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -18,7 +18,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = join(ROOT, 'fixtures');
 
 const SEED = 0x41726361; // 'Arca'
-const TOTAL_TICKETS = 770;
+const TOTAL_TICKETS = 2124;
 const HALF = TOTAL_TICKETS / 2;
 
 // ---------------------------------------------------------------------------
@@ -138,16 +138,23 @@ const chance = (rate) => rng() < rate;
 
 // ---------------------------------------------------------------------------
 // Gold set: stratify by intent (this nests the three risk-tier strata from
-// section 4.10). 770 = 25 x 30 + 20, so 20 intents get 31 case records and 5
-// get 30. Odd counts alternate the spare record between the fit and report
-// halves so both halves land on exactly 385.
+// section 4.10). The total is spread as evenly as the intents allow, and the
+// remainder goes to the first few. Odd counts alternate the spare record
+// between the fit and report halves so both halves land on the same size.
+//
+// The total is what the coverage fit needs, not a round number. A precision
+// floor read against an interval sets a minimum support, and 0.985 needs 253
+// drafts above the review threshold. The corpus that held 770 offered 172,
+// so no threshold could reach the floor however clean the judge was.
 //
 // A record is one turn, not one conversation. Each half is filled with whole
 // conversations, so no thread straddles the split and DEC-31 cannot leak
 // through a shared conversation.
 // ---------------------------------------------------------------------------
 
-const counts = INTENTS.map((_, i) => (i < TOTAL_TICKETS - INTENTS.length * 30 ? 31 : 30));
+const perIntent = Math.floor(TOTAL_TICKETS / INTENTS.length);
+const spareIntents = TOTAL_TICKETS - perIntent * INTENTS.length;
+const counts = INTENTS.map((_, i) => (i < spareIntents ? perIntent + 1 : perIntent));
 let fitSpare = true;
 const splitsFor = (n) => {
   const fitHalf = Math.floor(n / 2) + (n % 2 === 1 && fitSpare ? 1 : 0);
@@ -299,6 +306,81 @@ const DOCUMENTS = [
   doc('RES-SYN-106', 'canonical_resolution', 'Resolved: incident confirmed and tracked',
     'Outcome: the technical queue matched the slowdown to the active incident and attached the ticket to its tracker.',
     'resolutions/incident-link', 2, '2026-01-31', ['status-inquiry']),
+  doc('DOC-SYN-009', 'document', 'When a payment fails',
+    'This article explains the retry schedule after a declined card, the grace period before suspension and how to update a payment method.',
+    'articles/payment-failures', 0, '2026-03-01', ['payment-failure']),
+  doc('DOC-SYN-010', 'document', 'Changing your plan',
+    'This article describes upgrades that apply at once, downgrades that wait for the period end and the proration rule that applies to each.',
+    'articles/plan-changes', 0, '2026-04-01', ['plan-change-question']),
+  doc('DOC-SYN-011', 'document', 'Getting started with your workspace',
+    'This article walks through the first sign-in, inviting colleagues and the setup checklist that appears on the dashboard.',
+    'articles/onboarding', 1, '2026-02-15', ['onboarding-help']),
+  doc('DOC-SYN-012', 'document', 'Answers to common how-to questions',
+    'This article collects the tasks people ask about most, with the steps for each and a link to the deeper reference.',
+    'articles/how-to', 1, '2026-05-01', ['how-to-question']),
+  doc('DOC-SYN-013', 'document', 'How pricing works',
+    'This article sets out the pricing tiers, what each tier includes and how usage above the included amount is charged.',
+    'articles/pricing', 0, '2026-03-15', ['pricing-question']),
+  doc('DOC-SYN-014', 'document', 'Reporting a gap in the documentation',
+    'This article explains where to report a missing or unclear page, what the report should carry and how the docs team acknowledges it.',
+    'articles/docs-gaps', 1, '2026-04-15', ['documentation-gap']),
+  doc('DOC-SYN-015', 'document', 'Sending feedback about the product',
+    'This article describes the feedback channels, how the product team groups what arrives and what happens to a suggestion that many people send.',
+    'articles/feedback', 1, '2026-01-31', ['feedback-positive', 'feature-request']),
+  doc('DOC-SYN-016', 'document', 'Reporting a minor bug',
+    'This article explains what a good bug report carries, how severity is assigned and where to watch for the fix.',
+    'articles/bug-reports', 2, '2026-02-28', ['bug-minor-report']),
+  doc('DOC-SYN-017', 'document', 'Using the mobile app',
+    'This article covers the mobile sign-in, the features that differ from the desktop client and the offline behaviour of the app.',
+    'articles/mobile-app', 2, '2026-05-01', ['mobile-app-question']),
+  doc('DOC-SYN-018', 'document', 'Escalating an unresolved ticket',
+    'This article explains when a ticket may be escalated, who reviews an escalation and what the requester is told.',
+    'articles/escalations', 1, '2026-03-01', ['other']),
+  doc('DOC-SYN-019', 'document', 'Understanding your invoice',
+    'This article explains the lines on an invoice, where taxes appear and how a credit note is shown.',
+    'articles/invoice-lines', 0, '2026-04-01', ['invoice-copy-request', 'billing-dispute']),
+  doc('DOC-SYN-020', 'document', 'Two-factor authentication',
+    'This article describes enrolling a second factor, replacing a lost device and the recovery codes issued at enrolment.',
+    'articles/two-factor', 1, '2026-02-15', ['account-recovery', 'login-trouble']),
+  doc('DOC-SYN-021', 'document', 'Webhooks and event delivery',
+    'This article covers registering a webhook, the retry policy for a failed delivery and the signature that proves an event came from us.',
+    'articles/webhooks', 2, '2026-03-15', ['integration-failure', 'api-usage-question']),
+  doc('DOC-SYN-022', 'document', 'Service status and incident history',
+    'This article explains where the status page lives, how an incident is graded and where past incidents are listed.',
+    'articles/status-page', 2, '2026-01-31', ['status-inquiry']),
+  doc('RES-SYN-107', 'canonical_resolution', 'Resolved: failed payment retried and cleared',
+    'Outcome: the billing queue confirmed the declined card, took an updated method and cleared the balance.',
+    'resolutions/payment-cleared', 0, '2026-03-01', ['payment-failure']),
+  doc('RES-SYN-108', 'canonical_resolution', 'Resolved: plan upgraded with proration applied',
+    'Outcome: the billing queue applied the upgrade at once, prorated the remaining period and confirmed the new amount.',
+    'resolutions/plan-upgraded', 0, '2026-04-01', ['plan-change-question']),
+  doc('RES-SYN-109', 'canonical_resolution', 'Resolved: onboarding checklist completed',
+    'Outcome: the accounts queue walked the customer through the checklist, invited the remaining colleagues and confirmed the workspace was ready.',
+    'resolutions/onboarding-done', 1, '2026-02-15', ['onboarding-help']),
+  doc('RES-SYN-110', 'canonical_resolution', 'Resolved: pricing explained and tier confirmed',
+    'Outcome: the general queue explained the tier boundaries, compared the usage on the account and confirmed the tier that fits.',
+    'resolutions/pricing-explained', 0, '2026-05-01', ['pricing-question']),
+  doc('RES-SYN-111', 'canonical_resolution', 'Resolved: documentation page corrected',
+    'Outcome: the docs team reproduced the confusion, rewrote the unclear step and published the corrected page.',
+    'resolutions/docs-corrected', 1, '2026-04-15', ['documentation-gap']),
+  doc('RES-SYN-112', 'canonical_resolution', 'Resolved: minor bug fixed and released',
+    'Outcome: the technical queue reproduced the fault, graded it minor and released the fix.',
+    'resolutions/bug-released', 2, '2026-02-28', ['bug-minor-report']),
+  doc('RES-SYN-113', 'canonical_resolution', 'Resolved: mobile sign-in restored',
+    'Outcome: the technical queue cleared the stored session, guided a fresh sign-in and confirmed the app worked.',
+    'resolutions/mobile-signin', 2, '2026-03-15', ['mobile-app-question', 'login-trouble']),
+  doc('RES-SYN-114', 'canonical_resolution', 'Resolved: webhook signature mismatch corrected',
+    'Outcome: the technical queue traced the rejected events, corrected the signing secret and confirmed delivery resumed.',
+    'resolutions/webhook-signature', 2, '2026-01-31', ['integration-failure', 'api-usage-question']),
+  doc('RES-SYN-115', 'canonical_resolution', 'Resolved: feature request recorded',
+    'Outcome: the general queue recorded the request, linked it to the existing group and told the customer where to follow it.',
+    'resolutions/feature-recorded', 1, '2026-05-01', ['feature-request']),
+  doc('RES-SYN-116', 'canonical_resolution', 'Resolved: export completed after retry',
+    'Outcome: the technical queue found the interrupted export, ran it again and delivered the complete archive.',
+    'resolutions/export-retried', 2, '2026-04-01', ['export-broken']),
+  doc('RES-SYN-117', 'canonical_resolution', 'Resolved: data deletion completed and confirmed',
+    'Outcome: the accounts queue verified the requester, ran the deletion and sent the written confirmation.',
+    'resolutions/deletion-confirmed', 1, '2026-02-15', ['data-deletion-request']),
 ];
 
 // ---------------------------------------------------------------------------
@@ -310,10 +392,13 @@ mkdirSync(join(FIXTURES, 'gold'), { recursive: true });
 // ---------------------------------------------------------------------------
 // Per-claim ground truth for the groundedness fit (section 4.7, DEC-07).
 //
-// Every draw below happens AFTER every ticket draw above, so the shared
-// mulberry32 stream reaches this point in the same state it always did and
-// the committed corpus stays byte for byte identical. Verified by running the
-// generator with a probe consuming 5000 trailing draws.
+// Each document carries two blocks. The fit half draws from `fit` and the
+// report half from `report`, and the two never share a sentence. A judge that
+// mis-reads one wording then moves one half only, so the report half can
+// disagree with the fit half instead of repeating it (DEC-31). The report
+// sentence paraphrases its fit counterpart rather than testing a new fact, so
+// the two halves stay matched in difficulty and a precision gap between them
+// means the judge disagreed, not that one pool was harder.
 //
 // A supported claim restates what its document says. An unsupported claim
 // comes in one of three grades, because a fit that holds only on the easy
@@ -332,88 +417,550 @@ const CLAIM_GRADES = ['off_topic', 'absent', 'unstated_detail'];
 
 const CLAIMS = {
   'DOC-SYN-001': {
-    supported: 'The article explains renewal dates and proration.',
-    supported_b: 'The article covers where past invoice copies are listed.',
-    absent: 'Invoices are emailed to every account owner each month.',
-    unstated_detail: 'The finance archive keeps invoice copies for seven years.',
+    fit: {
+      supported: 'The article explains renewal dates and proration.',
+      supported_b: 'The article covers where past invoice copies are listed.',
+      absent: 'Invoices are emailed to every account owner each month.',
+      unstated_detail: 'The finance archive keeps invoice copies for seven years.',
+    },
+    report: {
+      supported: 'Renewal dates and proration are described here.',
+      supported_b: 'This says where the finance archive lists past invoices.',
+      absent: 'Every account owner receives a monthly invoice by email.',
+      unstated_detail: 'Invoice copies stay in the finance archive for seven years.',
+    },
   },
   'DOC-SYN-002': {
-    supported: 'The article lists the refund windows for each plan.',
-    supported_b: 'The article covers the steps the billing queue follows.',
-    absent: 'A refund is approved automatically when the plan is annual.',
-    unstated_detail: 'The refund window is longer on an annual plan.',
+    fit: {
+      supported: 'The article lists the refund windows for each plan.',
+      supported_b: 'The article covers the steps the billing queue follows.',
+      absent: 'A refund is approved automatically when the plan is annual.',
+      unstated_detail: 'The refund window is longer on an annual plan.',
+    },
+    report: {
+      supported: 'Refund windows are given per plan here.',
+      supported_b: 'The billing queue steps for each case are set out.',
+      absent: 'An annual plan has its refunds approved without review.',
+      unstated_detail: 'An annual plan carries a longer refund window.',
+    },
   },
   'DOC-SYN-003': {
-    supported: 'The article describes what happens at period-end closure.',
-    supported_b: 'The article covers how reactivation works.',
-    absent: 'A closed subscription is announced to every collaborator.',
-    unstated_detail: 'Stored records are removed fourteen days after closure.',
+    fit: {
+      supported: 'The article describes what happens at period-end closure.',
+      supported_b: 'The article covers how reactivation works.',
+      absent: 'A closed subscription is announced to every collaborator.',
+      unstated_detail: 'Stored records are removed fourteen days after closure.',
+    },
+    report: {
+      supported: 'Period-end closure is described here.',
+      supported_b: 'Reactivation is explained here too.',
+      absent: 'Every collaborator is told when a subscription closes.',
+      unstated_detail: 'Closure removes the stored records after fourteen days.',
+    },
   },
   'DOC-SYN-004': {
-    supported: 'The article covers how a deletion request is handled.',
-    supported_b: 'The article covers the erase window per region.',
-    absent: 'A deletion request is refused while an invoice is unpaid.',
-    unstated_detail: 'A deletion request completes within thirty days.',
+    fit: {
+      supported: 'The article covers how a deletion request is handled.',
+      supported_b: 'The article covers the erase window per region.',
+      absent: 'A deletion request is refused while an invoice is unpaid.',
+      unstated_detail: 'A deletion request completes within thirty days.',
+    },
+    report: {
+      supported: 'This walks through the deletion policy.',
+      supported_b: 'The erase window is given for each region.',
+      absent: 'An unpaid invoice blocks a deletion request.',
+      unstated_detail: 'Deletion finishes inside thirty days.',
+    },
   },
   'DOC-SYN-005': {
-    supported: 'The article covers pause states and error codes such as E-412.',
-    supported_b: 'The article covers the reconnect procedure for stalled clients.',
-    absent: 'Sync errors are reported to the status page automatically.',
-    unstated_detail: 'The reconnect procedure takes two steps.',
+    fit: {
+      supported: 'The article covers pause states and error codes such as E-412.',
+      supported_b: 'The article covers the reconnect procedure for stalled clients.',
+      absent: 'Sync errors are reported to the status page automatically.',
+      unstated_detail: 'The reconnect procedure takes two steps.',
+    },
+    report: {
+      supported: 'Pause states and codes such as E-412 are covered.',
+      supported_b: 'A stalled client has a reconnect procedure here.',
+      absent: 'The status page picks up sync errors on its own.',
+      unstated_detail: 'Reconnecting is a two-step procedure.',
+    },
   },
   'DOC-SYN-006': {
-    supported: 'The article explains the recovery flow.',
-    supported_b: 'The article covers the case where the backup codes are unavailable too.',
-    absent: 'Account recovery requires a photograph of an identity document.',
-    unstated_detail: 'A backup code expires after ten minutes.',
+    fit: {
+      supported: 'The article explains the recovery flow.',
+      supported_b: 'The article covers the case where the backup codes are unavailable too.',
+      absent: 'Account recovery requires a photograph of an identity document.',
+      unstated_detail: 'A backup code expires after ten minutes.',
+    },
+    report: {
+      supported: 'The recovery flow is explained here.',
+      supported_b: 'It handles backup codes being unavailable as well.',
+      absent: 'Recovery asks for a photo of an identity document.',
+      unstated_detail: 'Backup codes stop working after ten minutes.',
+    },
   },
   'DOC-SYN-007': {
-    supported: 'The article lists the export formats and the empty-archive causes.',
-    supported_b: 'The article covers the retry rule for partial exports.',
-    absent: 'An export can be scheduled to repeat every week.',
-    unstated_detail: 'The retry rule allows three attempts per export.',
+    fit: {
+      supported: 'The article lists the export formats and the empty-archive causes.',
+      supported_b: 'The article covers the retry rule for partial exports.',
+      absent: 'An export can be scheduled to repeat every week.',
+      unstated_detail: 'The retry rule allows three attempts per export.',
+    },
+    report: {
+      supported: 'This lists the export formats and the empty-archive causes.',
+      supported_b: 'A partial export has a retry rule here.',
+      absent: 'Weekly repeating exports can be scheduled.',
+      unstated_detail: 'Each export gets three retry attempts.',
+    },
   },
   'DOC-SYN-008': {
-    supported: 'The article shows the cursor parameter and the page size default.',
-    supported_b: 'The article covers the header that reports the next cursor.',
-    absent: 'The list endpoints accept a filter for each custom field.',
-    unstated_detail: 'A cursor stays valid for one hour.',
+    fit: {
+      supported: 'The article shows the cursor parameter and the page size default.',
+      supported_b: 'The article covers the header that reports the next cursor.',
+      absent: 'The list endpoints accept a filter for each custom field.',
+      unstated_detail: 'A cursor stays valid for one hour.',
+    },
+    report: {
+      supported: 'The cursor parameter and the default page size are shown.',
+      supported_b: 'A header carries the next cursor, and it is described.',
+      absent: 'Every custom field can be filtered on the list endpoints.',
+      unstated_detail: 'Cursors remain usable for an hour.',
+    },
   },
   'RES-SYN-101': {
-    supported: 'The case records a duplicate charge that was refunded.',
-    supported_b: 'The case records the correct renewal date being confirmed.',
-    absent: 'The customer was offered a discount on the next renewal.',
-    unstated_detail: 'The refund reached the customer in three working days.',
+    fit: {
+      supported: 'The case records a duplicate charge that was refunded.',
+      supported_b: 'The case records the correct renewal date being confirmed.',
+      absent: 'The customer was offered a discount on the next renewal.',
+      unstated_detail: 'The refund reached the customer in three working days.',
+    },
+    report: {
+      supported: 'A duplicate charge was refunded in this case.',
+      supported_b: 'The correct renewal date was confirmed here.',
+      absent: 'A discount on the next renewal was offered.',
+      unstated_detail: 'Three working days passed before the refund landed.',
+    },
   },
   'RES-SYN-102': {
-    supported: 'The case records a fresh reset message that was issued.',
-    supported_b: 'The case records a blocked send that was cleared.',
-    absent: 'The customer changed the address on the account afterwards.',
-    unstated_detail: 'The reset message arrived within two minutes.',
+    fit: {
+      supported: 'The case records a fresh reset message that was issued.',
+      supported_b: 'The case records a blocked send that was cleared.',
+      absent: 'The customer changed the address on the account afterwards.',
+      unstated_detail: 'The reset message arrived within two minutes.',
+    },
+    report: {
+      supported: 'A fresh reset message went out in this case.',
+      supported_b: 'The blocked send was cleared here.',
+      absent: 'Afterwards the account address was changed.',
+      unstated_detail: 'Two minutes passed before the reset message arrived.',
+    },
   },
   'RES-SYN-103': {
-    supported: 'The case records closure scheduled for the period end.',
-    supported_b: 'The case records a confirmation sent with the final invoice.',
-    absent: 'The customer exported the account data before closure.',
-    unstated_detail: 'The subscription closed on the last day of the month.',
+    fit: {
+      supported: 'The case records closure scheduled for the period end.',
+      supported_b: 'The case records a confirmation sent with the final invoice.',
+      absent: 'The customer exported the account data before closure.',
+      unstated_detail: 'The subscription closed on the last day of the month.',
+    },
+    report: {
+      supported: 'Closure was scheduled for the period end here.',
+      supported_b: 'The confirmation went out with the final invoice.',
+      absent: 'Account data was exported before the closure.',
+      unstated_detail: 'The last day of the month was the closing date.',
+    },
   },
   'RES-SYN-104': {
-    supported: 'The case records a stale token that was rotated.',
-    supported_b: 'The case records the daily drop being stopped.',
-    absent: 'The customer connected a second calendar at the same time.',
-    unstated_detail: 'The integration scope now includes write access.',
+    fit: {
+      supported: 'The case records a stale token that was rotated.',
+      supported_b: 'The case records the daily drop being stopped.',
+      absent: 'The customer connected a second calendar at the same time.',
+      unstated_detail: 'The integration scope now includes write access.',
+    },
+    report: {
+      supported: 'A stale token was rotated in this case.',
+      supported_b: 'The daily drop was stopped here.',
+      absent: 'A second calendar was connected at the same time.',
+      unstated_detail: 'Write access is now part of the integration scope.',
+    },
   },
   'RES-SYN-105': {
-    supported: 'The case records a digest schedule that was corrected.',
-    supported_b: 'The case records the delivery slot being verified.',
-    absent: 'The customer turned every other notification off.',
-    unstated_detail: 'The digest now arrives at eight in the morning.',
+    fit: {
+      supported: 'The case records a digest schedule that was corrected.',
+      supported_b: 'The case records the delivery slot being verified.',
+      absent: 'The customer turned every other notification off.',
+      unstated_detail: 'The digest now arrives at eight in the morning.',
+    },
+    report: {
+      supported: 'The digest schedule was corrected in this case.',
+      supported_b: 'The delivery slot was verified here.',
+      absent: 'Every other notification was switched off.',
+      unstated_detail: 'Eight in the morning is the new digest time.',
+    },
   },
   'RES-SYN-106': {
-    supported: 'The case records a slowdown matched to the active incident.',
-    supported_b: 'The case records the ticket attached to its tracker.',
-    absent: 'The incident was caused by a change to the search index.',
-    unstated_detail: 'The incident lasted forty minutes.',
+    fit: {
+      supported: 'The case records a slowdown matched to the active incident.',
+      supported_b: 'The case records the ticket attached to its tracker.',
+      absent: 'The incident was caused by a change to the search index.',
+      unstated_detail: 'The incident lasted forty minutes.',
+    },
+    report: {
+      supported: 'The slowdown was matched to the active incident here.',
+      supported_b: 'The ticket was attached to its tracker in this case.',
+      absent: 'A change to the search index caused the incident.',
+      unstated_detail: 'Forty minutes was how long the incident ran.',
+    },
+  },
+  'DOC-SYN-009': {
+    fit: {
+      supported: 'The article explains the retry schedule after a declined card.',
+      supported_b: 'The article covers how to update a payment method.',
+      absent: 'A failed payment is reported to the account owner by telephone.',
+      unstated_detail: 'The grace period runs for ten days.',
+    },
+    report: {
+      supported: 'Retries after a declined card are described here.',
+      supported_b: 'Updating a payment method is covered here.',
+      absent: 'The account owner is telephoned when a payment fails.',
+      unstated_detail: 'Suspension follows a grace period of ten days.',
+    },
+  },
+  'DOC-SYN-010': {
+    fit: {
+      supported: 'The article describes upgrades that apply at once.',
+      supported_b: 'The article covers the proration rule for a downgrade.',
+      absent: 'A plan change requires approval from a billing administrator.',
+      unstated_detail: 'A downgrade may be reversed during the same period.',
+    },
+    report: {
+      supported: 'An upgrade applying at once is described here.',
+      supported_b: 'Proration for a downgrade is covered here.',
+      absent: 'A billing administrator must approve a plan change.',
+      unstated_detail: 'A downgrade can be reversed within the same period.',
+    },
+  },
+  'DOC-SYN-011': {
+    fit: {
+      supported: 'The article walks through the first sign-in.',
+      supported_b: 'The article covers the setup checklist on the dashboard.',
+      absent: 'The setup checklist can be hidden by an administrator.',
+      unstated_detail: 'The setup checklist holds seven items.',
+    },
+    report: {
+      supported: 'Signing in for the first time is described here.',
+      supported_b: 'The dashboard setup checklist is covered here.',
+      absent: 'An administrator can hide the setup checklist.',
+      unstated_detail: 'Seven items make up the setup checklist.',
+    },
+  },
+  'DOC-SYN-012': {
+    fit: {
+      supported: 'The article collects the tasks people ask about most.',
+      supported_b: 'The article gives a link to the deeper reference.',
+      absent: 'The article is translated into every supported language.',
+      unstated_detail: 'The reference is updated each quarter.',
+    },
+    report: {
+      supported: 'Frequently asked tasks are collected here.',
+      supported_b: 'A link to the deeper reference is given here.',
+      absent: 'Every supported language has a translation of this article.',
+      unstated_detail: 'Quarterly updates reach the reference.',
+    },
+  },
+  'DOC-SYN-013': {
+    fit: {
+      supported: 'The article sets out the pricing tiers.',
+      supported_b: 'The article explains how usage above the included amount is charged.',
+      absent: 'Pricing is fixed for the lifetime of an account.',
+      unstated_detail: 'Usage is charged at the end of the billing period.',
+    },
+    report: {
+      supported: 'The pricing tiers are set out here.',
+      supported_b: 'Charging for usage above the included amount is explained here.',
+      absent: 'An account keeps its pricing for its lifetime.',
+      unstated_detail: 'Charging for usage happens at the billing period end.',
+    },
+  },
+  'DOC-SYN-014': {
+    fit: {
+      supported: 'The article explains where to report an unclear page.',
+      supported_b: 'The article covers how the docs team acknowledges a report.',
+      absent: 'A documentation report opens a ticket in the public tracker.',
+      unstated_detail: 'The docs team acknowledges a report within a working week.',
+    },
+    report: {
+      supported: 'Reporting an unclear page is explained here.',
+      supported_b: 'Acknowledgement by the docs team is covered here.',
+      absent: 'The public tracker receives a ticket for each documentation report.',
+      unstated_detail: 'A report is acknowledged inside a working week.',
+    },
+  },
+  'DOC-SYN-015': {
+    fit: {
+      supported: 'The article describes the feedback channels.',
+      supported_b: 'The article covers how the product team groups what arrives.',
+      absent: 'Feedback is answered personally by the product team.',
+      unstated_detail: 'A suggestion is reviewed at the monthly planning meeting.',
+    },
+    report: {
+      supported: 'The feedback channels are described here.',
+      supported_b: 'Grouping of arriving feedback is covered here.',
+      absent: 'The product team answers feedback personally.',
+      unstated_detail: 'Monthly planning reviews each suggestion.',
+    },
+  },
+  'DOC-SYN-016': {
+    fit: {
+      supported: 'The article explains what a good bug report carries.',
+      supported_b: 'The article covers where to watch for the fix.',
+      absent: 'A minor bug is fixed in the release after it is reported.',
+      unstated_detail: 'Severity is assigned by the engineer who takes the report.',
+    },
+    report: {
+      supported: 'What a good bug report carries is explained here.',
+      supported_b: 'Where to watch for the fix is covered here.',
+      absent: 'The release after a report carries the fix for a minor bug.',
+      unstated_detail: 'The engineer taking the report assigns its severity.',
+    },
+  },
+  'DOC-SYN-017': {
+    fit: {
+      supported: 'The article covers the mobile sign-in.',
+      supported_b: 'The article describes the offline behaviour of the app.',
+      absent: 'The mobile app supports a fingerprint unlock.',
+      unstated_detail: 'Offline changes are merged when the app reconnects.',
+    },
+    report: {
+      supported: 'Signing in on mobile is covered here.',
+      supported_b: 'How the app behaves offline is described here.',
+      absent: 'A fingerprint unlock is available in the mobile app.',
+      unstated_detail: 'Reconnecting merges the changes made offline.',
+    },
+  },
+  'DOC-SYN-018': {
+    fit: {
+      supported: 'The article explains when a ticket may be escalated.',
+      supported_b: 'The article covers who reviews an escalation.',
+      absent: 'An escalation moves the ticket to a separate queue.',
+      unstated_detail: 'The requester is told the name of the reviewer.',
+    },
+    report: {
+      supported: 'When a ticket may be escalated is explained here.',
+      supported_b: 'Who reviews an escalation is covered here.',
+      absent: 'A separate queue receives an escalated ticket.',
+      unstated_detail: 'The reviewer is named to the requester.',
+    },
+  },
+  'DOC-SYN-019': {
+    fit: {
+      supported: 'The article explains the lines on an invoice.',
+      supported_b: 'The article covers how a credit note is shown.',
+      absent: 'An invoice may be issued in a currency the account chooses.',
+      unstated_detail: 'Taxes appear beneath the subtotal.',
+    },
+    report: {
+      supported: 'The lines on an invoice are explained here.',
+      supported_b: 'How a credit note is shown is covered here.',
+      absent: 'The account may choose the currency of an invoice.',
+      unstated_detail: 'The subtotal is followed by the taxes.',
+    },
+  },
+  'DOC-SYN-020': {
+    fit: {
+      supported: 'The article describes enrolling a second factor.',
+      supported_b: 'The article covers replacing a lost device.',
+      absent: 'A second factor may be shared between two accounts.',
+      unstated_detail: 'Recovery codes are issued once at enrolment.',
+    },
+    report: {
+      supported: 'Enrolling a second factor is described here.',
+      supported_b: 'Replacing a lost device is covered here.',
+      absent: 'Two accounts may share one second factor.',
+      unstated_detail: 'Enrolment issues the recovery codes a single time.',
+    },
+  },
+  'DOC-SYN-021': {
+    fit: {
+      supported: 'The article covers registering a webhook.',
+      supported_b: 'The article describes the signature that proves an event origin.',
+      absent: 'A webhook may be paused from the dashboard.',
+      unstated_detail: 'A failed delivery is retried with a growing delay.',
+    },
+    report: {
+      supported: 'Registering a webhook is covered here.',
+      supported_b: 'The signature proving an event origin is described here.',
+      absent: 'The dashboard can pause a webhook.',
+      unstated_detail: 'Retries of a failed delivery grow further apart.',
+    },
+  },
+  'DOC-SYN-022': {
+    fit: {
+      supported: 'The article explains where the status page lives.',
+      supported_b: 'The article covers where past incidents are listed.',
+      absent: 'The status page sends an alert to every account owner.',
+      unstated_detail: 'An incident is graded by the share of users it reaches.',
+    },
+    report: {
+      supported: 'Where to find the status page is explained here.',
+      supported_b: 'Where past incidents are listed is covered here.',
+      absent: 'Every account owner receives an alert from the status page.',
+      unstated_detail: 'The share of users reached decides an incident grade.',
+    },
+  },
+  'RES-SYN-107': {
+    fit: {
+      supported: 'The case records a declined card that was confirmed.',
+      supported_b: 'The case records the balance being cleared.',
+      absent: 'The customer was given credit while the payment was retried.',
+      unstated_detail: 'The updated method was a card from the same bank.',
+    },
+    report: {
+      supported: 'A declined card was confirmed in this case.',
+      supported_b: 'The balance was cleared here.',
+      absent: 'Credit was given while the payment was retried.',
+      unstated_detail: 'The same bank issued the updated card.',
+    },
+  },
+  'RES-SYN-108': {
+    fit: {
+      supported: 'The case records an upgrade applied at once.',
+      supported_b: 'The case records the new amount being confirmed.',
+      absent: 'The customer asked to return to the earlier plan.',
+      unstated_detail: 'The prorated amount appeared on the following invoice.',
+    },
+    report: {
+      supported: 'An upgrade was applied at once in this case.',
+      supported_b: 'The new amount was confirmed here.',
+      absent: 'A return to the earlier plan was requested.',
+      unstated_detail: 'The following invoice carried the prorated amount.',
+    },
+  },
+  'RES-SYN-109': {
+    fit: {
+      supported: 'The case records the customer being walked through the checklist.',
+      supported_b: 'The case records the workspace being confirmed ready.',
+      absent: 'The customer imported data from another product during setup.',
+      unstated_detail: 'The colleagues accepted their invitations the same day.',
+    },
+    report: {
+      supported: 'The customer was walked through the checklist here.',
+      supported_b: 'The workspace was confirmed ready in this case.',
+      absent: 'Data was imported from another product during setup.',
+      unstated_detail: 'The invitations were accepted on the same day.',
+    },
+  },
+  'RES-SYN-110': {
+    fit: {
+      supported: 'The case records the tier boundaries being explained.',
+      supported_b: 'The case records the fitting tier being confirmed.',
+      absent: 'The customer moved to the confirmed tier immediately.',
+      unstated_detail: 'The comparison covered the previous quarter.',
+    },
+    report: {
+      supported: 'The tier boundaries were explained here.',
+      supported_b: 'The fitting tier was confirmed in this case.',
+      absent: 'The customer moved to that tier immediately.',
+      unstated_detail: 'The previous quarter was what the comparison covered.',
+    },
+  },
+  'RES-SYN-111': {
+    fit: {
+      supported: 'The case records the unclear step being rewritten.',
+      supported_b: 'The case records the corrected page being published.',
+      absent: 'The customer was credited for reporting the error.',
+      unstated_detail: 'The rewrite added a worked example.',
+    },
+    report: {
+      supported: 'The unclear step was rewritten here.',
+      supported_b: 'The corrected page was published in this case.',
+      absent: 'A credit was given for reporting the error.',
+      unstated_detail: 'A worked example came with the rewrite.',
+    },
+  },
+  'RES-SYN-112': {
+    fit: {
+      supported: 'The case records the fault being reproduced.',
+      supported_b: 'The case records the fix being released.',
+      absent: 'The customer tested the fix before it was released.',
+      unstated_detail: 'The fix reached the mobile client at the same time.',
+    },
+    report: {
+      supported: 'The fault was reproduced here.',
+      supported_b: 'The fix was released in this case.',
+      absent: 'The fix was tested by the customer before release.',
+      unstated_detail: 'The mobile client received the fix at the same time.',
+    },
+  },
+  'RES-SYN-113': {
+    fit: {
+      supported: 'The case records the stored session being cleared.',
+      supported_b: 'The case records the app being confirmed working.',
+      absent: 'The customer reinstalled the app to resolve the fault.',
+      unstated_detail: 'The fresh sign-in used the recovery codes.',
+    },
+    report: {
+      supported: 'The stored session was cleared here.',
+      supported_b: 'The app was confirmed working in this case.',
+      absent: 'The app was reinstalled to resolve the fault.',
+      unstated_detail: 'Recovery codes were used for the fresh sign-in.',
+    },
+  },
+  'RES-SYN-114': {
+    fit: {
+      supported: 'The case records the rejected events being traced.',
+      supported_b: 'The case records delivery being confirmed as resumed.',
+      absent: 'The customer rotated the secret again after the fix.',
+      unstated_detail: 'The rejected events were delivered again after the fix.',
+    },
+    report: {
+      supported: 'The rejected events were traced here.',
+      supported_b: 'Delivery was confirmed as resumed in this case.',
+      absent: 'The secret was rotated again after the fix.',
+      unstated_detail: 'A redelivery followed for the rejected events.',
+    },
+  },
+  'RES-SYN-115': {
+    fit: {
+      supported: 'The case records the request being recorded.',
+      supported_b: 'The case records the customer being told where to follow it.',
+      absent: 'The request was scheduled for the release that follows.',
+      unstated_detail: 'The existing group already held similar requests.',
+    },
+    report: {
+      supported: 'The request was recorded here.',
+      supported_b: 'The customer was told where to follow it in this case.',
+      absent: 'The release that follows was to carry the request.',
+      unstated_detail: 'Similar requests already sat in the existing group.',
+    },
+  },
+  'RES-SYN-116': {
+    fit: {
+      supported: 'The case records the interrupted export being found.',
+      supported_b: 'The case records the complete archive being delivered.',
+      absent: 'The customer split the export into smaller ranges.',
+      unstated_detail: 'The retry finished faster than the attempt before it.',
+    },
+    report: {
+      supported: 'The interrupted export was found here.',
+      supported_b: 'The complete archive was delivered in this case.',
+      absent: 'The export was split into smaller ranges.',
+      unstated_detail: 'Finishing was faster on the retry than on the attempt before.',
+    },
+  },
+  'RES-SYN-117': {
+    fit: {
+      supported: 'The case records the requester being verified.',
+      supported_b: 'The case records the written confirmation being sent.',
+      absent: 'The customer asked for a copy of the data before deletion.',
+      unstated_detail: 'The deletion covered the backups as well.',
+    },
+    report: {
+      supported: 'The requester was verified here.',
+      supported_b: 'The written confirmation was sent in this case.',
+      absent: 'A copy of the data was requested before deletion.',
+      unstated_detail: 'Backups were covered by the deletion as well.',
+    },
   },
 };
 
@@ -433,9 +980,10 @@ function docsForIntent(intentId) {
  * section 4.7 seeds of 0.70 and 0.80 fall between two of them, so the
  * granularity would decide the answer before the judge said anything.
  */
-function makeClaims(intentId) {
+function makeClaims(intentId, half, grounded) {
   const docs = docsForIntent(intentId);
   const claims = [];
+  const say = (docId, variant) => CLAIMS[docId][half][variant];
 
   // Without replacement. Picking with it repeated a claim verbatim inside one
   // draft, which bills the same question to the model twice and weights it
@@ -463,7 +1011,13 @@ function makeClaims(intentId) {
 
   // Unsupported claims cite a document the draft already reasons about, drawn
   // from the intent's own set so the negative is on topic too.
-  const unsupportedCount = chance(0.5) ? between(1, 2) : 0;
+  // The caller decides. A coin flip here gave the fit half 167 grounded drafts
+  // of 385 and the report half 195, which the loader's equivalence test
+  // refuses: one
+  // half was measurably the easier one, and a precision published from it read
+  // high. The flags are balanced and then shuffled, so the count is exact and
+  // the assignment is still unordered.
+  const unsupportedCount = grounded ? 0 : between(1, 2);
   const unsupportedDocs = [];
   for (let i = 0; i < unsupportedCount; i++) unsupportedDocs.push(pick(docs));
 
@@ -471,7 +1025,7 @@ function makeClaims(intentId) {
   const borrowed = new Set();
 
   for (const [docId, variant] of supportedPairs) {
-    claims.push({ text: CLAIMS[docId][variant], doc_id: docId, supported: true, grade: null });
+    claims.push({ text: say(docId, variant), doc_id: docId, supported: true, grade: null });
   }
 
   for (const docId of unsupportedDocs) {
@@ -485,9 +1039,9 @@ function makeClaims(intentId) {
       if (strangers.length === 0) continue;
       const from = pick(strangers);
       borrowed.add(from);
-      text = CLAIMS[from].supported;
+      text = say(from, 'supported');
     } else {
-      text = CLAIMS[docId][grade];
+      text = say(docId, grade);
     }
     // A repeat bills the same question twice and weights it twice in the
     // coverage denominator, so the last guard is on the text itself: two
@@ -495,11 +1049,46 @@ function makeClaims(intentId) {
     if (claims.some((c) => c.text === text)) continue;
     claims.push({ text, doc_id: docId, supported: false, grade });
   }
+  // A draft the caller marked ungrounded must carry an unsupported claim. Both
+  // guards above can drop every one it drew: two unsupported claims can pick
+  // one document and one grade, and an off_topic draw can find no stranger
+  // left. The draft would then come out grounded against its own flag, and the
+  // two halves would stop holding equal shares by exactly that many drafts.
+  // This draws nothing, so the shared stream is where the loop left it.
+  if (!grounded && claims.every((c) => c.supported)) {
+    for (const docId of docs) {
+      for (const grade of ['unstated_detail', 'absent']) {
+        const text = say(docId, grade);
+        if (claims.some((c) => c.text === text)) continue;
+        claims.push({ text, doc_id: docId, supported: false, grade });
+        return claims;
+      }
+    }
+  }
   return claims;
 }
 
-for (const ticket of [...fitTickets, ...reportTickets]) {
-  ticket.claims = makeClaims(ticket.intent);
+/**
+ * Exactly half the drafts grounded, in an order the stream decides.
+ *
+ * Both halves get the same count, so the equivalence test the loader runs
+ * sees a difference of zero. Shuffled rather than assigned by position, so
+ * groundedness does not line up with ticket order or with intent.
+ */
+function groundedFlags(n) {
+  const flags = Array.from({ length: n }, (_, i) => i < Math.floor(n / 2));
+  for (let i = flags.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [flags[i], flags[j]] = [flags[j], flags[i]];
+  }
+  return flags;
+}
+
+for (const [half, tickets] of [['fit', fitTickets], ['report', reportTickets]]) {
+  const flags = groundedFlags(tickets.length);
+  tickets.forEach((ticket, i) => {
+    ticket.claims = makeClaims(ticket.intent, half, flags[i]);
+  });
 }
 
 writeJson(join(FIXTURES, 'taxonomy.json'), {
