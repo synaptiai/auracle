@@ -91,4 +91,27 @@ describe('a CLI module does not run when it is imported', () => {
       process.exitCode = savedExit;
     }
   });
+  // The fourth of this class. `bands.test.ts` imports this CLI for
+  // `humanValue`, `parseDay`, `lastCompleteDay` and `bandLine`, which is the
+  // shape this suite's header describes: unguarded, that import would open a
+  // pool and query the ledger inside the test process.
+  //
+  // The observable is `--day` with no value, which this CLI alone reads and
+  // which is refused before any pool is built. It touches no shared state, so
+  // no later suite in this worker can see it.
+  it('does not start the control-band report', async () => {
+    const savedArgv = process.argv;
+    const savedExit = process.exitCode;
+    process.argv = [...savedArgv, '--day'];
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await import('../bands/run.js');
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(errors, 'importing the bands CLI ran the job').not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+      process.argv = savedArgv;
+      process.exitCode = savedExit;
+    }
+  });
 });

@@ -742,9 +742,7 @@ version and the turn population behind them. The gate is part of the number.
 
 ### Control bands
 
-The file `bands.yaml` defines four metrics. Until Phase 2 produces data, each
-metric is a target definition, not a live signal. The baseline mean and sigma
-stay null until a full window of daily samples exists. The window is 30 days.
+The file `bands.yaml` defines four metrics. The window is 30 days.
 
 | Metric | Source | Direction |
 |--------|--------|-----------|
@@ -758,6 +756,83 @@ The bands define three actions:
 - 1 sigma: log. No action.
 - 2 sigma: diagnose read-only. Read dashboards and journals. Change nothing.
 - 3 sigma: propose a change through a pull request.
+
+#### Reading a day
+
+`pnpm run bands` reports all four metrics for one day.
+
+```sh
+DATABASE_URL=... pnpm run bands
+DATABASE_URL=... pnpm run bands -- --day 2026-09-01
+```
+
+The command reads the ledger and writes `bands/v<n>.json`. Every statement is
+a SELECT, so it is safe against a live database. The default day is the most
+recent complete UTC day. A part of today compares against whole days, and
+every morning would then look like an excursion.
+
+The baseline covers the 30 most recent measured days before the day you
+asked for. It never
+includes that day. A day inside its own baseline pulls the mean toward
+itself, so a bad day reads less bad the worse it gets.
+
+The baselines in `bands.yaml` stay null. They are your production numbers, and
+the file is in the repository. The command computes a baseline from your
+ledger each time you run it.
+
+#### When a day carries no band
+
+The report states a band, or it states why it has none. It never states both.
+
+| Line | Meaning | What to do |
+|---|---|---|
+| `no baseline: 7 of 30 days` | Too few days in reach measured anything. | Wait. The count rises as the ledger fills. |
+| `the day measured nothing` | No run that day reached the step this metric measures. | Check that traffic reached the consumer. |
+| `steady at 0 over 30 days` | The metric held one value all window, and today matches it. | Nothing. This is the healthy reading for the delivery count. |
+| `no spread over 30 days, and today moved to 3` | The metric held one value all window, and today left it. | Look now. There is no sigma to measure the step against. |
+| `the day measured a value that is not a number` | The ledger holds a value no arithmetic can use. | Read the ledger for that day. This needs a person. |
+
+Each line has a code in the artifact, in `shortfall_code`. Read that rather
+than the sentence if a tool consumes the file.
+
+The baseline is 30 daily samples, not 30 calendar days. The job reads 60 days
+to find them. A quiet day yields no sample, so demanding 30 consecutive days
+would let one quiet weekend blind the band for a month.
+
+#### The counts beside each metric
+
+Each metric reports the runs behind its value. Three counts can sit beside it.
+
+`not reached` counts runs that never reached the step. A customer reply never
+reaches the agreement gate, because DEC-12 gates it first. The gate metric
+excludes those runs rather than counting them as failures. Otherwise the rate
+would follow your traffic mix instead of the classifier.
+
+`still to land` counts runs whose contribution may still arrive. It sits
+beside the two values that settle late, and the next section explains them.
+
+`unrecorded` counts runs whose journal cannot answer. A run written before the
+gate step recorded which rule decided carries no such answer. The count falls
+to zero as the ledger turns over. A high count means the numbers rest on few
+runs, so read the `over N runs` figure beside them.
+
+#### Two values that settle late
+
+The report files `approval_edit_distance` and `relay_delivery_unknown_count`
+under the day it picked the run up. Both values arrive later. A person writes
+one at approval, and the relay writes the other when it gives up on a
+delivery. Neither table records that moment, so the run is the only day the
+report can use.
+
+So a recent day is provisional. Running the command again for the same day can
+return a different value, and each run writes a new version rather than
+replacing the last. The edit distance prints the count of runs still awaiting
+approval beside it, and the delivery count prints the records the relay has
+not resolved. Both say how much of that day could still arrive.
+
+A count of zero means no known contribution is outstanding. It does not prove
+the day is final. A run of that day which is still working, or which stopped
+between steps, appears in neither count and can still acquire a value later.
 
 ### What happened on this run
 
@@ -960,6 +1035,10 @@ Careful labelling decides the value of every later number.
 Each customer reply parks as a draft and waits for approval. You measure the
 approval-edit distance. This value is the most useful early signal. It shows
 how far each draft was from a reply a person can send.
+
+`pnpm run bands` computes it, and the other three band metrics, for one day.
+Run it daily. See "Control bands" above for the command and for the lines it
+prints when a day carries no band.
 
 The criteria to leave Phase 2 are undecided. They are open item 1 for V2. Do
 not invent exit criteria. Watch the bands and wait for the decision.

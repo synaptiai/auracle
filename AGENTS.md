@@ -107,7 +107,9 @@ Four long-running processes exist:
 Offline jobs write artifacts and never touch live traffic:
 `pnpm run calibrate`, `pnpm run gold-report`, `pnpm run triage`, `pnpm run replay`, `pnpm run export-corpus`.
 `pnpm run latency` reads the ledger and reports queue wait and service time per partition (V2 open item 7).
-It issues SELECT statements only, so it is safe against a live database.
+`pnpm run bands` reads the ledger and reports the four `bands.yaml` metrics for one day.
+It judges that day against the 30 most recent measured days before it.
+Both issue SELECT statements only, so they are safe against a live database.
 
 `src/policy/policy.ts` is a pure function. It calls no model and reads no state.
 Adapters declare their capabilities, and autonomy adapts to those declarations (DEC-06).
@@ -153,6 +155,9 @@ generator.
 ## Things agents get wrong
 
 - Blending agreement and coverage into one confidence score. The gates are independent (DEC-05, section 3.2).
+- Reading `gate_pass_rate` from the gate verdict alone. `evaluatePolicy` returns `gated` for a customer reply,
+  a high-risk intent, an irreversible write and a missing idempotency capability, all before agreement is compared.
+  The journalled `reason` says which rule decided; `reachedAgreementGate` says whether the comparison happened.
 - Setting the classifier temperature to zero. At zero, agreement is always 1.0 and the gate passes every ticket (section 4.5).
 - Deriving the idempotency key from `run_id` or a timestamp. Two runs of the same action must produce the same key (section 3.4).
 - Mixing BM25 scores and cosine scores in a weighted average. RRF uses ranks only (DEC-21, section 4.6).

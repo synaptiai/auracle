@@ -571,6 +571,12 @@ Use approval-edit distance as the online measurement. This value shows how much
 a person changed a draft before the person sent it. It is available from the
 first day of Phase 2. It needs no labels. It has no counterfactual problem.
 
+`pnpm run bands` reads it from the ledger, with the other three metrics
+`bands.yaml` defines. It reports one UTC day against the 30 most recent
+measured days before it.
+The baseline excludes the day it judges, and a window too thin or too flat to
+carry a band says so instead of stating one.
+
 **Sensitivity.** To find a change of 5 percent in containment you need
 approximately 470 cases. To find a change of 2 percent you need approximately
 3 000 cases. Test-bed volume cannot supply these numbers online.
@@ -595,6 +601,20 @@ appearance of accuracy and nothing more.
 
 This job fits the global agreement threshold on the fit half of the gold set. It
 operates each month. It does not operate for each ticket.
+
+**`bands`**. Obeys DEC-18, DEC-19.
+
+This job reports the four control-band metrics for one day, against a baseline
+of the 30 most recent measured days before it. It reads the ledger and writes
+an artifact. It issues only SELECT statements, and it opens its connection
+read-only, so it is safe against a live database.
+
+The artifact stays with the adopter. It describes their own traffic, so the
+directory is ignored and nothing real enters the repository (DEC-18). The
+runbook states that position (DEC-19).
+
+It observes and it does not correct: the three-sigma action is a pull request,
+and the job states that one is warranted rather than opening it.
 
 TypeScript has no mature library for isotonic regression or HDBSCAN. This is
 acceptable. These are offline jobs. You can write them in a different language.
@@ -627,7 +647,7 @@ needs.
 
 1. The system does internal writes automatically.
 2. Each customer reply goes to the draft state.
-3. Measure the approval-edit distance.
+3. Measure the approval-edit distance. `pnpm run bands` reports it daily.
 
 The approval-edit distance is the most useful early signal. It shows how far the
 draft was from a reply that a person can send.

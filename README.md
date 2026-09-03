@@ -102,6 +102,7 @@ allow the compose address for a local run.
 | `pnpm run approve -- --run <run-id>` | Approves one gated customer reply through the approval bridge. |
 | `pnpm run escalations` | Lists the runs that need a person now, with the reason. The command only reads the ledger. |
 | `pnpm run latency` | Reports queue wait and service time per partition, so a partition falling behind is visible. Writes `latency/vN.json`. The command only reads the ledger. |
+| `pnpm run bands` | Reports the four control-band metrics for one day against the 30 most recent measured days before it. Writes `bands/v<n>.json`. The command only reads the ledger. |
 
 Notes on the consumers:
 

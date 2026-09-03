@@ -146,22 +146,137 @@ function assertFraction(value: number, field: string): void {
   }
 }
 
-export function evaluatePolicy(input: PolicyInput): PolicyDecision {
+/**
+ * Which rule decided, named after the rule rather than after its outcome.
+ *
+ * The verdict alone is ambiguous in the one direction a report needs: a
+ * `gated` run may have been stopped by a rule that returns before the
+ * agreement gate is read, or it may have reached that gate, passed it, and
+ * then landed in the groundedness review band. Nothing downstream could tell
+ * those apart, so a report on the agreement gate could not state its own
+ * population, and its rate would move with traffic mix instead of with
+ * classifier health.
+ */
+export type PolicyReason =
+  | 'no_idempotency'
+  | 'customer_visible'
+  | 'irreversible'
+  | 'high_risk'
+  | 'agreement'
+  | 'groundedness_block'
+  | 'groundedness_review'
+  | 'auto';
+
+export interface PolicyOutcome {
+  decision: PolicyDecision;
+  reason: PolicyReason;
+}
+
+/**
+ * Every reason, as a list.
+ *
+ * The record is typed by the union, so the compiler refuses this file when a
+ * reason is added to `PolicyReason` and not here. A reader that built its own
+ * list would silently miss the new one and drop those runs from its counts.
+ */
+const ALL_REASONS: Record<PolicyReason, true> = {
+  no_idempotency: true,
+  customer_visible: true,
+  irreversible: true,
+  high_risk: true,
+  agreement: true,
+  groundedness_block: true,
+  groundedness_review: true,
+  auto: true,
+};
+
+export const POLICY_REASONS: readonly PolicyReason[] = Object.keys(ALL_REASONS) as PolicyReason[];
+
+/**
+ * Which side of the agreement comparison each rule sits on.
+ *
+ * A record over the whole union, not a set of the four. A set answers "not
+ * present" for a reason nobody listed, so `reachedAgreementGate` failed open:
+ * add a fifth short-circuit rule and the build stays green while every run it
+ * stops is counted as an agreement pass, inflating the rate. The record makes
+ * the compiler refuse this file until the new reason is placed.
+ */
+const REACHES_AGREEMENT: Record<PolicyReason, boolean> = {
+  no_idempotency: false,
+  customer_visible: false,
+  irreversible: false,
+  high_risk: false,
+  agreement: true,
+  groundedness_block: true,
+  groundedness_review: true,
+  auto: true,
+};
+
+/**
+ * Whether the run got as far as comparing agreement against its threshold.
+ *
+ * Exported so a reader never re-derives the precedence order. A second copy
+ * of that order is free to drift from this one, which is the hazard of
+ * re-applying a gate outside the engine.
+ */
+export function reachedAgreementGate(reason: PolicyReason): boolean {
+  return REACHES_AGREEMENT[reason];
+}
+
+/**
+ * Whether the agreement gate passed, for a run that reached it.
+ *
+ * Not the same question as whether every gate passed. The gates are
+ * independent (DEC-05), so a run that cleared agreement and then failed on
+ * groundedness passed this one. Counting only `auto` would fold the second
+ * gate into the first and the rate would track the wrong one.
+ */
+export function passedAgreementGate(reason: PolicyReason): boolean {
+  return reachedAgreementGate(reason) && reason !== 'agreement';
+}
+
+/**
+ * The whole rule, stated once. `evaluatePolicy` returns this verdict.
+ *
+ * Pure and synchronous: it calls no model and reads no state, so the same
+ * inputs always give the same answer (section 4.8).
+ */
+export function evaluatePolicyDetailed(input: PolicyInput): PolicyOutcome {
   // DEC-06: no idempotency support means no automatic write, whatever the evidence.
-  if (!input.capabilities.supportsIdempotencyKey && input.action.isWrite) return 'gated';
+  if (!input.capabilities.supportsIdempotencyKey && input.action.isWrite) {
+    return { decision: 'gated', reason: 'no_idempotency' };
+  }
   // DEC-12: customer replies always need approval.
-  if (input.action.isCustomerVisible) return 'gated';
+  if (input.action.isCustomerVisible) return { decision: 'gated', reason: 'customer_visible' };
   // DEC-34: an irreversible write never reaches the automatic path,
   // whatever the gates read — compensation of a sent refund gates like a
   // customer reply does.
-  if (input.action.isWrite && input.action.isIrreversible) return 'gated';
+  if (input.action.isWrite && input.action.isIrreversible) {
+    return { decision: 'gated', reason: 'irreversible' };
+  }
   // DEC-03/DEC-13: a high-risk intent never reaches the automatic path,
   // regardless of the gate values.
-  if (input.riskTier === 'high') return 'gated';
+  if (input.riskTier === 'high') return { decision: 'gated', reason: 'high_risk' };
   // Gate 1: sample agreement (DEC-05).
-  if (input.agreement < input.thresholds.agreement) return 'escalate';
+  if (input.agreement < input.thresholds.agreement) {
+    return { decision: 'escalate', reason: 'agreement' };
+  }
   // Gate 2: groundedness coverage (DEC-05, section 4.7 thresholds).
-  if (input.groundedness < input.thresholds.groundednessBlock) return 'escalate';
-  if (input.groundedness < input.thresholds.groundednessReview) return 'gated';
-  return 'auto';
+  if (input.groundedness < input.thresholds.groundednessBlock) {
+    return { decision: 'escalate', reason: 'groundedness_block' };
+  }
+  if (input.groundedness < input.thresholds.groundednessReview) {
+    return { decision: 'gated', reason: 'groundedness_review' };
+  }
+  return { decision: 'auto', reason: 'auto' };
+}
+
+/**
+ * The verdict alone.
+ *
+ * Delegates rather than restating the rule, so the two can never disagree.
+ * Every existing caller that needs only the verdict keeps this signature.
+ */
+export function evaluatePolicy(input: PolicyInput): PolicyDecision {
+  return evaluatePolicyDetailed(input).decision;
 }

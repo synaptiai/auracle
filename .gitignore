@@ -21,6 +21,10 @@ dist/
 # so unlike the gold report there is no version to track.
 /latency/
 
+# Control-band daily samples. The adopter's own traffic, so it stays with the
+# adopter (DEC-17, DEC-19) — like /latency/ and /triage/ above.
+/bands/
+
 # Calibration artifacts are run output, not source. A committed artifact would
 # be adopted by every checkout and would move each adopter's gates to numbers
 # fitted on somebody else's corpus. Run `pnpm run calibrate` to make your own.
@@ -46,3 +50,7 @@ dist/
 # Python bytecode from the hook tests.
 __pycache__/
 *.pyc
+
+# Lock files the decision-journal recorder leaves behind. They are
+# process state, never a record of a decision.
+.decisions/*.lock

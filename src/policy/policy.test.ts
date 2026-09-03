@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { evaluatePolicy, GATE_AGREEMENT, SEED_THRESHOLDS, makeThresholds } from './policy.js';
+import {
+  evaluatePolicy,
+  evaluatePolicyDetailed,
+  POLICY_REASONS,
+  passedAgreementGate,
+  reachedAgreementGate,
+  GATE_AGREEMENT,
+  SEED_THRESHOLDS,
+  makeThresholds,
+} from './policy.js';
 import type { AdapterCapabilities, PolicyInput } from './policy.js';
 
 // An adapter that supports everything: any gate failure then comes from the
@@ -337,5 +346,159 @@ describe('the injected thresholds govern the gates (DEC-05, DEC-13)', () => {
     });
 
     expect(evaluatePolicy(reply)).toBe('gated');
+  });
+});
+
+// The reason a verdict carries, so the ledger records what explains it.
+//
+// `thresholds` was added to the gate step's journal entry for the same
+// stated reason: without it "the journal records the verdict and nothing
+// that explains it". The verdict alone is ambiguous in one direction that
+// matters — a `gated` run may have been short-circuited before the agreement
+// gate was ever read, or it may have reached that gate, passed it, and then
+// landed in the groundedness review band. Nothing downstream could tell those
+// apart, so a report on the agreement gate could not name its own population.
+describe('the reason a decision carries (section 4.8)', () => {
+  const cases: ReadonlyArray<readonly [string, Partial<PolicyInput>, string, string]> = [
+    [
+      'no idempotency support on a write (DEC-06)',
+      {
+        capabilities: { ...FULL_CAPABILITIES, supportsIdempotencyKey: false },
+        action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
+      },
+      'gated',
+      'no_idempotency',
+    ],
+    [
+      'a customer reply (DEC-12)',
+      { action: { isWrite: true, isCustomerVisible: true, isIrreversible: false } },
+      'gated',
+      'customer_visible',
+    ],
+    [
+      'an irreversible write (DEC-34)',
+      { action: { isWrite: true, isCustomerVisible: false, isIrreversible: true } },
+      'gated',
+      'irreversible',
+    ],
+    ['a high-risk intent (DEC-03, DEC-13)', { riskTier: 'high' }, 'gated', 'high_risk'],
+    ['agreement below its threshold (DEC-05)', { agreement: 0.1 }, 'escalate', 'agreement'],
+    [
+      'groundedness below the block threshold (DEC-07)',
+      { groundedness: 0.1 },
+      'escalate',
+      'groundedness_block',
+    ],
+    [
+      'groundedness inside the review band (DEC-07)',
+      { groundedness: (SEED_THRESHOLDS.groundednessBlock + SEED_THRESHOLDS.groundednessReview) / 2 },
+      'gated',
+      'groundedness_review',
+    ],
+    ['every rule passing', {}, 'auto', 'auto'],
+  ];
+
+  it.each(cases)('names %s', (_label, overrides, decision, reason) => {
+    const outcome = evaluatePolicyDetailed(baseInput(overrides));
+    expect(outcome.decision).toBe(decision);
+    expect(outcome.reason).toBe(reason);
+  });
+
+  // An independent statement of the rule, written from section 4.8 and the
+  // decisions rather than from the engine. The case below compares the engine
+  // against THIS across every combination of its inputs.
+  //
+  // A first version compared `evaluatePolicyDetailed(x).decision` against
+  // `evaluatePolicy(x)`. Since `evaluatePolicy` delegates, that was `x === x`
+  // across 288 iterations: it would have passed with every rule inverted. An
+  // equivalence test needs two implementations, and the second one has to
+  // come from the specification.
+  function referenceOutcome(input: PolicyInput): { decision: string; reason: string } {
+    const { action, capabilities, riskTier, agreement, groundedness, thresholds } = input;
+    if (action.isWrite && !capabilities.supportsIdempotencyKey) {
+      return { decision: 'gated', reason: 'no_idempotency' };     // DEC-06
+    }
+    if (action.isCustomerVisible) {
+      return { decision: 'gated', reason: 'customer_visible' };   // DEC-12
+    }
+    if (action.isWrite && action.isIrreversible) {
+      return { decision: 'gated', reason: 'irreversible' };       // DEC-34
+    }
+    if (riskTier === 'high') {
+      return { decision: 'gated', reason: 'high_risk' };          // DEC-03, DEC-13
+    }
+    if (agreement < thresholds.agreement) {
+      return { decision: 'escalate', reason: 'agreement' };       // DEC-05 gate 1
+    }
+    if (groundedness < thresholds.groundednessBlock) {
+      return { decision: 'escalate', reason: 'groundedness_block' }; // DEC-07
+    }
+    if (groundedness < thresholds.groundednessReview) {
+      return { decision: 'gated', reason: 'groundedness_review' };   // DEC-07
+    }
+    return { decision: 'auto', reason: 'auto' };
+  }
+
+  it('matches an independent statement of the rule on every combination', () => {
+    const tiers = ['low', 'medium', 'high'] as const;
+    const flags = [false, true];
+    let checked = 0;
+    for (const riskTier of tiers)
+      for (const isWrite of flags)
+        for (const isCustomerVisible of flags)
+          for (const isIrreversible of flags)
+            for (const supportsIdempotencyKey of flags)
+              for (const agreement of [0.1, 0.9])
+                for (const groundedness of [0.1, 0.75, 0.95]) {
+                  const input = baseInput({
+                    riskTier,
+                    agreement,
+                    groundedness,
+                    capabilities: { ...FULL_CAPABILITIES, supportsIdempotencyKey },
+                    action: { isWrite, isCustomerVisible, isIrreversible },
+                  });
+                  const outcome = evaluatePolicyDetailed(input);
+                  expect(outcome).toEqual(referenceOutcome(input));
+                  // The delegating wrapper still has to agree with its own
+                  // detailed form, which is cheap to assert alongside.
+                  expect(evaluatePolicy(input)).toBe(outcome.decision);
+                  checked += 1;
+                }
+    expect(checked).toBe(3 * 2 * 2 * 2 * 2 * 2 * 3);
+  });
+
+  // The four short-circuit reasons return before agreement is compared, so a
+  // report on the agreement gate must exclude them. The predicate lives here
+  // rather than in the reader, for the same reason the precedence does.
+  // Every reason is placed, so a reason added later cannot default to
+  // "reached" and silently inflate the rate.
+  it('places every reason on one side of the agreement gate', () => {
+    for (const reason of POLICY_REASONS) {
+      expect(typeof reachedAgreementGate(reason), `${reason} is unplaced`).toBe('boolean');
+      expect(typeof passedAgreementGate(reason), `${reason} is unplaced`).toBe('boolean');
+    }
+    expect(POLICY_REASONS.length).toBe(8);
+  });
+
+  it('says which reasons reached the agreement gate', () => {
+    expect(reachedAgreementGate('no_idempotency')).toBe(false);
+    expect(reachedAgreementGate('customer_visible')).toBe(false);
+    expect(reachedAgreementGate('irreversible')).toBe(false);
+    expect(reachedAgreementGate('high_risk')).toBe(false);
+    expect(reachedAgreementGate('agreement')).toBe(true);
+    expect(reachedAgreementGate('groundedness_block')).toBe(true);
+    expect(reachedAgreementGate('groundedness_review')).toBe(true);
+    expect(reachedAgreementGate('auto')).toBe(true);
+  });
+
+  // A reason that reached the gate and is not 'agreement' passed it. Stated
+  // as a case because the report's numerator depends on it: counting only
+  // 'auto' as a pass would drop every run that cleared agreement and then
+  // failed on groundedness, and the rate would track the wrong gate (DEC-05).
+  it('distinguishes passing the agreement gate from passing every gate', () => {
+    expect(passedAgreementGate('auto')).toBe(true);
+    expect(passedAgreementGate('groundedness_block')).toBe(true);
+    expect(passedAgreementGate('groundedness_review')).toBe(true);
+    expect(passedAgreementGate('agreement')).toBe(false);
   });
 });

@@ -407,6 +407,59 @@ describe('section 4.3 run coordinator', () => {
     });
   });
 
+  // Two runs, both journalled `gated`, for reasons that mean opposite things.
+  // The verdict alone cannot separate them: a customer reply is stopped
+  // before agreement is ever compared (DEC-12), while a run in the
+  // groundedness review band reached that comparison and passed it. A report
+  // on the agreement gate has to know which population a run belongs to, and
+  // without the reason it would count the customer reply as a gate failure —
+  // so the rate would move with traffic mix rather than classifier health.
+  it('journals which rule decided, not only what it decided', async () => {
+    const script = (): FakeStep[] => [
+      ...Array.from({ length: 9 }, () => ({ text: 'password_reset' })),
+      { vectors: [VEC] },
+      { text: '[doc:d1] Open the account settings page and choose reset password.' },
+      { text: 'VERDICT: SUPPORTED' },
+    ];
+
+    const replyTicket = 'T-' + randomUUID().slice(0, 8);
+    const reply = await coordinateTicket(
+      makeDeps(script(), undefined, helpdeskWith(replyTicket)),
+      replyInput(replyTicket, 1n),
+    );
+    const replyGate = (await journalRows(reply.runId)).find((s) => s.step_id === 'gate');
+    expect(replyGate?.result).toMatchObject({ decision: 'gated', reason: 'customer_visible' });
+
+    // An internal action whose draft carries two claims, one of them
+    // unsupported: groundedness 0.5. Against a block of 0.3 and a review of
+    // 0.9 that reaches the agreement gate, clears it, and gates on the
+    // second gate instead (DEC-05). The happy script scores exactly 1, which
+    // no review threshold can sit above, so the evidence has to change.
+    const reviewedScript: FakeStep[] = [
+      ...Array.from({ length: 9 }, () => ({ text: 'password_reset' })),
+      { vectors: [VEC] },
+      { text: '[doc:d1] Open the account settings page.\n[doc:d1] Then call the office.' },
+      { text: 'VERDICT: SUPPORTED' },
+      { text: 'VERDICT: UNSUPPORTED' },
+    ];
+    const reviewed = await coordinateTicket(
+      {
+        ...makeDeps(reviewedScript),
+        thresholds: makeThresholds({
+          ...SEED_THRESHOLDS,
+          groundednessBlock: 0.3,
+          groundednessReview: 0.9,
+        }),
+      },
+      autoInput('T-' + randomUUID().slice(0, 8), 1n),
+    );
+    const reviewedGate = (await journalRows(reviewed.runId)).find((s) => s.step_id === 'gate');
+    expect(reviewedGate?.result).toMatchObject({
+      decision: 'gated',
+      reason: 'groundedness_review',
+    });
+  });
+
   it('escalates when classifier agreement falls below the gate and keeps partial work', async () => {
     const ticketId = 'T-' + randomUUID().slice(0, 8);
     // Modal intent takes 4 of 9 samples: agreement 0.44 < GATE_AGREEMENT.

@@ -34,7 +34,7 @@ import {
 import { deriveIdemKey } from '../ledger/keys.js';
 import { UnreadableAnswerError } from '../models/provider.js';
 import type { ModelProvider, PinnedVersions } from '../models/provider.js';
-import { SEED_THRESHOLDS, evaluatePolicy } from '../policy/policy.js';
+import { SEED_THRESHOLDS, evaluatePolicyDetailed } from '../policy/policy.js';
 import type { AdapterCapabilities, GateThresholds, RiskTier } from '../policy/policy.js';
 import { COMPENSATION_ACTION_CLASS } from '../adapters/types.js';
 import { hybridSearch } from '../retriever/retriever.js';
@@ -619,7 +619,7 @@ export async function coordinateTicket(
     );
   }
   const gateThresholds = deps.thresholds ?? SEED_THRESHOLDS;
-  const decision = evaluatePolicy({
+  const outcome = evaluatePolicyDetailed({
     riskTier: intent.risk_tier,
     agreement: classification.agreement,
     groundedness: grounded.groundedness,
@@ -634,10 +634,18 @@ export async function coordinateTicket(
       isIrreversible: input.actionClass === COMPENSATION_ACTION_CLASS,
     },
   });
+  const decision = outcome.decision;
   progress.stepsUsed++;
   await journalFinish('gate', 'done', {
     groundedness: grounded.groundedness,
     decision,
+    // Which rule decided, not only what it decided. `gated` alone is
+    // ambiguous between a rule that returns before the agreement gate is
+    // read and the groundedness review band, which reaches that gate and
+    // passes it. A reader that could not tell those apart would count a
+    // customer reply as a gate failure, and the rate would then track
+    // traffic mix instead of the classifier (DEC-05, DEC-12).
+    reason: outcome.reason,
     // Section 6 documents a rebalance window where two consumers overlap, and
     // each resolves its thresholds once at startup. During a rolling restart
     // one consumer can run a fitted number and the other the seed, and
