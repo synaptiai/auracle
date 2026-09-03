@@ -13,5 +13,10 @@ export default defineConfig({
     // The end-to-end hooks apply DDL and truncate against containers that
     // may have just started; the 10s default is too tight on a loaded host.
     hookTimeout: 60_000,
+    // The same reason, for the cases themselves. The hooks were raised and
+    // the cases were not, so a database suite that ran two consumers
+    // concurrently failed on a loaded host at 5s while taking 7s of real
+    // work. That looked like flakiness and was this line.
+    testTimeout: 30_000,
   },
 });

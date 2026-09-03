@@ -45,7 +45,8 @@ import type { GoldFile, GoldSource, GoldTicket, HalfIdentity } from '../fixtures
 import type { ModelProvider } from '../models/provider.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { startedAsCommand } from '../corpus/output-path.js';
 
 /**
  * The precision the review threshold must hold, and why.
@@ -447,7 +448,7 @@ async function main(): Promise<void> {
 }
 
 const invokedDirectly =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+  startedAsCommand(import.meta.url, process.argv[1]);
 
 if (invokedDirectly) {
   main().catch((err: unknown) => {

@@ -23,9 +23,9 @@ import {
   writeTriageArtifact,
 } from './artifact.js';
 import type { TriageArtifact } from './artifact.js';
-import { pathToFileURL } from 'node:url';
 import { label } from '../fixtures/load.js';
 import type { GoldSource } from '../fixtures/load.js';
+import { startedAsCommand } from '../corpus/output-path.js';
 
 export interface TriageRunOptions {
   /** Defaults to the deterministic offline stub judge over the fixture taxonomy. */
@@ -177,7 +177,7 @@ export function summariseForStdout(artifact: TriageArtifact): string {
 }
 
 const invokedDirectly =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+  startedAsCommand(import.meta.url, process.argv[1]);
 
 if (invokedDirectly) {
   main().catch((err: unknown) => {

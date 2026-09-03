@@ -99,6 +99,29 @@ function intFromEnv(name: string, fallback: number): number {
   return value;
 }
 
+/**
+ * The prompt pin, refusing the one value the ledger reserves.
+ *
+ * `abandonMessage` files a run with both pins set to 'intake', and the latency
+ * report reads that pair as a run that never entered service. A deployment
+ * setting PROMPT_VER=intake would label every real run the same way: the
+ * service distribution empties and the count an operator reads as a failing
+ * partition spikes on a healthy one. Section 4.5's rule applies here too —
+ * enforce it with an assertion, not a comment.
+ */
+export function requirePromptVer(): string {
+  const configured = process.env['PROMPT_VER'];
+  if (configured === undefined || configured.length === 0) return 'consumer-prompt-v1';
+  if (configured === 'intake') {
+    throw new Error(
+      "PROMPT_VER cannot be 'intake'. The ledger reserves that value for a run "
+        + 'filed without executing, and the latency report reads it as one. Pick '
+        + 'another name for the prompt pin.',
+    );
+  }
+  return configured;
+}
+
 async function main(): Promise<void> {
   loadDotEnv();
   const apiKey = process.env['OPENROUTER_API_KEY'];
@@ -145,7 +168,7 @@ async function main(): Promise<void> {
     capabilities: egress.capabilities,
     egress,
     pins: {
-      promptVer: process.env['PROMPT_VER'] ?? 'consumer-prompt-v1',
+      promptVer: requirePromptVer(),
       // The default lives in one place, beside the guarantee it carries.
       // Override with MODEL_VER. Read above, because the coverage pair a
       // fitted artifact installs must have been fitted under this same pin.

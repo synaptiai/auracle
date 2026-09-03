@@ -16,6 +16,11 @@ dist/
 !/gold-report/v7.json
 /triage/
 
+# A latency report describes the adopter's own traffic, and they are the data
+# controller (DEC-17, DEC-19). Nothing in this repository quotes its numbers,
+# so unlike the gold report there is no version to track.
+/latency/
+
 # Calibration artifacts are run output, not source. A committed artifact would
 # be adopted by every checkout and would move each adopter's gates to numbers
 # fitted on somebody else's corpus. Run `pnpm run calibrate` to make your own.

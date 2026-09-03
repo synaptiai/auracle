@@ -801,7 +801,7 @@ coordinator can record appears below. A queued message that failed
 |---|---|---|
 | `limit_cost` | The run reached its cost budget. | Read the journal for the step that spent it. Raise the budget or fix the prompt. |
 | `limit_steps` | The run reached its step budget. | Look for a loop between steps. |
-| `limit_clock` | The run reached its deadline. | Check provider latency and the deadline setting. |
+| `limit_clock` | The run reached its deadline. | Run `pnpm run latency`. A high service time on one partition is the model; a high queue wait is the partition falling behind. |
 | `composer_abstained` | The composer could not cite every claim. | A knowledge gap. Write or correct the document. |
 | `policy_escalated` | A gate or the policy rules sent the action to a person. | Read the draft and decide. |
 | `park_unresolved` | An approval could not be parked. | Check the egress adapter. |
@@ -868,6 +868,69 @@ The classifier samples nine times, so one run can meet several shapes.
 It names the shape that the most samples reported.
 A tie breaks on the shape name.
 So the order the provider answered in never decides your remedy.
+
+## 7.1 Seeing a partition fall behind
+
+One consumer owns each partition (DEC-27). A slow run therefore holds up every
+ticket behind it in that partition. The register calls this head-of-line delay
+and says V1 does not correct it.
+
+`pnpm run latency` shows it. The job reads the ledger and writes
+`latency/vN.json`.
+
+```sh
+pnpm run latency
+pnpm run latency --since 2026-09-01T00:00:00Z
+```
+
+Every statement it runs is a SELECT, so it is safe against a live database.
+It writes nothing to the ledger.
+
+It reports two quantities per partition. The queue wait is the time from a
+ticket arriving to a consumer picking it up. The service time is the time from
+pickup to a terminal state. The two separate a slow model from a busy queue.
+
+Read the partitions against each other, not the totals.
+
+| What you see | What it means | What you do |
+|---|---|---|
+| One partition's wait far above the others | Head-of-line delay. A slow run is holding up its queue. | Read `pnpm run escalations` for a run stuck in that partition. |
+| Every partition's wait rising together | Not head-of-line delay. The system is behind overall. | Add consumers, or look at intake volume. |
+| Wait low and service high | The queue is fine and the work is slow. | Check the provider and the deadline setting. |
+| Service `max` far above `p99` | A few runs are much slower than the rest. | Read the journal for those runs. |
+
+The last row needs a hundred finished runs in the partition before it says
+anything. Below that count `p99` selects the maximum itself, so the two agree
+by construction. `p95` needs twenty for the same reason.
+
+Each figure is a duration some run actually recorded, not an interpolation
+between two of them. Percentiles, never an average: a partition whose every
+hundredth ticket waits an hour has an unremarkable mean.
+
+Read the counts beside the figures. A `p99` over four runs is not a `p99`.
+
+`--since` filters on pickup time, not on arrival. So a run picked up before
+the window and still running falls outside it, and that is the run holding up
+a partition. Drop the window when you hunt a stalled one.
+
+## 7.2 The counts beside the figures
+
+The job reports five counts rather than folding them into the figures. Each
+names one cause, because each sends you somewhere different.
+
+| Count | What it means | What you do |
+|---|---|---|
+| `unmeasured` | The run carried no arrival time, so it has no wait. | Nothing, unless it grows. A run with no intake row reaches this. |
+| `unordered` | The pickup precedes the arrival, so the wait is not a duration. | Check clock synchronisation between the ingress host and the consumer host. |
+| `unfinished` | The run has not reached a terminal state. | This separates an idle partition from a stalled one. Both show few finished runs. |
+| `unstamped` | The run finished before `db/005` added the column. | Nothing. The count falls as the ledger turns over. |
+| `never_ran` | The run reached a terminal state without executing, such as an intake abandonment. | Read `pnpm run escalations`. This count rises when a partition is failing. |
+
+A run the job could not measure never enters a figure as a zero. A zero would
+flatter exactly the runs the ledger understands least.
+
+The job observes. It does not correct the delay, and V2 open item 7 stays
+open until an adopter chooses a correction on data like this.
 
 ## 8. The phase model
 

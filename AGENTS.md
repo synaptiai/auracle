@@ -106,6 +106,8 @@ Four long-running processes exist:
 
 Offline jobs write artifacts and never touch live traffic:
 `pnpm run calibrate`, `pnpm run gold-report`, `pnpm run triage`, `pnpm run replay`, `pnpm run export-corpus`.
+`pnpm run latency` reads the ledger and reports queue wait and service time per partition (V2 open item 7).
+It issues SELECT statements only, so it is safe against a live database.
 
 `src/policy/policy.ts` is a pure function. It calls no model and reads no state.
 Adapters declare their capabilities, and autonomy adapts to those declarations (DEC-06).

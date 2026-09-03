@@ -55,4 +55,40 @@ describe('a CLI module does not run when it is imported', () => {
       delete process.env['CORPUS_PATH'];
     }
   });
+
+  // The latency CLI is the third of this class, and the one most exposed:
+  // `latency.test.ts` imports it for `humanMs` and `parseSince`, which is
+  // exactly the shape this suite's header describes. Unguarded, that import
+  // would open a pool and query the ledger inside the test process.
+  //
+  // The observable is the catch handler, as in the induction case above, and
+  // not a written artifact. A first version watched the artifact directory
+  // after 250 milliseconds; a database round trip does not finish inside that
+  // window, so removing the guard left the case green and it proved nothing.
+  // The argument the case now supplies is refused before any pool is built,
+  // which the handler reports inside the window and without a database.
+  it('does not start the latency report', async () => {
+    // The observable must touch nothing another suite reads. An earlier
+    // version pointed DATABASE_URL at a closed port. That is shared state:
+    // `fileParallelism` is false, so every suite in this worker builds its
+    // pool from the same variable, and a suite that ran after this one would
+    // have connected to a closed port through no fault of its own.
+    //
+    // `--since` with no value is read by this CLI alone. An unguarded main()
+    // reports it and returns before it constructs a pool, so the case is
+    // decided without a database at all, and no later suite can see it.
+    const savedArgv = process.argv;
+    const savedExit = process.exitCode;
+    process.argv = [...savedArgv, '--since'];
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await import('../latency/run.js');
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(errors, 'importing the latency CLI ran the job').not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+      process.argv = savedArgv;
+      process.exitCode = savedExit;
+    }
+  });
 });

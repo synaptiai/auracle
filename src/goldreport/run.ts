@@ -36,7 +36,6 @@ import { SEED_THRESHOLDS, evaluatePolicy } from '../policy/policy.js';
 import type { AdapterCapabilities, ActionClass, GateThresholds, RiskTier } from '../policy/policy.js';
 import { resolveThresholds } from '../calibration/resolve.js';
 import type { CoverageProvenance, ThresholdProvenance } from '../calibration/resolve.js';
-import { pathToFileURL } from 'node:url';
 import {
   defaultGoldReportDir,
   assertGoldReportDirUsable,
@@ -46,6 +45,7 @@ import {
 } from './artifact.js';
 import type { GoldReportArtifact } from './artifact.js';
 import { aggregateReport } from './score.js';
+import { startedAsCommand } from '../corpus/output-path.js';
 
 /**
  * The report needs the risk tier per intent; the classifier's own taxonomy
@@ -411,8 +411,7 @@ async function main(): Promise<void> {
 }
 
 const invokedDirectly =
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(process.argv[1]).href;
+  startedAsCommand(import.meta.url, process.argv[1]);
 
 if (invokedDirectly) {
   main().catch((err: unknown) => {

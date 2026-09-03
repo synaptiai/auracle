@@ -1,6 +1,9 @@
 // No real data here: every path is a literal (DEC-18).
 
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -91,6 +94,27 @@ describe('startedAsCommand', () => {
 
   it('is false when there is no entry point at all', () => {
     expect(startedAsCommand('file:///repo/dist/corpus/export-main.js', undefined)).toBe(false);
+  });
+
+  // Node resolves `import.meta.url` through symlinks and `process.argv[1]` is
+  // the path as typed. Comparing them raw made a CLI reached through a
+  // symlinked directory exit 0 having run nothing and reported nothing. On
+  // macOS the `/tmp` link alone is enough to reach it.
+  it('sees through a symlinked entry path', () => {
+    // realpath on the directory too: on macOS `tmpdir()` is itself a symlink
+    // (/var -> /private/var), and Node reports `import.meta.url` resolved.
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'entry-real-')));
+    const real = join(dir, 'main.js');
+    writeFileSync(real, '');
+    const link = join(mkdtempSync(join(tmpdir(), 'entry-link-')), 'main.js');
+    symlinkSync(real, link);
+    try {
+      // The module was loaded from the real path; the command named the link.
+      expect(startedAsCommand(pathToFileURL(real).href, link)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(dirname(link), { recursive: true, force: true });
+    }
   });
 });
 

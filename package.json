@@ -17,6 +17,7 @@
     "test": "vitest run",
     "lint": "eslint .",
     "db:migrate": "pnpm run build && node dist/ledger/migrate.js",
+    "latency": "pnpm run build && node dist/latency/run.js",
     "escalations": "pnpm run build && node dist/escalations/cli.js",
     "approve": "pnpm run build && node dist/approval/cli.js",
     "calibrate": "pnpm run build && node dist/calibration/run.js",

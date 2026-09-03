@@ -38,10 +38,10 @@ import type { GoldFile, HalfIdentity } from '../fixtures/load.js';
 import { selectHalf } from '../fixtures/half-from-env.js';
 import type { ModelProvider } from '../models/provider.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
-import { pathToFileURL } from 'node:url';
 import { assertCalibrationDirUsable, nextVersion, validateCalibrationArtifact, writeCalibrationArtifact, defaultCalibrationDir } from './artifact.js';
 import type { CalibrationArtifact, CalibrationScope } from './artifact.js';
 import { fitAgreementThreshold } from './calibrate.js';
+import { startedAsCommand } from '../corpus/output-path.js';
 
 export interface CalibrationRunOptions {
   provider: ModelProvider;
@@ -325,8 +325,7 @@ async function main(): Promise<void> {
 }
 
 const invokedDirectly =
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(process.argv[1]).href;
+  startedAsCommand(import.meta.url, process.argv[1]);
 
 if (invokedDirectly) {
   main().catch((err: unknown) => {

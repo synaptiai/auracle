@@ -654,6 +654,11 @@ a rebalance period where two consumers can overlap. The fencing epoch covers the
 rebalance period. V1 does not correct the head-of-line delay. It will appear as
 latency on busy partitions.
 
+That prediction is now checkable. `pnpm run latency` reports queue wait and
+service time per partition, as percentiles rather than as an average, because
+an average is where a tail hides. The limit stands: this measures the delay and
+does not correct it.
+
 **Fencing needs the target to agree.** The ledger applies the epoch check
 because the system owns the ledger. External adapters do not know about epochs.
 A stopped run cannot damage the ledger. It can still reach an external system.
@@ -972,9 +977,13 @@ in `schema_version`.
 
 Item 7 was a correction for head-of-line delay in a
 partition. `db/005_run_timing.sql` adds the timing columns such a correction
-needs. Nothing reads them yet. The service time of a run is the difference
-between its finish and its creation, and the wait is the difference between
-its pickup and its arrival.
+needs. The service time of a run is the difference between its finish and its
+creation, and the wait is the difference between its pickup and its arrival.
+
+`pnpm run latency` reads them. It reports both quantities per partition, so a
+partition falling behind is visible beside the ones that are not. It observes
+and it does not correct: choosing a correction still needs production data,
+which is what this item asks for and what the job now collects.
 
 ### 7.1 Where the V2 design documents live
 

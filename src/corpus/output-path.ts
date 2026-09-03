@@ -6,13 +6,18 @@
 // Message-IDs. Both must land under `corpus/`, which the repository ignores
 // (DEC-18).
 //
-// It lives here, apart from either CLI, because neither is importable: each
+// `startedAsCommand` below serves a wider set. Every CLI in this repository
+// needs that answer, and each one that carried its own copy carried the same
+// symlink defect with it.
+//
+// It lives here, apart from any one CLI, because none is importable: each
 // runs `main()` at module load, so nothing can test them. A guard that was
 // cloned from one to the other inherited the original's absence of tests,
 // and both then rejected nothing that any case checked.
 
 import { resolve, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 /**
  * The path a job should write, or the reason it must not.
@@ -53,5 +58,28 @@ export function resolveCorpusOutput(
  */
 export function startedAsCommand(moduleUrl: string, argv1: string | undefined): boolean {
   if (argv1 === undefined) return false;
-  return moduleUrl === pathToFileURL(argv1).href;
+  // Both sides resolved through symlinks before they are compared. Node
+  // normally resolves `import.meta.url` to the real path while
+  // `process.argv[1]` is the path as typed, so through a symlinked directory
+  // the two disagreed, the guard read false, and the CLI exited 0 having done
+  // nothing and reported nothing — a job claiming success while never
+  // running. On macOS the `/tmp` link alone is enough to reach it.
+  //
+  // Resolving only the argument would fix the common case and reintroduce the
+  // same silent no-op under `--preserve-symlinks-main`, which keeps the
+  // symlinked path in `import.meta.url`. So both sides are resolved.
+  //
+  // A path that does not resolve falls back to the raw value, which is what
+  // this function always compared. Node cannot have loaded a file that is not
+  // there, so the fallback is never more permissive than the original rule.
+  return resolved(fileURLToPath(moduleUrl)) === resolved(argv1);
+}
+
+/** The real path, or the given one when it does not resolve. */
+function resolved(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }

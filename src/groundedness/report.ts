@@ -17,7 +17,7 @@
 // the groundedness artifact. These numbers are published prose, so they belong
 // in the register and the README beside the other published figures. Writing
 // them to a file nothing reads is the open loop this phase closed elsewhere.
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import { wilsonInterval } from '../calibration/calibrate.js';
 import type { FitInterval } from '../calibration/calibrate.js';
@@ -37,6 +37,7 @@ import {
   assertDocumentsResolvable,
   describeFaultShapes, describeSpend, scoreHalf, scoringDigest,
 } from './scoring.js';
+import { startedAsCommand } from '../corpus/output-path.js';
 
 /** How many drafts the judge may fail to score before the report means nothing. */
 const MAX_FAULTED_SHARE = 0.05;
@@ -336,7 +337,7 @@ async function main(): Promise<void> {
 }
 
 const invokedDirectly =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+  startedAsCommand(import.meta.url, process.argv[1]);
 if (invokedDirectly) {
   main().catch((error: unknown) => {
     console.error(error);
