@@ -21,9 +21,22 @@ That document holds decisions DEC-01 to DEC-39.
 This README states the compliance position per DEC-19.
 No machine check can decide who controls the data, so the documents carry that position.
 
+## Where to read next
+
+| Document | What it gives you |
+|---|---|
+| [The architecture map](docs/architecture-map.md) | Three diagrams of the system, with a legend for every box |
+| [The decision register](docs/v1-architecture.md) | DEC-01 to DEC-39. The only design authority |
+| [The runbook](docs/operations.md) | What an operator runs, and in what order |
+| [The V2 roadmap](docs/v2-roadmap.md) | What is left, what blocks it, and who owns each blocker |
+| [The contributing guide](CONTRIBUTING.md) | A clean checkout to a merged change |
+| [The review guide](REVIEW.md) | The three passes every change makes |
+
 ## The flow
 
 One ticket moves through these steps.
+[The architecture map](docs/architecture-map.md) draws the same path.
+The list below carries the decisions, and the map carries the picture.
 
 1. Intake normalizes the inbound message into a ticket and a message.
 2. The ledger stores the state change and the outbox insert in one transaction.
@@ -198,9 +211,10 @@ The numbers below cover those 815 cases.
 A later turn carries the disposition of the whole thread, so it grades no
 single decision.
 
-Do not read the move from `v3.json` as the effect of that filter alone.
-The corpus gained conversations, so the generator drew every value again.
-Both halves changed, and the two numbers moved for both reasons at once.
+These rates moved when the corpus gained conversations, and the first-turn
+filter is not the only reason. The generator drew every value again, so both
+halves changed and the two numbers moved for both reasons at once. This repository tracks one gold report at a time, so the earlier artifact is
+not here to compare against.
 
 The source corpus is fully synthetic (DEC-18).
 Run `pnpm run gold-report` to regenerate it.
@@ -218,6 +232,11 @@ numbers, so read the two fields together.
 `gate_calibration_scope` names the turn population the threshold was fitted
 on. The `scope` field names the population this report scored, which DEC-39
 fixes at first turns. The two can differ.
+
+`coverage_fit_version` reads 1, and the section below describes fit version 2.
+Two full passes of the fitting job chose the same pair, 0.75 and 1.00. So no
+number in this README depends on which of the two the field names. Read the
+field as provenance and not as a different result.
 
 A fitted threshold does not move these rates. The offline stub answers every
 sample of one ticket alike, so agreement is 1.0 on all 815 scored cases and no

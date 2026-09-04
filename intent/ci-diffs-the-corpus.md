@@ -14,7 +14,7 @@ under `db/` through `src/test-support/schema.ts`, and `db/` holds nine files.
 
 ## Proposed outcome
 
-`tests.yml` runs the generator and then diffs `fixtures/`. A drifted corpus
+`.github/workflows/tests.yml` runs the generator and then diffs `fixtures/`. A drifted corpus
 fails the pull request.
 
 The workflow header names the mechanism that runs today.
@@ -44,3 +44,10 @@ changes no decision text.
 
 The intent-file rule still has no checker. Deciding whether a commit changes
 behaviour needs a reader, so `REVIEW.md` keeps recording that gap.
+
+---
+
+## Superseded facts, recorded 2026-09-04
+
+`db/` held nine files when this was written. It holds fourteen now. The point
+the sentence makes is unchanged: the suites apply the real schema.

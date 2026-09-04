@@ -653,7 +653,8 @@ The approval-edit distance is the most useful early signal. It shows how far the
 draft was from a reply that a person can send.
 
 The criteria to leave Phase 2 are not in V1. They need a decision that this
-document does not make.
+document does not make. Section 7.1 names the document that proposes them, and
+`docs/v2-roadmap.md` states what blocks each one.
 
 ---
 
@@ -981,9 +982,9 @@ signal.
 4. Automatic feedback clusters when the volume is sufficient.
 5. A threshold for each intent above approximately 8 000 labelled tickets.
 6. A schema migration procedure for adopters. **Closed.** See below.
-7. A correction for head-of-line delay in a partition. **Closed.** See below.
+7. A correction for head-of-line delay in a partition. **Open.** See below.
 
-Four items now close. The numbers stay, because other documents cite them.
+Three items now close. The numbers stay, because other documents cite them.
 
 Item 3 was conversation state. DEC-35 to DEC-39 ratify it, and `db/008` and
 `db/009` carry the ledger entities.
@@ -995,37 +996,42 @@ Item 6 was a schema migration procedure for adopters.
 `src/ledger/migrate.ts` applies each file under `db/` and records the version
 in `schema_version`.
 
-Item 7 was a correction for head-of-line delay in a
-partition. `db/005_run_timing.sql` adds the timing columns such a correction
-needs. The service time of a run is the difference between its finish and its
+Item 7 asks for a correction for head-of-line delay in a partition. It stays
+open. `db/005_run_timing.sql` adds the timing columns such a correction needs.
+The service time of a run is the difference between its finish and its
 creation, and the wait is the difference between its pickup and its arrival.
 
 `pnpm run latency` reads them. It reports both quantities per partition, so a
 partition falling behind is visible beside the ones that are not. It observes
-and it does not correct: choosing a correction still needs production data,
-which is what this item asks for and what the job now collects.
+and it does not correct.
+
+Read the measurement as progress and not as closure. This item names a
+correction, and nobody has chosen one. `docs/operations.md` states the same
+position. The test for every item here is whether the item's own words
+describe what shipped.
 
 ### 7.1 Where the V2 design documents live
 
-Each open item above has a design document under `.creatumo/design/`. The
-register stays the only authority. A document becomes a decision only when a
-row enters the table in section 2.
+The table below accounts for every open item above. Most have a design
+document under `.creatumo/design/`, and the table names the one item that
+needed none. The register stays the only authority. A document becomes a
+decision only when a row enters the table in section 2.
 
 | Item | Document | Status |
 |---|---|---|
 | 1. Phase 2 exit criteria | `899a1565-de05-44ce-8693-ed6dd4cb97e3.md` | proposed, blocked |
 | 2. Compensation | `649c439e-afec-4bba-90d7-c14f78fd372d.md` | accepted, ratified as DEC-34 |
 | 3. Conversation state | `8bd63fe0-8567-44f9-b6cf-ae3d83918381.md` | ratified as DEC-35 to DEC-39, renumbered from its DEC-34 to DEC-38 |
+| 4. Automatic feedback clusters | `f4c1a90e-7d3b-4c2a-9e15-3b8d6f0a5c47.md` | blocked on volume |
 | 5. A threshold for each intent | `434db94d-bbba-4977-805a-e9d83cb0b6c5.md` | blocked on the trigger |
-| 7. Head-of-line delay | `99dc14d7-da9d-4a92-a9dc-d7c0685c6992.md` | proposed, shipped as an implementation detail |
+| 6. Schema migration procedure | none needed | closed by `src/ledger/migrate.ts` |
+| 7. Head-of-line delay | `99dc14d7-da9d-4a92-a9dc-d7c0685c6992.md` | proposed. The measurement shipped and the correction is unchosen |
 | (none) | `bbc657f2-8083-47be-84e9-672825e2158d.md` online A/B tests | proposed, blocked |
 | (none) | `af2c0364-dc11-4547-a0b0-90f51592ae2b.md` ledger implementation | V1 background |
 
 A DEC number inside one of those documents is provisional. The register
 assigns the real number at ratification. So two documents may propose the
 same number, and neither holds it until a row exists in section 2.
-
----
 
 ---
 

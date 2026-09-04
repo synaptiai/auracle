@@ -45,6 +45,26 @@ CASES = [
 ]
 
 
+def check_bytes(name, want, payload):
+    """One case that writes bytes rather than text."""
+    with tempfile.NamedTemporaryFile("wb", suffix=".md", delete=False) as handle:
+        handle.write(payload)
+        path = handle.name
+    try:
+        got = subprocess.run([sys.executable, CHECKER, path],
+                             capture_output=True, text=True)
+        if got.returncode != want:
+            print(f"FAIL {name}: want exit {want}, got {got.returncode}")
+            return 1
+        if "not UTF-8" not in got.stdout:
+            print(f"FAIL {name}: wanted the finding to name the encoding")
+            return 1
+        print(f"pass {name}")
+        return 0
+    finally:
+        os.unlink(path)
+
+
 def main() -> int:
     label = {PASS: "pass", FAIL: "fail"}
     failures = 0
@@ -66,6 +86,10 @@ def main() -> int:
                 )
                 if proc.stdout.strip():
                     print(f"     {proc.stdout.strip().splitlines()[0]}")
+    # A file this checker cannot decode must be a finding, not a traceback.
+    failures += check_bytes("a file that is not UTF-8 is a finding", FAIL,
+                            b"\xff\xfe# not utf-8\n")
+
     if failures:
         print(f"\n{failures} failure(s)")
         return 1

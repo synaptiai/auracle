@@ -12,7 +12,7 @@ a ledger-only park.
 
 Section 1.2 still listed compensation as outside V1. Section 7 listed it as
 an open item. The section 4.8 pseudocode omitted the rule the engine runs,
-while `policy.ts` claimed to follow that pseudocode exactly.
+while `src/policy/policy.ts` claimed to follow that pseudocode exactly.
 
 Section 4.9 said the bridge writes every gated action into a draft state.
 A ledger-only park makes no adapter call.

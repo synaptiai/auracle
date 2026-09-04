@@ -5,6 +5,10 @@ setup, the running processes, the approval workflow, the offline jobs and
 observability. The design authority is `docs/v1-architecture.md`. The README
 states what the system does. This document states how you operate it.
 
+Read `docs/architecture-map.md` first if you have not seen the system before.
+It draws the processes, the jobs and the tables this runbook operates.
+`docs/v2-roadmap.md` says what is left in V2 and what blocks each item.
+
 ## 1. Local setup
 
 You need Node 22 or later and Docker.
@@ -1006,6 +1010,7 @@ flatter exactly the runs the ledger understands least.
 
 The job observes. It does not correct the delay, and V2 open item 7 stays
 open until an adopter chooses a correction on data like this.
+`docs/v2-roadmap.md` states what that choice needs.
 
 ## 8. The phase model
 
@@ -1042,3 +1047,4 @@ prints when a day carries no band.
 
 The criteria to leave Phase 2 are undecided. They are open item 1 for V2. Do
 not invent exit criteria. Watch the bands and wait for the decision.
+`docs/v2-roadmap.md` states what blocks that decision and who owns each part.

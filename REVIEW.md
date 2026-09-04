@@ -57,8 +57,10 @@ above five.
 
 ## Checklists
 
-The verification checklist replaces a verifier subagent. The adversarial
-checklist replaces an adversarial reviewer subagent.
+The verification checklist backs the verifier subagent. The adversarial
+checklist backs the adversarial reviewer subagent. Both subagents live under
+`.claude/agents/`. A checklist runs where no subagent does, and a subagent
+that runs still answers to the checklist below.
 
 ### Verification checklist
 

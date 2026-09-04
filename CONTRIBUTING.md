@@ -27,9 +27,49 @@ answer still allows room for the reasoning before it.
 Run all three before you open a pull request.
 Paste the output of each command into the pull request description.
 State the exit code next to each output.
+Report the skip count from the test run, not only the pass count.
+A suite that skips itself proves nothing, and the count is how you see it.
 A pull request without this evidence waits for a person to ask for it.
 
-## 2. Trace your change to a decision
+`pnpm run check` runs the compiler alone and is the fast inner loop.
+To run one file or one case, see the "Running one test" section of `AGENTS.md`.
+A `*.test.ts` file needs no database. A `*.db.test.ts` file needs Postgres.
+
+[The runbook](docs/operations.md) tells you what each process and job does.
+
+## 2. Where the code lives
+
+[The architecture map](docs/architecture-map.md) draws the system in three
+diagrams. This table names the directories a first change is most likely to
+touch. It is not the whole tree.
+
+| Directory | What it holds |
+|---|---|
+| `src/coordinator/` | The run state machine, the queue seam and the partition consumer |
+| `src/ledger/` | The Postgres writes, the fencing epoch and the idempotency keys |
+| `src/policy/` | The policy engine. A pure function that calls no model |
+| `src/classifier/` | Gate one. It samples the label nine times |
+| `src/groundedness/` | Gate two, and the jobs that fit and measure its thresholds |
+| `src/retriever/` | Word search and meaning search. It fuses ranks only |
+| `src/composer/` | Cite-or-abstain drafting |
+| `src/relay/` | The outbox relay daemon |
+| `src/adapters/` | One component per external system, and the ports they implement |
+| `src/approval/` | The approval bridge, the approve command and the edit distance |
+| `src/ingress/`, `src/intake/`, `src/imap/` | How a message arrives and becomes a queue row |
+| `src/calibration/`, `src/goldreport/`, `src/replay/`, `src/triage/` | Offline jobs that fit or publish a number |
+| `src/escalations/`, `src/latency/`, `src/bands/` | Read-only reports. Every statement is a SELECT |
+| `src/models/` | The model port and the one provider behind it |
+| `src/jobs/` | Taxonomy induction. It proposes the list of intents |
+| `src/kb/` | The knowledge-base loader |
+| `src/fixtures/` | Loaders and validators for the committed corpus |
+| `db/` | The schema files. The migration runner applies them in order |
+| `fixtures/` | The committed synthetic corpus |
+| `scripts/` | The generator, the style checker and the documentation checker |
+
+Four processes run without stopping: `webhook`, `imap`, `consumer` and `relay`.
+Everything else runs when you ask it to.
+
+## 3. Trace your change to a decision
 
 Every change to behaviour cites a DEC from `docs/v1-architecture.md`, or states
 that it is an implementation detail.
@@ -39,7 +79,7 @@ If your change contradicts a DEC, stop and raise the conflict before you write
 code.
 See `.claude/skills/decision-tracing` for the full rule set.
 
-## 3. Write the intent file
+## 4. Write the intent file
 
 Copy `intent/TEMPLATE.md` to `intent/<short-title>.md` and fill every section.
 Record the DEC IDs your change obeys under "Decisions affected".
@@ -47,10 +87,11 @@ Write "none" there if your change is an implementation detail.
 Commit the intent file with your change.
 Reviewers read it first.
 
-## 4. Fixtures stay synthetic
+## 5. Fixtures stay synthetic
 
 This repository ships synthetic fixtures only (DEC-18).
-Invented values are what let this repository stay public.
+Invented values are what let this repository stay public to read.
+This repository carries no licence file, so no grant to use it exists yet.
 Never commit real emails, phone numbers, names or account identifiers.
 Read `fixtures/README.md` before you touch anything under `fixtures/`.
 
@@ -107,7 +148,7 @@ number at all.
 `scripts/generate-fixtures.mjs` regenerates the corpus deterministically.
 A committed fixture file must match the generator output byte for byte.
 
-## 5. Install the hooks
+## 6. Install the hooks
 
 Install the commit hook:
 
@@ -134,7 +175,25 @@ The test-edit-lock and live-database rules have no CI surface.
 Their context exists only inside a session.
 Do not assume CI catches them.
 
-## 6. Open the pull request
+## 7. Branch, commit and open the pull request
+
+Name your branch for the issue it closes.
+
+```sh
+git checkout -b feature/issue-42-short-description origin/main
+```
+
+Use `feature/` for new work and `fix/` for a defect. Branches named
+`creatumo/card-<id>` are historical. Do not add more.
+
+Write each commit subject as `type: subject`, in the present tense.
+The types in use are `feat`, `fix`, `docs` and `chore`.
+Keep the subject under 72 characters and explain the reason in the body.
+
+A commit that edits `docs/v1-architecture.md` must cite a DEC in its message.
+The commit hook blocks it otherwise, and CI runs the same check.
+A pull request merges as one squashed commit, and its subject is a sentence
+that names what changed.
 
 Include these items in the description:
 
@@ -144,7 +203,7 @@ Include these items in the description:
    that it is an implementation detail.
 4. Regenerated fixtures if you changed `scripts/generate-fixtures.mjs`.
 
-## 7. The three-pass review
+## 8. The three-pass review
 
 Every change passes three reviews before merge.
 Run them yourself before a reviewer does.
@@ -172,7 +231,7 @@ The severity bar has three levels of "important":
 Everything else is a nit.
 A review reports at most five nits.
 
-## 8. Documentation follows Simplified Technical English
+## 9. Documentation follows Simplified Technical English
 
 Markdown that ships to adopters follows ASD-STE100 Simplified Technical
 English. Prompts, scripts and configuration do not.
@@ -197,6 +256,17 @@ is not coverage of those three.
 
 `.github/workflows/guardrails.yml` runs the same script on every pull request.
 `scripts/test_ste_check.py` holds the checker's own cases.
+
+A second checker decides the claims a document makes about the repository:
+
+```sh
+python3 scripts/check-docs.py
+```
+
+It proves that each diagram declares and explains every box it draws an edge
+to, that every relative link resolves, and that the register's design table accounts for
+every open item. CI runs it and its cases on every pull request. It decides
+structure and reference. It does not decide whether a document is true.
 
 The script strips markdown structure first.
 Headings and list items count as their own units.

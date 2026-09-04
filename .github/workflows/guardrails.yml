@@ -6,6 +6,7 @@ on:
 jobs:
   validators:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,6 +56,16 @@ jobs:
 
       - name: STE checker cases
         run: python3 scripts/test_ste_check.py
+
+      # A document drifts quietly. These checks decide the claims a machine
+      # can decide: every diagram box is declared and explained, the parked
+      # reply reaches a person through the adapter, every relative link
+      # resolves, and section 7.1 accounts for every open item.
+      - name: Documentation claims (diagrams, links, design index)
+        run: python3 scripts/check-docs.py
+
+      - name: Documentation checker cases
+        run: python3 scripts/test_check_docs.py
 
       # The test-edit-lock and live-database rules still block inside a
       # session only. The step above tests the live-database logic; it does

@@ -43,7 +43,7 @@ query.
 
 ## Constraints
 
-`escalations/query.ts` compared a scalar subquery over intake. That throws
+`src/escalations/query.ts` compared a scalar subquery over intake. That throws
 as soon as a ticket holds two queued messages. It now takes the earliest
 arrival, which is what answers the question the filter asks. The design
 document does not mention this site.

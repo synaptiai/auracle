@@ -78,6 +78,8 @@ The authoritative design is `docs/v1-architecture.md`. It holds 39 numbered deci
 
 Core shape: TypeScript, a Postgres ledger (`tsvector` and `pgvector`), a plain state machine, a transactional outbox. No orchestration framework. Models come through OpenRouter.
 
+`docs/architecture-map.md` draws the same system in three diagrams.
+
 ## Runtime shape
 
 `src/coordinator/coordinator.ts` holds the state machine. No model controls the flow.
@@ -106,7 +108,8 @@ Four long-running processes exist:
 
 Offline jobs write artifacts and never touch live traffic:
 `pnpm run calibrate`, `pnpm run gold-report`, `pnpm run triage`, `pnpm run replay`, `pnpm run export-corpus`.
-`pnpm run latency` reads the ledger and reports queue wait and service time per partition (V2 open item 7).
+`pnpm run latency` reads the ledger and reports queue wait and service time per partition.
+It measures V2 open item 7, which stays open because nobody has chosen a correction.
 `pnpm run bands` reads the ledger and reports the four `bands.yaml` metrics for one day.
 It judges that day against the 30 most recent measured days before it.
 Both issue SELECT statements only, so they are safe against a live database.
@@ -115,6 +118,9 @@ Both issue SELECT statements only, so they are safe against a live database.
 Adapters declare their capabilities, and autonomy adapts to those declarations (DEC-06).
 
 `docs/operations.md` is the runbook. `README.md` states the published numbers and the compliance position.
+`docs/v2-roadmap.md` states what is left in V2 and what blocks each item.
+`python3 scripts/check-docs.py` proves the diagram structure, the links and the design index.
+It decides structure and reference. It does not decide whether a diagram is true.
 
 ## Conventions
 

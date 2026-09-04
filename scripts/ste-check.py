@@ -53,9 +53,26 @@ def units(line: str, is_table: bool) -> list[str]:
     return cells
 
 
+def read_text(path: str) -> tuple[str, list[str]]:
+    """Returns (text, findings). A file this script cannot read is a finding.
+
+    `scripts/check-docs.py` runs beside this one over the same file list. A
+    document that is not UTF-8 was a finding there and a traceback here.
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read(), []
+    except UnicodeDecodeError:
+        return "", [f"{path}: not UTF-8"]
+    except OSError as error:
+        return "", [f"{path}: {error.strerror or error}"]
+
+
 def check_file(path: str) -> list[str]:
-    findings = []
-    for block in re.split(r"\n\s*\n", normalize(open(path).read())):
+    text, findings = read_text(path)
+    if findings:
+        return findings
+    for block in re.split(r"\n\s*\n", normalize(text)):
         lines = []
         for raw in block.splitlines():
             line = QUOTE.sub("", HEADING.sub("", raw.strip()))
