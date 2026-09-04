@@ -27,6 +27,9 @@ function priorDays(values: readonly (number | null)[]): DailySample[] {
     value,
     count: value === null ? 0 : 10,
     notReached: 0,
+    // One provider throughout, so these cases test the band and not the
+    // provider guard. src/bands/provider.test.ts tests the guard.
+    provider: 'stub',
     unrecorded: 0,
     pending: 0,
   }));
@@ -78,11 +81,11 @@ describe('the baseline', () => {
     const prior = priorDays(Array.from({ length: WINDOW_DAYS }, () => 0.1));
     // 31 samples supplied, one of them the target's own, so the cut cannot
     // drop it for being outside the window either.
-    prior.push({ day: target, value: 100, count: 10, notReached: 0, unrecorded: 0, pending: 0 });
+    prior.push({ day: target, value: 100, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' });
 
     const evaluated = evaluateMetric(
       METRICS[0]!,
-      { day: target, value: 0.9, count: 10, notReached: 0, unrecorded: 0, pending: 0 },
+      { day: target, value: 0.9, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' },
       prior,
     );
     // Admitting the target would put 100 in the mean and move it to ~3.3.
@@ -92,7 +95,7 @@ describe('the baseline', () => {
 
   it('reports no band and names the shortfall when the history is thin', () => {
     const prior = priorDays(Array.from({ length: WINDOW_DAYS - 1 }, () => 0.1));
-    const evaluated = evaluateMetric(METRICS[0]!, { day: '2026-02-01', value: 0.5, count: 10, notReached: 0, unrecorded: 0, pending: 0 }, prior);
+    const evaluated = evaluateMetric(METRICS[0]!, { day: '2026-02-01', value: 0.5, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' }, prior);
     expect(evaluated.band).toBeNull();
     expect(evaluated.shortfall).toBe(`no baseline: ${WINDOW_DAYS - 1} of ${WINDOW_DAYS} days`);
   });
@@ -101,7 +104,7 @@ describe('the baseline', () => {
   // is infinity, and the three-sigma action is a pull request.
   it('reports no band when a flat window moved today, and says it moved', () => {
     const prior = priorDays(Array.from({ length: WINDOW_DAYS }, () => 0.4));
-    const evaluated = evaluateMetric(METRICS[0]!, { day: '2026-02-01', value: 0.9, count: 10, notReached: 0, unrecorded: 0, pending: 0 }, prior);
+    const evaluated = evaluateMetric(METRICS[0]!, { day: '2026-02-01', value: 0.9, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' }, prior);
     expect(evaluated.band).toBeNull();
     expect(evaluated.shortfall).toBe(`no spread over ${WINDOW_DAYS} days, and today moved to 0.9`);
   });
@@ -113,7 +116,7 @@ describe('the baseline', () => {
     const prior = priorDays(Array.from({ length: WINDOW_DAYS }, () => 0));
     const evaluated = evaluateMetric(
       METRICS[3]!,
-      { day: '2026-02-01', value: 0, count: 10, notReached: 0, unrecorded: 0, pending: 0 },
+      { day: '2026-02-01', value: 0, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' },
       prior,
     );
     expect(METRICS[3]!.name).toBe('relay_delivery_unknown_count');
@@ -126,7 +129,7 @@ describe('the baseline', () => {
     // the day the system knows least about.
     const values: (number | null)[] = Array.from({ length: WINDOW_DAYS }, () => 0.1);
     values[5] = null;
-    const evaluated = evaluateMetric(METRICS[0]!, { day: '2026-02-01', value: 0.5, count: 10, notReached: 0, unrecorded: 0, pending: 0 }, priorDays(values));
+    const evaluated = evaluateMetric(METRICS[0]!, { day: '2026-02-01', value: 0.5, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' }, priorDays(values));
     expect(evaluated.band).toBeNull();
     expect(evaluated.shortfall).toBe(`no baseline: ${WINDOW_DAYS - 1} of ${WINDOW_DAYS} days`);
   });
@@ -144,7 +147,7 @@ describe('the baseline', () => {
     for (const i of [44, 42, 40, 38, 36, 34, 32, 30, 28, 26]) values[i] = null;
     const evaluated = evaluateMetric(
       METRICS[0]!,
-      { day: '2026-09-01', value: 0.9, count: 10, notReached: 0, unrecorded: 0, pending: 0 },
+      { day: '2026-09-01', value: 0.9, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' },
       priorDays(values),
     );
     expect(evaluated.baseline?.days).toBe(WINDOW_DAYS);
@@ -156,7 +159,7 @@ describe('the baseline', () => {
     for (let i = 0; i < 12; i += 1) values[i] = i % 2 === 0 ? 0 : 0.2;
     const evaluated = evaluateMetric(
       METRICS[0]!,
-      { day: '2026-09-01', value: 0.9, count: 10, notReached: 0, unrecorded: 0, pending: 0 },
+      { day: '2026-09-01', value: 0.9, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' },
       priorDays(values),
     );
     expect(evaluated.band).toBeNull();
@@ -172,7 +175,7 @@ describe('the baseline', () => {
 
   it('takes the last full window when more days are supplied', () => {
     const prior = priorDays(Array.from({ length: WINDOW_DAYS + 10 }, (_, i) => (i < 10 ? 9 : 0.1)));
-    const evaluated = evaluateMetric(METRICS[0]!, { day: '2026-03-01', value: 0.1, count: 10, notReached: 0, unrecorded: 0, pending: 0 }, prior);
+    const evaluated = evaluateMetric(METRICS[0]!, { day: '2026-03-01', value: 0.1, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' }, prior);
     // The ten outlying days fall outside the trailing window and must not
     // reach the mean.
     expect(evaluated.baseline?.mean).toBeCloseTo(0.1, 12);
@@ -192,7 +195,7 @@ describe('the band verdict', () => {
   // mean 0.1, sigma 0.1, so value = 0.1 + z/10.
   it('names which of the three defined actions applies', () => {
     const at = (value: number): string | null =>
-      evaluateMetric(METRICS[0]!, { day: '2026-02-01', value, count: 10, notReached: 0, unrecorded: 0, pending: 0 }, spread).band?.action ?? null;
+      evaluateMetric(METRICS[0]!, { day: '2026-02-01', value, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' }, spread).band?.action ?? null;
     // Straddled within a fiftieth of a sigma. The exact boundary is not
     // asserted, because (0.2 - 0.1) / 0.1 lands either side of 1 depending on
     // float rounding and the case would pin the rounding rather than the
@@ -208,7 +211,7 @@ describe('the band verdict', () => {
   });
 
   it('measures the distance in sigmas, signed, so the side is readable', () => {
-    const below = evaluateMetric(METRICS[0]!, { day: '2026-02-01', value: -0.2, count: 10, notReached: 0, unrecorded: 0, pending: 0 }, spread);
+    const below = evaluateMetric(METRICS[0]!, { day: '2026-02-01', value: -0.2, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' }, spread);
     expect(below.band?.sigmaDistance).toBeCloseTo(-3, 10);
   });
 
@@ -220,7 +223,7 @@ describe('the band verdict', () => {
     const gate = METRICS.find((m) => m.name === 'gate_pass_rate')!;
     expect(gate.direction).toBe('low_is_bad');
     const at = (definition: typeof gate, value: number) =>
-      evaluateMetric(definition, { day: '2026-02-01', value, count: 10, notReached: 0, unrecorded: 0, pending: 0 }, spread).band;
+      evaluateMetric(definition, { day: '2026-02-01', value, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' }, spread).band;
 
     // Both directions of both senses, because asserting one arm of each let a
     // hardcoded `false` survive: a gate pass rate that COLLAPSED would then
@@ -241,21 +244,21 @@ describe('the band verdict', () => {
   it('carries a machine-readable reason beside every sentence', () => {
     const flat = priorDays(Array.from({ length: WINDOW_DAYS }, () => 0));
     const moved = evaluateMetric(
-      METRICS[3]!, { day: '2026-09-01', value: 50, count: 10, notReached: 0, unrecorded: 0, pending: 0 }, flat);
+      METRICS[3]!, { day: '2026-09-01', value: 50, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' }, flat);
     expect(moved.shortfallCode).toBe('moved_from_flat');
     expect(moved.shortfall).toContain('today moved to 50');
 
     const steady = evaluateMetric(
-      METRICS[3]!, { day: '2026-09-01', value: 0, count: 10, notReached: 0, unrecorded: 0, pending: 0 }, flat);
+      METRICS[3]!, { day: '2026-09-01', value: 0, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' }, flat);
     expect(steady.shortfallCode).toBe('steady');
 
     const thin = evaluateMetric(
-      METRICS[0]!, { day: '2026-09-01', value: 1, count: 10, notReached: 0, unrecorded: 0, pending: 0 },
+      METRICS[0]!, { day: '2026-09-01', value: 1, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' },
       priorDays([0, 0.2, 0]));
     expect(thin.shortfallCode).toBe('thin_window');
 
     const nan = evaluateMetric(
-      METRICS[0]!, { day: '2026-09-01', value: Number.NaN, count: 10, notReached: 0, unrecorded: 0, pending: 0 },
+      METRICS[0]!, { day: '2026-09-01', value: Number.NaN, count: 10, notReached: 0, unrecorded: 0, pending: 0, provider: 'stub' },
       spread);
     // A value that is not a number fell through every comparison to the last
     // arm of the ladder, so it reported propose_change — a pull request.
@@ -264,7 +267,7 @@ describe('the band verdict', () => {
   });
 
   it('reports no band for a day that measured nothing', () => {
-    const none = evaluateMetric(METRICS[0]!, { day: '2026-02-01', value: null, count: 0, notReached: 4, unrecorded: 0, pending: 0 }, spread);
+    const none = evaluateMetric(METRICS[0]!, { day: '2026-02-01', value: null, count: 0, notReached: 4, unrecorded: 0, pending: 0, provider: 'stub' }, spread);
     expect(none.band).toBeNull();
     expect(none.shortfall).toBe('the day measured nothing');
     // The fifth code, and the only one no case pinned. Mislabelled as
@@ -277,6 +280,12 @@ describe('the band verdict', () => {
 // A valid artifact, which each case below breaks one rule at a time. Built
 // from the definitions rather than written out, so a metric added to
 // bands.yaml cannot leave this fixture silently one row short.
+/** The shape an artifact written before the provider field existed has. */
+function preProviderArtifactFixture(): Record<string, unknown> {
+  const { provider: _dropped, ...rest } = artifactFixture();
+  return rest;
+}
+
 function artifactFixture(): Record<string, unknown> {
   return {
     artifact: 'control-bands',
@@ -286,6 +295,7 @@ function artifactFixture(): Record<string, unknown> {
     day: '2026-02-01',
     window_days: WINDOW_DAYS,
     runs: 10,
+    provider: 'stub',
     metrics: METRICS.map((definition) => ({
       metric: definition.name,
       direction: definition.direction,
@@ -332,6 +342,15 @@ describe('the artifact write path', () => {
 });
 
 describe('the control-band artifact', () => {
+  // An adopter holds artifacts written before this field existed. Asserting
+  // the key present made loadBandsArtifact throw on every one of them.
+  it('accepts a report written before the provider field existed', () => {
+    const raw = preProviderArtifactFixture();
+    expect('provider' in raw).toBe(false);
+    expect(() => validateBandsArtifact(raw)).not.toThrow();
+    expect(validateBandsArtifact(raw).provider).toBeNull();
+  });
+
   it('accepts a well-formed report', () => {
     expect(validateBandsArtifact(artifactFixture()).day).toBe('2026-02-01');
   });
@@ -494,17 +513,29 @@ describe('the bands command never writes', () => {
   });
 
   // The blocklist is over column names, so it is blind to the one payload the
-  // query does read. Only these two keys may be extracted from it.
-  it('extracts no jsonb key from the journal beyond the two it needs', () => {
+  // query does read. Only these keys may be extracted from it.
+  //
+  // Three now, not two. Issue #23 added `provider`, which holds the answerer's
+  // kind — the literal string 'stub' or 'model' — and never a payload, a
+  // prompt or a completion. A fourth key is a widening of what this report can
+  // carry out of the journal, so it belongs here with its reason, and DEC-18
+  // decides whether it may be added at all.
+  it('extracts no jsonb key from the journal beyond the three it needs', () => {
     const code = codeOf('src/bands/query.ts');
     // Every quoted literal near the payload, not only the arrow syntaxes. A
     // first version matched `result->'x'` alone, so
     // `jsonb_extract_path_text(result, 'customer_email')` walked straight
     // past it — and the companion blocklist below is over six column names,
     // so it did not catch that either.
-    const keys = [...code.matchAll(/result[^\n]*?'([a-z_]+)'/g)].map((m) => m[1]!);
+    // Every identifier character, not lowercase alone. A future
+    // `result->>'customerEmail'` kept the sorted-equality assertion green
+    // under `[a-z_]+` — the key simply did not match — and it evades the
+    // extraction-syntax blocklist below too. The DEC-18 guard on the one
+    // payload this report reads would have passed on the widening it exists
+    // to refuse.
+    const keys = [...code.matchAll(/result[^\n]*?'([A-Za-z0-9_]+)'/g)].map((m) => m[1]!);
     expect(keys.length).toBeGreaterThan(0);
-    expect([...new Set(keys)].sort()).toEqual(['abstained', 'reason']);
+    expect([...new Set(keys)].sort()).toEqual(['abstained', 'provider', 'reason']);
     // And no other extraction syntax reaches the payload at all.
     for (const form of ['jsonb_extract_path', 'jsonb_path_query', '#>', '#>>']) {
       expect(code, `query.ts extracts from the journal with ${form}`).not.toContain(form);

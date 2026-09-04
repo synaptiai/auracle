@@ -20,6 +20,17 @@ export interface EscalationItem {
   readonly state: string;
   /** Coordinator reason from the `escalate` step; null when not journaled. */
   readonly reason: string | null;
+  /**
+   * The prompt version the run was pinned to.
+   *
+   * Surfaced because this is the queue a person works from, and a seeded run
+   * reaches it exactly like a produced one: a backdated history writes runs
+   * in `escalated` and `awaiting_approval`, which are the two states this
+   * report selects. Nothing else here distinguishes them, so an operator
+   * pointed at a demo database would work a synthetic backlog as real
+   * customer escalations. `pnpm run seed-history` pins `seed`.
+   */
+  readonly promptVer: string;
   /** Outbox status when a record is stuck: `delivery_unknown` or `malformed`. */
   readonly outboxStatus: string | null;
   /** Park-record fields; present only on the gated path. */
@@ -41,6 +52,7 @@ const RUN_SELECT = `
   SELECT r.run_id            AS run_id,
          r.ticket_id         AS ticket_id,
          r.state             AS state,
+         r.prompt_ver        AS prompt_ver,
          r.cost_micros        AS cost_micros,
          r.steps_used        AS steps_used,
          esc.result ->> 'reason'          AS reason,
@@ -67,6 +79,7 @@ const OUTBOX_SELECT = `
   SELECT o.run_id            AS run_id,
          r.ticket_id         AS ticket_id,
          r.state             AS state,
+         r.prompt_ver        AS prompt_ver,
          r.cost_micros        AS cost_micros,
          r.steps_used        AS steps_used,
          esc.result ->> 'reason'           AS reason,
@@ -88,6 +101,7 @@ function toItem(row: Record<string, unknown>): EscalationItem {
     ticketId: row['ticket_id'] as string,
     state: row['state'] as string,
     reason: (row['reason'] as string | null) ?? null,
+    promptVer: String(row['prompt_ver'] ?? ''),
     outboxStatus: (row['outbox_status'] as string | null) ?? null,
     draftExternalId: (row['draft_external_id'] as string | null) ?? null,
     actionClass: (row['action_class'] as string | null) ?? null,

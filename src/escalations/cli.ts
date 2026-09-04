@@ -38,11 +38,17 @@ stay listed rather than being hidden by the window.`;
 const KNOWN_STATES = new Set(['escalated', 'awaiting_approval', 'delivery_unknown']);
 
 function renderTable(items: readonly EscalationItem[]): string {
-  const header = ['RUN', 'TICKET', 'STATE', 'REASON', 'OUTBOX', 'COSTµ$', 'STEPS', 'DRAFT'];
+  // PIN is the prompt version. It is here because this is the queue a person
+  // works from, and a seeded run reaches it exactly like a produced one:
+  // `pnpm run seed-history` writes runs in `escalated` and
+  // `awaiting_approval`, which are the two states this report selects. It
+  // pins `seed`, and without this column nothing on the screen said so.
+  const header = ['RUN', 'TICKET', 'STATE', 'PIN', 'REASON', 'OUTBOX', 'COSTµ$', 'STEPS', 'DRAFT'];
   const rows = items.map((item) => [
     item.runId.slice(0, 8),
     item.ticketId,
     item.state,
+    item.promptVer,
     item.reason ?? '-',
     item.outboxStatus ?? '-',
     String(item.costMicros),

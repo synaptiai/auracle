@@ -270,9 +270,16 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
       expect(artifact.artifact).toBe('gold-report');
       expect(artifact.method).toBe('human-review');
       // `method` names section 4.10's slot; `scored_by` names the scorer.
-      // This run pins modelVer 'test-stub', not the replay stub, so a real
-      // provider is what answered.
-      expect(artifact.scored_by).toBe('model');
+      //
+      // 'stub', because a `FakeProvider` answered. This case asserted 'model'
+      // and said a real provider had answered, which was the exact false
+      // claim the field exists to prevent: the fake declared no kind, and an
+      // absent kind reads as 'model'. The pin is not the answerer — the two
+      // are independent options, which is why `scorerOf` reads the provider.
+      //
+      // No published number moves. `gold-report/v7.json` already reads
+      // `scored_by: 'stub'`; only this suite was wrong about itself.
+      expect(artifact.scored_by).toBe('stub');
       expect(artifact.split_used).toBe('report');
       expect(artifact.gold_source).toBe('synthetic');
       expect(artifact.report_tickets).toBe(REPORT_COUNT);

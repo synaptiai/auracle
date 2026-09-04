@@ -71,6 +71,9 @@ describe('escalations CLI queries', () => {
       runId: run.runId,
       ticketId: run.ticketId,
       state: 'escalated',
+      // The pin is on the row so a person can tell a seeded run from a
+      // produced one in the queue they work from.
+      promptVer: 'p1',
       reason: 'limit_cost',
       outboxStatus: null,
       draftExternalId: null,

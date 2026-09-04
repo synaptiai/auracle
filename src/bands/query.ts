@@ -35,6 +35,11 @@ export interface DayRow {
   day: string;
   /** Runs the day held, across every metric. */
   runs: number;
+  /**
+   * What answered the model calls behind the day, or null when the day
+   * recorded none or recorded more than one (issue #23).
+   */
+  provider: string | null;
   samples: Record<MetricName, DailySample>;
 }
 
@@ -70,6 +75,34 @@ const SELECT_BY_DAY = `
       -- which is the cost that made "safe against a live database" true of
       -- writes and false of load.
      WHERE step_id = 'compose' AND result ? 'abstained'
+       AND run_id IN (SELECT run_id FROM day_run)
+  ),
+  -- What answered the model calls behind each run (issue #23).
+  --
+  -- The composer is what calls the model, so the marker sits on its journal
+  -- row beside the abstained key. Read from the row rather than derived from
+  -- the version pins: src/models/provider.ts states that the provider and the
+  -- model version are independent options, so a stub answering under a real
+  -- model's pin would report the wrong provider. That is the defect the kind
+  -- field exists to prevent, and deriving it here would reintroduce it.
+  --
+  -- Guarded on the type, like the abstained key above: one row whose value is
+  -- not a string would otherwise fail the statement and produce no report.
+  composed_by AS (
+    SELECT run_id,
+           -- The closed set, not a length bound. src/models/provider.ts
+           -- declares the field as 'stub' | 'model' and nothing else, so an
+           -- allowlist is available for free and a length bound is not the
+           -- tightest guard on offer. Thirty-one characters is enough to
+           -- carry a name or an address out of the journal into a written
+           -- artifact, and this value does ride into one (DEC-18).
+           --
+           -- Anything else reads as unrecorded, which the day then reports
+           -- honestly rather than passing a value nobody declared.
+           CASE WHEN result->>'provider' IN ('stub', 'model')
+                THEN result->>'provider' END AS provider
+      FROM step_journal
+     WHERE step_id = 'compose' AND result ? 'provider'
        AND run_id IN (SELECT run_id FROM day_run)
   ),
   -- The gate step's reason, from a gate that produced a verdict.
@@ -111,6 +144,37 @@ const SELECT_BY_DAY = `
          -- would inflate this count, deflate every rate, and pass the gate
          -- cross-check below, because the gate counts would inflate with it.
          count(DISTINCT d.run_id)                                       AS runs,
+         -- One name when the day is unanimous, null when it recorded none or
+         -- recorded more than one. A day that mixed providers is not a day
+         -- from either of them, and averaging across the mix is the defect.
+         -- One name when the day is unanimous. The sentinel when the day
+         -- held more than one, or held a run that recorded none beside one
+         -- that did. Null only when nothing in the day recorded a provider.
+         --
+         -- Three states, not two. Collapsing mixed and unrecorded into null
+         -- made a window in which EVERY day mixed providers look like a
+         -- ledger written before the field existed, so the guard stayed
+         -- silent and the report emitted propose_change across the exact
+         -- boundary it exists to refuse.
+         CASE WHEN count(cb.provider) = 0                    THEN NULL
+              WHEN count(DISTINCT cb.provider) = 1
+               -- Only a run that composed can testify. A run absent from
+               -- both CTEs never reached the compose step, so it made no
+               -- model call and has no opinion about who answered.
+               --
+               -- Counting its absence as a disagreement was a silencer: a
+               -- run stopped by an unreadable classifier, a cost limit or an
+               -- abandoned intake made its whole day read 'mixed', and every
+               -- window covering that day then refused all four metrics for
+               -- thirty days. Those runs are ordinary traffic, not rare.
+               --
+               -- A run that DID compose and recorded no provider still
+               -- disagrees, because that is the deploy boundary this guard
+               -- exists to catch.
+               AND count(*) FILTER (
+                     WHERE cb.provider IS NULL AND c.run_id IS NOT NULL
+                   ) = 0                                     THEN min(cb.provider)
+              ELSE 'mixed' END                                          AS provider,
          count(c.abstained)                                             AS abstain_count,
          count(*) FILTER (WHERE c.abstained)                            AS abstained,
          count(*) FILTER (WHERE g.reason = ANY($3::text[]))             AS gate_count,
@@ -142,6 +206,7 @@ const SELECT_BY_DAY = `
          count(*) FILTER (WHERE p.run_id IS NOT NULL)                   AS undelivered
     FROM day_run d
     LEFT JOIN composed c ON c.run_id = d.run_id
+    LEFT JOIN composed_by cb ON cb.run_id = d.run_id
     LEFT JOIN gated    g ON g.run_id = d.run_id
     LEFT JOIN unknown  u ON u.run_id = d.run_id
     LEFT JOIN undelivered p ON p.run_id = d.run_id
@@ -203,6 +268,11 @@ export async function readDays(pool: Pool, from: Date, to: Date): Promise<DayRow
     // Derived by subtraction the check could not fail, and a gap between the
     // predicates disappeared into the remainder unnoticed.
     const neverGated = toCount(row['gate_never'], 'gate_never');
+    // One name for the whole day, or null. Every metric of a day shares it:
+    // the provider answered that day's runs, not that day's metrics.
+    const provider = row['provider'] === null || row['provider'] === undefined
+      ? null
+      : String(row['provider']);
     const accounted =
       gateCount + gateUnrecorded + gateShortCircuit + gateObsolete + neverGated;
     if (accounted !== runs) {
@@ -215,6 +285,7 @@ export async function readDays(pool: Pool, from: Date, to: Date): Promise<DayRow
     return {
       day,
       runs,
+      provider,
       samples: {
         abstain_rate: {
           day,
@@ -223,6 +294,7 @@ export async function readDays(pool: Pool, from: Date, to: Date): Promise<DayRow
           notReached: runs - abstainCount,
           unrecorded: 0,
           pending: 0,
+          provider,
         },
         gate_pass_rate: {
           day,
@@ -234,6 +306,7 @@ export async function readDays(pool: Pool, from: Date, to: Date): Promise<DayRow
           // cannot answer for, not the ordinary traffic below the gate.
           unrecorded: gateUnrecorded + gateObsolete,
           pending: 0,
+          provider,
         },
         approval_edit_distance: {
           day,
@@ -242,6 +315,7 @@ export async function readDays(pool: Pool, from: Date, to: Date): Promise<DayRow
           notReached: runs - editCount,
           unrecorded: 0,
           pending: toCount(row['awaiting_approval'], 'awaiting_approval'),
+          provider,
         },
         relay_delivery_unknown_count: {
           day,
@@ -252,6 +326,7 @@ export async function readDays(pool: Pool, from: Date, to: Date): Promise<DayRow
           notReached: 0,
           unrecorded: 0,
           pending: toCount(row['undelivered'], 'undelivered'),
+          provider,
         },
       },
     };

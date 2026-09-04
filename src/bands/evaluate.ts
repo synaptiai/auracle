@@ -11,6 +11,15 @@
 import type { MetricDefinition } from './metrics.js';
 import { WINDOW_DAYS } from './metrics.js';
 
+/**
+ * The value a day carries when its runs did not agree on a provider.
+ *
+ * A distinct state from null. Null means nothing in the day recorded one,
+ * which a ledger written before the field existed produces for every day.
+ * This means the day held two, which is a provider change inside one day.
+ */
+export const MIXED_PROVIDER = 'mixed';
+
 /** One day's value for one metric, with the population behind it. */
 export interface DailySample {
   /** UTC calendar day, `YYYY-MM-DD`. Days order by this string. */
@@ -47,6 +56,19 @@ export interface DailySample {
    * and this count says by how much.
    */
   pending: number;
+  /**
+   * What answered the model calls behind this day, or null.
+   *
+   * Null means the day's runs recorded no provider, or recorded more than
+   * one. Both are reasons to refuse a comparison, and both are reported as
+   * such, but they are not the same reason and the shortfall says which.
+   *
+   * A band across a provider change measures the provider and not the
+   * system: the bulk history composes through the offline stand-in and a
+   * demo day composes through a real model, and a number that moved because
+   * the thing producing it changed reads as though the system moved.
+   */
+  provider: string | null;
 }
 
 /** The action bands.yaml names for the line a day crossed. */
@@ -95,7 +117,8 @@ export type ShortfallCode =
   | 'day_not_a_number'
   | 'thin_window'
   | 'steady'
-  | 'moved_from_flat';
+  | 'moved_from_flat'
+  | 'provider_change';
 
 export interface MetricEvaluation {
   metric: MetricDefinition['name'];
@@ -209,6 +232,46 @@ export function evaluateMetric(
       band: null,
       shortfall: `no baseline: ${measured.length} of ${WINDOW_DAYS} days`,
       shortfallCode: 'thin_window',
+    };
+  }
+
+  // The window exists, so it can now be asked whether it describes one system.
+  //
+  // Checked after the thin window and after today's own value, because both
+  // are more basic: a window that does not exist cannot span a provider
+  // change, and a day with no point needs no baseline at all. Reporting the
+  // provider ahead of either would send a reader to the wrong remedy.
+  //
+  // Over the measured days and today together. A model-produced day judged
+  // against a stub baseline is the same defect read from the other side.
+  //
+  // A window where no day names a provider is not a window spanning a change.
+  // It is a ledger written before the field existed, which is the state
+  // db/005 describes for its own columns, and refusing every verdict on it
+  // would take the report away from exactly the adopters who have the most
+  // history. So the check activates once any day names a provider, and from
+  // then on it refuses the moment unanimity cannot be proven — a named
+  // provider beside an unrecorded day could be two providers, and a band
+  // must not rest on a guess.
+  const providers = [today, ...measured].map((s) => s.provider);
+  const mixed = providers.filter((p) => p === MIXED_PROVIDER).length;
+  const named = [
+    ...new Set(providers.filter((p): p is string => p !== null && p !== MIXED_PROVIDER)),
+  ].sort();
+  const unrecorded = providers.filter((p) => p === null).length;
+  // A day that mixed providers is itself a provider change, so it refuses on
+  // its own — it does not need a second named provider beside it. Folding it
+  // into the unrecorded count left a window of nothing but mixed days looking
+  // like a ledger written before the field existed.
+  if (mixed > 0 || (named.length > 0 && (named.length > 1 || unrecorded > 0))) {
+    const parts: string[] = [];
+    if (named.length > 0) parts.push(named.join(' and '));
+    if (mixed > 0) parts.push(`${mixed} day(s) that held more than one`);
+    if (unrecorded > 0) parts.push(`${unrecorded} day(s) with an unrecorded provider`);
+    return {
+      ...base, baseline: null, band: null,
+      shortfall: `the window spans more than one provider: ${parts.join(', ')}`,
+      shortfallCode: 'provider_change',
     };
   }
 

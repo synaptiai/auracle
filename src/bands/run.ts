@@ -167,8 +167,16 @@ export async function runBandsJob(options: BandsJobOptions): Promise<BandsJobRes
     day,
     window_days: WINDOW_DAYS,
     runs,
+    // The day's own provider, from the row the query answered with. Absent
+    // when the day held no runs, which records honestly that nothing composed.
+    provider: today?.provider ?? null,
     metrics: METRICS.map((definition) => {
-      const empty: DailySample = { day, value: null, count: 0, notReached: runs, unrecorded: 0, pending: 0 };
+      // A day with no row records no provider, which is honest: nothing
+      // composed, so nothing answered. It never reaches the provider check,
+      // because a null value is the more basic shortfall.
+      const empty: DailySample = {
+        day, value: null, count: 0, notReached: runs, unrecorded: 0, pending: 0, provider: null,
+      };
       const sample = today?.samples[definition.name] ?? empty;
       const evaluated = evaluateMetric(
         definition,

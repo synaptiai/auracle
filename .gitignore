@@ -54,3 +54,6 @@ __pycache__/
 # Lock files the decision-journal recorder leaves behind. They are
 # process state, never a record of a decision.
 .decisions/*.lock
+
+# Worktrees a subagent creates for parallel work. Harness state, never source.
+/.claude/worktrees/

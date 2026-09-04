@@ -37,6 +37,21 @@ const DAEMON_ENTRIES = [
 const SEAM_MODULES = ['src/ledger/clock.ts', 'src/ledger/insert.ts'];
 
 /**
+ * The one module allowed to supply a clock (issue #23).
+ *
+ * The traffic seeder writes a backdated history through the real path, which
+ * is what the seam was built for. It is offline tooling, run by hand against
+ * a database an operator names.
+ *
+ * The exception belongs to the shipped-module rule only. The daemon closure
+ * below keeps **no** exception, so a daemon that ever imported the seeder
+ * fails that case even though the seeder is allowed here. That asymmetry is
+ * the guarantee: the seeder may hold the clock, and nothing a daemon reaches
+ * may — including the seeder itself.
+ */
+const SEEDER_MODULES = ['src/seed/write.ts'];
+
+/**
  * Blanks comments, and only comments.
  *
  * A naive `//` sweep also blanks the rest of any line holding a URL, and
@@ -68,7 +83,15 @@ function stripComments(source: string): string {
 function importsOf(file: string): string[] {
   const source = readFileSync(file, 'utf8');
   const found: string[] = [];
-  for (const pattern of [/from\s+'(\.[^']+)'/g, /import\s*\(\s*'(\.[^']+)'/g]) {
+  // Every quote character, not the single quote alone. The guard matched only
+  // `'...'`, and this repository has no eslint `quotes` rule, so
+  // `await import("../seed/write.js")` was lint-clean and invisible: the
+  // seeder never entered the daemon closure and the asymmetry that is the
+  // whole guarantee held for one quote character.
+  for (const pattern of [
+    /from\s+['"`](\.[^'"`]+)['"`]/g,
+    /import\s*\(\s*['"`](\.[^'"`]+)['"`]\s*\)/g,
+  ]) {
     for (const match of source.matchAll(pattern)) {
       const candidate = resolve(dirname(file), match[1]!.replace(/\.js$/, '.ts'));
       if (existsSync(candidate)) found.push(candidate);
@@ -140,11 +163,14 @@ function stripImports(source: string): string {
  * a helper. Imports are blanked first, then any residual mention that is not
  * immediately followed by `(` is an offender.
  */
-function offendingMentions(files: readonly string[]): string[] {
+function offendingMentions(
+  files: readonly string[],
+  allowed: readonly string[] = [],
+): string[] {
   const offenders: string[] = [];
   for (const file of files) {
     const rel = relative(REPO_ROOT, file);
-    if (SEAM_MODULES.includes(rel)) continue;
+    if (SEAM_MODULES.includes(rel) || allowed.includes(rel)) continue;
     const source = stripImports(stripComments(readFileSync(file, 'utf8')));
     for (const match of source.matchAll(/\bfenced(?:Insert|Transition)\b\s*/g)) {
       const next = source[match.index + match[0].length];
@@ -205,11 +231,16 @@ const SHIPPED = shippedModules(join(REPO_ROOT, 'src'))
 const DAEMON_CLOSURE = [...closure(DAEMON_ENTRIES)].sort();
 
 /** The seam's own module is excluded; a declaration is not a call site. */
-function offendingArities(files: readonly string[], name: string, limit: number): string[] {
+function offendingArities(
+  files: readonly string[],
+  name: string,
+  limit: number,
+  allowed: readonly string[] = [],
+): string[] {
   const offenders: string[] = [];
   for (const file of files) {
     const rel = relative(REPO_ROOT, file);
-    if (SEAM_MODULES.includes(rel)) continue;
+    if (SEAM_MODULES.includes(rel) || allowed.includes(rel)) continue;
     const source = stripComments(readFileSync(file, 'utf8'));
     for (const local of localNames(source, name)) {
       for (const arity of callArities(source, local)) {
@@ -239,11 +270,14 @@ function offendingTypeReferences(files: readonly string[]): string[] {
   return offenders;
 }
 
-function offendingTypeNames(files: readonly string[]): string[] {
+function offendingTypeNames(
+  files: readonly string[],
+  allowed: readonly string[] = [],
+): string[] {
   const offenders: string[] = [];
   for (const file of files) {
     const rel = relative(REPO_ROOT, file);
-    if (SEAM_MODULES.includes(rel)) continue;
+    if (SEAM_MODULES.includes(rel) || allowed.includes(rel)) continue;
     const source = stripComments(readFileSync(file, 'utf8'));
     if (/\bSeededInsertClock\b|\bSeededFinishClock\b/.test(source)) offenders.push(rel);
   }
@@ -264,17 +298,17 @@ describe('the clock seam and everything that ships', () => {
   });
 
   it('passes no clock to fencedInsert from any shipped module', () => {
-    expect(offendingArities(SHIPPED, 'fencedInsert', 3)).toEqual([]);
+    expect(offendingArities(SHIPPED, 'fencedInsert', 3, SEEDER_MODULES)).toEqual([]);
   });
 
   it('passes no clock to fencedTransition from any shipped module', () => {
-    expect(offendingArities(SHIPPED, 'fencedTransition', 2)).toEqual([]);
+    expect(offendingArities(SHIPPED, 'fencedTransition', 2, SEEDER_MODULES)).toEqual([]);
   });
 
   // An arity check alone would miss a module that builds a clock and hands
   // it on through a helper of its own.
   it('names neither clock type in any shipped module', () => {
-    expect(offendingTypeNames(SHIPPED)).toEqual([]);
+    expect(offendingTypeNames(SHIPPED, SEEDER_MODULES)).toEqual([]);
   });
 
   it('reaches for neither write signature in any shipped module', () => {
@@ -283,7 +317,37 @@ describe('the clock seam and everything that ships', () => {
 
   // The whole class, not a fourth member of it.
   it('names neither write except to call it, in any shipped module', () => {
-    expect(offendingMentions(SHIPPED)).toEqual([]);
+    expect(offendingMentions(SHIPPED, SEEDER_MODULES)).toEqual([]);
+  });
+});
+
+// An exception nobody can check is a hole. These pin what it covers, that it
+// covers exactly one file, and that the file it covers really does need it.
+describe('the seeder exception', () => {
+  it('names exactly one module', () => {
+    expect(SEEDER_MODULES).toEqual(['src/seed/write.ts']);
+  });
+
+  it('names a module that exists and is scanned', () => {
+    const rels = SHIPPED.map((f) => relative(REPO_ROOT, f));
+    for (const seeder of SEEDER_MODULES) expect(rels).toContain(seeder);
+  });
+
+  // If the seeder stopped passing a clock the exception would be dead, and a
+  // dead exception is a hole waiting for the next module that lands under it.
+  it('covers a module that really does supply a clock', () => {
+    const offenders = offendingArities(
+      SHIPPED.filter((f) => SEEDER_MODULES.includes(relative(REPO_ROOT, f))),
+      'fencedInsert',
+      3,
+    );
+    expect(offenders).toHaveLength(1);
+  });
+
+  // The guarantee. The exception is the shipped rule's alone.
+  it('is not honoured by the daemon closure', () => {
+    const rels = DAEMON_CLOSURE.map((f) => relative(REPO_ROOT, f));
+    for (const seeder of SEEDER_MODULES) expect(rels).not.toContain(seeder);
   });
 });
 
@@ -442,6 +506,30 @@ describe('stripComments', () => {
   it('keeps the rest of a line holding a URL in a template literal', () => {
     const kept = stripComments('const u = `https://example.test/${v}`; f(a, b, c, d);');
     expect(callArities(kept, 'f')).toEqual([4]);
+  });
+});
+
+describe('importsOf, on every quote a specifier can wear', () => {
+  // The three forms a module can name an import with. The guard matched one,
+  // and nothing in this repository enforces which a writer picks.
+  it('follows a single-quoted static import', () => {
+    expect(importsOf(join(REPO_ROOT, 'src/coordinator/consumer-main.ts')).length)
+      .toBeGreaterThan(0);
+  });
+
+  it('reads a double-quoted specifier', () => {
+    const source = 'const m = await import("./clock.js");';
+    expect(/import\s*\(\s*['"`](\.[^'"`]+)['"`]\s*\)/.exec(source)?.[1]).toBe('./clock.js');
+  });
+
+  it('reads a template-literal specifier with no interpolation', () => {
+    const source = 'const m = await import(`./clock.js`);';
+    expect(/import\s*\(\s*['"`](\.[^'"`]+)['"`]\s*\)/.exec(source)?.[1]).toBe('./clock.js');
+  });
+
+  it('reads a double-quoted static import', () => {
+    const source = 'import { x } from "./clock.js";';
+    expect(/from\s+['"`](\.[^'"`]+)['"`]/.exec(source)?.[1]).toBe('./clock.js');
   });
 });
 

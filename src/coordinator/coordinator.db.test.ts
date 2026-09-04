@@ -233,6 +233,17 @@ describe('section 4.3 run coordinator', () => {
       'gate',
       'retrieve',
     ]);
+    // Issue #23: the compose row records what answered the model calls, so
+    // `pnpm run bands` can refuse to compare a day against a baseline from a
+    // different provider. Read from the provider, never derived from the
+    // pins, which are an independent option.
+    //
+    // 'stub', because `FakeProvider` now declares itself one. It declared no
+    // kind before, and `provider.ts` says an absent kind means 'model', so
+    // the harness answered under the name of a real provider.
+    const compose = steps.find((s) => s.step_id === 'compose');
+    expect(compose?.result).toMatchObject({ provider: 'stub' });
+
     const classify = steps.find((s) => s.step_id === 'classify');
     expect(classify).toMatchObject({ status: 'done' });
     expect(classify?.result).toMatchObject({

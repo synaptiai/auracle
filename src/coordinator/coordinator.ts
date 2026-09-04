@@ -567,6 +567,20 @@ export async function coordinateTicket(
     abstained: composed.abstained,
     claimCount: composed.claims.length,
     staleDocumentIds: composed.staleDocuments.map((doc) => doc.docId),
+    // What actually answered this run's model calls (issue #23).
+    //
+    // Read from the provider rather than derived from the pins: this module's
+    // own import states that the provider and the model version are
+    // independent options, so a stub answering under a real model's pin would
+    // report the wrong thing. `scorerOf` in the gold report reads it the same
+    // way, for the same reason.
+    //
+    // `pnpm run bands` compares a day against the thirty before it, and a
+    // band across a provider change measures the provider and not the system.
+    // Without this the reader had no way to tell, and every day of live
+    // traffic recorded nothing while a seeded day recorded a name — which
+    // made the report refuse a verdict on any ledger holding both.
+    provider: deps.provider.kind ?? 'model',
   });
   if (composed.abstained || composed.draft === null) {
     // DEC-07: an abstain is a correct output, not an error. A person closes

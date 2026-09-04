@@ -52,6 +52,21 @@ export interface RecordedCall {
  * script throws instead of inventing output.
  */
 export class FakeProvider implements ModelProvider {
+  /**
+   * A stub, and it says so.
+   *
+   * `provider.ts` says an absent kind means 'model', so this class answered
+   * under the name of a real provider for every reader of the field. That is
+   * the false claim the field exists to prevent: `scorerOf` in the gold
+   * report reads it, and its suite asserted `scored_by: 'model'` for a report
+   * this class produced, with a comment saying a real provider had answered.
+   *
+   * The published artifact was never wrong — `gold-report/v7.json` reads
+   * `scored_by: 'stub'`, because the job that wrote it used a provider that
+   * declares itself. Only the harness lied, and only to its own tests.
+   */
+  readonly kind = 'stub' as const;
+
   readonly calls: RecordedCall[] = [];
 
   constructor(

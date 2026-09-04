@@ -862,9 +862,23 @@ The report states a band, or it states why it has none. It never states both.
 | `steady at 0 over 30 days` | The metric held one value all window, and today matches it. | Nothing. This is the healthy reading for the delivery count. |
 | `no spread over 30 days, and today moved to 3` | The metric held one value all window, and today left it. | Look now. There is no sigma to measure the step against. |
 | `the day measured a value that is not a number` | The ledger holds a value no arithmetic can use. | Read the ledger for that day. This needs a person. |
+| `the window spans more than one provider: stub and model` | The days compared did not all run against one model provider. | Wait out the window, or read the days on each side of the change separately. |
 
 Each line has a code in the artifact, in `shortfall_code`. Read that rather
 than the sentence if a tool consumes the file.
+
+The provider line has a cost worth knowing before you meet it. A band
+compares a day against the thirty before it, so a change of provider silences
+every metric until the window clears. Upgrading this software is such a
+change: a run records its provider from this version onward, and a run written
+before it recorded none. The first day carrying both is a day that disagrees
+with itself, and the window covering that day emits no verdict for about a
+month.
+
+The artifact names the day's own provider in `provider`. It reads `mixed` when
+the day's runs disagreed, and null when none of them recorded one. An artifact
+written before the field existed has no `provider` key, and the reader treats
+that as null.
 
 The baseline is 30 daily samples, not 30 calendar days. The job reads 60 days
 to find them. A quiet day yields no sample, so demanding 30 consecutive days

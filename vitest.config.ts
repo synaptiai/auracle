@@ -5,6 +5,13 @@ export default defineConfig({
     // Each run gets its own throwaway pgvector Postgres, started once here
     // before workers fork (see src/test-support/global-setup.ts); its URI is
     // injected as DATABASE_URL per test file by src/test-support/db-url.setup.ts.
+    // Only this checkout's suites. The Agent tool creates a worktree under
+    // .claude/worktrees/ for a subagent working in parallel, and that holds a
+    // second full checkout. Without this the runner collected both trees: the
+    // file and case counts roughly doubled, and the two copies of the
+    // end-to-end mail suite raced for the one GreenMail server the global
+    // setup starts, so one of them failed on a mailbox the other had emptied.
+    exclude: ['**/node_modules/**', '**/dist/**', '.claude/worktrees/**'],
     globalSetup: ['./src/test-support/global-setup.ts'],
     setupFiles: ['./src/test-support/db-url.setup.ts'],
     // Suites still truncate tables between cases within a run; running test

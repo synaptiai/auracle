@@ -52,6 +52,8 @@ interface SeedOptions {
   state?: string;
   /** The compose step's outcome, or absent for a run that never composed. */
   abstained?: boolean;
+  /** What answered the run's model calls, recorded beside the compose outcome. */
+  provider?: string;
   /** The gate step's reason, or absent for a run that never gated. */
   reason?: string;
   /** A gate step journalled before the reason existed. */
@@ -89,7 +91,14 @@ async function seedRun(opts: SeedOptions): Promise<string> {
     await pool.query(
       `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
        VALUES ($1, 'compose', 'done', $2::jsonb, 'p1', 'm1', 0)`,
-      [run.runId, JSON.stringify({ abstained: opts.abstained })],
+      [
+        run.runId,
+        JSON.stringify(
+          opts.provider === undefined
+            ? { abstained: opts.abstained }
+            : { abstained: opts.abstained, provider: opts.provider },
+        ),
+      ],
     );
   }
   if (opts.reason !== undefined || opts.gateWithoutReason === true || opts.gateFailed === true) {
@@ -144,6 +153,94 @@ describe('the control-band daily sample', () => {
     expect(days.map((d) => d.day)).toEqual(['2026-02-01', '2026-02-03']);
     expect(days[0]!.runs).toBe(2);
     expect(days[1]!.runs).toBe(1);
+  });
+
+  // Issue #23. The provider is read off the compose journal row, so it must
+  // survive the round trip through the query, not merely be written.
+  it('reads back one provider for a day whose runs agree', async () => {
+    await seedRun({ day: '2026-03-01', abstained: false, provider: 'stub' });
+    await seedRun({ day: '2026-03-01', abstained: true, provider: 'stub' });
+    const days = await readDays(pool, new Date('2026-03-01T00:00:00Z'), new Date('2026-03-02T00:00:00Z'));
+    expect(days).toHaveLength(1);
+    expect(days[0]!.provider).toBe('stub');
+    // And every metric of the day carries it, because the provider answered
+    // the day's runs and not the day's metrics.
+    expect(days[0]!.samples.abstain_rate.provider).toBe('stub');
+    expect(days[0]!.samples.gate_pass_rate.provider).toBe('stub');
+  });
+
+  // A day that mixed providers is not a day from either of them, and it is
+  // not a day that recorded nothing either. It reports the mixed sentinel, so
+  // a window of nothing but mixed days still refuses a verdict.
+  it('reads back the mixed sentinel for a day whose runs disagree', async () => {
+    await seedRun({ day: '2026-03-01', abstained: false, provider: 'stub' });
+    await seedRun({ day: '2026-03-01', abstained: true, provider: 'model' });
+    const days = await readDays(pool, new Date('2026-03-01T00:00:00Z'), new Date('2026-03-02T00:00:00Z'));
+    expect(days[0]!.provider).toBe('mixed');
+  });
+
+  // A run recorded before the field existed, beside one recorded after. The
+  // day cannot be proven unanimous, so it is not claimed to be.
+  it('reads back the mixed sentinel for a day holding a run with no provider', async () => {
+    await seedRun({ day: '2026-03-01', abstained: false, provider: 'stub' });
+    await seedRun({ day: '2026-03-01', abstained: true });
+    const days = await readDays(pool, new Date('2026-03-01T00:00:00Z'), new Date('2026-03-02T00:00:00Z'));
+    expect(days[0]!.provider).toBe('mixed');
+  });
+
+  // A run that never composed made no model call, so it cannot testify to a
+  // provider. Counting its absence as a disagreement made one unreadable
+  // classifier answer silence every metric for the thirty days that window
+  // covers — the opposite of what the guard is for.
+  //
+  // Runs reach this shape constantly: abandonMessage files one with 'intake'
+  // pins and only an escalate row, and classifier_unreadable, limit_cost and
+  // limit_steps all stop before the compose step starts.
+  it('ignores a run that never composed when reading the day provider', async () => {
+    await seedRun({ day: '2026-03-01', abstained: false, provider: 'stub' });
+    // No `abstained`, so no compose row at all: the run stopped earlier.
+    await seedRun({ day: '2026-03-01', reason: 'auto' });
+    const days = await readDays(pool, new Date('2026-03-01T00:00:00Z'), new Date('2026-03-02T00:00:00Z'));
+    expect(days[0]!.provider).toBe('stub');
+  });
+
+  // But a run that DID compose and recorded no provider is a real
+  // disagreement: it is the deploy boundary, one side of which knows.
+  it('reads mixed for a day holding a compose that recorded no provider', async () => {
+    await seedRun({ day: '2026-03-01', abstained: false, provider: 'stub' });
+    await seedRun({ day: '2026-03-01', abstained: true });
+    const days = await readDays(pool, new Date('2026-03-01T00:00:00Z'), new Date('2026-03-02T00:00:00Z'));
+    expect(days[0]!.provider).toBe('mixed');
+  });
+
+  // Only this case is null: a day where nothing recorded a provider at all.
+  it('reads back null for a day where nothing recorded a provider', async () => {
+    await seedRun({ day: '2026-03-01', abstained: false });
+    const days = await readDays(pool, new Date('2026-03-01T00:00:00Z'), new Date('2026-03-02T00:00:00Z'));
+    expect(days[0]!.provider).toBeNull();
+  });
+
+  // The privacy guard over the payload is a text scan, so it cannot see what
+  // a value actually holds. This drives a value the read path must refuse
+  // rather than asserting a bound on one the test itself wrote — which is
+  // what the first version did, and it could not fail (DEC-18).
+  it('refuses a provider value that is not one the field declares', async () => {
+    const essay = 'x'.repeat(4096);
+    await seedRun({ day: '2026-03-01', abstained: false, provider: essay });
+    const days = await readDays(pool, new Date('2026-03-01T00:00:00Z'), new Date('2026-03-02T00:00:00Z'));
+    // Treated as unrecorded, so nothing long reaches the artifact.
+    expect(days[0]!.provider).toBeNull();
+  });
+
+  // The two the field declares, and nothing else. A short name that nobody
+  // declared is still refused, because the guard is an allowlist and not a
+  // length bound.
+  it('carries only the two providers the field declares', async () => {
+    await seedRun({ day: '2026-03-02', abstained: false, provider: 'stub' });
+    await seedRun({ day: '2026-03-03', abstained: false, provider: 'model' });
+    await seedRun({ day: '2026-03-04', abstained: false, provider: 'gpt' });
+    const days = await readDays(pool, new Date('2026-03-02T00:00:00Z'), new Date('2026-03-05T00:00:00Z'));
+    expect(days.map((d) => d.provider)).toEqual(['stub', 'model', null]);
   });
 
   it('computes the abstain rate over runs that composed, and counts the rest', async () => {

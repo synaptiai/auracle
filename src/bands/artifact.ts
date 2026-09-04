@@ -30,6 +30,7 @@ const ARTIFACT_NAME = 'control-bands';
 const ACTIONS: readonly BandAction[] = ['in_band', 'log', 'diagnose', 'propose_change'];
 const SHORTFALL_CODES: readonly ShortfallCode[] = [
   'day_unmeasured', 'day_not_a_number', 'thin_window', 'steady', 'moved_from_flat',
+  'provider_change',
 ];
 
 export interface ArtifactMetric {
@@ -75,6 +76,16 @@ export interface BandsArtifact {
   window_days: number;
   /** Runs the day held. Every metric's counts partition this number. */
   runs: number;
+  /**
+   * What answered the model calls behind this day, or null (issue #23).
+   *
+   * Null means the day recorded no provider, or recorded more than one. The
+   * name only: the literal 'stub' or 'model', never a prompt, a completion or
+   * a payload. A band across a provider change measures the provider and not
+   * the system, so the file states what produced its numbers rather than
+   * leaving a reader to assume they are comparable.
+   */
+  provider: string | null;
   /** One row per metric, in the order bands.yaml declares them. */
   metrics: ArtifactMetric[];
 }
@@ -141,6 +152,20 @@ export function validateBandsArtifact(raw: unknown): BandsArtifact {
   assert(raw['window_days'] === WINDOW_DAYS, `artifact.window_days is not ${WINDOW_DAYS}`);
   assertCount(raw['runs'], 'runs');
   const runs = raw['runs'] as number;
+
+  // Absent on every artifact written before the field existed, and
+  // `artifact.version` is a per-run mint counter rather than a schema
+  // version, so nothing else tells the two shapes apart. Read as null, which
+  // is what such a file means: it recorded no provider.
+  //
+  // Asserted without this, `loadBandsArtifact` threw on every bands/v<n>.json
+  // an adopter already held, and no test caught it because every case here
+  // writes and reads inside one shape.
+  const provider = raw['provider'] ?? null;
+  assert(
+    provider === null || typeof provider === 'string',
+    'artifact.provider is not a string or null',
+  );
 
   const metrics = raw['metrics'];
   assert(Array.isArray(metrics), 'artifact.metrics is not an array');
@@ -251,7 +276,9 @@ export function validateBandsArtifact(raw: unknown): BandsArtifact {
       );
     }
   }
-  return raw as unknown as BandsArtifact;
+  // `provider` is normalised rather than passed through, so a caller reading
+  // an older artifact gets null and never undefined.
+  return { ...raw, provider } as unknown as BandsArtifact;
 }
 
 /**
