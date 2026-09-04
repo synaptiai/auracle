@@ -1,10 +1,12 @@
 /**
  * Approval completion entrypoint (section 4.2). Obeys DEC-11, DEC-12,
- * DEC-24, DEC-28, DEC-29.
+ * DEC-24, DEC-28, DEC-29, DEC-40.
  *
  * An operator, or the adopter's helpdesk webhook, calls this after a person
- * approves a parked draft in the helpdesk UI (DEC-11: this project adds no
- * queue interface of its own).
+ * approves a parked draft in the helpdesk UI. The draft parks in the helpdesk
+ * and nowhere else (DEC-11). DEC-40 permits an operator console to call this
+ * as well; no console ships today, so this entrypoint and the CLI are the
+ * only callers.
  *
  * One transaction does all of:
  *   1. refuse the move unless the run sits in `awaiting_approval` (DEC-12)

@@ -149,11 +149,13 @@ tickets.
 
 ### What blocks it
 
-Two things, and both must clear.
+One thing now, and it was two.
 
-**DEC-13 binds.** It selects one global threshold and rejects a threshold the
-system learns for each intent. The policy engine enforces that. A register
-decision must come first.
+**DEC-13 no longer binds alone.** It selects one global threshold and rejects a
+threshold the system learns for each intent. DEC-41 permits one above the
+labelled-case trigger, and it requires each case to record what labelled it.
+The policy engine still applies one global threshold, so the mechanism is the
+work that remains.
 
 **The trigger cannot fire.** Section 3.3 gives the arithmetic. One global
 threshold needs 385 labelled tickets for an interval of five points. A
@@ -172,7 +174,7 @@ short, and it is synthetic besides (DEC-18).
 
 | Blocker | Owner |
 |---|---|
-| DEC-13 binds | The maintainer, through a register amendment |
+| DEC-13 binds | Cleared. DEC-41 carries the amendment |
 | The trigger cannot fire | The adopter, through labelling their own history |
 
 ### What has shipped toward it
@@ -190,12 +192,17 @@ after it was written, and the note says which.
 
 Nothing in this repository, and the reason is worth stating plainly.
 
-The trigger counts cases a person labelled. The history carries no tags
-(DEC-02), so a person applies each one. Section 5 calls that labelling the
-largest single cost in the whole plan.
+DEC-41 clears the register blocker, so the mechanism can ship. The item still
+does not close for an adopter.
 
-This item is not waiting on engineering. It is waiting on labelled data that
-costs real money to produce.
+The trigger counts labelled cases, and DEC-41 requires each one to record what
+labelled it. The history carries no tags (DEC-02), so something applies each
+one. Section 5 calls that labelling the largest single cost in the whole plan,
+and it means labelling by a person.
+
+So an adopter still waits on labelled data that costs real money to produce.
+A model may label the cases, and the artifact then says so and states how
+often that model agreed with a known answer.
 
 ---
 

@@ -87,6 +87,8 @@ statement is an implementation detail. You can change it.
 | DEC-37 | Conversation history enters the classifier and composer prompts. The gates read retrieved documents alone | History in the composer only; history as retrieved documents |
 | DEC-38 | The idempotency key derives from action semantics plus the turn that requests the action | The conversation id alone; the run id, which DEC-24 forbids |
 | DEC-39 | Replay scores first turns only. Multi-turn quality uses online metrics and a human-labelled cohort | Simulated customers; a judge scoring later turns |
+| DEC-40 | Gated actions park in the helpdesk draft state. A read-only operator console may also approve one | A console that parks its own drafts; a console that is the only approval path |
+| DEC-41 | Above the labelled-case trigger the system fits a threshold for each intent. Each case records what labelled it, and the artifact records the count and the accuracy of each kind | One global threshold above the trigger; per-intent thresholds with no record of what labelled the cases |
 
 ---
 
@@ -463,12 +465,14 @@ It does not measure the cost of an error. These are different quantities.
 
 ### 4.9 Approval bridge
 
-**`approval`**. Obeys DEC-11, DEC-14, DEC-24, DEC-33.
+**`approval`**. Obeys DEC-11, DEC-14, DEC-24, DEC-33, DEC-40.
 
 The bridge writes each gated customer reply into the draft state of the adapter.
 A gated write with no customer draft parks in the ledger alone (DEC-34).
 It makes no adapter call, so no unsent draft is left behind after approval.
-Adopters do not install a new interface. This is the purpose of DEC-11.
+Adopters do not install a new interface to receive a draft. That is the
+purpose of DEC-11, and DEC-40 keeps it: a draft parks in the helpdesk and
+nowhere else. DEC-40 permits an operator console to approve one as well.
 
 Each customer reply must have three items:
 
@@ -1026,6 +1030,9 @@ decision only when a row enters the table in section 2.
 | 5. A threshold for each intent | `434db94d-bbba-4977-805a-e9d83cb0b6c5.md` | blocked on the trigger |
 | 6. Schema migration procedure | none needed | closed by `src/ledger/migrate.ts` |
 | 7. Head-of-line delay | `99dc14d7-da9d-4a92-a9dc-d7c0685c6992.md` | proposed. The measurement shipped and the correction is unchosen |
+| (none) | `8dcb8fcb-39dc-4911-a695-2282b6081f07.md` operator console | ratified as DEC-40 |
+| (none) | `38f6dcea-8473-4cf4-9aef-c13936a0442f.md` a threshold for each intent | ratified as DEC-41 |
+| (none) | `ab98fd60-4327-4891-bb4e-00e51e66bdbd.md` partition concurrency | a trace. No row needed |
 | (none) | `bbc657f2-8083-47be-84e9-672825e2158d.md` online A/B tests | proposed, blocked |
 | (none) | `af2c0364-dc11-4547-a0b0-90f51592ae2b.md` ledger implementation | V1 background |
 

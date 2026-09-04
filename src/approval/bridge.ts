@@ -1,9 +1,10 @@
 /**
- * Approval bridge (section 4.9). Obeys DEC-11, DEC-14, DEC-33.
+ * Approval bridge (section 4.9). Obeys DEC-11, DEC-14, DEC-33, DEC-40.
  *
  * The bridge parks each gated action as a draft inside the target system
- * through the adapter the action came from (DEC-11). Adopters keep their
- * own helpdesk UI; this project adds no queue interface.
+ * through the adapter the action came from (DEC-11). Adopters keep their own
+ * helpdesk UI, and a draft never parks anywhere else. DEC-40 keeps that rule
+ * and permits an operator console to approve a parked draft.
  *
  * Before a reply enters a draft state, the bridge enforces two independent
  * obligations on each customer reply:
