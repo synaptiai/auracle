@@ -80,7 +80,68 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
     });
   });
 
-  describe('rule 2: customer-visible actions always gate (DEC-12)', () => {
+  // Rule 2 of section 4.8, and the second capability rule DEC-06 asks for.
+  //
+  // The relay already refuses to guess: without read-back a failed send
+  // leaves the delivery state unknown, and `resolveSendFailure` escalates
+  // rather than retry blind (DEC-30). An automatic write on such an adapter
+  // is therefore a write whose outcome nobody can establish. DEC-06 says
+  // autonomy decreases to agree with the declared capability, so the engine
+  // never routes that write to the automatic path in the first place.
+  describe('rule 2: no read-back support plus a write gates (DEC-06, DEC-30)', () => {
+    it('gates a write when supportsReadBack is false', () => {
+      const decision = evaluatePolicy(
+        baseInput({
+          capabilities: { ...FULL_CAPABILITIES, supportsReadBack: false },
+          action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
+        }),
+      );
+      expect(decision).toBe('gated');
+    });
+
+    it('ignores the read-back rule for read-only actions', () => {
+      const decision = evaluatePolicy(
+        baseInput({ capabilities: { ...FULL_CAPABILITIES, supportsReadBack: false } }),
+      );
+      expect(decision).toBe('auto');
+    });
+
+    // Asserted on the reason, not the verdict. Every later rule here also
+    // gates, so a verdict assertion would pass with this rule deleted and
+    // would prove the precedence of nothing.
+    it('beats every later rule: high risk and failing evidence still name it', () => {
+      const outcome = evaluatePolicyDetailed(
+        baseInput({
+          riskTier: 'high',
+          agreement: 0.1,
+          groundedness: 0.1,
+          capabilities: { ...FULL_CAPABILITIES, supportsReadBack: false },
+          action: { isWrite: true, isCustomerVisible: true, isIrreversible: true },
+        }),
+      );
+      expect(outcome.decision).toBe('gated');
+      expect(outcome.reason).toBe('no_read_back');
+    });
+
+    // The idempotency rule runs first, so an adapter missing both flags is
+    // named by the first one. Pinned because the journalled reason is what a
+    // report groups on: a silent reorder would move runs between populations.
+    it('names the idempotency rule first when both capabilities are missing', () => {
+      const outcome = evaluatePolicyDetailed(
+        baseInput({
+          capabilities: {
+            ...FULL_CAPABILITIES,
+            supportsIdempotencyKey: false,
+            supportsReadBack: false,
+          },
+          action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
+        }),
+      );
+      expect(outcome.reason).toBe('no_idempotency');
+    });
+  });
+
+  describe('rule 3: customer-visible actions always gate (DEC-12)', () => {
     it('gates a customer-visible reply with perfect evidence', () => {
       const decision = evaluatePolicy(
         baseInput({ action: { isWrite: false, isCustomerVisible: true, isIrreversible: false } }),
@@ -100,7 +161,7 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
     });
   });
 
-  describe('rule 3: an irreversible write always gates (DEC-03, V2)', () => {
+  describe('rule 4: an irreversible write always gates (DEC-03, V2)', () => {
     it('gates an irreversible write with perfect evidence', () => {
       const decision = evaluatePolicy(
         baseInput({
@@ -143,7 +204,7 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
     });
   });
 
-  describe('rule 4: high risk tier gates (DEC-13)', () => {
+  describe('rule 5: high risk tier gates (DEC-13)', () => {
     it('gates a high-risk intent with perfect evidence', () => {
       const decision = evaluatePolicy(baseInput({ riskTier: 'high' }));
       expect(decision).toBe('gated');
@@ -175,7 +236,7 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
     });
   });
 
-  describe('rule 5: agreement below GATE_AGREEMENT escalates (DEC-05, section 4.5)', () => {
+  describe('rule 6: agreement below GATE_AGREEMENT escalates (DEC-05, section 4.5)', () => {
     it('escalates when agreement is below the threshold', () => {
       const decision = evaluatePolicy(baseInput({ agreement: GATE_AGREEMENT - 0.01 }));
       expect(decision).toBe('escalate');
@@ -187,7 +248,7 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
     });
   });
 
-  describe('rules 6 and 7: groundedness thresholds (DEC-05, section 4.7)', () => {
+  describe('rules 7 and 8: groundedness thresholds (DEC-05, section 4.7)', () => {
     it('escalates below 0.70 even with full agreement', () => {
       const decision = evaluatePolicy(baseInput({ groundedness: 0.69 }));
       expect(decision).toBe('escalate');
@@ -370,6 +431,15 @@ describe('the reason a decision carries (section 4.8)', () => {
       'no_idempotency',
     ],
     [
+      'no read-back support on a write (DEC-06, DEC-30)',
+      {
+        capabilities: { ...FULL_CAPABILITIES, supportsReadBack: false },
+        action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
+      },
+      'gated',
+      'no_read_back',
+    ],
+    [
       'a customer reply (DEC-12)',
       { action: { isWrite: true, isCustomerVisible: true, isIrreversible: false } },
       'gated',
@@ -418,6 +488,9 @@ describe('the reason a decision carries (section 4.8)', () => {
     if (action.isWrite && !capabilities.supportsIdempotencyKey) {
       return { decision: 'gated', reason: 'no_idempotency' };     // DEC-06
     }
+    if (action.isWrite && !capabilities.supportsReadBack) {
+      return { decision: 'gated', reason: 'no_read_back' };       // DEC-06, DEC-30
+    }
     if (action.isCustomerVisible) {
       return { decision: 'gated', reason: 'customer_visible' };   // DEC-12
     }
@@ -448,23 +521,28 @@ describe('the reason a decision carries (section 4.8)', () => {
         for (const isCustomerVisible of flags)
           for (const isIrreversible of flags)
             for (const supportsIdempotencyKey of flags)
-              for (const agreement of [0.1, 0.9])
-                for (const groundedness of [0.1, 0.75, 0.95]) {
-                  const input = baseInput({
-                    riskTier,
-                    agreement,
-                    groundedness,
-                    capabilities: { ...FULL_CAPABILITIES, supportsIdempotencyKey },
-                    action: { isWrite, isCustomerVisible, isIrreversible },
-                  });
-                  const outcome = evaluatePolicyDetailed(input);
-                  expect(outcome).toEqual(referenceOutcome(input));
-                  // The delegating wrapper still has to agree with its own
-                  // detailed form, which is cheap to assert alongside.
-                  expect(evaluatePolicy(input)).toBe(outcome.decision);
-                  checked += 1;
-                }
-    expect(checked).toBe(3 * 2 * 2 * 2 * 2 * 2 * 3);
+              for (const supportsReadBack of flags)
+                for (const agreement of [0.1, 0.9])
+                  for (const groundedness of [0.1, 0.75, 0.95]) {
+                    const input = baseInput({
+                      riskTier,
+                      agreement,
+                      groundedness,
+                      capabilities: {
+                        ...FULL_CAPABILITIES,
+                        supportsIdempotencyKey,
+                        supportsReadBack,
+                      },
+                      action: { isWrite, isCustomerVisible, isIrreversible },
+                    });
+                    const outcome = evaluatePolicyDetailed(input);
+                    expect(outcome).toEqual(referenceOutcome(input));
+                    // The delegating wrapper still has to agree with its own
+                    // detailed form, which is cheap to assert alongside.
+                    expect(evaluatePolicy(input)).toBe(outcome.decision);
+                    checked += 1;
+                  }
+    expect(checked).toBe(3 * 2 * 2 * 2 * 2 * 2 * 2 * 3);
   });
 
   // The four short-circuit reasons return before agreement is compared, so a
@@ -477,11 +555,12 @@ describe('the reason a decision carries (section 4.8)', () => {
       expect(typeof reachedAgreementGate(reason), `${reason} is unplaced`).toBe('boolean');
       expect(typeof passedAgreementGate(reason), `${reason} is unplaced`).toBe('boolean');
     }
-    expect(POLICY_REASONS.length).toBe(8);
+    expect(POLICY_REASONS.length).toBe(9);
   });
 
   it('says which reasons reached the agreement gate', () => {
     expect(reachedAgreementGate('no_idempotency')).toBe(false);
+    expect(reachedAgreementGate('no_read_back')).toBe(false);
     expect(reachedAgreementGate('customer_visible')).toBe(false);
     expect(reachedAgreementGate('irreversible')).toBe(false);
     expect(reachedAgreementGate('high_risk')).toBe(false);

@@ -1,0 +1,70 @@
+# A real FreeScout instance for the egress adapter (DEC-06, DEC-11).
+#
+# A separate file, and that is the whole point. Compose interpolates every
+# service in a file before it selects one, so a required-variable reference
+# anywhere in docker-compose.yml would break the bare `docker compose up -d`
+# that AGENTS.md tells a reader to run. A profile does not help: it selects
+# services after interpolation. So the services that need a credential live
+# here, and this file is read only when a person asks for it:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.freescout.yml up -d
+#
+# Set FREESCOUT_ADMIN_EMAIL and FREESCOUT_ADMIN_PASSWORD in ./.env
+# first. Compose refuses to start without them and names the missing one.
+#
+# That refusal is the point too. The image reads ADMIN_PASS with a shell
+# default (`${ADMIN_PASS:-"freescout"}`), which substitutes on empty as well
+# as on unset, so an empty value becomes a published default password on a
+# host port. Never weaken these two references to the plain form.
+#
+# The REST API is not in FreeScout. It lives in the API & Webhooks module,
+# which a person buys and installs; a stock instance answers 404 to every
+# /api/ route. See docs/operations.md.
+services:
+  # FreeScout's own database. Its port is not published: only the FreeScout
+  # container talks to it, so the host needs no route to it at all.
+  freescout-db:
+    image: mariadb:11.8
+    environment:
+      MARIADB_DATABASE: freescout
+      MARIADB_USER: freescout
+      MARIADB_PASSWORD: freescout
+      MARIADB_ROOT_PASSWORD: freescout
+    volumes:
+      - freescout-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  freescout:
+    image: nfrastack/freescout:latest
+    depends_on:
+      freescout-db:
+        condition: service_healthy
+    environment:
+      DB_TYPE: mariadb
+      DB_HOST: freescout-db
+      DB_PORT: 3306
+      DB_NAME: freescout
+      DB_USER: freescout
+      DB_PASS: freescout
+      SITE_URL: http://localhost:8088
+      APP_URL: http://localhost:8088
+      ADMIN_EMAIL: ${FREESCOUT_ADMIN_EMAIL:?set FREESCOUT_ADMIN_EMAIL in ./.env}
+      ADMIN_PASS: ${FREESCOUT_ADMIN_PASSWORD:?set FREESCOUT_ADMIN_PASSWORD in ./.env}
+    ports:
+      # Loopback only. The adapter runs on the host, so nothing needs a route
+      # from the network, and a helpdesk holding customer replies should not
+      # answer one. Host 8088, because 5433 belongs to Postgres and 8080 is a
+      # common local default. The container listens on 80.
+      - "127.0.0.1:8088:80"
+    volumes:
+      - freescout-data:/data
+      - freescout-logs:/logs
+
+volumes:
+  freescout-db-data:
+  freescout-data:
+  freescout-logs:

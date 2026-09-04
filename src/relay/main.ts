@@ -4,7 +4,7 @@
  *
  * Configuration:
  * - RELAY_ADAPTER     egress adapter name (default: helpdesk; known values:
- *                     helpdesk, imap-smtp)
+ *                     helpdesk, imap-smtp, freescout)
  * - RELAY_INTERVAL_MS milliseconds between scans (default: 5000)
  * - DATABASE_URL      ledger connection (see src/db/config.ts)
  *
@@ -16,6 +16,7 @@
  */
 import { Pool } from 'pg';
 
+import { FreeScoutEgressAdapter, freeScoutConfigFromEnv } from '../adapters/freescout.js';
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.js';
 import type { EgressAdapter } from '../adapters/types.js';
@@ -26,6 +27,7 @@ import { startRelayDaemon } from './daemon.js';
 const EGRESS_ADAPTERS: Readonly<Record<string, () => EgressAdapter>> = {
   helpdesk: () => new HelpdeskAdapter(),
   'imap-smtp': () => new SmtpEgressAdapter(imapSmtpConfigFromEnv()),
+  freescout: () => new FreeScoutEgressAdapter(freeScoutConfigFromEnv()),
 };
 
 function selectAdapter(name: string): EgressAdapter {

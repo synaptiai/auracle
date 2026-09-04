@@ -1,5 +1,6 @@
 /**
- * Policy engine (section 4.8). Obeys DEC-03, DEC-06, DEC-12, DEC-13, DEC-34.
+ * Policy engine (section 4.8). Obeys DEC-03, DEC-06, DEC-12, DEC-13, DEC-30,
+ * DEC-34.
  *
  * A pure function. It calls no model and reads no state.
  *
@@ -8,12 +9,26 @@
  * (DEC-06), customer replies always need approval (DEC-12), a write that
  * cannot be reversed always gates (DEC-34, extending DEC-03), and one
  * global agreement threshold applies with person-set risk tiers (DEC-13).
+ *
+ * Two capability flags carry that first rule, not one. An adapter with no
+ * idempotency key cannot make a retry safe, and an adapter with no read-back
+ * cannot say whether its write landed: `resolveSendFailure` escalates such a
+ * failure rather than retry blind (DEC-30). An automatic write needs both
+ * guarantees, so both are read here.
  */
 
 /** Cost of an error for an intent. A person sets it; the system does not learn it (DEC-13). */
 export type RiskTier = 'low' | 'medium' | 'high';
 
-/** Capability declaration from section 4.1. Autonomy adapts to these (DEC-06). */
+/**
+ * Capability declaration from section 4.1. Autonomy adapts to these (DEC-06).
+ *
+ * `supportsIdempotencyKey` and `supportsReadBack` are the two the engine
+ * reads. Each is a separate guarantee about a write's outcome, and an
+ * automatic write needs both: one makes a retry safe, the other makes the
+ * result knowable. The remaining three describe what an adapter can carry,
+ * not what it guarantees about a delivery, so no rule reads them.
+ */
 export interface AdapterCapabilities {
   supportsIdempotencyKey: boolean;
   supportsReadBack: boolean;
@@ -159,6 +174,7 @@ function assertFraction(value: number, field: string): void {
  */
 export type PolicyReason =
   | 'no_idempotency'
+  | 'no_read_back'
   | 'customer_visible'
   | 'irreversible'
   | 'high_risk'
@@ -181,6 +197,7 @@ export interface PolicyOutcome {
  */
 const ALL_REASONS: Record<PolicyReason, true> = {
   no_idempotency: true,
+  no_read_back: true,
   customer_visible: true,
   irreversible: true,
   high_risk: true,
@@ -203,6 +220,7 @@ export const POLICY_REASONS: readonly PolicyReason[] = Object.keys(ALL_REASONS) 
  */
 const REACHES_AGREEMENT: Record<PolicyReason, boolean> = {
   no_idempotency: false,
+  no_read_back: false,
   customer_visible: false,
   irreversible: false,
   high_risk: false,
@@ -245,6 +263,14 @@ export function evaluatePolicyDetailed(input: PolicyInput): PolicyOutcome {
   // DEC-06: no idempotency support means no automatic write, whatever the evidence.
   if (!input.capabilities.supportsIdempotencyKey && input.action.isWrite) {
     return { decision: 'gated', reason: 'no_idempotency' };
+  }
+  // DEC-06 and DEC-30: no read-back means the delivery state of an automatic
+  // write can never be established. The relay escalates such a failure
+  // instead of retrying, so the write does not belong on the automatic path.
+  // Second, and not first, because an adapter missing both flags is named by
+  // the guarantee that already governs every existing adapter.
+  if (!input.capabilities.supportsReadBack && input.action.isWrite) {
+    return { decision: 'gated', reason: 'no_read_back' };
   }
   // DEC-12: customer replies always need approval.
   if (input.action.isCustomerVisible) return { decision: 'gated', reason: 'customer_visible' };

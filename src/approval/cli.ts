@@ -10,7 +10,8 @@
  * path stays: no body is captured and the distance stays null.
  *
  * Configuration:
- * - APPROVE_ADAPTER  read-back adapter name (default: helpdesk)
+ * - APPROVE_ADAPTER  read-back adapter name (default: helpdesk; known
+ *                    values: helpdesk, imap-smtp, freescout)
  * - DATABASE_URL     ledger connection (see src/db/config.ts)
  *
  * Prints the outcome as JSON on stdout and exits non-zero when the run was
@@ -18,6 +19,7 @@
  */
 import { Pool } from 'pg';
 
+import { FreeScoutEgressAdapter, freeScoutConfigFromEnv } from '../adapters/freescout.js';
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.js';
 import type { DraftReadBack } from '../adapters/types.js';
@@ -28,6 +30,7 @@ import { approveRun } from './approve.js';
 const READ_BACK_ADAPTERS: Readonly<Record<string, () => DraftReadBack>> = {
   helpdesk: () => new HelpdeskAdapter(),
   'imap-smtp': () => new SmtpEgressAdapter(imapSmtpConfigFromEnv()),
+  freescout: () => new FreeScoutEgressAdapter(freeScoutConfigFromEnv()),
 };
 
 function selectReadBackAdapter(name: string): DraftReadBack {

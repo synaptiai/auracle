@@ -76,24 +76,53 @@ C7 sets an adapter floor. An automatic send needs `supportsIdempotencyKey` and
 `supportsReadBack` (DEC-06). With no person in the loop, the relay must
 reconcile delivery itself (DEC-30).
 
-No channel both meets that floor and reaches a real customer. Read the two
-halves apart, because each adapter fails a different one.
+The policy engine applies that floor. It reads both flags, and a write on an
+adapter that declares either one false goes to the approval path.
+
+No channel meets the floor and reaches a real customer. Read the two halves
+apart, because each adapter fails a different one.
 
 | Adapter | Meets the C7 floor? | Reaches a customer? |
 |---|---|---|
 | Mail | No. It declares `supportsReadBack: false` and its `readBack` throws | Yes |
 | Helpdesk | Yes. It declares both capabilities | No. It holds fixtures and opens no connection |
+| FreeScout | No. It declares both delivery flags false | Yes, once a person installs the API module |
 
 So an automatic customer reply has no channel to leave through, whatever the
-register later decides. An adopter supplies one, or a reference adapter gains
-read-back. That gap is the candidate for the next change. This document names
-it and does not close it.
+register later decides. This document names the gap and does not close it.
 
-One more thing is worth stating, because C7 reads like a rule the code already
-applies. It is not one yet. The policy engine gates on
-`supportsIdempotencyKey` and never reads `supportsReadBack`. C7 proposes that
-second check; nothing enforces it today, and nothing needs to while every
-reply waits for a person.
+### What the FreeScout adapter established
+
+Three findings back the FreeScout row. Each rests on FreeScout's own API
+documentation, which is a stronger source than the register's prediction and
+is still not a run against a live instance. Read them that way.
+
+**No key reaches the target.** `POST /api/conversations/{id}/threads` takes no
+idempotency field. The API documentation claims uniqueness for a customer
+address and for a user address, and for nothing else. Two identical posts make
+two threads.
+
+**No key comes back either.** The relay reads delivery state back by the
+outbox key. FreeScout records no such key on a thread, so the question has no
+answer there. A guess would turn an unknown delivery into a claim, which DEC-30
+forbids.
+
+**A shim was available and was refused.** DEC-06's rejected column names "a
+shim that removes duplicates". The adapter declares `supportsIdempotencyKey:
+false` and builds none.
+
+So C7 stays open. An adopter supplies the channel.
+
+### The API module a person must buy
+
+FreeScout's REST API lives in the `API & Webhooks` module. It is a separate
+purchase, and FreeScout 1.8.239 ships an empty `Modules` directory. A stock
+instance answers `404` to every `/api/` route.
+
+So `docker-compose.freescout.yml` brings a FreeScout instance up, and the
+adapter cannot reach its API until a person installs that module. The automated suites drive
+the adapter against the documented wire contract instead.
+`docs/operations.md` says how to check a real instance by hand.
 
 Everything else waits on a person and on traffic.
 

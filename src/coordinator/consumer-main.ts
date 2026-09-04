@@ -19,11 +19,16 @@
 // - DISCLOSURE_TEXT       DEC-14 disclosure; required when customer-visible,
 //                         startup fails fast without it
 // - EGRESS_ADAPTER        egress adapter that parks gated replies (default:
-//                         helpdesk; known values: helpdesk, imap-smtp). The
-//                         policy engine reads the capabilities of the selected
-//                         adapter, so gating follows the real manifest
-//                         (DEC-03, DEC-06: smtp accepts no idempotency key,
-//                         therefore every write gates).
+//                         helpdesk; known values: helpdesk, imap-smtp,
+//                         freescout). The policy engine reads the
+//                         capabilities of the selected adapter, so gating
+//                         follows the real manifest (DEC-03, DEC-06: smtp
+//                         accepts no idempotency key, therefore every write
+//                         gates; freescout accepts neither an idempotency key
+//                         nor a delivery read-back, so the same holds).
+// - FREESCOUT_BASE_URL, FREESCOUT_API_KEY, FREESCOUT_USER_ID
+//                         required when EGRESS_ADAPTER is freescout. No value
+//                         has a default; see src/adapters/freescout.ts
 // - DATABASE_URL          ledger connection (see src/db/config.ts)
 //
 // Each gate takes its own artifact. The agreement number comes from the
@@ -47,6 +52,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 
+import { FreeScoutEgressAdapter, freeScoutConfigFromEnv } from '../adapters/freescout.js';
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.js';
 import type { EgressAdapter } from '../adapters/types.js';
@@ -61,6 +67,9 @@ import type { CoordinatorDeps } from './coordinator.js';
 const EGRESS_ADAPTERS: Readonly<Record<string, () => EgressAdapter>> = {
   helpdesk: () => new HelpdeskAdapter(),
   'imap-smtp': () => new SmtpEgressAdapter(imapSmtpConfigFromEnv()),
+  // Declares no idempotency key and no read-back, so the policy engine sends
+  // every write of this adapter to the approval path (DEC-06, DEC-30).
+  freescout: () => new FreeScoutEgressAdapter(freeScoutConfigFromEnv()),
 };
 
 function selectEgressAdapter(name: string): EgressAdapter {

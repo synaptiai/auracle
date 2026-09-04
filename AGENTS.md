@@ -162,7 +162,8 @@ generator.
 
 - Blending agreement and coverage into one confidence score. The gates are independent (DEC-05, section 3.2).
 - Reading `gate_pass_rate` from the gate verdict alone. `evaluatePolicy` returns `gated` for a customer reply,
-  a high-risk intent, an irreversible write and a missing idempotency capability, all before agreement is compared.
+  a high-risk intent, an irreversible write, a missing idempotency capability and a missing read-back
+  capability, all before agreement is compared.
   The journalled `reason` says which rule decided; `reachedAgreementGate` says whether the comparison happened.
 - Setting the classifier temperature to zero. At zero, agreement is always 1.0 and the gate passes every ticket (section 4.5).
 - Deriving the idempotency key from `run_id` or a timestamp. Two runs of the same action must produce the same key (section 3.4).

@@ -215,7 +215,7 @@ The process drains the in-flight record on SIGTERM or SIGINT before it exits.
 
 | Variable | Meaning | Default |
 |----------|---------|---------|
-| `RELAY_ADAPTER` | Egress adapter name: `helpdesk` or `imap-smtp`. | `helpdesk` |
+| `RELAY_ADAPTER` | Egress adapter name: `helpdesk`, `imap-smtp` or `freescout`. | `helpdesk` |
 | `RELAY_INTERVAL_MS` | Milliseconds between scans. | 5000 |
 
 The relay reads no action configuration. Every record carries its own delivery
@@ -248,6 +248,73 @@ Every process that selects the adapter reads the same variables:
 | `SMTP_PORT` | SMTP server port. Required. | none |
 | `SMTP_SECURE` | Use implicit TLS on connect. | `true` |
 | `EMAIL_FROM_ADDRESS` | Address the replies are sent from. Required. | none |
+
+#### The `freescout` egress adapter
+
+The `freescout` adapter talks to a FreeScout instance over its REST API.
+It parks each gated reply as a draft thread and posts the approved text after
+approval.
+The selectors are `RELAY_ADAPTER`, `EGRESS_ADAPTER` and `APPROVE_ADAPTER`.
+
+The adapter declares two guarantees as false, and each has a reason.
+FreeScout accepts no idempotency key on thread create.
+So every write gates through approval (DEC-06, DEC-12).
+FreeScout also records no such key on a thread.
+
+So the relay cannot ask whether one delivery landed.
+The adapter declares no read-back, and the relay escalates on unknown state
+(DEC-30).
+
+The API has no endpoint that updates a thread.
+So an approved send posts a second thread and the parked draft stays.
+Remove the draft in the FreeScout UI after the send.
+
+| Variable | Meaning | Default |
+|----------|---------|---------|
+| `FREESCOUT_BASE_URL` | Instance root, such as `http://localhost:8088`. Required. | none |
+| `FREESCOUT_API_KEY` | Value of the `X-FreeScout-API-Key` header. Required. | none |
+| `FREESCOUT_USER_ID` | FreeScout user the threads belong to. Required. | none |
+
+##### Bringing an instance up
+
+`docker-compose.freescout.yml` carries a FreeScout service and its database.
+It is a separate file, so a bare `docker compose up -d` starts the ledger
+database alone and reads none of it.
+
+Set `FREESCOUT_ADMIN_EMAIL` and `FREESCOUT_ADMIN_PASSWORD` in `./.env` first.
+This repository commits no credential.
+Compose refuses to start without both and names the missing one.
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.freescout.yml up -d
+```
+
+Never weaken those two references so that an empty value passes.
+The image reads the admin password with a shell default.
+That default applies to an empty value as well as to an absent one.
+So an empty value becomes a published default password.
+
+FreeScout answers on `127.0.0.1:8088`. It takes no route from the network,
+because the adapter runs on the host. Its database publishes no port at all.
+
+##### The API needs a module that this repository cannot ship
+
+A stock FreeScout install answers `404` to every `/api/` route.
+The REST API lives in the `API & Webhooks` module, and a person buys and
+installs that module.
+FreeScout 1.8.239 ships an empty `Modules` directory.
+
+So the adapter cannot reach a stock instance, and no automated test in this
+repository claims it can.
+Install the module, mint a key under `Manage`, then check the route by hand.
+A person does both in the FreeScout UI:
+
+```sh
+curl -H "X-FreeScout-API-Key: $FREESCOUT_API_KEY" \
+  http://localhost:8088/api/conversations
+```
+
+A `404` means the module is absent. A JSON body means the adapter can run.
 
 ### Ingress drivers
 

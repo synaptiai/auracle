@@ -438,7 +438,7 @@ cannot find a confident error. See paragraph 3.2.
 
 ### 4.8 Policy engine
 
-**`policy`**. Obeys DEC-03, DEC-06, DEC-12, DEC-13.
+**`policy`**. Obeys DEC-03, DEC-06, DEC-12, DEC-13, DEC-30.
 
 This component is a pure function. It does not call a model.
 
@@ -448,6 +448,7 @@ Output: `auto`, `gated` or `escalate`.
 
 ```
 if (!capabilities.supportsIdempotencyKey && action.isWrite) return 'gated';
+if (!capabilities.supportsReadBack && action.isWrite)       return 'gated';
 if (action.isCustomerVisible)                                return 'gated';
 if (action.isWrite && action.isIrreversible)                 return 'gated';
 if (intent.riskTier === 'high')                              return 'gated';
@@ -456,6 +457,12 @@ if (groundedness < thresholds.groundednessBlock)             return 'escalate';
 if (groundedness < thresholds.groundednessReview)            return 'gated';
 return 'auto';
 ```
+
+An automatic write needs two capability guarantees, and the engine reads both.
+An idempotency key makes a retry safe. Read-back makes the result knowable.
+
+Without read-back the relay escalates a failed send instead of retrying it.
+See DEC-30. So autonomy decreases for that adapter as well. See DEC-06.
 
 A person sets the risk tier for each intent. The system does not learn the tier.
 See DEC-13. A high-risk intent never goes to the automatic path. The gate values
