@@ -635,6 +635,9 @@ export async function coordinateTicket(
   const gateThresholds = deps.thresholds ?? SEED_THRESHOLDS;
   const outcome = evaluatePolicyDetailed({
     riskTier: intent.risk_tier,
+    // DEC-41: the gate reads the threshold fitted for this intent when the
+    // artifact carried one. Without this the map is present and never read.
+    intent: classification.intentId,
     agreement: classification.agreement,
     groundedness: grounded.groundedness,
     thresholds: gateThresholds,

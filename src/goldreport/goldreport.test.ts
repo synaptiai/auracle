@@ -63,14 +63,18 @@ describe('Wilson interval math (shared with the calibration job)', () => {
     });
   });
 
-  it('prices a full-half interval near 2 points at p = 0.9 (section 4.10)', () => {
-    // Restated at the committed half size. The corpus grew because a
-    // precision floor read against an interval needs support, and the same
-    // growth narrows every published interval: three points became two.
-    const interval = wilsonInterval(966, REPORT_COUNT); // p = 0.9096
+  it('prices a full-half interval near one point at p = 0.9 (section 4.10)', () => {
+    // Restated at the committed half size, and stated as a rate so it
+    // survives the next growth. The corpus grew because a precision floor
+    // read against an interval needs support, and the same growth narrows
+    // every published interval: three points at 385 cases, two at 1062, and
+    // about 0.9 at 4100. That narrowing is the point of the growth, so the
+    // band is asserted rather than the old figure kept.
+    const successes = Math.round(0.9096 * REPORT_COUNT);
+    const interval = wilsonInterval(successes, REPORT_COUNT); // p = 0.9096
     const halfWidth = (interval.upper - interval.lower) / 2;
-    expect(halfWidth).toBeGreaterThan(0.016);
-    expect(halfWidth).toBeLessThan(0.019);
+    expect(halfWidth).toBeGreaterThan(0.008);
+    expect(halfWidth).toBeLessThan(0.010);
   });
 
   it('gives strata-sized samples wider intervals than the full half', () => {
@@ -285,8 +289,12 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
       expect(artifact.report_tickets).toBe(REPORT_COUNT);
       expect(artifact.gate_agreement).toBe(0.6);
 
-      // 63 of the tickets sit on a multiple of 17 and mismatch, so 999 match.
-      expect(artifact.action_match.successes).toBe(999);
+      // The mismatches are the cases whose index is a multiple of 17, so the
+      // count follows from REPORT_COUNT rather than from a figure that has to
+      // be re-derived by hand every time the corpus grows. It was written as
+      // a literal, and the growth to 8200 is what found that.
+      const mismatches = Math.ceil(REPORT_COUNT / 17);
+      expect(artifact.action_match.successes).toBe(REPORT_COUNT - mismatches);
       expect(artifact.action_match.total).toBe(REPORT_COUNT);
       expect(artifact.action_match.interval.lower).toBeLessThanOrEqual(
         artifact.action_match.rate,
@@ -294,12 +302,19 @@ describe('runGoldReportJob (section 4.10, DEC-31)', () => {
       expect(artifact.action_match.interval.upper).toBeGreaterThanOrEqual(
         artifact.action_match.rate,
       );
-      // High-tier tickets are gated to a person: i % 3 === 2 gives 354.
-      expect(artifact.containment.successes).toBe(708);
+      // High-tier cases are gated to a person, and they are exactly the
+      // indices where i % 3 === 2. Derived, for the same reason the mismatch
+      // count above is.
+      const gated = Math.floor(REPORT_COUNT / 3);
+      expect(artifact.containment.successes).toBe(REPORT_COUNT - gated);
       expect(artifact.containment.total).toBe(REPORT_COUNT);
 
       expect(artifact.strata.map((s) => s.risk_tier)).toEqual(['low', 'medium', 'high']);
-      expect(artifact.strata.map((s) => s.tickets)).toEqual([354, 354, 354]);
+      // One stratum per residue of i % 3, so the three counts differ by at
+      // most one and sum to the half.
+      const strata = artifact.strata.map((s) => s.tickets);
+      expect(strata.reduce((a, b) => a + b, 0)).toBe(REPORT_COUNT);
+      expect(Math.max(...strata) - Math.min(...strata)).toBeLessThanOrEqual(1);
       for (const stratum of artifact.strata) {
         expect(stratum.publishable).toBe(false);
       }

@@ -108,10 +108,12 @@ export interface ScoredHalf {
   /**
    * How many drafts each fault shape accounted for.
    *
-   * The count alone cannot say why a half was dropped. The report half of the
-   * shipped corpus lost 146 drafts of 1062 where the fit half lost 6, and a
-   * bare count leaves an operator guessing between a corpus that reads badly
-   * and a provider having a bad hour. The shape names which.
+   * The count alone cannot say why a half was dropped. On the 2124-case
+   * corpus this repository shipped before the growth to 8200, the report half
+   * lost 146 drafts of 1062 where the fit half lost 6. A bare count leaves an
+   * operator guessing between a corpus that reads badly and a provider having
+   * a bad hour. The shape names which. The figures are that corpus's and have
+   * not been re-measured, because measuring them costs a model run.
    */
   readonly faultShapes: Map<string, number>;
   /**

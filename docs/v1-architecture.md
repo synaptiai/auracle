@@ -60,7 +60,7 @@ statement is an implementation detail. You can change it.
 | DEC-10 | Clusters give the taxonomy. A person curates it to 25 intents | An imposed taxonomy; open codes |
 | DEC-11 | The helpdesk shows gated actions in its own draft state | A Slack queue; a new web queue |
 | DEC-12 | Internal writes are automatic. Customer replies need approval | All reversible writes are automatic |
-| DEC-13 | One global threshold. A person sets a risk tier for each intent | A threshold that the system learns for each intent |
+| DEC-13 | Below the labelled-case trigger, one global threshold. A person sets the risk tier for each intent, at every corpus size | A threshold the system learns below the trigger; a risk tier the system learns at any size |
 | DEC-14 | The disclosure field is mandatory on each customer reply | A configuration flag; documentation only |
 | DEC-15 | Do not remove personal data in the runtime path. Use a DPA | Remove personal data everywhere |
 | DEC-16 | OpenRouter supplies the models | Vercel AI SDK; one provider only |
@@ -116,12 +116,15 @@ If the model is wrong on a ticket in the same way each time, all samples agree.
 The samples agree on the wrong answer. No number of samples finds this error.
 This result is the reason for a second and independent gate.
 
-### 3.3 A threshold for each intent is not possible
+### 3.3 A threshold for each intent is not possible below the trigger
 
 One global threshold needs 385 labelled tickets for an interval of 5 percent.
 A threshold for each of 25 intents needs approximately 2 400 tickets. Intent
 frequencies obey a Zipf distribution. Therefore the intent at rank 20 needs a
 corpus of approximately 7 700 tickets. DEC-13 exists because of this result.
+
+Above that corpus size the result no longer holds, and DEC-41 governs. DEC-13
+keeps the risk tier, which no corpus size changes.
 
 ### 3.4 A correct idempotency key is not a concurrency design
 
@@ -543,10 +546,11 @@ number from the other half. See DEC-31.
 
 DEC-31 governs the split, not the size. The maintainer ruled the size an
 implementation detail of it, so a corpus may grow and the discipline still
-holds. The set held 770 cases and now holds 2124. It grew because a precision
-floor read against an interval needs support: 0.985 asks for 253 drafts above
-the review threshold, and 770 cases offered 172, so the corpus could never fit
-the gate it exists to fit.
+holds. The set held 770 cases, then 2124, and now holds 8200. The first growth
+answered a precision floor read against an interval: 0.985 asks for 253 drafts
+above the review threshold, and 770 cases offered 172, so the corpus could
+never fit the gate it exists to fit. The second answers the labelled-case
+trigger of DEC-41, which section 3.3 puts near 7 700.
 
 Do not use one set of cases for both tasks. That method is selection on the test
 data. A simulation of 2 000 trials shows the effect. If you select the best of 13
@@ -558,10 +562,10 @@ The cost is a wider interval than an undivided set gives. At the current half
 size that cost is approximately 1.8 points at p=0.9.
 
 The strata need care. DEC-39 scores first turns only, so the report half of
-1062 cases yields 815 scored cases. The three risk tiers hold 361, 295 and 159
-of them.
+4100 cases yields 3128 scored cases. The three risk tiers hold 1359, 1134 and
+635 of them.
 
-The widest stratum interval is 15 points wide, on the high tier.
+The widest stratum interval is under 8 points wide, on the high tier.
 Widths here are full widths, lower bound to upper bound. The corpus growth
 narrowed this one: at the earlier half size the same tier held 57 cases and
 its interval was 25 points wide. It was never 5 points, and the split still
@@ -608,10 +612,14 @@ The limit of 25 comes from the Zipf result in paragraph 3.3. Above 25 intents,
 the rare intents never collect sufficient examples. More intents give an
 appearance of accuracy and nothing more.
 
-**`calibration`**. Obeys DEC-13, DEC-31.
+**`calibration`**. Obeys DEC-13, DEC-31, DEC-41.
 
-This job fits the global agreement threshold on the fit half of the gold set. It
+This job fits the agreement threshold on the fit half of the gold set. It
 operates each month. It does not operate for each ticket.
+
+Below the labelled-case trigger the job fits one global threshold. At or above
+it, the job fits a threshold for each intent that clears the data floor
+(DEC-41). An intent below that floor keeps the global threshold.
 
 **`bands`**. Obeys DEC-18, DEC-19.
 
@@ -643,9 +651,9 @@ gated live phase are almost the same system.
 1. Run the induction job on the history.
 2. Curate the taxonomy to 25 intents.
 3. Set a risk tier for each intent.
-4. Label 2124 stratified tickets.
-5. Fit the threshold on 1062 of them.
-6. Keep 1062 for the reports.
+4. Label 8200 stratified tickets.
+5. Fit the threshold on 4100 of them.
+6. Keep 4100 for the reports.
 7. Run action match to get a baseline.
 
 This phase has no risk to a customer. It gives each number that the live system
@@ -768,7 +776,7 @@ threshold of 1.96, which would call the halves different on the strength of
 rounding. Fisher gives p = 0.37 for the first run and p = 0.12 for the second.
 Neither is evidence of a difference.
 
-The two runs must not be pooled to sharpen this. They scored the same 1062
+The two runs must not be pooled to sharpen this. They scored the same 4100
 drafts, so they are not independent samples of the half, and pooling them
 would inflate the count that decides the answer.
 
@@ -829,7 +837,7 @@ the customer's own text.
 The two halves also held different shares of grounded drafts, 43 percent
 against 51 percent. Precision counts grounded drafts above a threshold against
 all drafts above it, so the report half was the easier one and a published
-precision read high. Both halves now hold 531 fully grounded drafts of 1062.
+precision read high. Both halves now hold 2050 fully grounded drafts of 4100.
 
 The loader tests that gap with an equivalence test, and not with a
 significance test. The two answer different questions. A significance test
@@ -909,7 +917,7 @@ the other (DEC-05).
 **A fitted threshold cannot move the published numbers.** The gold report runs
 against the offline stub, which answers each sample by matching a phrase. Every
 sample of one ticket therefore agrees, and agreement is 1.0 on every scored
-case. DEC-39 scores the 815 first turns of the report half. No threshold below
+case. DEC-39 scores the 3128 first turns of the report half. No threshold below
 1.0 changes a decision. A run at 0.60 and a run at
 0.75 publish the same rates, and only the recorded provenance differs.
 

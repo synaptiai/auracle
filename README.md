@@ -17,7 +17,7 @@ A customer reply is not reversible: the customer reads it and acts on it.
 So each reply waits for approval by a person (DEC-12).
 
 The design authority is `docs/v1-architecture.md`.
-That document holds decisions DEC-01 to DEC-39.
+That document holds decisions DEC-01 to DEC-41.
 This README states the compliance position per DEC-19.
 No machine check can decide who controls the data, so the documents carry that position.
 
@@ -26,7 +26,7 @@ No machine check can decide who controls the data, so the documents carry that p
 | Document | What it gives you |
 |---|---|
 | [The architecture map](docs/architecture-map.md) | Three diagrams of the system, with a legend for every box |
-| [The decision register](docs/v1-architecture.md) | DEC-01 to DEC-39. The only design authority |
+| [The decision register](docs/v1-architecture.md) | DEC-01 to DEC-41. The only design authority |
 | [The runbook](docs/operations.md) | What an operator runs, and in what order |
 | [The V2 roadmap](docs/v2-roadmap.md) | What is left, what blocks it, and who owns each blocker |
 | [The contributing guide](CONTRIBUTING.md) | A clean checkout to a merged change |
@@ -43,8 +43,11 @@ The list below carries the decisions, and the map carries the picture.
    A crash then leaves both records or neither.
 3. The classifier takes nine samples at a temperature above zero.
    At temperature zero every sample matches, so agreement would measure nothing.
-4. The sample agreement gate compares the samples against one global threshold (DEC-13).
-   One threshold exists because 25 separate thresholds need about 2 400 labelled tickets (section 3.3).
+4. The sample agreement gate compares the samples against a threshold (DEC-13, DEC-41).
+   Below the labelled-case trigger that is one global threshold, because 25 separate
+   thresholds need about 2 400 labelled tickets (section 3.3). Above it the gate reads
+   the threshold fitted for the ticket's own intent, and falls back to the global one
+   for an intent that could not be fitted.
 5. The retriever merges BM25 ranks and dense ranks with reciprocal rank fusion (DEC-21).
    Ranks fuse because raw scores differ in scale: BM25 has no upper limit and cosine stops at one.
 6. The composer writes the answer with citations or abstains (DEC-07).
@@ -206,21 +209,31 @@ It scores first turns only, and records that scope (DEC-39).
 Numbers from the fitting cases flatter the system, so reporting uses untouched cases.
 The fit half never touches a published number.
 
-The report half holds 1062 cases and 815 of them open a conversation.
-The numbers below cover those 815 cases.
+The report half holds 4100 cases and 3128 of them open a conversation.
+The numbers below cover those 3128 cases.
 A later turn carries the disposition of the whole thread, so it grades no
 single decision.
 
-These rates moved when the corpus gained conversations, and the first-turn
-filter is not the only reason. The generator drew every value again, so both
-halves changed and the two numbers moved for both reasons at once. This repository tracks one gold report at a time, so the earlier artifact is
-not here to compare against.
+These rates move whenever the corpus grows, and the first-turn filter is not
+the only reason. The generator draws every value again, so both halves change
+and a rate moves for both reasons at once. This repository tracks one gold
+report at a time, so an earlier artifact is not here to compare against.
 
 The source corpus is fully synthetic (DEC-18).
 Run `pnpm run gold-report` to regenerate it.
 
-- Action match: 0.793. Interval 0.763 to 0.819. 815 cases.
-- Containment: 0.805. Interval 0.776 to 0.831. 815 cases.
+- Containment: 0.7970. Interval 0.7825 to 0.8107. 3128 cases.
+- Action match: awaiting a re-run. See below.
+
+Containment is a property of the corpus, so it is measured here. It fell from
+0.805 to 0.7970 when the corpus grew, because the generator drew every case
+again and the share of high-tier first turns moved with it.
+
+Action match is not a property of the corpus. It needs a classifier, so it
+needs a run. The published figure was 0.793 over 815 cases of the 2124-case
+corpus, and that corpus no longer exists: this repository now ships 8200
+cases. Rather than carry a number whose population is gone, the figure is
+withdrawn until `pnpm run gold-report` runs against the current corpus.
 
 The artifact records an agreement gate threshold of 0.60.
 
@@ -239,7 +252,7 @@ number in this README depends on which of the two the field names. Read the
 field as provenance and not as a different result.
 
 A fitted threshold does not move these rates. The offline stub answers every
-sample of one ticket alike, so agreement is 1.0 on all 815 scored cases and no
+sample of one ticket alike, so agreement is 1.0 on all 3128 scored cases and no
 threshold below 1.0 changes a decision. The gate is wired and it binds at
 runtime. This corpus cannot show it.
 
@@ -292,6 +305,6 @@ A judge shares the failures of the system it tests.
 It is weakest where the evaluation matters most, so its output is a review queue only.
 The numbers for the README come from `pnpm run gold-report` alone.
 
-On the synthetic 2124-case gold set this job is a demonstration, not a tool.
+On the synthetic 8200-case gold set this job is a demonstration, not a tool.
 It earns its keep when real volume exists to triage.
 Inject live cases through `runTriageJob`; each case records its origin.

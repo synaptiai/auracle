@@ -138,9 +138,17 @@ function scorerOf(provider: ModelProvider): 'stub' | 'model' {
  */
 const COVERAGE_FIELDS = ['groundednessBlock', 'groundednessReview'] as const;
 
+/**
+ * The agreement half. `perIntent` joins it rather than the coverage list:
+ * DEC-41 fits a threshold for each intent on the agreement gate alone, and
+ * DEC-05 keeps the two gates independent, so a coverage rule must never read
+ * it. Naming it here is the classification the guard below demands.
+ */
+type AgreementField = 'agreement' | 'perIntent';
+
 type UncoveredThreshold = Exclude<
   keyof GateThresholds,
-  'agreement' | (typeof COVERAGE_FIELDS)[number]
+  AgreementField | (typeof COVERAGE_FIELDS)[number]
 >;
 // A new gate field must join COVERAGE_FIELDS or this alias stops being never.
 const _everyThresholdIsChecked: UncoveredThreshold extends never ? true : never = true;
@@ -203,7 +211,7 @@ export async function runGoldReportJob(
   const reportHalf = options.reportHalf ?? loadGoldHalf('report');
   // DEC-39: replay scores first turns only. A later turn's disposition
   // reflects the whole conversation, not the decision being scored. The
-  // committed report half holds 1062 cases and 815 first turns, so `scope`
+  // committed report half holds 4100 cases and 3128 first turns, so `scope`
   // and `report_tickets` below are what a reader must go by.
   const firstTurns = reportHalf.tickets.filter(isFirstTurn);
   const promptVer = options.promptVer ?? DEFAULT_PROMPT_VER;
@@ -248,6 +256,9 @@ export async function runGoldReportJob(
     }
     const decision = evaluatePolicy({
       riskTier: tier,
+      // DEC-41, as the coordinator does. A published number must come from
+      // the gate the system runs, not from a narrower one.
+      intent: classification.intentId,
       agreement: classification.agreement,
       groundedness: ROUTING_GROUNDEDNESS,
       thresholds,

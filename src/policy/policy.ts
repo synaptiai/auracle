@@ -52,17 +52,34 @@ export interface ActionClass {
 /**
  * The three numbers that govern the gates (section 4.5, section 4.7).
  *
- * They travel as data so a fitted value can reach the engine. DEC-13 rules
- * out a threshold per intent, and this shape cannot express one: there is no
- * intent key, so one agreement value governs every ticket.
+ * They travel as data so a fitted value can reach the engine.
+ *
+ * DEC-13 binds below the labelled-case trigger: one global threshold. DEC-41
+ * governs above it: a threshold for each intent that could be fitted. The
+ * engine does not know which side of the trigger a deployment is on, and it
+ * must not — the calibration job decides that and hands over a map. An empty
+ * map is the DEC-13 path, expressed as data rather than as a special case.
+ *
+ * DEC-13's second rule is untouched and unconditional. A person sets the risk
+ * tier and the system never learns one, so a high-risk intent still never
+ * reaches the automatic path whatever its threshold says.
  *
  * DEC-05 keeps the two gates independent. The agreement value and the
  * coverage values live in one record for transport only. No rule reads both,
- * and nothing here combines them into a score.
+ * and nothing here combines them into a score. The map belongs to the
+ * agreement gate alone and no coverage rule reads it.
  */
 export interface GateThresholds {
   /** Section 4.5. Below this, escalate. */
   readonly agreement: number;
+  /**
+   * DEC-41: the threshold fitted for each intent that cleared the fit.
+   *
+   * Absent or empty below the trigger. An intent with no entry keeps the
+   * global value, which is the fallback DEC-41 requires; the global value is
+   * never copied in, so an entry always means a threshold that was fitted.
+   */
+  readonly perIntent?: Readonly<Record<string, number>>;
   /** Section 4.7. Below this, block. Do not send. */
   readonly groundednessBlock: number;
   /** Section 4.7. Below this, send to a person for review. */
@@ -71,6 +88,13 @@ export interface GateThresholds {
 
 export interface PolicyInput {
   riskTier: RiskTier;
+  /**
+   * DEC-41: the intent this run classified, so the gate can read the
+   * threshold fitted for it. Optional, because a run may carry none and
+   * because every caller predating DEC-41 supplies none; such a run takes
+   * the global threshold.
+   */
+  intent?: string;
   /** Fraction of classifier samples that agree (section 4.5). */
   agreement: number;
   /** Fraction of claims the retrieved text supports (section 4.7). */
@@ -126,6 +150,38 @@ export const SEED_THRESHOLDS: GateThresholds = Object.freeze(makeThresholds({
  * two independent searches over one score, so nothing in the fit guarantees
  * the order — this is where it is guaranteed.
  */
+/**
+ * The one spelling of an intent id that the per-intent map is keyed on.
+ *
+ * The classifier only ever returns a normalised id: it builds its valid set
+ * with the same rule and counts nothing outside it. So the gate looks up a
+ * normalised key, and a map keyed on a raw taxonomy id would miss every
+ * lookup the moment an adopter capitalises anything. Both sides call this,
+ * which is the only way the two vocabularies cannot drift apart.
+ */
+export function normalizeIntentId(id: string): string {
+  return id.trim().toLowerCase();
+}
+
+/**
+ * Validates a per-intent map and returns a frozen copy with no prototype.
+ *
+ * `Object.create(null)` is the point, not tidiness. A plain object inherits
+ * from `Object.prototype`, so an intent named `constructor` or `toString`
+ * resolves off the prototype chain and the gate reads a function instead of
+ * `undefined`; comparing agreement against it coerces to NaN, which is false,
+ * and the gate then passes every ticket for that intent. Those are legal
+ * lower-case slugs an adopter could put in a taxonomy.
+ */
+function freezeIntentMap(map: Readonly<Record<string, number>>): Readonly<Record<string, number>> {
+  const safe = Object.create(null) as Record<string, number>;
+  for (const [intent, threshold] of Object.entries(map)) {
+    assertFraction(threshold, `perIntent.${intent}`);
+    safe[normalizeIntentId(intent)] = threshold;
+  }
+  return Object.freeze(safe);
+}
+
 export function makeThresholds(values: GateThresholds): GateThresholds {
   assertFraction(values.agreement, 'agreement');
   assertFraction(values.groundednessBlock, 'groundednessBlock');
@@ -136,13 +192,26 @@ export function makeThresholds(values: GateThresholds): GateThresholds {
         + 'below block escalates and below review gates, so an inverted pair has no review band',
     );
   }
+  // Every per-intent threshold is held to the same rule as the global one. A
+  // zero passes every ticket for that intent, which is the gate switched off
+  // for it, and nothing downstream would say so.
+  const perIntent = values.perIntent === undefined
+    ? undefined
+    : freezeIntentMap(values.perIntent);
+
   // Frozen: the record is shared by reference into every PolicyInput a
   // process builds, so one mutation anywhere would move the gate for all of
   // them. `readonly` is a compile-time claim and does not survive to runtime.
+  //
+  // The three fields are listed rather than spread, so a caller cannot smuggle
+  // a fourth in. That is why `perIntent` had to be named here: a version of
+  // this change spread it in at the call site and it was dropped in silence,
+  // leaving a wired feature that could never fire.
   return Object.freeze({
     agreement: values.agreement,
     groundednessBlock: values.groundednessBlock,
     groundednessReview: values.groundednessReview,
+    ...(perIntent === undefined ? {} : { perIntent }),
   });
 }
 
@@ -237,6 +306,31 @@ const REACHES_AGREEMENT: Record<PolicyReason, boolean> = {
  * of that order is free to drift from this one, which is the hazard of
  * re-applying a gate outside the engine.
  */
+/**
+ * The agreement threshold this ticket is judged against.
+ *
+ * Pure and total: it reads the map the caller supplied and never loads one.
+ * The engine stays a synchronous function that reads no state (section 4.3).
+ */
+export function agreementThresholdFor(
+  input: Pick<PolicyInput, 'intent' | 'thresholds'>,
+): number {
+  const map = input.thresholds.perIntent;
+  if (input.intent === undefined || map === undefined) return input.thresholds.agreement;
+  // `Object.hasOwn`, never a bare read. `makeThresholds` builds the map with
+  // no prototype, and this is the second guard: a map that reached here by
+  // another route cannot resolve `constructor` or `toString` off the chain.
+  const key = normalizeIntentId(input.intent);
+  if (!Object.hasOwn(map, key)) return input.thresholds.agreement;
+  const fitted = map[key];
+  // A non-finite or out-of-range value would compare false against any
+  // agreement and pass every ticket. The global threshold is the safe answer.
+  if (typeof fitted !== 'number' || !(fitted > 0) || fitted > 1) {
+    return input.thresholds.agreement;
+  }
+  return fitted;
+}
+
 export function reachedAgreementGate(reason: PolicyReason): boolean {
   return REACHES_AGREEMENT[reason];
 }
@@ -284,7 +378,12 @@ export function evaluatePolicyDetailed(input: PolicyInput): PolicyOutcome {
   // regardless of the gate values.
   if (input.riskTier === 'high') return { decision: 'gated', reason: 'high_risk' };
   // Gate 1: sample agreement (DEC-05).
-  if (input.agreement < input.thresholds.agreement) {
+  //
+  // The intent's own threshold when the fit produced one, the global value
+  // otherwise (DEC-41, and DEC-13 below the trigger). A run that names no
+  // intent takes the global value: there is no entry to read, and picking
+  // one would apply another intent's gate to this ticket.
+  if (input.agreement < agreementThresholdFor(input)) {
     return { decision: 'escalate', reason: 'agreement' };
   }
   // Gate 2: groundedness coverage (DEC-05, section 4.7 thresholds).

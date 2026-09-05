@@ -241,21 +241,35 @@ function scriptUnanimous(tickets: readonly GoldTicket[]): { text: string }[] {
 
 /**
  * Script a full fit half, at the committed FIT_COUNT:
- * - 552 tickets unanimous and correct (agreement 1);
- * - 276 tickets at 8/9 agreement, 248 correct and 28 wrong-modal;
- * - 234 tickets at 5/9 agreement, all wrong-modal.
+ * - about 52 per cent unanimous and correct (agreement 1);
+ * - about 26 per cent at 8/9 agreement, nine in ten of them correct;
+ * - the rest at 5/9 agreement, all wrong-modal.
  * The script returns the provider steps plus the matching gold half.
  *
- * The proportions are those of the earlier 385-case half, scaled with the
- * corpus. The 8/9 tier still holds a precision under the floor, so the fit
- * is still forced onto the unanimous tier, which is what these cases test.
+ * The proportions are those of the original 385-case half, and they are
+ * computed from FIT_COUNT rather than written out. They were written out
+ * once and scaled by hand once; the growth to 4100 is what showed that a
+ * hand-scaled figure is a pin that breaks on the next growth.
+ *
+ * The property these cases rest on survives the scaling: the 8/9 tier still
+ * holds a precision under the floor, so the fit is still forced onto the
+ * unanimous tier.
  */
+const UNANIMOUS = Math.round((FIT_COUNT * 552) / 1062);
+const TIER_8 = Math.round((FIT_COUNT * 276) / 1062);
+const TIER_5 = FIT_COUNT - UNANIMOUS - TIER_8;
+
 function scriptedFitHalf(): { steps: FakeStep[]; half: GoldFile } {
   const OTHER = 'shipping-status';
   const groups = [
-    { count: 552, intent: 'refund-request', agree: 9, correctCount: 552 },
-    { count: 276, intent: 'payment-failure', agree: 8, correctCount: 248 },
-    { count: 234, intent: 'general-question', agree: 5, correctCount: 0 },
+    { count: UNANIMOUS, intent: 'refund-request', agree: 9, correctCount: UNANIMOUS },
+    {
+      count: TIER_8,
+      intent: 'payment-failure',
+      agree: 8,
+      correctCount: Math.round((TIER_8 * 248) / 276),
+    },
+    { count: TIER_5, intent: 'general-question', agree: 5, correctCount: 0 },
   ] as const;
 
   const steps: FakeStep[] = [];
@@ -329,12 +343,12 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
         expect(fitTexts.has(call.messages?.[1]?.content ?? '')).toBe(true);
       }
 
-      // Threshold selection on this distribution: the 8/9 tier passes 828
-      // tickets but holds only 800 correct, precision 0.966 < 0.985, so the
-      // floor forces the unanimous tier.
+      // Threshold selection on this distribution: the 8/9 tier passes the
+      // unanimous and the 8/9 groups together, and its precision sits near
+      // 0.966, under the 0.985 floor, so the floor forces the unanimous tier.
       expect(artifact.threshold).toBe(1);
       expect(artifact.precision_at_threshold).toBe(1);
-      expect(artifact.coverage_at_threshold).toBeCloseTo(552 / FIT_COUNT);
+      expect(artifact.coverage_at_threshold).toBeCloseTo(UNANIMOUS / FIT_COUNT);
       expect(artifact.fit_tickets).toBe(FIT_COUNT);
       expect(artifact.split_used).toBe('fit');
       // Every scripted case is a first turn, so the recorded scope says so.

@@ -18,8 +18,8 @@ import { readFileSync } from 'node:fs';
 
 import type { ConversationTurn } from '../coordinator/coordinator.js';
 
-export const FIT_COUNT = 1062;
-export const REPORT_COUNT = 1062;
+export const FIT_COUNT = 4100;
+export const REPORT_COUNT = 4100;
 export const INTENT_CAP = 25;
 
 const RISK_TIERS = ['low', 'medium', 'high'] as const;
@@ -81,7 +81,27 @@ export type ClaimGrade = (typeof CLAIM_GRADES)[number];
 export interface GoldTicket {
   ticket_id: string;
   source: string;
+  /** The true intent, assigned by the generator. Ground truth for scoring. */
   intent: string;
+  /**
+   * DEC-41: what produced this case's label.
+   *
+   * Never `human-review`. Section 5 calls the labelling the largest single
+   * cost in the plan, and `method: "human-review"` in a gold report means a
+   * person read the case. A model label written there would make one field
+   * mean two things, and no reader could recover which.
+   *
+   * Optional on read, because a corpus written before DEC-41 carries neither
+   * this field nor the label beside it.
+   */
+  labelled_by?: string;
+  /**
+   * The label that labeller produced, which is what a deployment would have.
+   *
+   * It differs from `intent` exactly where the labeller was wrong, and that
+   * difference is the agreement rate the calibration artifact records.
+   */
+  labelled_intent?: string;
   queue: string;
   disposition: Disposition;
   subject: string;

@@ -214,6 +214,12 @@ export async function resolveThresholds(
 
   const thresholds = makeThresholds({
     agreement: artifact.threshold,
+    // DEC-41: the thresholds fitted for each intent, when the artifact carries
+    // any. Absent or empty is the DEC-13 path, and the gate then reads the
+    // global value for every intent.
+    ...(artifact.per_intent === undefined || Object.keys(artifact.per_intent).length === 0
+      ? {}
+      : { perIntent: artifact.per_intent }),
     // DEC-05: each gate takes its own artifact, and neither reads the other's.
     groundednessBlock: coverageBlock,
     groundednessReview: coverageReview,

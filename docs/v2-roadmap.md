@@ -180,11 +180,11 @@ tickets.
 
 One thing now, and it was two.
 
-**DEC-13 no longer binds alone.** It selects one global threshold and rejects a
-threshold the system learns for each intent. DEC-41 permits one above the
-labelled-case trigger, and it requires each case to record what labelled it.
-The policy engine still applies one global threshold, so the mechanism is the
-work that remains.
+**DEC-13 no longer binds alone.** It selected one global threshold and
+rejected a threshold the system learns for each intent. DEC-13 now names the
+trigger as its own bound, and DEC-41 governs above it. Each case records what
+labelled it. The mechanism has shipped: the job fits per intent, the artifact
+carries the map and the policy engine reads it.
 
 **The trigger cannot fire.** Section 3.3 gives the arithmetic. One global
 threshold needs 385 labelled tickets for an interval of five points. A
@@ -192,19 +192,21 @@ threshold for each of 25 intents needs roughly 2400. Intent frequencies follow
 a Zipf distribution, so the intent at rank 20 needs roughly 7700. The item
 rounds that to 8000.
 
-Read 385 as a requirement and not as a corpus size. The fit half holds 1062
-cases, so the global threshold has the data it needs. The per-intent threshold
-does not.
+Read 385 as a requirement and not as a corpus size. The fit half holds 4100
+cases, so both the global threshold and the per-intent one have the data they
+need.
 
-The shipped corpus holds 2124 synthetic cases. That is an order of magnitude
-short, and it is synthetic besides (DEC-18).
+The shipped corpus holds 8200 synthetic cases, which clears the trigger. It
+is synthetic (DEC-18), and a stand-in labelled it. So the mechanism is
+exercised end to end and the numbers describe this corpus, not an adopter's
+traffic.
 
 ### Who owns each blocker
 
 | Blocker | Owner |
 |---|---|
-| DEC-13 binds | Cleared. DEC-41 carries the amendment |
-| The trigger cannot fire | The adopter, through labelling their own history |
+| DEC-13 binds | Cleared. DEC-41 carries the amendment, and DEC-13 now names the trigger as its own bound |
+| The trigger cannot fire | Cleared on the shipped corpus, which holds 8200 cases. An adopter clears it by labelling their own history |
 
 ### What has shipped toward it
 
@@ -214,15 +216,22 @@ per-intent map. At or above it, the job fits a threshold for each intent above
 the data floor. Either way the artifact records the trigger and the count, so a
 reader can tell which path ran.
 
-That document carries a dated note. Three of the facts it rests on moved
-after it was written, and the note says which.
+That document carries a dated note, and the note is itself out of date. Its
+corrections were written against a corpus of 2124 cases, which this repository
+no longer ships. Read the register and this item for the current figures.
 
 ### The next step
 
-Nothing in this repository, and the reason is worth stating plainly.
+The mechanism has shipped and the item does not close. Both halves of that
+are worth stating plainly.
 
-DEC-41 clears the register blocker, so the mechanism can ship. The item still
-does not close for an adopter.
+The shipped corpus clears the trigger, so the per-intent path runs and its
+thresholds gate the shipped gold report. A stand-in labelled those cases, and
+the artifact says so. That is the mechanism working end to end on synthetic
+data.
+
+It is not the item. The item asks for a threshold for each intent on an
+adopter's own traffic, and two things stand between.
 
 The trigger counts labelled cases, and DEC-41 requires each one to record what
 labelled it. The history carries no tags (DEC-02), so something applies each
@@ -231,7 +240,15 @@ and it means labelling by a person.
 
 So an adopter still waits on labelled data that costs real money to produce.
 A model may label the cases, and the artifact then says so and states how
-often that model agreed with a known answer.
+often that model agreed with a known answer. This repository ships no model
+labeller; an adopter writes one.
+
+The second is the shape of the corpus. Section 3.3's arithmetic assumes
+Zipf-distributed intent frequencies and sizes the trigger from the intent at
+rank 20. The shipped corpus is uniformly stratified, so it has no rank-20
+intent and no thin tail, and the data-floor fallback is proved by unit cases
+rather than by the fixture. The mechanism is exercised; the distribution that
+makes the fallback matter is not.
 
 ---
 

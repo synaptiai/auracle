@@ -7,8 +7,14 @@
 //
 // Decisions obeyed: DEC-18 (synthetic only), DEC-13 (risk tier per intent),
 // DEC-22 (documents + canonical resolutions), DEC-23 (owner + review_by),
-// DEC-31 (2124 cases, 1062 fit / 1062 report), section 4.11 (<=25 intents,
-// 'other' group kept).
+// DEC-31 (8200 cases, 4100 fit / 4100 report), section 4.11 (<=25 intents,
+// 'other' group kept), DEC-41 (each case says what labelled it).
+//
+// The size clears the per-intent trigger. Section 3.3 puts the rank-20 intent
+// at about 7 700 cases, and DEC-41 fits a threshold for each intent above
+// that. A smaller corpus can never exercise the per-intent path with a real
+// fit. DEC-31 governs the split and not the size, so both halves grow
+// together and the stratification is unchanged.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -18,8 +24,67 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = join(ROOT, 'fixtures');
 
 const SEED = 0x41726361; // 'Arca'
-const TOTAL_TICKETS = 2124;
+const TOTAL_TICKETS = 8200;
 const HALF = TOTAL_TICKETS / 2;
+
+/**
+ * The label a classifier would have produced, and the pin that produced it.
+ *
+ * DEC-41 requires each case to say what labelled it, and requires the
+ * artifact to record how accurate that labeller was. Accuracy is measurable
+ * here and nowhere else, because this generator assigns the true intent: a
+ * case keeps `intent` as the truth and carries `labelled_intent` beside it.
+ * A labeller that overwrote the truth would leave nothing to score against.
+ *
+ * The stand-in is deterministic, so the corpus regenerates byte for byte with
+ * no key and no network. That is a hard constraint: CI runs this generator
+ * and diffs the result, so no live model call can ever sit here. An adopter
+ * labelling their own history supplies their own labeller; this repository
+ * ships none.
+ *
+ * The errors are not random. A classifier confuses an intent with its
+ * neighbours in the same queue, so that is what this confuses, and the fit
+ * then sees the shape of mistake a deployment actually makes.
+ *
+ * `src/labeller/labeller.ts` holds the same rule, and a test asserts it
+ * reproduces every label in the committed corpus. The duplication is the
+ * pattern `mulberry32` already follows across this boundary.
+ */
+const LABELLER_PIN = 'stub-labeller-v1';
+const LABELLER_AGREEMENT = 0.92;
+
+/**
+ * A unit value derived from the case id alone (FNV-1a).
+ *
+ * Deliberately not a draw from this script's PRNG. A label taken from the
+ * shared stream depends on generation order, so nothing outside this file
+ * could reproduce it, and `src/labeller/labeller.ts` could not check itself
+ * against the committed corpus. Keyed on the case, the label is a property of
+ * the case and both sides compute it independently.
+ */
+function unitFromId(id) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < id.length; i += 1) {
+    hash ^= id.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash / 4294967296;
+}
+
+function labelFor(intentId, id) {
+  const rnd = unitFromId(id);
+  if (rnd < LABELLER_AGREEMENT) return intentId;
+  const self = INTENTS.find((i) => i.id === intentId);
+  // Sorted by id, so the choice does not depend on the order this file
+  // happens to declare its taxonomy in. `src/labeller/labeller.ts` derives
+  // the same set from the corpus and sorts it the same way.
+  const siblings = INTENTS.filter((i) => i.queue === self.queue && i.id !== intentId)
+    .map((i) => i.id)
+    .sort();
+  if (siblings.length === 0) return intentId;
+  const spread = (rnd - LABELLER_AGREEMENT) / (1 - LABELLER_AGREEMENT);
+  return siblings[Math.min(siblings.length - 1, Math.floor(spread * siblings.length))];
+}
 
 // ---------------------------------------------------------------------------
 // Taxonomy: 24 named intents + 'other' = 25 (the DEC-10 / section 4.11 cap).
@@ -202,12 +267,15 @@ function makeConversation(intent, cap) {
 
   const turns = [];
   for (let turn = 1; turn <= turnCount; turn++) {
+    const ticketId = nextId();
     turns.push({
-      ticket_id: nextId(),
+      ticket_id: ticketId,
       source: 'synthetic',
       conversation_id: conversationId,
       turn_number: turn,
       intent: intent.id,
+      labelled_by: LABELLER_PIN,
+      labelled_intent: labelFor(intent.id, ticketId),
       queue,
       disposition: {
         escalated,

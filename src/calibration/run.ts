@@ -25,6 +25,7 @@ import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
 import {
   FIT_COUNT,
   GOLD_SOURCES,
+  REPORT_COUNT,
   assertHalvesDisjoint,
   conversationHistories,
   goldCaseText,
@@ -34,13 +35,16 @@ import {
   loadGoldHalf,
   loadTaxonomy,
 } from '../fixtures/load.js';
-import type { GoldFile, HalfIdentity } from '../fixtures/load.js';
+import type { GoldFile, GoldTicket, HalfIdentity } from '../fixtures/load.js';
 import { selectHalf } from '../fixtures/half-from-env.js';
 import type { ModelProvider } from '../models/provider.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
 import { assertCalibrationDirUsable, nextVersion, validateCalibrationArtifact, writeCalibrationArtifact, defaultCalibrationDir } from './artifact.js';
 import type { CalibrationArtifact, CalibrationScope } from './artifact.js';
 import { fitAgreementThreshold } from './calibrate.js';
+import { fitPerIntent } from './per-intent.js';
+import type { IntentSample } from './per-intent.js';
+import { STUB_LABELLER_PIN, scoreLabeller } from '../labeller/labeller.js';
 import { startedAsCommand } from '../corpus/output-path.js';
 
 export interface CalibrationRunOptions {
@@ -114,6 +118,9 @@ export async function runCalibrationJob(
   const targetPrecision = options.targetPrecision ?? DEFAULT_TARGET_PRECISION;
 
   assertFitHalf(fitHalf, options.reportIdentity);
+  // Before the loop, never after. A label fault found afterwards discards a
+  // run an operator has already paid for.
+  assertLabelsScoreable(fitHalf.tickets);
 
   // Check the artifact directory before the sampling loop, not after it. The
   // loop makes CLASSIFIER_K model calls per fit-half ticket, and nextVersion
@@ -131,7 +138,7 @@ export async function runCalibrationJob(
   // agreement, so the threshold is fitted on the provider's answer budget and
   // not on the model's judgement. The coverage job records its own attrition
   // for the same reason, by a different rule; this one must not stay silent.
-  const samples: { agreement: number; correct: boolean }[] = [];
+  const samples: IntentSample[] = [];
   let unreadableSamples = 0;
   let ticketsWithUnreadable = 0;
   for (const ticket of fitHalf.tickets) {
@@ -148,6 +155,7 @@ export async function runCalibrationJob(
     unreadableSamples += result.unreadableSamples;
     if (result.unreadableSamples > 0) ticketsWithUnreadable++;
     samples.push({
+      intent: ticket.intent,
       agreement: result.agreement,
       correct: normalize(result.intentId) === normalize(ticket.intent),
     });
@@ -168,6 +176,26 @@ export async function runCalibrationJob(
   }
 
   const fit = fitAgreementThreshold(samples, { targetPrecision });
+
+  // DEC-41. The trigger counts labelled cases in the corpus, and the corpus
+  // is both halves: DEC-31 splits one gold set in two and this job consumes
+  // the fit half, so counting what the fit consumed would hold the trigger
+  // permanently at half its own bar.
+  //
+  // Counted, never assumed. A first version read `FIT_COUNT + REPORT_COUNT`
+  // and justified it with `assertFitHalf`, but that size check runs only for
+  // a synthetic half — so an adopter's 200-case corpus cleared a trigger of
+  // 8000 and installed per-intent gates DEC-41 forbids it. That failure was
+  // open: unmeasured thresholds reached a live gate.
+  //
+  // A non-synthetic half always carries `reportIdentity`, because
+  // `assertFitHalf` refuses one without it, so the counterpart's size is
+  // available exactly where the constant is wrong.
+  const counterpart = options.reportIdentity?.ticketIds.size
+    ?? (fitHalf.source === 'synthetic' ? REPORT_COUNT : 0);
+  const labelledCases = fitHalf.tickets.length + counterpart;
+  const perIntent = fitPerIntent(samples, { targetPrecision, labelledCases });
+  const labellers = labellersOf(fitHalf.tickets);
 
   const version = await nextVersion(dir);
   const artifact = validateCalibrationArtifact({
@@ -190,9 +218,73 @@ export async function runCalibrationJob(
     precision_at_threshold: fit.precision,
     coverage_at_threshold: fit.coverage,
     interval: fit.interval,
+    trigger_min_labelled: perIntent.trigger_min_labelled,
+    labelled_cases: perIntent.labelled_cases,
+    per_intent: perIntent.per_intent,
+    below_floor: perIntent.below_floor,
+    ...(labellers.length === 0 ? {} : { labellers }),
   });
   await writeCalibrationArtifact(artifact, dir);
   return { artifact };
+}
+
+/**
+ * What labelled the fit half, and how accurate each labeller was (DEC-41).
+ *
+ * A list, one entry per pin. DEC-41 asks for the count and the accuracy of
+ * each kind, so a corpus labelled by two producers must be representable: an
+ * earlier version returned a single entry and gave up — returning nothing at
+ * all — the moment it saw two, which published per-intent thresholds with no
+ * provenance and read exactly like a corpus that predates DEC-41.
+ *
+ * Each entry is scored over its own cases alone. Scoring one pin over the
+ * whole half attributes cases to a labeller that did not label them.
+ *
+ * Empty when no case carries a label, which keeps a pre-DEC-41 gold set
+ * usable.
+ */
+function labellersOf(
+  tickets: readonly GoldTicket[],
+): { kind: 'stub' | 'model'; pin: string; agreement: number; cases: number }[] {
+  const byPin = new Map<string, GoldTicket[]>();
+  for (const ticket of tickets) {
+    if (ticket.labelled_by === undefined) continue;
+    const group = byPin.get(ticket.labelled_by) ?? [];
+    group.push(ticket);
+    byPin.set(ticket.labelled_by, group);
+  }
+  // Sorted, so the artifact reads the same way on every run.
+  return [...byPin.keys()].sort().map((pin) => {
+    const score = scoreLabeller(byPin.get(pin)!);
+    return {
+      // The pin says which, and a stand-in must never read as a model.
+      kind: pin === STUB_LABELLER_PIN ? 'stub' as const : 'model' as const,
+      pin,
+      agreement: score.agreement,
+      cases: score.total,
+    };
+  });
+}
+
+/**
+ * Refuses a half whose labels cannot be scored, before the run spends
+ * anything.
+ *
+ * `scoreLabeller` throws on a case that carries a labeller but no label, and
+ * it used to run after the classification loop — so one such case discarded a
+ * run of 36 900 model calls over a field readable before the first one. This
+ * is the hazard `assertCalibrationDirUsable` was moved ahead of the loop for.
+ */
+function assertLabelsScoreable(tickets: readonly GoldTicket[]): void {
+  for (const ticket of tickets) {
+    if (ticket.labelled_by === undefined) continue;
+    if (ticket.labelled_intent === undefined || ticket.labelled_intent === '') {
+      throw new Error(
+        `case ${ticket.ticket_id} names a labeller but carries no label, so its `
+          + 'agreement could be neither measured nor honestly omitted (DEC-41)',
+      );
+    }
+  }
 }
 
 /**

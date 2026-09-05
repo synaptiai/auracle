@@ -1124,7 +1124,7 @@ Set a risk tier for each intent.
 Label the stratified tickets and split them in two equal halves.
 
 Fit the thresholds on one half and keep the other for the reports.
-The shipped synthetic corpus holds 2124 cases, 1062 to each half.
+The shipped synthetic corpus holds 8200 cases, 4100 to each half.
 A half needs enough drafts to hold the precision floor on its interval.
 `scripts/generate-fixtures.mjs` states the sizes the floors imply.
 

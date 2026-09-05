@@ -184,6 +184,9 @@ async function classifyAndApplyPolicy(
   }
   const decision = evaluatePolicy({
     riskTier: tier,
+    // DEC-41, as the coordinator does. A replay scoring against a different
+    // gate than the live path would measure the wrong system.
+    intent: classification.intentId,
     agreement: classification.agreement,
     groundedness: ROUTING_GROUNDEDNESS,
     thresholds,

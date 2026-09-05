@@ -110,6 +110,54 @@ export interface CalibrationArtifact {
   model_ver: string;
   target_precision: number;
   threshold: number;
+  /**
+   * DEC-41: the trigger in force when this ran, so a reader need not know it.
+   *
+   * Every field below is optional on read, and only on read. This file is
+   * loaded at startup by every daemon, so an adopter holding an artifact
+   * fitted before DEC-41 must still start. Present and malformed is still
+   * refused, and the job always writes them.
+   */
+  trigger_min_labelled?: number;
+  /**
+   * Labelled cases in the corpus, which is what the trigger counts.
+   *
+   * Not the fit population: `fit_tickets` records that, and the two differ
+   * because DEC-31 splits the corpus and this job consumes one half.
+   */
+  labelled_cases?: number;
+  /**
+   * The threshold fitted for each intent. Empty below the trigger.
+   *
+   * Absent or empty is the DEC-13 path, and an entry always means a
+   * threshold that was fitted: the global value is never copied in, so a
+   * reader can tell a fitted threshold from an inherited one.
+   */
+  per_intent?: Readonly<Record<string, number>>;
+  /** Intents that kept the global threshold. Named, because an absence is not a finding. */
+  below_floor?: readonly string[];
+  /**
+   * What labelled the cases behind these thresholds, and how accurate each
+   * one was. One entry per pin, because DEC-41 asks for the count and the
+   * accuracy of each kind and a corpus may carry more than one.
+   *
+   * Each `agreement` is scored over that pin's own cases, and `cases` counts
+   * them, so the entries never attribute a case to a labeller that did not
+   * label it. The counts cover the fit half, which is the population this job
+   * reads; `labelled_cases` above covers the corpus.
+   *
+   * The kind is a closed set for the same reason `gold_source` is. A
+   * stand-in's agreement read as a real model's score is exactly the
+   * confusion DEC-41 exists to prevent, and `human-review` can never appear
+   * here — that value belongs to a gold report and means a person read the
+   * case.
+   */
+  labellers?: readonly {
+    kind: 'stub' | 'model';
+    pin: string;
+    agreement: number;
+    cases: number;
+  }[];
   precision_at_threshold: number;
   coverage_at_threshold: number;
   interval: CalibrationInterval;
@@ -167,6 +215,67 @@ export function validateCalibrationArtifact(raw: unknown): CalibrationArtifact {
         && (raw[field] as number) >= 0,
       `artifact.${field} is not a count`,
     );
+  }
+  for (const field of ['trigger_min_labelled', 'labelled_cases'] as const) {
+    if (raw[field] === undefined) continue;
+    assert(
+      typeof raw[field] === 'number'
+        && Number.isInteger(raw[field])
+        && (raw[field] as number) >= 0,
+      `artifact.${field} is not a count`,
+    );
+  }
+  if (raw['per_intent'] !== undefined) {
+    const map = raw['per_intent'];
+    assert(isRecord(map) && !Array.isArray(map), 'artifact.per_intent is not a map');
+    for (const [intent, threshold] of Object.entries(map)) {
+      // A threshold of zero passes every ticket, which is the gate switched
+      // off. It must not survive a round trip any more than it survives the
+      // fit that refused it.
+      assert(
+        typeof threshold === 'number' && threshold > 0 && threshold <= 1,
+        `artifact.per_intent[${intent}] is not a fraction in (0, 1]`,
+      );
+    }
+  }
+  if (raw['below_floor'] !== undefined) {
+    const named = raw['below_floor'];
+    assert(
+      Array.isArray(named) && named.every((i) => typeof i === 'string' && i.length > 0),
+      'artifact.below_floor is not a list of intent ids',
+    );
+  }
+  if (raw['labellers'] !== undefined) {
+    const labellers = raw['labellers'];
+    assert(Array.isArray(labellers), 'artifact.labellers is not a list');
+    const seen = new Set<string>();
+    for (const labeller of labellers) {
+      assert(isRecord(labeller), 'artifact.labellers holds a non-object');
+      assert(
+        labeller['kind'] === 'stub' || labeller['kind'] === 'model',
+        `artifact.labellers kind is ${String(labeller['kind'])}, expected stub or model`,
+      );
+      assert(
+        typeof labeller['pin'] === 'string' && labeller['pin'].length > 0,
+        'artifact.labellers holds an entry with no pin',
+      );
+      // One entry per pin. Two entries for one pin would split a labeller's
+      // cases across rows and no reader could total them.
+      assert(!seen.has(labeller['pin']), `artifact.labellers repeats pin ${labeller['pin']}`);
+      seen.add(labeller['pin']);
+      assert(
+        typeof labeller['agreement'] === 'number'
+          && labeller['agreement'] >= 0
+          && labeller['agreement'] <= 1,
+        'artifact.labellers holds an agreement outside [0, 1]',
+      );
+      assert(
+        typeof labeller['cases'] === 'number'
+          && Number.isInteger(labeller['cases'])
+          && (labeller['cases'] as number) >= 0,
+        'artifact.labellers holds a cases value that is not a count',
+      );
+    }
   }
   for (const field of ['report_half_digest', 'fit_half_digest'] as const) {
     const value = raw[field];

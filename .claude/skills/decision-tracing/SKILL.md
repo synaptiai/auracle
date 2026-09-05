@@ -9,7 +9,7 @@ This skill is advisory. The deterministic backstop is the commit hook. It
 blocks a change to `docs/v1-architecture.md` without a DEC citation. The
 compliance pass in `REVIEW.md` is a second backstop.
 
-`docs/v1-architecture.md` holds 39 numbered decisions, DEC-01 to DEC-39. The
+`docs/v1-architecture.md` holds 41 numbered decisions, DEC-01 to DEC-41. The
 decisions are the only design authority.
 
 ## Rules
