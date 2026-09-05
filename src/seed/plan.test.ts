@@ -26,6 +26,22 @@ const OPTIONS = {
   seed: 0x41726361, days: 45, endDay: '2026-06-30', partitions: 4, provider: 'stub',
 };
 
+/** The queue wait of every run in a plan, sorted. */
+function waitsOf(options: Parameters<typeof planHistory>[0]): number[] {
+  return planHistory(options)
+    .map((r) => r.createdAt.getTime() - r.enqueuedAt.getTime())
+    .sort((a, b) => a - b);
+}
+
+function mean(values: readonly number[]): number {
+  return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+/** The value at `p` of a sorted list. */
+function quantile(sorted: readonly number[], p: number): number {
+  return sorted[Math.floor(sorted.length * p)] ?? 0;
+}
+
 describe('the planner is deterministic', () => {
   it('gives byte-identical plans from one seed', () => {
     expect(JSON.stringify(planHistory(OPTIONS))).toBe(JSON.stringify(planHistory(OPTIONS)));
@@ -143,49 +159,146 @@ describe('the queue wait the serial walk produces', () => {
     }
   });
 
-  // The poll interval is a floor on the wait that exists at any load.
-  // consumer-main.ts defaults CONSUMER_INTERVAL_MS to 5000, so a message is
-  // invisible until the next tick. A model without it reports a p50 of zero
-  // and hides the one delay every deployment has.
-  // The number that decides which rule fires, pinned so a claim about it
-  // cannot outrun the evidence again.
+  // The two regimes, measured side by side.
   //
-  // Nothing in this suite measured how much of the wait was queueing rather
-  // than the poll floor, so a reading of "a few long runs cause most of the
-  // wait" — rule R3 — survived it. The measurement says otherwise: at this
-  // load almost every run waits exactly one poll period and nothing else.
-  // A change that made the system queue would move these numbers and fail
-  // here, which is the point.
-  it('measures how much of the wait is queueing rather than the poll floor', () => {
-    const waits = plan.map((r) => r.createdAt.getTime() - r.enqueuedAt.getTime());
+  // These are the figures issue #25 turns on, so both are pinned and neither
+  // is quoted from the other. `wakeOnArrival: false` is the loop that the
+  // #23 reading measured: intake queued a row and the consumer did not look
+  // until its next tick. True is the loop that ships after #25.
+  //
+  // The pair is what makes each number evidence. A wake that did nothing
+  // would leave the two columns equal, and every assertion below that names
+  // a difference would fail. The figures the shipped documents quote are
+  // pinned separately, in `pins the figures the register and the roadmap
+  // quote` — a bound loose enough to survive any draw pins no document.
+  it('removes the poll floor from the wait when it wakes on arrival', () => {
+    const polled = waitsOf({ ...OPTIONS, wakeOnArrival: false });
+    const woken = waitsOf({ ...OPTIONS, wakeOnArrival: true });
+
+    // The reading that decided the correction: a mean sitting within a
+    // whisker of half a poll period, which is what a message arriving at a
+    // uniform instant waits when nothing is ahead of it.
+    expect(mean(polled)).toBeGreaterThan(2_400);
+    expect(mean(polled)).toBeLessThan(3_200);
+    expect(quantile(polled, 0.5)).toBeGreaterThan(2_000);
+    expect(quantile(polled, 0.95)).toBeGreaterThan(4_000);
+
+    // With the signal, almost every message is picked up the instant it is
+    // queued, so the median and the 95th are both zero rather than small.
+    expect(quantile(woken, 0.5)).toBe(0);
+    expect(quantile(woken, 0.95)).toBe(0);
+    expect(woken.filter((w) => w === 0).length / woken.length).toBeGreaterThan(0.95);
+
+    // The mean falls by an order of magnitude, and the assertion is on the
+    // ratio rather than on either figure, so it survives a reseed.
+    expect(mean(woken)).toBeLessThan(mean(polled) / 5);
+  });
+
+  // What the wake does not touch, stated as plainly as what it does.
+  //
+  // The residual tail is a message waiting behind the batch ahead of it —
+  // real queueing, and the head-of-line delay open item 7 names. A signal
+  // cannot shorten a run that is already under way, so removing the tick
+  // cannot remove that wait. Reporting the wake as a fix for head-of-line
+  // delay would be the same overstatement this suite exists to prevent.
+  //
+  // The property is an inequality, and it is asserted across seeds. An
+  // earlier version asserted equality and passed only on the committed seed:
+  // it held on 0x41726361 and failed on seven of the next eight, always in
+  // the same direction. Waking does shave a little queueing, because a
+  // message picked up a tick earlier also frees the consumer a tick earlier.
+  // A little is not none, and a number that is true of one draw is not a
+  // property.
+  it('leaves the queueing behind a batch where it was, or slightly below', () => {
+    const beyond = (waits: number[]): number =>
+      waits.filter((w) => w > 5_000).length / waits.length;
+
+    for (let seed = OPTIONS.seed; seed < OPTIONS.seed + 6; seed += 1) {
+      const polled = beyond(waitsOf({ ...OPTIONS, seed, wakeOnArrival: false }));
+      const woken = beyond(waitsOf({ ...OPTIONS, seed, wakeOnArrival: true }));
+
+      // Never above: the wake removes the tick and adds no queueing.
+      expect(woken).toBeLessThanOrEqual(polled);
+      // And never a correction: it removes at most a small part of it.
+      expect(woken).toBeGreaterThan(polled * 0.5);
+      // Both stay near one run in a hundred, which is why no head-of-line
+      // rule fires at this load.
+      expect(polled).toBeLessThan(0.03);
+    }
+
+    // The tail keeps its order of magnitude. One poll period leaves it.
+    const polledWaits = waitsOf({ ...OPTIONS, wakeOnArrival: false });
+    const wokenWaits = waitsOf({ ...OPTIONS, wakeOnArrival: true });
+    expect(Math.max(...wokenWaits)).toBeGreaterThan(Math.max(...polledWaits) - 5_000);
+  });
+
+  // Under two per cent busy, in either regime. A queue forms near
+  // saturation, not here, and the wake changes no run's service time.
+  it('stays far from saturation, which is why no rule R1 to R4 fires', () => {
     const totalWork = plan.reduce((sum, r) => sum + r.serviceMs, 0);
     const consumers = 2;
     const utilisation = totalWork / (consumers * OPTIONS.days * 11 * 3_600_000);
-    const mean = waits.reduce((a, b) => a + b, 0) / waits.length;
-    const beyondOnePoll = waits.filter((w) => w > 5_000).length / waits.length;
-
-    // Under two per cent busy. A queue forms near saturation, not here.
     expect(utilisation).toBeLessThan(0.02);
-    // The mean sits within a whisker of half a poll period, which is what a
-    // message arriving at a uniform instant waits when nothing is ahead.
-    expect(mean).toBeGreaterThan(2_400);
-    expect(mean).toBeLessThan(3_200);
-    // So almost nothing waits for another run at all.
-    expect(beyondOnePoll).toBeLessThan(0.03);
   });
 
-  it('makes the poll tick the floor on the wait', () => {
-    const waits = plan
-      .map((r) => r.createdAt.getTime() - r.enqueuedAt.getTime())
-      .sort((a, b) => a - b);
-    // A message arriving exactly on a tick waits nothing, so the floor is
-    // zero and not positive. What the tick guarantees is the shape: the
-    // median wait sits inside one poll period rather than at zero, which is
-    // where a model without the tick puts it.
-    expect(waits[0]).toBeGreaterThanOrEqual(0);
-    const median = waits[Math.floor(waits.length / 2)]!;
-    expect(median).toBeGreaterThan(500);
-    expect(median).toBeLessThanOrEqual(5_000);
+  // Every figure the shipped documents quote, pinned to the value they
+  // quote.
+  //
+  // This case exists because the suite claimed the numbers were pinned and
+  // they were not. `docs/v1-architecture.md` and `docs/v2-roadmap.md` name a
+  // utilisation of 1.37 per cent, a depth ratio of 1.14 and a prior wait of
+  // 2.4 to 2.7 s at the median. Loose bounds like "under two per cent" and
+  // "above two seconds" let every one of those move in silence, which is the
+  // failure the surrounding comments say the suite prevents.
+  it('pins the figures the register and the roadmap quote', () => {
+    const totalWork = plan.reduce((sum, r) => sum + r.serviceMs, 0);
+    const utilisation = totalWork / (2 * OPTIONS.days * 11 * 3_600_000);
+    // "1.37 per cent utilisation".
+    expect(utilisation).toBeGreaterThan(0.0130);
+    expect(utilisation).toBeLessThan(0.0145);
+
+    const depth = new Map<number, number>();
+    for (const run of plan) depth.set(run.partition, (depth.get(run.partition) ?? 0) + 1);
+    const counts = [...depth.values()];
+    // "a depth ratio of 1.14, which is what a hash gives".
+    expect(counts).toHaveLength(OPTIONS.partitions);
+    expect(Math.max(...counts) / Math.min(...counts)).toBeLessThan(1.2);
+
+    // "2.4 to 2.7 s and 4.7 to 4.8 s before", per partition, on the loop
+    // this change replaced.
+    const polled = planHistory({ ...OPTIONS, wakeOnArrival: false });
+    for (const partition of counts.keys()) {
+      const waits = polled
+        .filter((r) => r.partition === partition)
+        .map((r) => r.createdAt.getTime() - r.enqueuedAt.getTime())
+        .sort((a, b) => a - b);
+      expect(quantile(waits, 0.5)).toBeGreaterThan(2_400);
+      expect(quantile(waits, 0.5)).toBeLessThan(2_700);
+      expect(quantile(waits, 0.95)).toBeGreaterThan(4_700);
+      expect(quantile(waits, 0.95)).toBeLessThan(4_900);
+    }
+
+    // "the maximum wait barely moves". The documents rest the
+    // no-correction claim on this figure, so it is pinned across seeds
+    // rather than on one draw. A 0.95 bound passed the committed seed and
+    // failed two of the next eleven, which is a figure quoted rather than
+    // pinned — the defect this whole case exists to remove.
+    // The ratio, not the value. The worst wait itself runs from 40 s to
+    // 191 s across seeds, so `2.3 minutes` is one history's reading and the
+    // documents attribute it to that history. What holds everywhere is that
+    // the wake leaves the tail almost untouched: it keeps at least 90 per
+    // cent of its value, and never grows.
+    for (let seed = OPTIONS.seed; seed < OPTIONS.seed + 6; seed += 1) {
+      const worst = Math.max(...waitsOf({ ...OPTIONS, seed, wakeOnArrival: false }));
+      const after = Math.max(...waitsOf({ ...OPTIONS, seed, wakeOnArrival: true }));
+      expect(after).toBeGreaterThan(worst * 0.9);
+      expect(after).toBeLessThanOrEqual(worst);
+    }
+
+    // And the reading the documents quote, from the committed seed.
+    const quoted = Math.max(...waitsOf({ ...OPTIONS, wakeOnArrival: false }));
+    expect(quoted).toBeGreaterThan(130_000);
+    expect(quoted).toBeLessThan(140_000);
   });
 
   // Poisson, so the gaps are exponential and the day carries clusters. A

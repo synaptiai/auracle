@@ -187,7 +187,7 @@ Use `feature/` for new work and `fix/` for a defect. Branches named
 `creatumo/card-<id>` are historical. Do not add more.
 
 Write each commit subject as `type: subject`, in the present tense.
-The types in use are `feat`, `fix`, `docs` and `chore`.
+The types in use are `feat`, `fix`, `docs`, `test` and `chore`.
 Keep the subject under 72 characters and explain the reason in the body.
 
 A commit that edits `docs/v1-architecture.md` must cite a DEC in its message.

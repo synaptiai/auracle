@@ -691,6 +691,11 @@ service time per partition, as percentiles rather than as an average, because
 an average is where a tail hides. The limit stands: this measures the delay and
 does not correct it.
 
+The consumer no longer sleeps through an arrival, because intake signals it.
+That removes the poll interval from the wait. It leaves the head-of-line
+delay: a message queued behind a batch still waits for the batch. Section 7
+item 7 carries the figures and their bounds.
+
 **Fencing needs the target to agree.** The ledger applies the epoch check
 because the system owns the ledger. External adapters do not know about epochs.
 A stopped run cannot damage the ledger. It can still reach an external system.
@@ -1008,18 +1013,55 @@ Item 6 was a schema migration procedure for adopters.
 in `schema_version`.
 
 Item 7 asks for a correction for head-of-line delay in a partition. It stays
-open. `db/005_run_timing.sql` adds the timing columns such a correction needs.
-The service time of a run is the difference between its finish and its
-creation, and the wait is the difference between its pickup and its arrival.
+open, and the measurement now says why. `db/005_run_timing.sql` adds the
+timing columns. The service time of a run is the difference between its
+finish and its creation, and the wait is the difference between its pickup
+and its arrival. `pnpm run latency` reads both per partition (DEC-27).
 
-`pnpm run latency` reads them. It reports both quantities per partition, so a
-partition falling behind is visible beside the ones that are not. It observes
-and it does not correct.
+The first loaded reading came from a synthetic history of 2397 runs over 45
+days. It reported 1.37 per cent utilisation across two consumers. Depth ran
+567 to 646 runs per partition, a ratio of 1.14, which is what a hash gives.
+The mean wait was 2.78 s against a poll floor of 2.50 s. Arrivals ran at
+53 tickets a day, and the mean service time was 20.4 s.
 
-Read the measurement as progress and not as closure. This item names a
-correction, and nobody has chosen one. `docs/operations.md` states the same
-position. The test for every item here is whether the item's own words
-describe what shipped.
+So the wait was the consumer's own sleep and not a queue. The design
+document gives four rules, and none of them fires at this load. R1 needs
+waits that are high and uniform. R2 needs skew. R3 needs a heavy tail
+causing most of the wait. R4 needs one harmed class.
+
+The sleep is now gone. Intake signals the consumer inside the enqueue
+transaction, and the loop wakes on that signal. `CONSUMER_INTERVAL_MS`
+remains as a ceiling for a lost signal. Wait p50 and p95 fall from 2.4 to 2.6 s and 4.7
+to 4.8 s to a figure the poll no longer sets. What remains is the signal and
+the pickup. The seeder models that as zero, so the register quotes no number
+for it: nothing here measures a live notification.
+
+The correction this item asks for is still unchosen. Removing the sleep
+removes the floor, and it corrects at most a small part of the head-of-line
+delay. Two figures bound that part.
+
+The maximum wait barely moves, from 2.3 minutes to 2.2 minutes on the
+deepest partition. About one run in a hundred still waits longer than one
+poll period. That share never rises with the signal, and it never falls by
+half, across the six seeds `src/seed/plan.test.ts` sweeps.
+
+Those runs wait behind the batch ahead of them. That wait is the delay this
+item names, and a signal cannot shorten a run already under way.
+
+Service time is where the hours are, and it is not the consumer. The median
+runs 30 to 48 s and the 95th percentile 2.5 to 3 hours, against model calls
+of about 14 s. DEC-12 puts a person on every customer reply, and the run row
+resolves when that person answers, so most of that figure is human time.
+
+The question reopens on volume. This history runs at 53 tickets a day and
+two consumers, which is 1.37 per cent of their capacity. Saturating those two
+consumers therefore needs about 3 900 tickets a day, and the figure scales
+with the consumer count. An adopter near that volume reads the four rules
+again and picks from the five options the design document maps.
+
+Read the measurement as progress and not as closure. `docs/operations.md`
+states the same position. The test for every item here is whether the item's
+own words describe what shipped.
 
 ### 7.1 Where the V2 design documents live
 
@@ -1036,7 +1078,7 @@ decision only when a row enters the table in section 2.
 | 4. Automatic feedback clusters | `f4c1a90e-7d3b-4c2a-9e15-3b8d6f0a5c47.md` | blocked on volume |
 | 5. A threshold for each intent | `434db94d-bbba-4977-805a-e9d83cb0b6c5.md` | blocked on the trigger |
 | 6. Schema migration procedure | none needed | closed by `src/ledger/migrate.ts` |
-| 7. Head-of-line delay | `99dc14d7-da9d-4a92-a9dc-d7c0685c6992.md` | proposed. The measurement shipped and the correction is unchosen |
+| 7. Head-of-line delay | `99dc14d7-da9d-4a92-a9dc-d7c0685c6992.md` | proposed. The measurement shipped, the poll floor is gone, and the correction is unchosen |
 | (none) | `8dcb8fcb-39dc-4911-a695-2282b6081f07.md` operator console | ratified as DEC-40 |
 | (none) | `38f6dcea-8473-4cf4-9aef-c13936a0442f.md` a threshold for each intent | ratified as DEC-41 |
 | (none) | `ab98fd60-4327-4891-bb4e-00e51e66bdbd.md` partition concurrency | a trace. No row needed |

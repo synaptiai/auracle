@@ -46,6 +46,8 @@ import type {
   CoordinateInput,
   CoordinatorDeps,
 } from './coordinator.js';
+import { reason } from './arrival-signal.js';
+import type { ArrivalSignal } from './arrival-signal.js';
 import { ackTicket, pollPartition } from './intake.js';
 
 /**
@@ -87,7 +89,20 @@ export async function claimPartition(pool: Pool, partition: number): Promise<num
       await client.query('COMMIT');
       return bumped.rowCount ?? 0;
     } catch (error) {
-      await client.query('ROLLBACK');
+      // The rollback must not replace the diagnosis. When the connection is
+      // what failed, this statement throws a generic transport error and it
+      // is the one that reaches the operator, in place of the cause. It is
+      // demoted rather than discarded: the pool destroys a client whose
+      // transport failed, so the cost is diagnostics and nothing else.
+      await client.query('ROLLBACK').catch((rollbackError: unknown) => {
+        console.error(
+          JSON.stringify({
+            event: 'rollback_failed',
+            at: new Date().toISOString(),
+            error: errorMessage(rollbackError),
+          }),
+        );
+      });
       throw error;
     }
   } finally {
@@ -114,6 +129,17 @@ export interface ConsumerOptions {
   readonly scanBatchSize?: number;
   /** Overrides MAX_INTAKE_ATTEMPTS. Tests set it low; operators may lower it. */
   readonly maxIntakeAttempts?: number;
+  /**
+   * Issue #25: an arrival signal, so the loop stops sleeping through a
+   * message that landed just after a scan. Optional, and omitting it gives
+   * the loop that shipped before: `intervalMs` alone.
+   *
+   * The signal is an optimisation and never an authority. The queued row is
+   * the authority, and `intervalMs` still bounds the wait when a
+   * notification is lost — so the worst a broken signal costs is the latency
+   * the system had without it.
+   */
+  readonly signal?: ArrivalSignal;
 }
 
 export type ConsumerScanOutcome =
@@ -128,6 +154,12 @@ export type ConsumerScanOutcome =
    * exists to prevent.
    */
   | { ticketId: string; outcome: 'not_claimed' };
+
+/**
+ * How long `stop()` waits for the arrival signal to release its connection
+ * before it gives up and moves on to the drain.
+ */
+const SIGNAL_STOP_BUDGET_MS = 2000;
 
 /**
  * Failed attempts a queued message gets before it leaves the queue.
@@ -243,7 +275,17 @@ async function abandonMessage(
     await client.query('COMMIT');
     return true;
   } catch (error) {
-    await client.query('ROLLBACK');
+    // As above: a rollback that throws must not replace the cause, and is
+    // reported rather than dropped.
+    await client.query('ROLLBACK').catch((rollbackError: unknown) => {
+      console.error(
+        JSON.stringify({
+          event: 'rollback_failed',
+          at: new Date().toISOString(),
+          error: errorMessage(rollbackError),
+        }),
+      );
+    });
     throw error;
   } finally {
     client.release();
@@ -251,7 +293,10 @@ async function abandonMessage(
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  // Shared with the arrival signal, so one reading of an AggregateError
+  // serves both. Naming an event while withholding its cause is worse than
+  // either alone, and a refused connection hides its cause twice over.
+  return reason(error);
 }
 
 /**
@@ -404,7 +449,11 @@ export async function processQueuedTickets(
 }
 
 export interface ConsumerHandle {
-  /** Stops the loop and waits for the in-flight scan to drain. */
+  /**
+   * Stops the loop, releases the arrival signal, and waits for the in-flight
+   * scan to drain. It resolves only once nothing this handle started still
+   * holds a connection, because the caller ends the pool next.
+   */
   stop(): Promise<void>;
 }
 
@@ -426,22 +475,70 @@ export function startConsumer(
   let scanning = false;
   let drained: (() => void) | null = null;
   let wakeTimer: (() => void) | null = null;
+  // The shortest gap between two scans that a signal alone can drive. It
+  // bounds what an unprivileged NOTIFY can cost, and it never delays a scan
+  // that follows one which found work.
+  const SIGNAL_FLOOR_MS = 50;
+  // Set by an arrival that this consumer has not yet scanned for. Cleared at
+  // the top of each scan, because a scan covers every row queued before it.
+  let pending = false;
+  // Issue #25: only this consumer's own partitions. Every consumer in a
+  // deployment hears every arrival, so without the filter one busy partition
+  // wakes the whole fleet for work none of them owns.
+  const owned = new Set(options.partitions);
 
-  async function scanOnce(): Promise<void> {
-    for (const result of await processQueuedTickets(deps, options)) {
+  /**
+   * Runs one scan and reports whether it made progress — a message that left
+   * the queue, not merely a row the poll returned.
+   *
+   * The distinction decides whether the next signal-driven rescan skips its
+   * floor, so a count of results is the wrong proxy. A message that throws
+   * stays queued, and the abandonment path can throw without bound when the
+   * ledger itself is failing. Counting rows there would report progress on
+   * every scan, skip the floor on every iteration, and spin hardest against
+   * a database that is already in trouble.
+   */
+  async function scanOnce(): Promise<boolean> {
+    const results = await processQueuedTickets(deps, options);
+    let drained = 0;
+    for (const result of results) {
       if (result.outcome === 'error') {
         console.error(
           JSON.stringify({ event: 'ticket_failed', at: new Date().toISOString(), ...result }),
         );
+        continue;
       }
+      // 'stale_epoch' leaves the message queued for the new owner. Every
+      // other outcome acked it or filed its abandonment.
+      if (result.outcome !== 'stale_epoch') drained += 1;
     }
+    return drained > 0;
+  }
+
+  /**
+   * An arrival, from the signal. It records the arrival rather than starting
+   * a scan, because a scan is already serialized by the loop and two
+   * overlapping scans would break the ownership argument in this module's
+   * header.
+   */
+  function onArrival(partition: number): void {
+    if (!owned.has(partition)) return;
+    pending = true;
+    // Ends an interval sleep early. Null while a scan runs, and then the
+    // flag alone carries the arrival to the end of the scan.
+    wakeTimer?.();
   }
 
   async function loop(): Promise<void> {
     while (!stopped) {
+      // Cleared before the poll, never after. An arrival that lands between
+      // here and the poll is read by this very scan; one that lands after
+      // the poll sets the flag again and gets the next.
+      pending = false;
       scanning = true;
+      let foundWork = false;
       try {
-        await scanOnce();
+        foundWork = await scanOnce();
       } catch (error) {
         console.error(
           JSON.stringify({
@@ -456,29 +553,101 @@ export function startConsumer(
         drained = null;
       }
       if (stopped) break;
+      // A message that arrived during the scan is queued and was not polled,
+      // and the scan that just ran drained a message — so the queue is
+      // moving and the next scan starts at once. Sleeping here would cost that message a
+      // full interval, which is the delay this signal exists to remove.
+      if (pending && foundWork) continue;
+
+      // Otherwise a floor applies. In Postgres a NOTIFY needs no grant, so
+      // any role that can open a session on the ledger — including a
+      // read-only reporting role — can send one. Without a floor, a stream
+      // of notifications for rows that do not exist would hold the loop in a
+      // tight poll for as long as it lasted. The floor is two orders of
+      // magnitude below the interval, so a real arrival still loses nothing.
+      //
+      // It is an absolute deadline rather than a delay, so repeated arrivals
+      // cannot push the next scan further out. Resetting a relative timer on
+      // each arrival would starve the scan under exactly the traffic that
+      // most needs it.
+      const floorAt = Date.now() + SIGNAL_FLOOR_MS;
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
+        const finish = (): void => {
           wakeTimer = null;
           resolve();
-        }, options.intervalMs);
+        };
+        let timer = setTimeout(finish, pending ? SIGNAL_FLOOR_MS : options.intervalMs);
         wakeTimer = () => {
           clearTimeout(timer);
-          resolve();
+          if (stopped) {
+            finish();
+            return;
+          }
+          timer = setTimeout(finish, Math.max(0, floorAt - Date.now()));
         };
       });
     }
   }
 
+  // Failing to listen is not fatal: the interval still bounds the wait, and
+  // a daemon that refused to start over a lost optimisation would trade a
+  // few seconds of latency for an outage.
+  void options.signal?.start(onArrival).catch((error: unknown) => {
+    console.error(
+      JSON.stringify({
+        event: 'arrival_signal_unavailable',
+        at: new Date().toISOString(),
+        error: errorMessage(error),
+      }),
+    );
+  });
+
   void loop();
 
   return {
-    stop(): Promise<void> {
+    async stop(): Promise<void> {
       stopped = true;
       wakeTimer?.();
-      if (!scanning) return Promise.resolve();
-      return new Promise<void>((resolve) => {
-        drained = resolve;
-      });
+      // Started here, so released here, and awaited: the daemon calls
+      // pool.end() as soon as this resolves, and a listener still closing
+      // would leave its connection open past shutdown. Stopping twice is
+      // safe, so a caller that owns the signal may also stop it.
+      //
+      // Bounded, because it runs ahead of the drain. `client.end()` carries
+      // no timeout of its own, so a half-open socket here would hold up the
+      // in-flight scan this handle exists to wait for.
+      //
+      // The budget is not free, and saying otherwise would contradict
+      // arrival-signal.ts: a connected client that is never released holds
+      // the Node event loop open, so a daemon whose listener wins this race
+      // exits on its supervisor's SIGKILL rather than on its own. That is
+      // still the better trade — a shutdown that never returns is worse than
+      // one that ends hard — but it is a fault, so it is logged as one.
+      if (options.signal !== undefined) {
+        let released = false;
+        await Promise.race([
+          options.signal.stop().then(() => {
+            released = true;
+          }),
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, SIGNAL_STOP_BUDGET_MS).unref?.();
+          }),
+        ]);
+        if (!released) {
+          console.error(
+            JSON.stringify({
+              event: 'arrival_signal_stop_timeout',
+              at: new Date().toISOString(),
+              budgetMs: SIGNAL_STOP_BUDGET_MS,
+            }),
+          );
+        }
+      }
+      if (scanning) {
+        await new Promise<void>((resolve) => {
+          drained = resolve;
+        });
+      }
     },
   };
 }

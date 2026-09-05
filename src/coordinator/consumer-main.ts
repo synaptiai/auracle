@@ -5,7 +5,11 @@
 // - CONSUMER_PARTITIONS   comma-separated partitions this process owns
 //                         (required). Each partition must be owned by exactly
 //                         one consumer across the whole deployment (DEC-27).
-// - CONSUMER_INTERVAL_MS  milliseconds between scans (default: 5000)
+// - CONSUMER_INTERVAL_MS  ceiling on the wait between scans, in
+//                         milliseconds (default: 5000). Intake signals an
+//                         arrival and the loop wakes on it, so this bounds
+//                         the wait when a signal is lost rather than setting
+//                         it (issue #25).
 // - TICKET_DEADLINE_MS    per-ticket clock budget in milliseconds (DEC-25,
 //                         default: 60000)
 // - OPENROUTER_API_KEY    provider credential
@@ -61,6 +65,7 @@ import { actionProfileFromEnv } from '../config/action-profile.js';
 import { loadDotEnv, dataGuaranteeOption, DEFAULT_CHAT_MODEL_VER } from '../config/env.js';
 import { requireDbUrl } from '../db/config.js';
 import { OpenRouterProvider } from '../models/openrouter.js';
+import { pgArrivalSignal } from './arrival-signal.js';
 import { claimPartition, startConsumer } from './consumer.js';
 import type { CoordinatorDeps } from './coordinator.js';
 
@@ -199,7 +204,10 @@ async function main(): Promise<void> {
         return new Date(Date.now() + ticketDeadlineMs);
       },
     },
-    partitionCount: Number(process.env['PARTITION_COUNT'] ?? '8'),
+    // Validated like its siblings. A bare Number() turns a typo into NaN,
+    // and `hash(...) % NaN` keys every ticket to a partition no consumer
+    // owns — a silent total stall rather than a startup failure.
+    partitionCount: intFromEnv('PARTITION_COUNT', 8),
   };
 
   console.log(
@@ -211,9 +219,18 @@ async function main(): Promise<void> {
     }),
   );
 
+  // Issue #25: intake signals an arrival and the loop wakes on it, instead
+  // of sleeping the full interval through a message that landed just after a
+  // scan. Its own connection, never the pool above: that pool is `max: 1`,
+  // and a LISTEN client is held for the process lifetime, so taking it from
+  // there would leave the consumer with no client for its actual work.
+  //
+  // `intervalMs` stays as the ceiling. A dropped notification costs the
+  // latency this daemon had before the signal existed, and nothing more.
   const handle = startConsumer(deps, {
     partitions,
     intervalMs,
+    signal: pgArrivalSignal(requireDbUrl('the consumer')),
     action: {
       actionClass: profile.actionClass,
       actionPayload: { queue: 'triaged' },
@@ -228,10 +245,29 @@ async function main(): Promise<void> {
     const shutdown = (): void => {
       if (stopping) return;
       stopping = true;
-      void handle.stop().then(async () => {
-        await pool.end();
-        resolve();
-      });
+      void handle
+        .stop()
+        .catch((error: unknown) => {
+          // The chain must always settle. Without this, a rejection leaves
+          // the shutdown promise pending forever, the SIGTERM listener is
+          // already consumed, and the process dies on an unhandled rejection
+          // instead of reporting why it could not stop.
+          console.error(
+            JSON.stringify({
+              event: 'shutdown_failed',
+              at: new Date().toISOString(),
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+          process.exitCode = 1;
+        })
+        .finally(async () => {
+          // In `finally`, not `then`: a rejecting stop() would otherwise skip
+          // the pool and leave it holding the event loop while the exit code
+          // said the process had failed cleanly.
+          await pool.end().catch(() => undefined);
+          resolve();
+        });
     };
     process.once('SIGINT', shutdown);
     process.once('SIGTERM', shutdown);

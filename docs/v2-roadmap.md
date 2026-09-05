@@ -259,10 +259,30 @@ The adopter. The choice depends on their traffic, and the data comes from it.
 partition falling behind is visible beside the ones that are not. That is the
 measurement a correction rests on.
 
+A synthetic history of 2397 runs over 45 days gave the first loaded reading.
+It reported 1.37 per cent utilisation and a depth ratio of 1.14 across four
+partitions, at 53 tickets a day. The mean wait was 2.78 s against a poll
+floor of 2.50 s, so the wait was the consumer's own sleep rather than a
+queue. None of the design
+document's four rules fires at that load.
+
+The sleep is gone. Intake signals the consumer inside the enqueue transaction,
+and the loop wakes on that signal. Wait `p50` and `p95` fall from seconds to
+a figure the poll no longer sets.
+
 ### The next step
 
-Run the report through a Phase 2 deployment, and read whether one partition
-falls behind the others. Choose a correction against that reading.
+That change removes the poll floor and corrects at most a small part of the
+head-of-line delay. The maximum wait barely moves, from 2.3 minutes to 2.2
+minutes on the deepest partition, and about one run in a hundred still waits
+behind the batch ahead of it. That share never rises with the signal and
+never falls by half. Those runs are what this item names.
+
+The question reopens on volume. The history runs at 53 tickets a day against
+two consumers, which is 1.37 per cent of their capacity, so saturating them
+needs about 3 900 a day. Run the report through a Phase 2 deployment near
+that volume, read the four rules again, and choose a correction against that
+reading.
 
 The register marked this item closed until 2026-09-04. The measurement shipped
 and the correction did not, so it now reads open. The test is whether the

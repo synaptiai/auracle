@@ -110,6 +110,9 @@ Offline jobs write artifacts and never touch live traffic:
 `pnpm run calibrate`, `pnpm run gold-report`, `pnpm run triage`, `pnpm run replay`, `pnpm run export-corpus`.
 `pnpm run latency` reads the ledger and reports queue wait and service time per partition.
 It measures V2 open item 7, which stays open because nobody has chosen a correction.
+
+Intake signals the consumer on enqueue and the loop wakes on it, so a queue wait
+sits far below `CONSUMER_INTERVAL_MS`. That variable is the ceiling for a lost signal.
 `pnpm run bands` reads the ledger and reports the four `bands.yaml` metrics for one day.
 It judges that day against the 30 most recent measured days before it.
 Both issue SELECT statements only, so they are safe against a live database.

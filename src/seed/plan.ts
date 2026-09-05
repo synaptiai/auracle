@@ -26,25 +26,38 @@
  *   full batch is where the delay lives.
  * - **Queue wait is not drawn at all.** It is computed from the consumer's
  *   real loop, and three facts of that loop shape it:
- *     1. `consumer-main.ts` polls every `CONSUMER_INTERVAL_MS`, 5000 by
- *        default, so a message waits for the next tick before anything reads
- *        it. That floor exists at any load.
+ *     1. Intake signals the consumer inside the enqueue transaction and the
+ *        loop wakes on it (issue #25), so a message is visible the instant
+ *        it is queued. `CONSUMER_INTERVAL_MS` remains as a ceiling for a
+ *        lost signal. Set `wakeOnArrival: false` for the loop before that
+ *        change, where a message waited for the next tick at any load.
  *     2. `pollPartition` takes every queued message across the partitions one
  *        consumer owns, and `scanBatchSize` defaults to the whole queue.
  *     3. `processQueuedTickets` awaits each `coordinateTicket` before the
  *        next, so the batch is walked serially.
- *   So a ticket waits for the tick, then for every ticket ahead of it in its
- *   consumer's batch — including tickets on a *different* partition that the
- *   same consumer owns. That cross-partition wait is the head-of-line delay
- *   V2 open item 7 names, and modelling one server per partition would have
- *   hidden it entirely.
+ *   So a ticket waits for every ticket ahead of it in its consumer's batch —
+ *   including tickets on a *different* partition that the same consumer
+ *   owns. That cross-partition wait is the head-of-line delay V2 open item 7
+ *   names, and modelling one server per partition would have hidden it
+ *   entirely.
  *
  * Head-of-line delay is therefore a consequence of those facts, and whatever
  * the report shows about it is a finding rather than a setting.
  *
- * Read `pnpm run latency` against the result and report which of the design
- * document's rules R1 to R4 actually fires. If it is not R3, issue #25's
- * correction changes, which is what that issue's own text asks for.
+ * ## What the figures say
+ *
+ * At this load the system does not queue. Utilisation is 1.37 %, and one run
+ * in a hundred waits longer than one poll period. None of the design
+ * document's rules R1 to R4 fires.
+ *
+ * `wakeOnArrival: false` models the loop before the consumer woke on an
+ * arrival. There the mean wait is 2.78 s against a poll floor of 2.50 s, so
+ * ninety per cent of the wait is the sleep itself. Both regimes stay
+ * expressible, because a wait figure that can only be stated one way is not
+ * evidence for anything.
+ *
+ * `src/seed/plan.test.ts` pins every figure the register and the roadmap
+ * quote.
  */
 import { partitionOf } from '../coordinator/coordinator.js';
 
@@ -160,6 +173,17 @@ export interface PlanOptions {
   arrivalsPerDay?: number;
   /** The consumer's poll period, CONSUMER_INTERVAL_MS. */
   pollIntervalMs?: number;
+  /**
+   * Whether the consumer wakes on arrival (issue #25). True models the loop
+   * that ships: intake signals on enqueue and the consumer scans at once,
+   * with the poll period left as a ceiling. False models the loop before it,
+   * where a message was invisible until the next tick.
+   *
+   * Both regimes stay expressible on purpose. The wait figures this planner
+   * produces are the evidence for what the poll floor costs, and evidence
+   * that can only be stated one way is not evidence.
+   */
+  wakeOnArrival?: boolean;
   /** What answered the bulk history's model calls. */
   provider: string;
 }
@@ -292,6 +316,7 @@ export function planHistory(options: PlanOptions): PlannedRun[] {
   const consumers = options.consumers ?? 2;
   const meanArrivals = options.arrivalsPerDay ?? 54;
   const pollMs = options.pollIntervalMs ?? 5_000;
+  const wakeOnArrival = options.wakeOnArrival ?? true;
   const planned: PlannedRun[] = [];
 
   // Which consumer owns which partition. CONSUMER_PARTITIONS names a set per
@@ -353,11 +378,15 @@ export function planHistory(options: PlanOptions): PlannedRun[] {
       // Served in the order the queue filled.
       queue.sort((x, y) => x.arrivedMs - y.arrivedMs);
       for (const a of queue) {
-        // The next poll tick at or after the message arrived. A message is
-        // invisible until the consumer looks, whatever the load.
-        const tickMs = dayStartMs + Math.ceil((a.arrivedMs - dayStartMs) / pollMs) * pollMs;
+        // When the consumer learns the message exists. With the arrival
+        // signal that is the instant it was queued, because intake notifies
+        // inside the same transaction. Without it, the next poll tick: a
+        // message was invisible until the consumer looked, whatever the load.
+        const visibleMs = wakeOnArrival
+          ? a.arrivedMs
+          : dayStartMs + Math.ceil((a.arrivedMs - dayStartMs) / pollMs) * pollMs;
         const free = freeAt.get(owner) ?? 0;
-        const startedMs = Math.max(tickMs, free);
+        const startedMs = Math.max(visibleMs, free);
         freeAt.set(owner, startedMs + a.serviceMs);
 
         // An abstain escalates before the gate step starts, so such a run

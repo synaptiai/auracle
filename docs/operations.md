@@ -166,7 +166,7 @@ The consumer reads this configuration:
 | Variable | Meaning | Default |
 |----------|---------|---------|
 | `CONSUMER_PARTITIONS` | Comma-separated partitions this process owns. Required. | none |
-| `CONSUMER_INTERVAL_MS` | Milliseconds between scans. | 5000 |
+| `CONSUMER_INTERVAL_MS` | Ceiling on the wait between scans, in milliseconds. Intake signals an arrival and the consumer wakes on it, so this bounds the wait when a signal is lost. | 5000 |
 | `TICKET_DEADLINE_MS` | Per-ticket clock budget (DEC-25). | 60000 |
 | `PARTITION_COUNT` | Partition count for hashing (DEC-27). | 8 |
 | `MODEL_VER` | Chat model pin. Overridable at any time. | `z-ai/glm-5.3-flash` |
@@ -1035,6 +1035,21 @@ One consumer owns each partition (DEC-27). A slow run therefore holds up every
 ticket behind it in that partition. The register calls this head-of-line delay
 and says V1 does not correct it.
 
+Intake signals the consumer when a message arrives, so the consumer does not
+sleep through it. A healthy partition therefore reads a queue wait far below
+`CONSUMER_INTERVAL_MS` at `p50` and at `p95`. What remains is the signal and
+the pickup. No published figure states that number, because no measurement
+here has taken it from a live deployment.
+
+Read the partitions against each other, as everywhere else in this section.
+An absolute number is not the signal. One partition sitting well above the
+others is.
+
+`CONSUMER_INTERVAL_MS` is the ceiling for a lost signal. A partition whose
+`p50` sits near half that value has lost its signal, and every partition
+sitting there means the database refused the listener. Check the consumer log
+for `arrival_signal_lost` or `arrival_signal_unavailable`.
+
 `pnpm run latency` shows it. The job reads the ledger and writes
 `latency/vN.json`.
 
@@ -1055,7 +1070,8 @@ Read the partitions against each other, not the totals.
 | What you see | What it means | What you do |
 |---|---|---|
 | One partition's wait far above the others | Head-of-line delay. A slow run is holding up its queue. | Read `pnpm run escalations` for a run stuck in that partition. |
-| Every partition's wait rising together | Not head-of-line delay. The system is behind overall. | Add consumers, or look at intake volume. |
+| Every partition's wait `p50` near half `CONSUMER_INTERVAL_MS` | The arrival signal is down. Every consumer is back on the poll. | Check the consumer log for `arrival_signal_lost`, then the database. |
+| Every partition's wait rising together, above the poll ceiling | Not head-of-line delay. The system is behind overall. | Add consumers, or look at intake volume. |
 | Wait low and service high | The queue is fine and the work is slow. | Check the provider and the deadline setting. |
 | Service `max` far above `p99` | A few runs are much slower than the rest. | Read the journal for those runs. |
 

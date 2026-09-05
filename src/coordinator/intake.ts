@@ -18,6 +18,7 @@ import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 
 import type { ConversationLinkage } from '../adapters/types.js';
+import { ARRIVAL_CHANNEL } from './arrival-signal.js';
 import { partitionOf } from './coordinator.js';
 
 export interface IntakeTicket {
@@ -310,10 +311,32 @@ export async function enqueueTicket(
         );
       }
 
+      // Issue #25: tell the consumer that owns this partition, so it stops
+      // sleeping through the arrival. Emitted on the transaction's client, so
+      // the notification commits with the row and rolls back with it — the
+      // redelivery path above rolls back, and must wake nobody. The signal is
+      // an optimisation, never an authority: CONSUMER_INTERVAL_MS still bounds
+      // the wait when it is lost.
+      await client.query('SELECT pg_notify($1, $2)', [ARRIVAL_CHANNEL, String(partition)]);
+
       await client.query('COMMIT');
       return { conversationId, turnNumber, partition, enqueued: true };
     } catch (error) {
-      await client.query('ROLLBACK');
+      // The rollback must not replace the diagnosis. When the connection is
+      // what failed, this statement throws a generic transport error and it
+      // is the one that reaches the operator, in place of the cause.
+      await client.query('ROLLBACK').catch((rollbackError: unknown) => {
+        // Demoted, not discarded. A rollback that rejects means the transport
+        // failed, and the pool destroys such a client on release, so the cost
+        // is diagnostics alone.
+        console.error(
+          JSON.stringify({
+            event: 'rollback_failed',
+            at: new Date().toISOString(),
+            error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+          }),
+        );
+      });
       throw error;
     }
   } finally {
