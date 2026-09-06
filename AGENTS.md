@@ -11,6 +11,15 @@ Each command is a single target. Each exits non-zero on failure.
 - Test: `pnpm test`. Healthy output: every test passes, for example `Tests: 42 passed, 42 total`, exit code 0.
 - Lint: `pnpm run lint`. Healthy output: no findings printed and exit code 0.
 
+The console is a second package, and these three targets do not reach it.
+Run its own three as well, or you verify none of `console/`:
+
+- `pnpm --filter @auracle/console build`
+- `pnpm --filter @auracle/console check`
+- `pnpm --filter @auracle/console test`
+
+`pnpm run lint` is the exception. It reaches `console/` already.
+
 `pnpm run check` runs the compiler with `--noEmit`. Use it as the fast inner loop.
 It is not a substitute for the three targets above.
 

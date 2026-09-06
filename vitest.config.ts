@@ -11,7 +11,10 @@ export default defineConfig({
     // file and case counts roughly doubled, and the two copies of the
     // end-to-end mail suite raced for the one GreenMail server the global
     // setup starts, so one of them failed on a mailbox the other had emptied.
-    exclude: ['**/node_modules/**', '**/dist/**', '.claude/worktrees/**'],
+    // `console/` is its own package with its own runner. Collected here it
+    // would move the core suite's file and case counts, which issue #27
+    // requires to stay where they are.
+    exclude: ['**/node_modules/**', '**/dist/**', '.claude/worktrees/**', 'console/**'],
     globalSetup: ['./src/test-support/global-setup.ts'],
     setupFiles: ['./src/test-support/db-url.setup.ts'],
     // Suites still truncate tables between cases within a run; running test

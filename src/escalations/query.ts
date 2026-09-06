@@ -11,6 +11,8 @@
  * Every statement is a SELECT. The module never writes, so it is safe to
  * run against a live database without approval.
  */
+import { RUN_STATES } from '../coordinator/coordinator.js';
+import type { TerminalRunState } from '../coordinator/coordinator.js';
 import type { Pool, PoolClient } from 'pg';
 
 /** One item that needs a person. */
@@ -48,7 +50,30 @@ export interface EscalationFilters {
   readonly state?: string;
 }
 
-const RUN_SELECT = `
+/**
+ * The ledger states a run may sit in.
+ *
+ * The list is closed because `runSelectFor` interpolates it: a state set is
+ * a fixed vocabulary, not user input, and Postgres cannot bind an IN list of
+ * unknown length. Interpolating a checked member of a closed set is the same
+ * discipline `LISTEN` uses for its channel name.
+ */
+export const TERMINAL_RUN_STATES = [
+  'resolved',
+  'escalated',
+  'superseded',
+  'abandoned',
+] as const satisfies readonly TerminalRunState[];
+
+export const LEDGER_STATES = [
+  ...RUN_STATES,
+  ...TERMINAL_RUN_STATES,
+] as const;
+
+/** The two states the escalation queue reports (section 4.3). */
+export const RUN_STATES_ESCALATION = ['escalated', 'awaiting_approval'] as const;
+
+const RUN_SELECT_BODY = `
   SELECT r.run_id            AS run_id,
          r.ticket_id         AS ticket_id,
          r.state             AS state,
@@ -70,7 +95,33 @@ const RUN_SELECT = `
        WHERE run_id = r.run_id AND status IN ('delivery_unknown', 'malformed')
        LIMIT 1
     ) o ON TRUE
-   WHERE r.state IN ('escalated', 'awaiting_approval')`;
+`;
+
+/**
+ * The run SELECT, restricted to the states asked for.
+ *
+ * One statement serves the escalation queue and the console's runs list. A
+ * second copy would be two definitions of what a run row is, and the console
+ * exists to display what the jobs produce rather than to redefine it — which
+ * is why issue #27 forbids the console its own SQL.
+ */
+export function runSelectFor(states: readonly string[]): string {
+  if (states.length === 0) {
+    throw new Error('a run SELECT needs at least one state to select');
+  }
+  for (const state of states) {
+    if (!(LEDGER_STATES as readonly string[]).includes(state)) {
+      throw new Error(
+        `'${state}' is not a ledger state; the list is interpolated, so it takes `
+          + `only members of the closed set (${LEDGER_STATES.join(', ')})`,
+      );
+    }
+  }
+  const list = states.map((s) => `'${s}'`).join(', ');
+  return `${RUN_SELECT_BODY}   WHERE r.state IN (${list})`;
+}
+
+const RUN_SELECT = runSelectFor(RUN_STATES_ESCALATION);
 
 // DEC-30 says an unknown delivery always escalates the run in one
 // transaction, so this normally finds nothing new. It stays so the CLI
@@ -136,6 +187,49 @@ export function parseSince(value: string): Date {
  * List everything that needs a person. Read-only: two SELECTs merged by
  * run id, newest ticket arrival first when the intake row is known.
  */
+/**
+ * Every run in the given states, for the console's runs surface (issue #27).
+ *
+ * Shares `runSelectFor` with the escalation queue, so a run row means one
+ * thing. The console owns no SQL: this is the module it reads through, beside
+ * `bands` and `latency`.
+ */
+export async function listRuns(
+  pool: Pool | PoolClient,
+  states: readonly string[],
+  limit = 200,
+): Promise<EscalationItem[]> {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+    throw new Error(`a runs page takes 1 to 1000 rows, got ${limit}`);
+  }
+  const rows = await pool.query(
+    `${runSelectFor(states)} ORDER BY r.created_at DESC NULLS LAST LIMIT $1`,
+    [limit],
+  );
+  return (rows.rows as unknown as Record<string, unknown>[]).map(toItem);
+}
+
+/**
+ * One run by id, or null (issue #27).
+ *
+ * Exact rather than a scan. The console's first version read the newest
+ * thousand runs and searched them, so a run outside that window answered
+ * "no such run" — a wrong answer rather than a limit, and four joins and a
+ * thousand rows marshalled for one page.
+ *
+ * The id is bound, never interpolated. Only the state list is interpolated,
+ * and `runSelectFor` takes members of a closed set.
+ */
+export async function readRun(
+  pool: Pool | PoolClient,
+  runId: string,
+  states: readonly string[] = LEDGER_STATES,
+): Promise<EscalationItem | null> {
+  const rows = await pool.query(`${runSelectFor(states)} AND r.run_id = $1`, [runId]);
+  const row = (rows.rows as unknown as Record<string, unknown>[])[0];
+  return row === undefined ? null : toItem(row);
+}
+
 export async function listEscalations(
   pool: Pool | PoolClient,
   filters?: EscalationFilters,

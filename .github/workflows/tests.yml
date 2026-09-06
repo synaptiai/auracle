@@ -60,6 +60,22 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
+      # The console is its own package, so the core targets above do not
+      # reach it: `pnpm test` excludes `console/**` to keep the core counts
+      # where they were, and tsconfig.check.json covers `src/` alone. Without
+      # these three steps the console's build, its types and its cases run
+      # nowhere on a pull request — and `docs/operations.md` cites
+      # select-only.test.ts in print as the proof of the single-write claim.
+      # A proof that never executes is not one.
+      - name: Console build
+        run: pnpm --filter @auracle/console build
+
+      - name: Console types
+        run: pnpm --filter @auracle/console check
+
+      - name: Console test
+        run: pnpm --filter @auracle/console test
+
       # DEC-18: the committed corpus must match what the generator writes.
       # Running the generator and eyeballing it is circular. The diff is the
       # part that can fail.

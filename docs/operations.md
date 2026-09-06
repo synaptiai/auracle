@@ -1029,6 +1029,93 @@ It names the shape that the most samples reported.
 A tie breaks on the shape name.
 So the order the provider answered in never decides your remedy.
 
+## 7.0 The operator console
+
+The console reads the ledger and approves a parked draft. It is a separate
+package, so nothing it needs reaches the daemons.
+
+```sh
+pnpm install
+pnpm run build
+pnpm --filter @auracle/console build
+DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle \
+  pnpm --filter @auracle/console start
+```
+
+The console is its own package, so the root build does not build it. Run both
+build steps.
+
+It listens on 127.0.0.1:8787. Set `CONSOLE_PORT` and `CONSOLE_HOST` to change
+that.
+
+The console reads no `.env` file, as `pnpm run escalations` and `pnpm run
+triage` do not. Name `DATABASE_URL` on the command line, as above. It refuses
+to start when it cannot reach that ledger, so a wrong URL fails at startup
+rather than one page at a time.
+
+The console answers only the host names it was started for, and it refuses a
+form post that did not come from one of its own pages. Those two checks are
+the approval's defence.
+
+It derives the host names from the bind. That covers loopback under every
+spelling a browser sends, and it covers no other name. Put a reverse proxy in
+front, and the browser sends the proxy's name instead. Name it in
+`CONSOLE_ALLOWED_HOSTS`, as a comma-separated list:
+
+```sh
+CONSOLE_ALLOWED_HOSTS=console.internal.example,console.internal.example:8443 \
+  pnpm --filter @auracle/console start
+```
+
+Each entry is a host and a port, exactly as the browser sends it. Omit the
+port only for port 80 or 443. An unnamed proxy gets every request refused,
+and the console still looks healthy from the machine it runs on.
+
+A read from a script needs no header. An approval does: send
+`Sec-Fetch-Site: same-origin`, or an `Origin` the console answers to. Every
+browser sends one of the two, and a page that did not come from this console
+can send neither.
+
+Binding to loopback is not a defence. Any page the operator has open can post to a loopback port,
+and a name an attacker controls can resolve to 127.0.0.1, which gives their
+page a same-origin handle on this console. A reverse proxy that authenticates
+does not help either, because the browser it is being used through is already
+authenticated.
+
+The console authenticates nobody. Anyone who reaches it can approve a reply,
+so treat reaching it as the whole access control and place it accordingly.
+
+Five surfaces read live data: runs, one run in detail, the approval queue, the
+control bands and the partition latency.
+
+Two of them show a dash where the gate values go. The console reads the
+escalation module, which reports what a person needs to work the queue and
+carries neither agreement nor coverage. The dash says "not read by the
+console" and means exactly that: it is not a claim that the run failed to
+reach a gate.
+
+**The console makes one write, and it is the approval.** Every other statement
+it issues is a SELECT, so it is otherwise as safe against a live database as
+`pnpm run bands` and `pnpm run latency`. That claim is its own, not inherited:
+`console/src/select-only.test.ts` refuses any SQL keyword in the package,
+refuses a call to `pool.query`, and holds the approval to one module.
+
+Approving in the console calls the same function `pnpm run approve` calls, so
+the transaction and the fencing epoch are the same whichever path an operator
+used. The command line keeps working.
+
+The console captures no reply text, so it records no approval-edit distance.
+Edit the draft in the helpdesk, then approve. The relay sends the parked draft
+exactly as the helpdesk holds it, so text typed anywhere else is recorded and
+never sent. `pnpm run approve --read-back` is the path that measures an edit:
+it reads the draft back from the target system after the person changed it.
+
+A run whose parked draft is gone offers no approve button, and the command
+line reports the same `draft_missing` for it.
+
+The console never parks a draft. A draft parks in the helpdesk and nowhere
+else (DEC-11, DEC-40).
+
 ## 7.1 Seeing a partition fall behind
 
 One consumer owns each partition (DEC-27). A slow run therefore holds up every

@@ -5,8 +5,14 @@
  * An operator, or the adopter's helpdesk webhook, calls this after a person
  * approves a parked draft in the helpdesk UI. The draft parks in the helpdesk
  * and nowhere else (DEC-11). DEC-40 permits an operator console to call this
- * as well; no console ships today, so this entrypoint and the CLI are the
- * only callers.
+ * as well, and one ships: the `@auracle/console` package's approval surface
+ * calls this through `approveFromConsole`. So there are two callers and one
+ * implementation — the console has no approval of its own, and the
+ * transaction and the fencing epoch are the ones this function commits
+ * whichever path an operator used. The console passes no `finalBody`: the
+ * outbox payload for a draft-backed park is `{ draftExternalId }` and the
+ * relay sends that draft verbatim, so a body supplied here is recorded and
+ * never sent. Read-back is the honest way to measure an edit.
  *
  * One transaction does all of:
  *   1. refuse the move unless the run sits in `awaiting_approval` (DEC-12)

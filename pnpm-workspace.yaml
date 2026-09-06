@@ -1,3 +1,7 @@
+packages:
+  - '.'
+  - 'console'
+
 # Build scripts pnpm may run during install.
 #
 # pnpm blocks lifecycle scripts by default. Each package below is a real
@@ -9,8 +13,12 @@
 #   ssh2           testcontainers, through docker-modem
 #   cpu-features   ssh2's optional native accelerator
 #
-# There is no `packages` key on purpose: this repository is one package, not
-# a workspace. The file exists for the list above.
+# The repository is a workspace since issue #27. `console/` is the operator
+# console, and it is a separate package for one reason: DEC-11 keeps the core
+# free of a new interface, and a package boundary is the only way to state
+# that a console dependency can never reach the daemons. The core `build`,
+# `lint` and `test` targets cover `src/` alone, so the console package adds
+# nothing to any of them.
 allowBuilds:
   esbuild: true
   protobufjs: true

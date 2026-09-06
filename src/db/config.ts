@@ -40,6 +40,29 @@ export function requireDbUrl(processName: string): string {
   );
 }
 
+/**
+ * Proves a pool can reach its database, or throws saying it cannot.
+ *
+ * A `pg.Pool` connects lazily, so a wrong `DATABASE_URL` starts a process
+ * cleanly and fails one request at a time. The operator reads the listening
+ * line and believes it — the same hazard `requireDbUrl` names for guessing,
+ * arriving one step later.
+ *
+ * It lives here rather than at the call site so a caller needs no statement
+ * of its own. The operator console is held to naming no SQL at all, and a
+ * probe written there would be the first one.
+ */
+export async function probeLedger(pool: Pool, processName: string): Promise<void> {
+  try {
+    await pool.query('SELECT 1');
+  } catch (error) {
+    throw new Error(
+      `${processName} cannot reach the ledger named by DATABASE_URL: `
+        + (error instanceof Error ? error.message : String(error)),
+    );
+  }
+}
+
 export async function tryConnect(): Promise<Pool | null> {
   const pool = new Pool({ connectionString: dbUrl(), max: 1 });
   try {
