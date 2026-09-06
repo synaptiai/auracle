@@ -178,7 +178,7 @@ tickets.
 
 ### What blocks it
 
-One thing now, and it was two.
+One thing now, and it was not this one.
 
 **DEC-13 no longer binds alone.** It selected one global threshold and
 rejected a threshold the system learns for each intent. DEC-13 now names the
@@ -193,13 +193,23 @@ a Zipf distribution, so the intent at rank 20 needs roughly 7700. The item
 rounds that to 8000.
 
 Read 385 as a requirement and not as a corpus size. The fit half holds 4100
-cases, so both the global threshold and the per-intent one have the data they
-need.
+cases, so the global threshold has the data it needs.
+
+**The fit refuses every intent.** Section 3.3 sizes a corpus for an interval
+of five points. The job fits against a precision floor instead, and the two
+ask for different amounts.
+
+The shipped floor is 0.985. A perfect sample needs 253 cases to hold it, and
+25 intents would need 6325 in the fit half. That half holds 4100, so each
+intent holds 164 and the job refuses it. The next step below reports that
+run.
 
 The shipped corpus holds 8200 synthetic cases, which clears the trigger. It
-is synthetic (DEC-18), and a stand-in labelled it. So the mechanism is
-exercised end to end and the numbers describe this corpus, not an adopter's
-traffic.
+is synthetic (DEC-18), and a stand-in labels it. So the mechanism runs end to
+end, and the numbers describe this corpus and not an adopter's traffic.
+
+Clearing the trigger is not the same as fitting a threshold. The next step
+below reports what the fit produces on this corpus.
 
 ### Who owns each blocker
 
@@ -207,6 +217,7 @@ traffic.
 |---|---|
 | DEC-13 binds | Cleared. DEC-41 carries the amendment, and DEC-13 now names the trigger as its own bound |
 | The trigger cannot fire | Cleared on the shipped corpus, which holds 8200 cases. An adopter clears it by labelling their own history |
+| The trigger fires and fits nothing | Open. The fit needs 253 cases for one intent at the shipped target, and an even split of 4100 gives 164 |
 
 ### What has shipped toward it
 
@@ -225,10 +236,31 @@ no longer ships. Read the register and this item for the current figures.
 The mechanism has shipped and the item does not close. Both halves of that
 are worth stating plainly.
 
-The shipped corpus clears the trigger, so the per-intent path runs and its
-thresholds gate the shipped gold report. A stand-in labelled those cases, and
-the artifact says so. That is the mechanism working end to end on synthetic
-data.
+The shipped corpus clears the trigger, so the per-intent path runs. It fits
+no threshold. A run of the shipped fit half refuses all 25 intents.
+
+Two things decide that, and a reader needs both. One is the corpus. An even
+split of 4100 fit cases gives each of 25 intents 164 cases.
+
+The other is the target precision. Its shipped value is 0.985, and
+`CALIBRATION_TARGET_PRECISION` overrides it. The fit refuses a threshold whose
+95 per cent lower bound cannot hold the target.
+
+A perfect sample of 164 cases reaches 0.977. That is under 0.985, so the count
+settles every intent here whatever the answers are. Every intent keeps the
+global threshold, and the job fits no per-intent threshold.
+
+So this corpus cannot show whether precision alone would refuse an intent.
+
+It also cannot show that the mechanism selects anything. A run at a target of
+0.9 fits all 25 intents, each at a threshold of 1.0.
+
+No fitted threshold gates the shipped gold report either. That report records
+a gate source of `seed`, which names the section 4.5 seed. It records no
+calibration version. So the number it publishes is the seed and not a fitted threshold.
+
+A stand-in labels the cases, and the artifact says so. So the mechanism runs
+end to end on synthetic data, and it selects nothing.
 
 It is not the item. The item asks for a threshold for each intent on an
 adopter's own traffic, and two things stand between.
