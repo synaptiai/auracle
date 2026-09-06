@@ -46,8 +46,9 @@ They cover volume, edit distance, a human audit of unchanged sends, a
 groundedness floor, person-set eligibility, disclosure, an adapter floor and a
 daily cap. They stay a proposal until a row enters section 2.
 
-**B3. No production data exists.** The four baselines in `bands.yaml` stay
-null. They fill only from an adopter's own traffic, and this repository ships
+**B3. No production data exists.** The four control bands have no baseline
+here. `pnpm run bands` computes a baseline from an adopter's own ledger. That
+baseline is a production number, so it stays with the adopter. This repository ships
 synthetic fixtures only (DEC-18).
 
 ### Who owns each blocker

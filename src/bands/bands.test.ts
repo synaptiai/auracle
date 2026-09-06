@@ -35,6 +35,35 @@ function priorDays(values: readonly (number | null)[]): DailySample[] {
   }));
 }
 
+/**
+ * Words that name the number this file must not hold, not one spelling of it.
+ *
+ * `mean` is singular here on purpose. `means` is a verb far more often than a
+ * plural, so "the file defines the window, which means the band covers 30
+ * days" would fail this guard while stating the truth. A claim written as
+ * "the means and the sigmas" evades it, and `sigma` catches that pairing.
+ */
+const BASELINE = /\bbaselines?\b|\bsigmas?\b|\bmean\b|\bcent(?:re|er)s?\b/i;
+
+/**
+ * A denial, read over one clause and never over a whole sentence.
+ *
+ * Read over the sentence, one incidental `not` anywhere in it exempted every
+ * claim beside it: "the four baselines in `bands.yaml` are 0.31 and 0.74, not
+ * estimates" passed.
+ */
+const DENIES = /\b(?:no|not|never|nothing|neither|without|cannot)\b/i;
+
+function sentencesOf(text: string): string[] {
+  return text.split(/(?<=[.!?])\s+/).map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+}
+
+function clausesOf(sentence: string): string[] {
+  return sentence.split(/[,;:]|\s+\b(?:and|but|while|whereas)\b\s+/i)
+    .map((c) => c.trim())
+    .filter(Boolean);
+}
+
 describe('the definitions the report is pinned to', () => {
   // bands.yaml is the only YAML this application would read, and no parser is
   // in the dependency tree. The definitions are restated here and pinned
@@ -43,28 +72,212 @@ describe('the definitions the report is pinned to', () => {
   // than silently changing a control band under an operator.
   const yaml = readFileSync(join(REPO_ROOT, 'bands.yaml'), 'utf8');
 
-  it('names the same window bands.yaml does', () => {
+  // Two-space indented keys under `metrics:` are the metric names, and each
+  // metric's body runs to the next line indented two spaces or less. Hoisted,
+  // because four cases below read the same parse.
+  //
+  // Reading the body as a contiguous run of four-space lines ended it at the
+  // first blank line. A baseline re-declared after one was then invisible to
+  // every case below, and the file passed carrying the field it must not
+  // hold. Whatever follows the name's colon is body too, so a mapping written
+  // on the name line is read like an indented key rather than skipped.
+  const block = yaml.slice(yaml.indexOf('\nmetrics:'));
+  const bodies = new Map<string, string>();
+  {
+    let name: string | null = null;
+    let held: string[] = [];
+    const close = (): void => {
+      if (name !== null) bodies.set(name, held.join('\n'));
+      name = null;
+      held = [];
+    };
+    for (const line of block.split('\n')) {
+      const named = /^ {2}([^\s:#][^:]*):/.exec(line);
+      if (named) {
+        close();
+        name = named[1]!.trim().replace(/^['"]|['"]$/g, '');
+        const trailing = line.slice(line.indexOf(':') + 1).trim();
+        if (trailing !== '') held.push(`    ${trailing}`);
+      } else if (name !== null && (line.trim() === '' || /^ {3,}\S/.test(line))) {
+        held.push(line);
+      } else {
+        close();
+      }
+    }
+    close();
+  }
+
+  it('names the same window and sample interval bands.yaml does', () => {
     const found = /^window_days:\s*(\d+)/m.exec(yaml);
     expect(found, 'bands.yaml no longer declares window_days').not.toBeNull();
     expect(WINDOW_DAYS).toBe(Number(found![1]));
+    // Pinned as a literal, because no constant restates it. The job reports
+    // one UTC day per run, so a file asking for an hourly sample would
+    // describe a cadence nothing here can produce.
+    expect(yaml, 'bands.yaml no longer samples daily').toMatch(/^sample_interval: daily$/m);
   });
 
-  it('names the same four metrics bands.yaml does, with the same directions', () => {
-    // Two-space indented keys under `metrics:` are the metric names.
-    const block = yaml.slice(yaml.indexOf('\nmetrics:'));
+  it('names the same four metrics bands.yaml does', () => {
     const names = [...block.matchAll(/^ {2}([a-z_]+):$/gm)].map((m) => m[1]!);
     expect(names.length, 'bands.yaml declares no metrics').toBeGreaterThan(0);
     expect(METRICS.map((m) => m.name).slice().sort()).toEqual(names.slice().sort());
+  });
 
-    // Each metric's body is the four-space indented lines beneath its name.
-    const bodies = new Map(
-      [...block.matchAll(/^ {2}([a-z_]+):\n((?: {4}.*\n?)*)/gm)].map((m) => [m[1]!, m[2]!]),
-    );
+  it('declares no key beyond a source and a direction, so no baseline returns', () => {
+    // A whitelist, and not a search for the field that was removed. A search
+    // finds `baseline_mean` and misses `"baseline_mean"`, `mean`, `baseline:
+    // {mean: 0.3}` and `baseline_mean :`. Every one of those re-declares the
+    // value this file must not hold, and an adversarial pass got all four
+    // past the first version of this case.
+    //
+    // The file carried a null baseline for each metric once. Nothing parsed
+    // them, and they could never have been filled: a baseline is a
+    // production number, and this repository ships synthetic fixtures only
+    // (DEC-18).
+    const allowed = new Set(['source', 'direction']);
     for (const metric of METRICS) {
       const body = bodies.get(metric.name);
       expect(body, `bands.yaml lost ${metric.name}`).toBeDefined();
-      expect(body!).toContain(`direction: ${metric.direction}`);
+      const declared: string[] = [];
+      for (const line of body!.split('\n')) {
+        if (line.trim() === '' || line.trimStart().startsWith('#')) continue;
+        // Every line of a body is one key and one plain value. A key alone
+        // says nothing about its value, and `source: {from: composer, mean:
+        // 0.31}` declares only the key `source` while carrying the numbers
+        // this file must not hold. A block scalar hides them the same way.
+        const pair = /^ {4}([^\s:#][^:]*): {0,40}([^\s#].*)?$/.exec(line);
+        expect(pair, `${metric.name} carries a line this file cannot hold: ${line}`)
+          .not.toBeNull();
+        declared.push(pair![1]!.trim().replace(/^['"]|['"]$/g, ''));
+        const value = (pair![2] ?? '').trim();
+        expect(value, `${metric.name} declares ${pair![1]} with no value`).not.toBe('');
+        expect(value[0], `${metric.name} gives ${pair![1]} a value that can carry a map`)
+          .not.toMatch(/[[{>|&*!]/);
+      }
+      expect(new Set(declared), `${metric.name} declares a key this file must not hold`)
+        .toEqual(allowed);
     }
+    // Nothing above the metrics either. `window_days` and `sample_interval`
+    // are the only top-level keys beside the metrics, and a case above pins
+    // each of their values.
+    //
+    // Every key, not the lowercase ones. Under `[a-z_]+` a key the pattern
+    // could not read was simply absent from the found set, so the equality
+    // still held: `baselines_v1:` and `Baselines:` both restored a full set
+    // of numbers with every case green.
+    const top = [...yaml.matchAll(/^([^\s:#][^:]*):/gm)]
+      .map((m) => m[1]!.trim().replace(/^['"]|['"]$/g, ''));
+    expect(new Set(top), 'bands.yaml declares a top-level key beyond the three it needs')
+      .toEqual(new Set(['window_days', 'sample_interval', 'metrics']));
+  });
+
+  it('gives every metric a source with a value, not a comment', () => {
+    // Anchored. `toContain('source:')` was satisfied by a trailing comment
+    // reading `# source: outbox delivery status`, so a metric could lose its
+    // origin and still pass while declaring which way is bad and never of
+    // what.
+    for (const metric of METRICS) {
+      const body = bodies.get(metric.name);
+      expect(body!, `bands.yaml lost the source of ${metric.name}`)
+        .toMatch(/^ {4}source: {0,40}\S/m);
+      expect(body!, `bands.yaml lost the direction of ${metric.name}`)
+        .toMatch(new RegExp(`^ {4}direction: {0,40}${metric.direction}\\b`, 'm'));
+    }
+  });
+
+  // Scoped to the header, and the scope is asserted. `indexOf` returns -1 for
+  // a renamed key, and `slice(0, -1)` is the whole file again — the very
+  // widening this case was narrowed to close.
+  const headerSentences = ((): string[] => {
+    const at = yaml.indexOf('window_days:');
+    expect(at, 'bands.yaml no longer declares window_days').toBeGreaterThan(-1);
+    return sentencesOf(
+      yaml.slice(0, at).split('\n').map((line) => line.replace(/^#\s?/, '')).join(' '),
+    );
+  })();
+
+  it('says where the baseline does come from, in its own header', () => {
+    // Both words in one sentence. A match for `ledger` anywhere in the file
+    // passed while the explanation was deleted, because an unrelated line
+    // mentioning the ledger survived.
+    const said = headerSentences.some((s) => /baseline/i.test(s) && /ledger/i.test(s));
+    expect(said, 'bands.yaml no longer says the baseline comes from the ledger').toBe(true);
+  });
+
+  it('never says in that header that a baseline is shipped here', () => {
+    // The case above is satisfied by a false sentence as easily as a true
+    // one: "the baseline below was measured on our reference ledger" names
+    // both words. A shipped baseline is an adopter's production number in a
+    // tracked file, which DEC-18 refuses.
+    const settled = /\b(?:shipped|ships|measured|set|hard-?coded|carries|holds|stored|declares)\b/i;
+    const claims = headerSentences.flatMap(clausesOf).filter(
+      (clause) => BASELINE.test(clause) && settled.test(clause) && !DENIES.test(clause),
+    );
+    expect(claims, 'bands.yaml says a baseline is settled here').toEqual([]);
+  });
+});
+
+// What these cases can decide, and what they cannot.
+//
+// They decide that no shipped document writes the file name and a baseline
+// into one sentence without denying one. That is a wording test, so it cannot
+// decide that a document is truthful, and two evasions are known and open:
+//
+//   - A claim split across two sentences. "The centres are stored in
+//     `bands.yaml`. Each mean is fixed there." Neither sentence carries both.
+//   - A claim that names no file at all.
+//
+// Widening the unit to the paragraph closes the first and fails on true
+// prose, because a paragraph naming the file also describes what the command
+// computes. The structural cases above are the half that does not depend on
+// wording: a whitelist holds against spellings nobody has enumerated.
+describe('the documents that cite bands.yaml', () => {
+  // Discovered, not listed. A hardcoded pair could never catch a third
+  // document carrying the same claim, and one did: the epic handoff.
+  //
+  // The root documents are in scope too. `README.md` states the published
+  // numbers and `AGENTS.md` names the command, and a false claim in either
+  // reaches more readers than one under `docs/`.
+  //
+  // Standing documents only. `intent/` and `.decisions/` record the state
+  // that motivated a change, so a sentence there describing the file as it
+  // stood before that change is the record and not a defect.
+  const SHIPPED = ['README.md', 'AGENTS.md', 'CONTRIBUTING.md'];
+  const cites = [
+    ...readdirSync(join(REPO_ROOT, 'docs'), { recursive: true, encoding: 'utf8' })
+      .filter((name) => name.endsWith('.md'))
+      .map((name) => join('docs', name)),
+    ...SHIPPED,
+  ]
+    .filter((path) => readFileSync(join(REPO_ROOT, path), 'utf8').includes('bands.yaml'))
+    .sort();
+
+  it('finds the documents that carry the claim', () => {
+    // Named, not counted. A count of five was reached by two scaffold prompts
+    // that make no baseline claim, so it stayed green while both documents
+    // this case exists to cover fell out of the glob.
+    for (const path of ['docs/operations.md', 'docs/internal/epic-v2-handoff.md']) {
+      expect(cites, `${path} no longer reaches this case`).toContain(path);
+    }
+  });
+
+  it.each(cites)('%s never says the file holds a baseline', (path) => {
+    // A claim, not a sentence. The first version matched one wording, and an
+    // adversarial pass evaded it five ways: an extra noun, a possessive, `not
+    // set` for `null`, an unbackticked file name, and a sentence split.
+    //
+    // The denial is read over the clause that carries the number, and the
+    // number is read under every word that names it. Read over the whole
+    // sentence, "the four baselines in `bands.yaml` are 0.31 and 0.74, not
+    // estimates" passed; read as `baseline` alone, "`bands.yaml` records the
+    // mean and the sigma for each metric" passed.
+    const claims = readFileSync(join(REPO_ROOT, path), 'utf8')
+      .split(/\n\s*\n/)
+      .flatMap((block) => sentencesOf(block))
+      .filter((sentence) => /bands\.yaml/.test(sentence))
+      .flatMap(clausesOf)
+      .filter((clause) => BASELINE.test(clause) && !DENIES.test(clause));
+    expect(claims, `${path} says bands.yaml holds a baseline`).toEqual([]);
   });
 });
 

@@ -843,13 +843,13 @@ recent complete UTC day. A part of today compares against whole days, and
 every morning would then look like an excursion.
 
 The baseline covers the 30 most recent measured days before the day you
-asked for. It never
-includes that day. A day inside its own baseline pulls the mean toward
-itself, so a bad day reads less bad the worse it gets.
+asked for. It never includes that day. A day inside its own baseline pulls
+the mean toward itself, so a bad day reads less bad the worse it gets.
 
-The baselines in `bands.yaml` stay null. They are your production numbers, and
-the file is in the repository. The command computes a baseline from your
-ledger each time you run it.
+`bands.yaml` holds no baseline. `pnpm run bands` computes one from your ledger
+whenever the window holds enough days, so that number stays with you. A
+baseline is a production number, and this repository ships synthetic fixtures
+only.
 
 #### When a day carries no band
 

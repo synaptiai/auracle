@@ -2,11 +2,11 @@
  * The control-band definitions (bands.yaml, docs/operations.md).
  *
  * Restated here rather than parsed. `bands.yaml` is the only YAML this
- * application would read, no parser is in the dependency tree, and no value
- * is ever read from that file: its baselines are null and stay null, because
- * a baseline is an adopter's production number and the file is tracked
- * (DEC-18). Only the definitions are needed, and those are
- * static.
+ * application would read, no parser is in the dependency tree, and no
+ * baseline is ever read from that file. It holds none: a baseline is an adopter's
+ * production number and the file is tracked (DEC-18), so `pnpm run bands`
+ * computes each baseline from the ledger. Only the definitions are needed,
+ * and those are static.
  *
  * `bands.test.ts` pins these against the file, so a changed window fails the
  * build rather than silently changing a control band under an operator. This

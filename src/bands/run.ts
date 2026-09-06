@@ -1,10 +1,11 @@
 // The offline control-band job (bands.yaml, sections 4.10 and 5).
 //
 // `bands.yaml` defines four metrics, a 30-day window and a daily sample, and
-// nothing computed one. Its baselines are null and its own header says they
-// stay null "until a full window of daily samples exists", so they could
-// never fill. The runbook told an operator in Phase 2 to watch four bands and
-// named no tool that produced one.
+// nothing computed one. It holds no baseline, and it never could: a baseline
+// is an adopter's production number and the file is tracked (DEC-18). The
+// runbook told an operator in Phase 2 to watch four bands and named no tool
+// that produced one. This job is that tool, and it computes each baseline
+// from the ledger.
 //
 // Offline and on demand, like the latency report. It observes and never
 // corrects: bands.yaml's three-sigma action is a pull request, and this job
