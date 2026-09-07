@@ -11,16 +11,15 @@
 // nothing and repeat exactly. They are not a measurement of a classifier.
 //
 // Two things decide the outcome, and the record must name both. One is the
-// corpus, which spreads its cases evenly over the taxonomy. The other is the
-// target precision, which `CALIBRATION_TARGET_PRECISION` overrides. A case
-// below runs a second fit at a lower target to show that the refusal is a
-// property of the pair and not of the corpus alone.
+// corpus, which spreads its cases over the taxonomy on a Zipf curve. The
+// other is the target precision, which `CALIBRATION_TARGET_PRECISION`
+// overrides. A case below runs a second fit at a lower target to show that a
+// refusal is a property of the pair and not of the corpus alone.
 //
 // Section 3.3 sizes the trigger from a premise: intent frequencies obey a
 // Zipf distribution, and the intent at rank 20 needs a corpus of about 7700
-// tickets. The shipped corpus does not obey that premise, so the last block
-// states what the premise's own shape would give at the same total. That
-// block is arithmetic and it measures nothing.
+// tickets. The shipped corpus now obeys that premise, so the last block reads
+// the corpus rather than stating what the premise would give.
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,7 +33,7 @@ import { minimumSupport } from './calibrate.js';
 import type { CalibrationArtifact } from './artifact.js';
 import { FIT_COUNT, INTENT_CAP, loadGoldHalf, loadTaxonomy, readHalfIdentity } from '../fixtures/load.js';
 import type { GoldFile } from '../fixtures/load.js';
-import type { ClassifierTaxonomy } from '../classifier/classifier.js';
+import type { Taxonomy } from '../fixtures/load.js';
 import { ReplayStubProvider } from '../replay/fake-model.js';
 import { normalizeIntentId } from '../policy/policy.js';
 
@@ -71,16 +70,18 @@ async function fit(targetPrecision?: number): Promise<CalibrationArtifact> {
 }
 
 let fitHalf: GoldFile;
-let taxonomy: ClassifierTaxonomy;
+// The fixtures' taxonomy, which carries the risk tier. The classifier's
+// own shape drops it, and one case below reads it.
+let taxonomy: Taxonomy;
 /** The intents the taxonomy declares. `INTENT_CAP` is a cap, not a count. */
 let INTENT_COUNT: number;
 
 /**
  * Fit cases each intent holds, keyed the way the fit keys them.
  *
- * The even spread is the property under test, so it is counted from the
- * corpus. A corpus that stopped being even would still divide to the same
- * average, so dividing the total would prove nothing.
+ * Counted from the corpus, never divided out of a total. The shape is the
+ * property under test, and a total divided by a count reads the same on any
+ * shape at all.
  */
 let casesPerIntent: Map<string, number>;
 
@@ -124,16 +125,25 @@ describe('the per-intent fit on the shipped corpus', () => {
     ).toBeGreaterThanOrEqual(shipped.trigger_min_labelled!);
   });
 
-  it('fits nothing, and refuses every intent the corpus carries', () => {
+  it('fits the intents that clear the floor, and names every intent it refuses', () => {
     // Defined first. `?? {}` alone passes when the field is absent, so a run
-    // that never triggered would satisfy a case titled 'fits nothing'.
+    // that never triggered would satisfy a count of zero.
     expect(shipped.per_intent, 'the run wrote no per-intent map at all').toBeDefined();
-    expect(
-      Object.keys(shipped.per_intent ?? {}),
-      'an intent was fitted on the shipped corpus',
-    ).toHaveLength(0);
+    const fitted = Object.keys(shipped.per_intent ?? {});
+    // Counted from the corpus against the floor, not written here. A literal
+    // 4 would pass on a corpus reshaped to any curve that happens to put four
+    // intents over the line, and it would need editing every time the target
+    // moved.
+    const floor = minimumSupport(DEFAULT_TARGET_PRECISION);
+    const clearing = [...casesPerIntent]
+      .filter(([, cases]) => cases >= floor)
+      .map(([intent]) => intent);
+    expect(clearing.length, 'no intent clears the floor, so the fit proves nothing here')
+      .toBeGreaterThan(0);
+    expect(new Set(fitted), 'the fitted set is not the set that clears the floor')
+      .toEqual(new Set(clearing));
     expect(shipped.below_floor, 'the run wrote no refusal list at all').toBeDefined();
-    expect(shipped.below_floor).toHaveLength(INTENT_COUNT);
+    expect(shipped.below_floor).toHaveLength(INTENT_COUNT - clearing.length);
     // Against the taxonomy, not against the cap. Twenty-five ids that the
     // taxonomy does not declare would satisfy a bare count.
     const declared = new Set(taxonomy.intents.map((intent) => normalizeIntentId(intent.id)));
@@ -147,17 +157,25 @@ describe('the per-intent fit on the shipped corpus', () => {
     expect(new Set(casesPerIntent.keys())).toEqual(declared);
   });
 
-  it('rests every refusal on the sample count, which over-determines it', () => {
-    // The refusal needs no measurement, and the record must not claim one.
+  it('rests each refusal on the sample count, and each fit on the count and the answers', () => {
     // `fitAgreementThreshold` reads the 95 per cent lower bound, and a
-    // perfect sample of n reaches n / (n + 3.8415). At 164 cases that is
-    // 0.977, which is under the shipped target however accurate the answers
-    // are. So the count alone settles every intent here, and this corpus
-    // cannot show whether precision would refuse one.
+    // perfect sample of n reaches n / (n + 3.8415). So an intent under the
+    // floor is refused however accurate the answers are, and an intent over
+    // it is fitted only because the answers also hold.
+    //
+    // Every refusal is therefore over-determined and needs no measurement.
+    // No fit is: the stand-in's accuracy carries the other half of it, and
+    // the case below records that accuracy beside the result.
     const floor = minimumSupport(DEFAULT_TARGET_PRECISION);
+    const fitted = new Set(Object.keys(shipped.per_intent ?? {}));
     for (const [intent, cases] of casesPerIntent) {
-      expect(cases, `${intent} holds enough cases for precision to be the deciding rule`)
-        .toBeLessThan(floor);
+      if (fitted.has(intent)) {
+        expect(cases, `${intent} is fitted without clearing the floor`)
+          .toBeGreaterThanOrEqual(floor);
+      } else {
+        expect(cases, `${intent} is refused while holding enough cases, so precision decided it`)
+          .toBeLessThan(floor);
+      }
     }
     // Recorded beside it: the stand-in was exactly accurate. Precision is the
     // share correct among the cases that passed the threshold, so coverage
@@ -198,6 +216,33 @@ describe('the per-intent fit on the shipped corpus', () => {
     }
   });
 
+  it('fits a threshold only where the gate can read one', () => {
+    // `evaluatePolicy` returns `gated` for a high-risk intent before it
+    // compares agreement, so a threshold fitted for such an intent is never
+    // read. A corpus whose most frequent intents are the high-risk ones
+    // therefore fits four thresholds that decide nothing, and the per-intent
+    // path stays unexercised while every count says otherwise.
+    //
+    // The taxonomy lists the high-risk intents first, so ranking the curve by
+    // that order put all four fitted intents beyond the gate's reach. The
+    // generator names its own frequency order for this reason.
+    const tiers = new Map(taxonomy.intents.map((i) => [normalizeIntentId(i.id), i.risk_tier]));
+    // An empty map iterates zero times and proves nothing, and `?? {}` would
+    // absorb a missing one. This case is the only guard on the rank order, so
+    // it fails rather than passing vacuously.
+    expect(shipped.per_intent, 'the run wrote no per-intent map').toBeDefined();
+    const fittedIntents = Object.keys(shipped.per_intent ?? {});
+    expect(fittedIntents.length, 'no intent was fitted, so this case checks nothing')
+      .toBeGreaterThan(0);
+    for (const intent of fittedIntents) {
+      expect(tiers.get(intent), `the taxonomy does not declare ${intent}`).toBeDefined();
+      expect(
+        tiers.get(intent),
+        `${intent} is fitted a threshold, and a high-risk intent gates before agreement is read`,
+      ).not.toBe('high');
+    }
+  });
+
   it('records the target the shipped default names', () => {
     expect(DEFAULT_TARGET_PRECISION, 'the shipped default target moved').toBe(0.985);
     expect(
@@ -206,9 +251,19 @@ describe('the per-intent fit on the shipped corpus', () => {
     ).toBe(253);
     expect(shipped.target_precision, 'the run fitted at a target it was not given')
       .toBe(DEFAULT_TARGET_PRECISION);
-    // The spread, not one intent. Every intent holds the same count, and
-    // naming one couples this case to a fixture id.
-    expect(new Set(casesPerIntent.values())).toEqual(new Set([FIT_COUNT / INTENT_COUNT]));
+    // The shape, not one intent. The counts are read from the corpus and
+    // compared against the curve, so naming a fixture id is never needed.
+    const harmonic = Array.from({ length: INTENT_COUNT }, (_, i) => 1 / (i + 1))
+      .reduce((a, b) => a + b, 0);
+    const ranked = [...casesPerIntent.values()].sort((a, b) => b - a);
+    // A short map would iterate fewer times and still pass, so the shape
+    // claim in the title would go unchecked.
+    expect(ranked, 'the corpus lost an intent').toHaveLength(INTENT_COUNT);
+    ranked.forEach((cases, index) => {
+      const earned = FIT_COUNT / harmonic / (index + 1);
+      expect(Math.abs(cases - earned), `rank ${index + 1} holds ${cases}, and earns ${earned.toFixed(1)}`)
+        .toBeLessThanOrEqual(1);
+    });
   });
 });
 
@@ -238,10 +293,11 @@ describe('a Zipf shape at exponent one, as arithmetic', () => {
     const reached = Array.from({ length: INTENT_CAP }, (_, i) => fitCasesAtRank(i + 1))
       .filter((cases) => cases >= floor);
     expect(reached).toHaveLength(4);
-    // The contrast, read from the corpus rather than divided out of a total.
-    for (const [intent, cases] of casesPerIntent) {
-      expect(cases, `${intent} reaches the floor on the shipped even spread`)
-        .toBeLessThan(floor);
-    }
+    // The corpus now carries that shape, so the arithmetic and the fixture
+    // agree rather than contrasting. The fit reads the corpus, so this
+    // compares the two rather than restating one.
+    const clearing = [...casesPerIntent.values()].filter((cases) => cases >= floor);
+    expect(clearing, 'the corpus no longer clears the floor for the ranks the curve names')
+      .toHaveLength(reached.length);
   });
 });

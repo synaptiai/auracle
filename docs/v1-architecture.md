@@ -573,17 +573,25 @@ The cost is a wider interval than an undivided set gives. At the current half
 size that cost is approximately 1.8 points at p=0.9.
 
 The strata need care. DEC-39 scores first turns only, so the report half of
-4100 cases yields 3128 scored cases. The three risk tiers hold 1359, 1134 and
-635 of them.
+4100 cases yields 3074 scored cases. The low tier holds 1834 of them, the
+medium tier 1063 and the high tier 177.
 
-The widest stratum interval is under 8 points wide, on the high tier. Widths
-here are full widths, lower bound to upper bound. The corpus growth narrowed
-this one. At the earlier half size the same tier held 57 cases. Its interval
-was 25 points wide.
+The Zipf shape put the high-risk intents in the tail, so that tier is now the
+thin one. Containment there runs 2.1 points wide and the other two tiers under
+half a point. Widths here are full widths, lower bound to upper bound.
 
-The interval was never 5 points wide, and the split still makes it worse than
-an undivided set would. Treat the strata as an indication only and read the counts from the
-artifact, not from this paragraph.
+Read those widths with the rates beside them. The low and medium tiers contain
+every case and the high tier contains none. Each containment rate therefore
+sits on a boundary, where a Wilson interval is narrow. A narrow interval here
+reports no spread, not a precise measurement.
+
+Action match sits away from those boundaries, and its intervals are wide. The
+high tier reads 0.458 over 177 cases, across 14.5 points. The medium tier runs
+4.9 points wide and the low tier 2.1. That is the widest spread the artifact
+carries, and no boundary explains it away.
+
+Treat the strata as an indication only and read the counts from the artifact,
+not from this paragraph.
 
 **Method 3. Judge triage.** A model selects the cases that go to a person. It
 does not give the published number. A judge has the same failures as the system
@@ -663,7 +671,7 @@ gated live phase are almost the same system.
 1. Run the induction job on the history.
 2. Curate the taxonomy to 25 intents.
 3. Set a risk tier for each intent.
-4. Label 8200 stratified tickets.
+4. Label 8200 tickets, stratified by intent and Zipf-distributed by frequency.
 5. Fit the threshold on 4100 of them.
 6. Keep 4100 for the reports.
 7. Run action match to get a baseline.
@@ -749,84 +757,82 @@ thresholds. Each writes its own artifact, and nothing joins the two. DEC-05
 keeps the gates independent, and the second artifact refuses to carry an
 agreement value.
 
-The coverage pair has been fitted, twice. Two full passes over the fit half
-against `z-ai/glm-5.3-flash` produced the same pair. The block threshold is
-0.75 and the review threshold is 1.00. The second run cost 0.1708 US dollars.
-The job reports that as a floor, because 19 faulted drafts carry spend nothing
-can attribute (DEC-25).
+The coverage pair has been fitted once on the corpus this repository ships.
+A run against `z-ai/glm-5.3-flash` chose it. The block threshold is 0.67 and
+the review threshold is 0.83. The run cost 0.1484 US dollars. The job reports
+that as a floor, because 2 faulted drafts carry spend nothing can attribute
+(DEC-25).
 
-The shipped fit read 1043 drafts and dropped 19. Its block threshold holds a
-negative predictive value of 0.947 over the 360 drafts below it. That interval
-runs from 0.919 to 0.966. Its review threshold holds a precision of 1.000 over
-the 499 drafts at or above it. That interval runs from 0.992 to 1.000. Both
+**That run read a slice, not the half.** `GROUNDEDNESS_LIMIT` was 1100, and
+the job takes a prefix rather than a sample. The fit half holds 4100 drafts,
+so the run read 26.8 percent of it.
+
+The prefix is not representative, because the corpus orders its intents. The
+scored drafts cover 10 intents of 25. They hold every high-tier draft and no
+low-tier draft at all.
+
+So this pair is a pilot. It shows that the classes separate and that the job
+selects rather than refuses. It is not a fit of the half, and no adopter
+should read it as one. `pnpm run fit-groundedness` with no limit reads the
+whole half.
+
+The shipped fit read 1098 drafts and dropped 2. Its block threshold holds a
+negative predictive value of 0.958 over the 192 drafts below it. That interval
+runs from 0.920 to 0.979. Its review threshold holds a precision of 0.998 over
+the 539 drafts at or above it. That interval runs from 0.990 to 1.000. Both
 floors are read against the lower bound, so neither rests on a point estimate.
 
-The first run read 1056 drafts, dropped 6, and reached 0.950 and 0.998 on the
-same two measures. The thresholds are what reproduced; the supporting counts
-moved with the attrition, which is what a live provider does.
+An earlier pair of 0.75 and 1.00 stood here, and two passes reproduced it.
+Both passes read the uniform corpus, which no longer exists. So they are
+withdrawn rather than compared against this one.
 
-A review threshold of 1.00 means every claim must be cited or a person reads
-the draft. That is the value the evidence produced, not a value chosen for
-strictness. No lower threshold held the 0.985 precision floor on its interval.
-The floor is not lowered to make a friendlier number appear. It costs coverage:
-47.8 percent of drafts reach the automatic path, and the rest go to a person.
+The pair moved, and this change does not establish why. The class mix did not
+move with it. Each half holds 2050 fully grounded drafts of 4100, before the
+reshape and after it.
 
-**The report half was then measured at that pair, and it does not confirm the review floor.** DEC-31 exists for this. The numbers above chose the threshold, so
-they carry a selection effect; the numbers below chose nothing.
+The two runs scored different drafts, and coverage takes few distinct values.
+So each run chose from a different grid of candidates. That describes the
+move and does not explain it.
 
-The run scored 1053 drafts of the report half and dropped 9, which is 0.9
-percent. The block threshold holds a negative predictive value of 0.9847 over
-327 drafts. Its interval runs from 0.9647 to 0.9935. That clears the 0.9 floor
-on the lower bound, as the fit half did.
+Read no quality claim into the new pair. Nothing here says the judge improved,
+and the risk tier of an intent is not an input to this fit.
 
-The review threshold holds a precision of 0.9923 over 520 drafts. Its interval
-runs from 0.9804 to 0.9970. The lower bound is below the 0.985 floor. The fit
-half read 0.9889 on the same bound and cleared it.
+A review threshold of 0.83 means five claims in six must carry a citation.
+Below that value a person reads the draft. That is the value the evidence
+produced, not a value chosen for strictness. It is the lowest threshold whose
+interval still holds the 0.985 precision floor.
 
-Read that difference carefully. The fit half made 1 error in 505 drafts on the
-first run and 0 in 499 on the second. The report half made 4 in 520.
+It costs coverage. Of the drafts this gate scored, 49.1 percent clear review.
+A further 33.4 percent land in the review band, and 17.5 percent fall below
+block.
 
-Test it with Fisher's exact test, not with a two-proportion test. Two
-proportions rest on a normal approximation that fails at counts this small. It
-fails loudly here. On the second run it returns z = 1.963 against a threshold
-of 1.96. That calls the halves different on the strength of rounding.
+Read those as this gate's own pass rates and not as system dispositions. The
+policy engine gates a customer reply, a high-risk intent, an irreversible
+write or a missing capability first. It decides those before it reads either
+threshold (DEC-12, DEC-03). So clearing review is necessary for the automatic path and
+never sufficient.
 
-Fisher gives p = 0.37 for the first run and p = 0.12 for the second. Neither is
-evidence of a difference.
+A draft below block is escalated, and a person handles the escalation.
 
-The two runs must not be pooled to sharpen this. They scored the same 4100
-drafts, so they are not independent samples of the half. Pooling them would
-inflate the count that decides the answer.
+**The report half is not measured at this pair.** DEC-31 exists for this. The
+numbers above chose the threshold, so they carry a selection effect. Only the
+report half can check them, and it has not been run at this pair.
 
-So the honest reading is not that the fit half was flattered.
+A measurement stood here before. It read the earlier pair over the uniform
+corpus, and both are withdrawn. So the section is removed rather than
+restated. Substituting the fit-half figures would defeat DEC-31.
 
-It is that a floor of 0.985 needs more support than 520 drafts give. The
-support figure the fit job uses, 253 drafts, is what a run with NO errors
-needs. At 253 drafts and no error the lower bound is 0.98504. That clears by
-four ten-thousandths. Neither run was perfect, so neither had the support the
-figure implies.
+Two things went with it. The first is any claim that the review threshold
+cannot be tightened. That argument rested on a review value of 1.00, and the
+value is now 0.83. The second is the residual error figure an adopter plans
+around. No current measurement supports one, so this register states none.
 
-Note what this does and does not say. The measured precision is 0.9923, which
-is above the floor. The interval around it is too wide to prove that at this
-corpus size. At the observed error rate, 1050 drafts above the review
-threshold would settle it, and the report half offers 520. So the gate is not
-shown to fail its floor. It is not shown to hold it either, and a design
-document must not report the second as the first.
-
-Nothing here can be tightened. The review threshold is already 1.00 and no
-stricter value exists. The judge scored the 4 drafts at full coverage, and they
-carried an unsupported claim anyway. So the residual is the judge's error and
-not the threshold's.
-
-Raising the gate cannot remove it, and this is the limit an adopter must plan
-around. One coverage gate is the strictest this design admits. At that gate roughly 8
-automatic writes in a thousand still act on an unsupported claim.
-
-The block threshold is the one with room to move, and it did not need it.
+Recover both by running `pnpm run report-groundedness` on the report half at
+this pair. The job costs one model call per claim (DEC-25).
 
 The artifact does not travel. `groundedness/` is ignored. A committed fit would
 move every adopter's second gate to a number fitted on this repository's
-synthetic corpus. `groundedness/reference-v2.json` is a tracked copy so a
+synthetic corpus. `groundedness/reference-v3.json` is a tracked copy so a
 reader can check these numbers against the file that produced them. Its name
 sits outside the `v<n>.json` shape the version scanner reads. So no loader
 finds it, and no checkout adopts it.
@@ -896,8 +902,9 @@ A backstop must be at least as strict as the gate it backs. The agreement gate
 operates at 0.985. The value once matched paragraph 4.5 by coincidence. DEC-05
 keeps the two gates independent, so a borrowed number justified nothing.
 
-The block floor is 0.9. Below block the system throws a draft away and no
-person reads it. So the cost of a miss there is work and not correctness.
+The block floor is 0.9. Below block this gate escalates rather than drafting,
+so no person reads that draft as something to approve. A person still handles
+the escalation. So the cost of a miss there is work and not correctness.
 
 The agreement fit reads its floor the same way, and for the same reason. Both
 searches computed an interval, recorded it, and chose on a point estimate. The
@@ -939,7 +946,7 @@ the other (DEC-05).
 
 **A fitted threshold cannot move the published numbers.** The gold report runs against the offline stub, which answers each sample by matching a phrase.
 Every sample of one ticket therefore agrees, and agreement is 1.0 on every
-scored case. DEC-39 scores the 3128 first turns of the report half. No
+scored case. DEC-39 scores the 3074 first turns of the report half. No
 threshold below 1.0 changes a decision.
 
 A run at 0.60 and a run at 0.75 publish the same rates. Only the recorded provenance differs.

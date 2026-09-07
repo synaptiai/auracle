@@ -13,7 +13,7 @@ dist/
 # Exclude the directory's contents, not the directory: a negation cannot
 # re-include a file inside an excluded directory.
 /gold-report/*
-!/gold-report/v7.json
+!/gold-report/v9.json
 /triage/
 
 # A latency report describes the adopter's own traffic, and they are the data
@@ -41,7 +41,7 @@ dist/
 # the `v<n>.json` shape the version scanner reads, so no loader can find it
 # and no checkout adopts it. src/groundedness/reference.test.ts proves that.
 /groundedness/*
-!/groundedness/reference-v2.json
+!/groundedness/reference-v3.json
 .creatumo/MEMORY.md
 
 # Agent session transcripts. Never commit.

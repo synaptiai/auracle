@@ -1,0 +1,50 @@
+{
+  "artifact": "groundedness-thresholds",
+  "version": 3,
+  "fitted_at": "2026-09-07T16:52:36.151Z",
+  "gold_source": "synthetic",
+  "fit_half_digest": null,
+  "report_half_digest": null,
+  "split_used": "fit",
+  "fit_drafts": 1098,
+  "faulted_drafts": 2,
+  "cost_micros": 148418,
+  "cost_unknown": true,
+  "prompt_ver": "ground-p1",
+  "model_ver": "z-ai/glm-5.3-flash",
+  "target_precision": 0.985,
+  "target_npv": 0.9,
+  "block": 0.6666666666666666,
+  "block_npv": 0.9583333333333334,
+  "block_drafts": 192,
+  "block_interval": {
+    "confidence": 0.95,
+    "lower": 0.9199480120522677,
+    "upper": 0.9787381040532078
+  },
+  "review": 0.8333333333333334,
+  "review_precision": 0.9981447124304267,
+  "review_coverage": 0.49089253187613846,
+  "review_interval": {
+    "confidence": 0.95,
+    "lower": 0.9895666859822151,
+    "upper": 0.9996724210797537
+  },
+  "by_grade": [
+    {
+      "grade": "absent",
+      "drafts": 176,
+      "mean_coverage": 0.6677083333333335
+    },
+    {
+      "grade": "off_topic",
+      "drafts": 120,
+      "mean_coverage": 0.6902777777777771
+    },
+    {
+      "grade": "unstated_detail",
+      "drafts": 241,
+      "mean_coverage": 0.6436376210235125
+    }
+  ]
+}

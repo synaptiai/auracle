@@ -14,7 +14,8 @@
 // at about 7 700 cases, and DEC-41 fits a threshold for each intent above
 // that. A smaller corpus can never exercise the per-intent path with a real
 // fit. DEC-31 governs the split and not the size, so both halves grow
-// together and the stratification is unchanged.
+// together. Frequency follows the Zipf curve section 3.3 assumes, and
+// `FREQUENCY_RANK` below states the order it ranks the intents in.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -217,14 +218,83 @@ const chance = (rate) => rng() < rate;
 // through a shared conversation.
 // ---------------------------------------------------------------------------
 
-const perIntent = Math.floor(TOTAL_TICKETS / INTENTS.length);
-const spareIntents = TOTAL_TICKETS - perIntent * INTENTS.length;
-const counts = INTENTS.map((_, i) => (i < spareIntents ? perIntent + 1 : perIntent));
-let fitSpare = true;
+// Zipf-distributed intent frequency at the exponent section 3.3 names.
+//
+// The corpus was stratified uniformly, so every intent held the same count.
+// Section 3.3 derives the trigger from Zipf-distributed frequencies: one
+// global threshold needs 385 labelled cases, 25 thresholds need about 2 400,
+// and the intent at rank 20 pushes that near 7 700. A uniform corpus has no
+// rank-20 intent, so the fixture disagreed with the premise its own trigger
+// rests on.
+//
+// The allocation runs on a half and is then doubled. Every count is therefore
+// even, both halves take the same shape, and no spare record has to alternate
+// between them. DEC-31 splits the corpus and says nothing about two halves of
+// different provenance, so the same shape is the only reading it supports.
+//
+// The remainder goes to the largest fractional parts. Assigning it by rank
+// instead would bend the head of the curve, which is the part the fit reads.
+//
+// The curve is assigned by frequency and not by array order. `INTENTS` groups
+// the taxonomy by risk tier and lists the high-risk intents first, so ranking
+// by position handed the four largest strata to refund, billing dispute,
+// cancellation and data deletion. `evaluatePolicy` gates a high-risk intent
+// before it compares agreement (DEC-03, DEC-13), so all four fitted
+// thresholds would never be read and the per-intent path would stay
+// unexercised while the counts said otherwise.
+//
+// This order is a stated assumption. The register says frequencies obey a
+// Zipf distribution and names no ranking, so the ranking here is what a
+// helpdesk sees: questions and access trouble at the head, money and
+// data-subject rights in the tail.
+const FREQUENCY_RANK = [
+  'how-to-question', 'login-trouble', 'status-inquiry', 'account-recovery',
+  'payment-failure', 'pricing-question', 'onboarding-help', 'mobile-app-question',
+  'notification-settings-help', 'api-usage-question', 'documentation-gap',
+  'bug-minor-report', 'feature-request', 'plan-change-question',
+  'invoice-copy-request', 'sync-error-report', 'export-broken',
+  'integration-failure', 'feedback-positive', 'other',
+  'cancel-subscription', 'refund-request', 'billing-dispute',
+  'data-deletion-request', 'chargeback-notice',
+];
+
+{
+  const declared = new Set(INTENTS.map((i) => i.id));
+  const ranked = new Set(FREQUENCY_RANK);
+  if (ranked.size !== FREQUENCY_RANK.length) {
+    throw new Error('FREQUENCY_RANK names an intent twice');
+  }
+  for (const id of declared) {
+    if (!ranked.has(id)) throw new Error(`FREQUENCY_RANK omits ${id}`);
+  }
+  for (const id of ranked) {
+    if (!declared.has(id)) throw new Error(`FREQUENCY_RANK names an unknown intent ${id}`);
+  }
+}
+
+const ZIPF_EXPONENT = 1;
+const HARMONIC = INTENTS.reduce((sum, _, i) => sum + 1 / (i + 1) ** ZIPF_EXPONENT, 0);
+const rankOf = (id) => FREQUENCY_RANK.indexOf(id) + 1;
+const halfShares = INTENTS.map((intent) => HALF / HARMONIC / rankOf(intent.id) ** ZIPF_EXPONENT);
+const halfCounts = halfShares.map((share) => Math.floor(share));
+const remainder = HALF - halfCounts.reduce((a, b) => a + b, 0);
+[...halfCounts.keys()]
+  .sort((a, b) => (halfShares[b] - halfCounts[b]) - (halfShares[a] - halfCounts[a]))
+  .slice(0, remainder)
+  .forEach((i) => { halfCounts[i] += 1; });
+const counts = halfCounts.map((n) => n * 2);
+
+if (counts.reduce((a, b) => a + b, 0) !== TOTAL_TICKETS) {
+  throw new Error(`Zipf allocation missed the total: ${counts.reduce((a, b) => a + b, 0)}`);
+}
+// The allocation doubles a per-half count, so every total is even and the
+// halves are identical. An odd count would put a spare record in one half and
+// break that, so it fails here rather than alternating quietly.
 const splitsFor = (n) => {
-  const fitHalf = Math.floor(n / 2) + (n % 2 === 1 && fitSpare ? 1 : 0);
-  fitSpare = !fitSpare;
-  return { fit: fitHalf, report: n - fitHalf };
+  if (n % 2 !== 0) {
+    throw new Error(`Zipf allocation produced an odd count, so the halves would differ: ${n}`);
+  }
+  return { fit: n / 2, report: n / 2 };
 };
 
 let seq = 0;

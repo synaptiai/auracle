@@ -199,14 +199,15 @@ rounds that to 8000.
 Read 385 as a requirement and not as a corpus size. The fit half holds 4100
 cases, so the global threshold has the data it needs.
 
-**The fit refuses every intent.** Section 3.3 sizes a corpus for an interval
+**The fit refuses most intents.** Section 3.3 sizes a corpus for an interval
 of five points. The job fits against a precision floor instead, and the two
 ask for different amounts.
 
-The shipped floor is 0.985. A perfect sample needs 253 cases to hold it, and
-25 intents would need 6325 in the fit half. That half holds 4100, so each
-intent holds 164 and the job refuses it. The next step below reports that
-run.
+The shipped floor is 0.985. A perfect sample needs 253 cases to hold it.
+Twenty-five intents at that count would need 6325 in the fit half, and that
+half holds 4100. The Zipf shape spends those 4100 unevenly, so the four most
+frequent intents clear the floor and 21 do not. The next step below reports
+that run.
 
 The shipped corpus holds 8200 synthetic cases, which clears the trigger. It
 is synthetic (DEC-18), and a stand-in labels it. So the mechanism runs end to
@@ -221,7 +222,7 @@ below reports what the fit produces on this corpus.
 |---|---|
 | DEC-13 binds | Cleared. DEC-41 carries the amendment, and DEC-13 now names the trigger as its own bound |
 | The trigger cannot fire | Cleared on the shipped corpus, which holds 8200 cases. An adopter clears it by labelling their own history |
-| The trigger fires and fits nothing | Open. The fit needs 253 cases for one intent at the shipped target, and an even split of 4100 gives 164 |
+| The trigger fires and fits nothing | Cleared. The Zipf shape gives rank 1 1074 fit cases, so four intents clear the 253 the shipped target needs |
 
 ### What has shipped toward it
 
@@ -241,20 +242,21 @@ The mechanism has shipped and the item does not close. Both halves of that
 are worth stating plainly.
 
 The shipped corpus clears the trigger, so the per-intent path runs. It fits
-no threshold. A run of the shipped fit half refuses all 25 intents.
+four thresholds of 25. A run of the shipped fit half refuses the other 21.
 
-Two things decide that, and a reader needs both. One is the corpus. An even
-split of 4100 fit cases gives each of 25 intents 164 cases.
+Two things decide that, and a reader needs both. One is the corpus. The Zipf
+shape at exponent 1 gives rank 1 1074 fit cases and rank 25 only 43.
 
 The other is the target precision. Its shipped value is 0.985, and
 `CALIBRATION_TARGET_PRECISION` overrides it. The fit refuses a threshold whose
 95 per cent lower bound cannot hold the target.
 
-A perfect sample of 164 cases reaches 0.977. That is under 0.985, so the count
-settles every intent here whatever the answers are. Every intent keeps the
-global threshold, and the job fits no per-intent threshold.
+A perfect sample needs 253 cases to hold 0.985. Four intents hold that many
+and 21 do not, so the count settles each refusal whatever the answers were.
+Those 21 keep the global threshold.
 
-So this corpus cannot show whether precision alone would refuse an intent.
+So this corpus still cannot show whether precision alone would refuse an
+intent. The count decides every refusal before precision is read.
 
 It also cannot show that the mechanism selects anything. A run at a target of
 0.9 fits all 25 intents, each at a threshold of 1.0.
@@ -279,12 +281,19 @@ A model may label the cases, and the artifact then says so. It also states
 how often that model agreed with a known answer. This repository ships no
 model labeller; an adopter writes one.
 
-The second is the shape of the corpus. Section 3.3's arithmetic assumes
-Zipf-distributed intent frequencies and sizes the trigger from the intent at
-rank 20. The shipped corpus is uniformly stratified, so it has no rank-20
-intent and no thin tail. The data-floor fallback is proved by unit cases
-rather than by the fixture. The mechanism is exercised; the distribution
-that makes the fallback matter is not.
+The second was the shape of the corpus, and that half is closed. Section
+3.3's arithmetic assumes Zipf-distributed intent frequencies and sizes the
+trigger from the intent at rank 20. The shipped corpus now carries that shape
+at exponent 1.
+
+The fit reads it. Four intents of 25 clear the 253-sample floor and 21 keep
+the global threshold. So the fixture exercises both routes, rather than unit
+cases alone.
+
+What the fixture still cannot show is what a real classifier reaches. The
+offline stand-in answers every sample of one ticket alike. Agreement is then
+one value, and a fitted threshold has one place to sit. So the fitted count is
+a statement about the sample floor, and never about accuracy.
 
 ---
 

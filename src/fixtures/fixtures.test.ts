@@ -142,6 +142,76 @@ describe('gold set', () => {
     }
   });
 
+  // The shape the trigger's own derivation rests on (section 3.3, DEC-41).
+  //
+  // The corpus was stratified uniformly, so every intent held the same count.
+  // Section 3.3 derives the 8000-case trigger from Zipf-distributed intent
+  // frequencies, and a uniform corpus has no rank-20 intent and no thin tail.
+  // So the fixture disagreed with the premise the trigger rests on, and the
+  // per-intent fit was exercised by unit cases alone.
+  //
+  // These cases read the shape from the corpus and compare it against the
+  // arithmetic. They name no count of their own, because a count written here
+  // and a count written in the generator are two definitions that drift.
+  describe('the Zipf shape section 3.3 names', () => {
+    const ZIPF_EXPONENT = 1;
+
+    /** Case count for each intent, keyed by intent. */
+    function countsByIntent(half: GoldFile): Map<string, number> {
+      const counts = new Map<string, number>();
+      for (const ticket of half.tickets) {
+        counts.set(ticket.intent, (counts.get(ticket.intent) ?? 0) + 1);
+      }
+      return counts;
+    }
+
+    /** Case counts per intent, most frequent first. */
+    function shapeOf(half: GoldFile): number[] {
+      return [...countsByIntent(half).values()].sort((a, b) => b - a);
+    }
+
+    it('gives each intent the count its rank earns, in both halves', () => {
+      const intents = loadTaxonomy().intents.length;
+      const harmonic = Array.from({ length: intents }, (_, i) => 1 / (i + 1) ** ZIPF_EXPONENT)
+        .reduce((a, b) => a + b, 0);
+      for (const [name, half] of [['fit', fit], ['report', report]] as const) {
+        const shape = shapeOf(half);
+        expect(shape.length, `${name} half lost an intent`).toBe(intents);
+        shape.forEach((count, index) => {
+          const rank = index + 1;
+          const expected = half.tickets.length / harmonic / rank ** ZIPF_EXPONENT;
+          // Within one case of the exact value. The allocation is integral and
+          // the remainder goes somewhere, so an exact equality would pin the
+          // rounding rule rather than the shape.
+          expect(
+            Math.abs(count - expected),
+            `${name} half rank ${rank} holds ${count}, and rank ${rank} earns ${expected.toFixed(1)}`,
+          ).toBeLessThanOrEqual(1);
+        });
+      }
+    });
+
+    it('gives both halves the same shape, so neither is the easier one', () => {
+      // DEC-31 splits the corpus and says nothing about two halves of
+      // different provenance. A shape that differs between them would make
+      // every reported number describe a population the fit never saw.
+      //
+      // Compare per intent, not the sorted counts. A sorted comparison holds
+      // when the two halves give the same counts to DIFFERENT intents, which
+      // is exactly the drift this case exists to catch.
+      expect(countsByIntent(report)).toEqual(countsByIntent(fit));
+    });
+
+    it('has a tail, which is the property the uniform corpus lacked', () => {
+      const shape = shapeOf(fit);
+      const first = shape[0]!;
+      const last = shape[shape.length - 1]!;
+      // A uniform corpus reads 1 here. The ratio is the whole point of the
+      // reshape, so it is asserted rather than implied by the rank case.
+      expect(first / last, 'the fit half is flat, so it carries no tail').toBeGreaterThan(10);
+    });
+  });
+
   it('marks every ticket as synthetic with a SYN- id', () => {
     for (const ticket of [...fit.tickets, ...report.tickets]) {
       expect(ticket.source).toBe('synthetic');

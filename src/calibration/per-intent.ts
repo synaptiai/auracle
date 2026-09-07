@@ -13,11 +13,15 @@
 // figure is the trigger, because it is the number the register and the
 // roadmap both quote.
 //
-// That derivation sizes an adopter's corpus and not the shipped one. The
-// shipped corpus is uniformly stratified: all 25 intents hold the same count,
-// so it has no rank-20 intent and no thin tail. The fallback below is
-// therefore proved by unit cases rather than by the fixture, and a reader
-// should not take the shipped numbers as exercising the rank-20 case.
+// The shipped corpus carries that shape since issue #40. Its intents follow
+// a Zipf curve at exponent 1, so a half gives rank 1 about 1074 cases and
+// rank 25 about 43. Four intents clear the sample floor at the shipped
+// target and 21 fall back, so the fixture exercises both routes.
+//
+// What the fixture cannot show is what a real classifier reaches. The offline
+// stand-in answers every sample of one ticket alike, so agreement is one
+// value and a fitted threshold has one place to sit. Read a fitted count as a
+// statement about the sample floor, never about accuracy.
 //
 // The data floor is not re-implemented here. `fitAgreementThreshold` already
 // refuses a threshold whose 95 per cent lower bound cannot hold the target,

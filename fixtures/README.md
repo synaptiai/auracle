@@ -12,8 +12,8 @@ See DEC-18.
   risk tier per DEC-13. A high-risk intent never reaches the automatic path,
   whatever the gate values say. The `other` group stays in the list per
   section 4.11, so unmatched tickets have a target label.
-- `gold/fit.json`. The fit half of the gold set. It holds 1062 synthetic cases.
-- `gold/report.json`. The report half of the gold set. It also holds 1062
+- `gold/fit.json`. The fit half of the gold set. It holds 4100 synthetic cases.
+- `gold/report.json`. The report half of the gold set. It also holds 4100
   synthetic cases.
 - `documents.json`. Help-center documents and canonical resolutions for the
   retrieval index per DEC-22. Approved resolutions record how people actually
@@ -22,18 +22,20 @@ See DEC-18.
 
 ## Split discipline
 
-The gold set holds 2124 cases. You fit on the fit half only. You report each
+The gold set holds 8200 cases. You fit on the fit half only. You report each
 published number from the report half only. One case never serves both tasks.
 A threshold picked on the cases that you later report on inflates the result.
 See DEC-31.
 
-The strata are the intents. Each intent holds 84 or 85 cases. The split divides
-each stratum as evenly as possible between the halves. Each half contains every
+The strata are the intents, and they are not equal. Frequency follows a Zipf
+curve, so the most frequent intent holds 2148 cases and the rarest 86. The
+split divides each stratum evenly between the halves. Each half contains every
 intent, so every risk tier appears in both halves.
 
 A stratum counts case records. The scored population is smaller, because the
-replay and the gold report read first turns only. Each intent opens roughly 30 threads per half. Read a stratum count from the artifact of the run, never
-from this file.
+replay and the gold report read first turns only. Thread counts follow the
+same curve and range widely per half. Read a stratum count from the artifact
+of the run, never from this file.
 
 ## Conversations
 
@@ -74,7 +76,7 @@ A paraphrase pair tests one fact twice. So a judge that mis-reads the fact
 itself, rather than one wording of it, still moves both halves together. That
 limit stands.
 
-Both halves hold the same number of fully grounded drafts, 531 of 1062.
+Both halves hold the same number of fully grounded drafts, 2050 of 4100.
 Precision counts grounded drafts above a threshold against all drafts above it.
 A half holding more of them is the easier one, and a precision published from
 it reads high. The loader tests that gap with an equivalence test. So the
@@ -104,7 +106,7 @@ console.log('documents', docs.length, 'kinds', new Set(docs.map((d) => d.kind)).
 "
 ```
 
-The two halves must report 156 sentences each and 531 grounded drafts each.
+The two halves must report 156 sentences each and 2050 grounded drafts each.
 The two sentence sets must not intersect. That is 312 sentences over 39
 documents.
 

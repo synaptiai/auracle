@@ -10,10 +10,11 @@
 // 4. artifact round-trip and tamper rejection.
 
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { wilsonInterval } from '../calibration/calibrate.js';
 import { REPORT_COUNT } from '../fixtures/load.js';
@@ -880,8 +881,68 @@ describe('the DEC-31 proof a real run must carry', () => {
 });
 
 describe('the committed gold report artifact', () => {
+  /**
+   * Tracked paths under `dir` matching `shape`, and each one present on disk.
+   *
+   * `git ls-files` reports the index, so two environment faults would
+   * otherwise reach a reader as something else. Without `git` on PATH the
+   * call throws `spawnSync git ENOENT` in place of the caller's assertion.
+   * And a tracked file deleted from the worktree returns a path whose read
+   * then fails with a bare `ENOENT`. Both are named here instead.
+   */
+  function trackedPaths(dir: string, shape: RegExp): string[] {
+    let listing: string;
+    try {
+      listing = execFileSync('git', ['ls-files', dir], {
+        cwd: fileURLToPath(new URL('../../', import.meta.url)),
+        encoding: 'utf8',
+      });
+    } catch (error) {
+      throw new Error(
+        `cannot discover a tracked artifact under ${dir}: ` +
+          `git ls-files failed (${(error as Error).message})`,
+      );
+    }
+    const tracked = listing
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => shape.test(line));
+    for (const path of tracked) {
+      expect(
+        existsSync(new URL(`../../${path}`, import.meta.url)),
+        `${path} is tracked but missing from the working tree`,
+      ).toBe(true);
+    }
+    return tracked;
+  }
+
+  /**
+   * The committed report, discovered rather than named.
+   *
+   * A hardcoded `v7.json` failed the moment the corpus was reshaped and the
+   * job minted a new report. The repository tracks one report at a time, and
+   * the version it tracks is a fact about `.gitignore`, not about this case.
+   */
+  function committedGoldReport(): string {
+    const tracked = trackedPaths('gold-report', /^gold-report\/v\d+\.json$/);
+    expect(tracked, 'this repository tracks no gold report').toHaveLength(1);
+    return tracked[0]!;
+  }
+
+  /** The one tracked groundedness reference, discovered the same way. */
+  function committedReference(): string {
+    const tracked = trackedPaths(
+      'groundedness',
+      /^groundedness\/reference-v\d+\.json$/,
+    );
+    expect(tracked, 'the repository tracks exactly one groundedness reference')
+      .toHaveLength(1);
+    return tracked[0]!;
+  }
+
   it('validates against the validator this repository ships', () => {
-    const url = new URL('../../gold-report/v7.json', import.meta.url);
+    const path = committedGoldReport();
+    const url = new URL(`../../${path}`, import.meta.url);
     const artifact = validateGoldReportArtifact(
       JSON.parse(readFileSync(url, 'utf8')),
     );
@@ -889,16 +950,46 @@ describe('the committed gold report artifact', () => {
     expect(artifact.split_used).toBe('report');
     expect(artifact.scope).toBe('first_turn');
     // README quotes these two. A change here republishes a number.
-    expect(artifact.action_match.rate).toBeCloseTo(0.793, 3);
-    expect(artifact.containment.rate).toBeCloseTo(0.805, 3);
+    //
+    // Read against the README rather than written here. Two literals in two
+    // files are two definitions of one number, and the pair drifted once
+    // already: the README carried 0.7970 over 3128 cases while the committed
+    // artifact still said 0.805 over 815.
+    const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+    for (const [name, rate] of [
+      ['Containment', artifact.containment],
+      ['Action match', artifact.action_match],
+    ] as const) {
+      const quoted = new RegExp(`- ${name}: (\\d\\.\\d+)\\. Interval (\\d\\.\\d+) to (\\d\\.\\d+)\\. (\\d+) cases\\.`)
+        .exec(readme);
+      expect(quoted, `README quotes no ${name} figure`).not.toBeNull();
+      // Compare the printed forms. `toBeCloseTo(x, 4)` passes only under
+      // 0.00005, which is exactly the rounding error of a 4-decimal
+      // quotation, so a correct README can fail it on the fifth decimal.
+      expect(quoted![1], `README publishes a ${name} the artifact does not`)
+        .toBe(rate.rate.toFixed(4));
+      expect(quoted![2]).toBe(rate.interval.lower.toFixed(4));
+      expect(quoted![3]).toBe(rate.interval.upper.toFixed(4));
+      expect(Number(quoted![4]), `README quotes a ${name} population the artifact does not`)
+        .toBe(rate.total);
+    }
     // And it names the pair it was scored through, on both gates (DEC-05).
     // The rates above are identical to the version before these fields
     // existed, because a routing decision makes no textual claim and its
     // groundedness is pinned at 1.0 — but the artifact could no longer say so.
     expect(artifact.gate_source).toBe('seed');
     expect(artifact.coverage_source).toBe('groundedness');
-    expect(artifact.coverage_block).toBe(0.75);
-    expect(artifact.coverage_review).toBe(1);
+    // Read the pair from the tracked reference rather than restate it. A
+    // refit moves both files, and a literal here would let them drift.
+    // Discover it the way the report above is discovered: the next refit
+    // mints `reference-v4.json`, and a named path would break here for the
+    // very reason `committedGoldReport` exists.
+    const reference = JSON.parse(
+      readFileSync(new URL(`../../${committedReference()}`, import.meta.url), 'utf8'),
+    ) as { block: number; review: number; version: number };
+    expect(artifact.coverage_block).toBe(reference.block);
+    expect(artifact.coverage_review).toBe(reference.review);
+    expect(artifact.coverage_fit_version).toBe(reference.version);
   });
 });
 

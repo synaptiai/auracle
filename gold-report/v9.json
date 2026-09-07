@@ -1,13 +1,13 @@
 {
   "artifact": "gold-report",
-  "version": 7,
-  "generated_at": "2026-09-01T19:08:12.274Z",
+  "version": 9,
+  "generated_at": "2026-09-07T16:57:19.812Z",
   "method": "human-review",
   "scored_by": "stub",
   "gold_source": "synthetic",
   "split_used": "report",
   "scope": "first_turn",
-  "report_tickets": 815,
+  "report_tickets": 3074,
   "unreadable_samples": 0,
   "prompt_ver": "classify-p1",
   "model_ver": "replay-stub",
@@ -16,54 +16,54 @@
   "gate_calibration_version": null,
   "gate_calibration_scope": null,
   "gate_calibration_gold_source": null,
-  "coverage_block": 0.75,
-  "coverage_review": 1,
+  "coverage_block": 0.6666666666666666,
+  "coverage_review": 0.8333333333333334,
   "coverage_source": "groundedness",
-  "coverage_fit_version": 1,
+  "coverage_fit_version": 3,
   "coverage_fit_gold_source": "synthetic",
   "report_half_digest": null,
   "fit_half_digest": null,
   "action_match": {
-    "rate": 0.7926380368098159,
-    "successes": 646,
-    "total": 815,
+    "rate": 0.8630448926480156,
+    "successes": 2653,
+    "total": 3074,
     "interval": {
       "confidence": 0.95,
-      "lower": 0.7634629008276032,
-      "upper": 0.8190674472167928
+      "lower": 0.8504373965545956,
+      "upper": 0.8747461549254126
     }
   },
   "containment": {
-    "rate": 0.8049079754601227,
-    "successes": 656,
-    "total": 815,
+    "rate": 0.9424202992843201,
+    "successes": 2897,
+    "total": 3074,
     "interval": {
       "confidence": 0.95,
-      "lower": 0.7762979331588894,
-      "upper": 0.8306571674240558
+      "lower": 0.933619947859261,
+      "upper": 0.9501162797507848
     }
   },
   "strata": [
     {
       "risk_tier": "low",
-      "tickets": 361,
+      "tickets": 1834,
       "action_match": {
-        "rate": 0.9418282548476454,
-        "successes": 340,
-        "total": 361,
+        "rate": 0.9443838604143948,
+        "successes": 1732,
+        "total": 1834,
         "interval": {
           "confidence": 0.95,
-          "lower": 0.9127117529054289,
-          "upper": 0.9616406330079728
+          "lower": 0.9329361502207884,
+          "upper": 0.9539738670589059
         }
       },
       "containment": {
         "rate": 1,
-        "successes": 361,
-        "total": 361,
+        "successes": 1834,
+        "total": 1834,
         "interval": {
           "confidence": 0.95,
-          "lower": 0.9894708818643825,
+          "lower": 0.9979097985834103,
           "upper": 1
         }
       },
@@ -71,24 +71,24 @@
     },
     {
       "risk_tier": "medium",
-      "tickets": 295,
+      "tickets": 1063,
       "action_match": {
-        "rate": 0.7966101694915254,
-        "successes": 235,
-        "total": 295,
+        "rate": 0.7902163687676388,
+        "successes": 840,
+        "total": 1063,
         "interval": {
           "confidence": 0.95,
-          "lower": 0.7470015960389537,
-          "upper": 0.8385931895393105
+          "lower": 0.7647171417690363,
+          "upper": 0.8136255865704146
         }
       },
       "containment": {
         "rate": 1,
-        "successes": 295,
-        "total": 295,
+        "successes": 1063,
+        "total": 1063,
         "interval": {
           "confidence": 0.95,
-          "lower": 0.9871454956890737,
+          "lower": 0.9963992224065416,
           "upper": 1
         }
       },
@@ -96,25 +96,25 @@
     },
     {
       "risk_tier": "high",
-      "tickets": 159,
+      "tickets": 177,
       "action_match": {
-        "rate": 0.44654088050314467,
-        "successes": 71,
-        "total": 159,
+        "rate": 0.4576271186440678,
+        "successes": 81,
+        "total": 177,
         "interval": {
           "confidence": 0.95,
-          "lower": 0.3714363125029202,
-          "upper": 0.5241676686753693
+          "lower": 0.3859103744766434,
+          "upper": 0.531144043808753
         }
       },
       "containment": {
         "rate": 0,
         "successes": 0,
-        "total": 159,
+        "total": 177,
         "interval": {
           "confidence": 0.95,
           "lower": 0,
-          "upper": 0.023590176902824132
+          "upper": 0.021242135767677948
         }
       },
       "publishable": false
