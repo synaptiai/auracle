@@ -21,16 +21,17 @@ and the evidence gate, or it would get them wrong.
 ## Proposed outcome
 
 Three proposals sit under `.creatumo/design/`. Two propose a register row, and
-each proposes a new row rather than an edit, because no decision row has ever
+each proposes a new row rather than an edit. No decision row has ever
 been rewritten. The third is a trace, and it concludes that the concurrency
 correction needs no row.
 
-`docs/internal/epic-v2-handoff.md` carries what a fresh session needs: the
-issue order, the amendments that gate it, the session start, the baseline it
-must not move, the facts the design session verified, and the arguments that
-are already settled.
+`docs/internal/epic-v2-handoff.md` carries what a fresh session needs. That
+includes the issue order and the amendments that gate it. It also includes
+the session start and the baseline it must not move. It further includes the
+facts the design session verified and the arguments that are already
+settled.
 
-The operator console's design canvas has its source in the repository, so the
+The operator console's design canvas has its source in the repository. So the
 canvas can change when the console does.
 
 ## Affected users and systems

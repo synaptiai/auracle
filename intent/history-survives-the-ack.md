@@ -5,13 +5,13 @@
 DEC-37 puts conversation history into the classifier and composer prompts.
 The mechanism shipped in `bab5b3a` and it carried nothing.
 
-`conversationHistory` read each earlier turn's text from the queue row, by
-joining `turn` to `intake` on the ticket and the message. The consumer deletes
+`conversationHistory` read each earlier turn's text from the queue row. It
+joined `turn` to `intake` on the ticket and the message. The consumer deletes
 that row as soon as a run completes. So for turn N, every turn before it had
 already been acked and contributed no row.
 
 The prompts saw an empty history in every ordinary path. A non-empty one
-appeared only when an earlier turn had failed and stayed queued, which is the
+appeared only when an earlier turn had failed and stayed queued. That is the
 one case where the text is least useful.
 
 The ledger held no other copy. `turn` recorded a message's identity and never
@@ -29,7 +29,7 @@ neither, so the join still matched.
 `turn` carries `body_text`, written in the enqueue transaction that already
 holds the conversation row lock. `conversationHistory` reads `turn` alone.
 
-History no longer depends on the queue, so an earlier turn contributes its
+History no longer depends on the queue. So an earlier turn contributes its
 text whether or not its run has finished.
 
 A turn recorded before this migration holds no text. It is skipped rather than

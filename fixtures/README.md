@@ -46,8 +46,8 @@ loader refuses a corpus where one does.
 
 The replay and the gold report score first turns only, because a disposition
 belongs to the whole thread. See DEC-39. The calibration job scores a
-prediction against the intent label of the case, which every turn carries, so
-it fits on every turn and records that population in its artifact.
+prediction against the intent label of the case, which every turn carries.
+So it fits on every turn and records that population in its artifact.
 
 ## Claims
 
@@ -65,9 +65,9 @@ grade, and it refuses a separation that the easy grades alone produce.
 
 The two halves draw from disjoint sentence pools. Each document carries a fit
 block and a report block, and the report sentence paraphrases its fit
-counterpart. A judge sensitive to one wording therefore moves one half only,
-and the report half can disagree with the fit half instead of repeating it. The
-loader refuses a corpus where one sentence reaches both halves, and it names
+counterpart. A judge sensitive to one wording therefore moves one half only.
+The report half can disagree with the fit half instead of repeating it. The
+loader refuses a corpus where one sentence reaches both halves. It names
 that sentence by digest rather than printing it.
 
 A paraphrase pair tests one fact twice. So a judge that mis-reads the fact
@@ -77,8 +77,9 @@ limit stands.
 Both halves hold the same number of fully grounded drafts, 531 of 1062.
 Precision counts grounded drafts above a threshold against all drafts above it.
 A half holding more of them is the easier one, and a precision published from
-it reads high. The loader tests that gap with an equivalence test, so the
+it reads high. The loader tests that gap with an equivalence test. So the
 halves must show the gap is small rather than merely fail to prove it real.
+
 Two one-sided tests at 5 percent put the whole interval for the difference
 inside a margin of 5 points. The interval is Agresti-Caffo corrected, so a
 half where every draft is grounded cannot pass on a collapsed interval.
@@ -103,8 +104,8 @@ console.log('documents', docs.length, 'kinds', new Set(docs.map((d) => d.kind)).
 "
 ```
 
-The two halves must report 156 sentences each and 531 grounded drafts each,
-and the two sentence sets must not intersect. That is 312 sentences over 39
+The two halves must report 156 sentences each and 531 grounded drafts each.
+The two sentence sets must not intersect. That is 312 sentences over 39
 documents.
 
 ## Ticket schema

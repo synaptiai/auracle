@@ -18,8 +18,8 @@ enters the register's table in section 2. Where design material already exists
 under `.creatumo/design/`, this document reports it and names its status.
 
 Four items stay open: 1, 4, 5 and 7. Items 1, 4 and 5 have never closed.
-Item 7 has its measurement and not its correction, so it has a section of its
-own below the other three.
+Item 7 has its measurement and not its correction. So it has a section of
+its own below the other three.
 
 ---
 
@@ -42,9 +42,11 @@ it. No code change moves this. Only a person amends the register.
 **B2. No exit decision exists.** Section 5 states that the criteria to leave
 Phase 2 need a decision the register does not make. The design document
 `899a1565-de05-44ce-8693-ed6dd4cb97e3.md` proposes eight criteria, C1 to C8.
-They cover volume, edit distance, a human audit of unchanged sends, a
-groundedness floor, person-set eligibility, disclosure, an adapter floor and a
-daily cap. They stay a proposal until a row enters section 2.
+
+They cover volume, edit distance, a human audit of unchanged sends and a
+groundedness floor. They also cover person-set eligibility, disclosure, an
+adapter floor and a daily cap. They stay a proposal until a row enters
+section 2.
 
 **B3. No production data exists.** The four control bands have no baseline
 here. `pnpm run bands` computes a baseline from an adopter's own ledger. That
@@ -95,7 +97,7 @@ register later decides. This document names the gap and does not close it.
 ### What the FreeScout adapter established
 
 Three findings back the FreeScout row. Each rests on FreeScout's own API
-documentation, which is a stronger source than the register's prediction and
+documentation, which is a stronger source than the register's prediction. It
 is still not a run against a live instance. Read them that way.
 
 **No key reaches the target.** `POST /api/conversations/{id}/threads` takes no
@@ -154,9 +156,10 @@ Nothing, and the design material was missing too. The design document
 `f4c1a90e-7d3b-4c2a-9e15-3b8d6f0a5c47.md` now records the mechanism, the
 trigger and the reason V1 answers this manually.
 
-The taxonomy induction job already embeds records, groups them, folds small
-groups into an `other` group and asks a model to name each surviving group. A
-feedback clustering job is that shape over a different corpus.
+The taxonomy induction job already embeds records, groups them, and folds
+small groups into an `other` group. It also asks a model to name each
+surviving group. A feedback clustering job is that shape over a different
+corpus.
 
 ### The next step
 
@@ -272,16 +275,16 @@ one. Section 5 calls that labelling the largest single cost in the whole plan,
 and it means labelling by a person.
 
 So an adopter still waits on labelled data that costs real money to produce.
-A model may label the cases, and the artifact then says so and states how
-often that model agreed with a known answer. This repository ships no model
-labeller; an adopter writes one.
+A model may label the cases, and the artifact then says so. It also states
+how often that model agreed with a known answer. This repository ships no
+model labeller; an adopter writes one.
 
 The second is the shape of the corpus. Section 3.3's arithmetic assumes
 Zipf-distributed intent frequencies and sizes the trigger from the intent at
 rank 20. The shipped corpus is uniformly stratified, so it has no rank-20
-intent and no thin tail, and the data-floor fallback is proved by unit cases
-rather than by the fixture. The mechanism is exercised; the distribution that
-makes the fallback matter is not.
+intent and no thin tail. The data-floor fallback is proved by unit cases
+rather than by the fixture. The mechanism is exercised; the distribution
+that makes the fallback matter is not.
 
 ---
 
@@ -311,10 +314,9 @@ measurement a correction rests on.
 
 A synthetic history of 2397 runs over 45 days gave the first loaded reading.
 It reported 1.37 per cent utilisation and a depth ratio of 1.14 across four
-partitions, at 53 tickets a day. The mean wait was 2.78 s against a poll
-floor of 2.50 s, so the wait was the consumer's own sleep rather than a
-queue. None of the design
-document's four rules fires at that load.
+partitions. That is at 53 tickets a day. The mean wait was 2.78 s against a
+poll floor of 2.50 s. So the wait was the consumer's own sleep rather than a
+queue. None of the design document's four rules fires at that load.
 
 The sleep is gone. Intake signals the consumer inside the enqueue transaction,
 and the loop wakes on that signal. Wait `p50` and `p95` fall from seconds to
@@ -324,15 +326,15 @@ a figure the poll no longer sets.
 
 That change removes the poll floor and corrects at most a small part of the
 head-of-line delay. The maximum wait barely moves, from 2.3 minutes to 2.2
-minutes on the deepest partition, and about one run in a hundred still waits
+minutes on the deepest partition. About one run in a hundred still waits
 behind the batch ahead of it. That share never rises with the signal and
 never falls by half. Those runs are what this item names.
 
-The question reopens on volume. The history runs at 53 tickets a day against
-two consumers, which is 1.37 per cent of their capacity, so saturating them
-needs about 3 900 a day. Run the report through a Phase 2 deployment near
-that volume, read the four rules again, and choose a correction against that
-reading.
+The question reopens on volume. The history runs at 53 tickets a day
+against two consumers, which is 1.37 per cent of their capacity. So
+saturating them needs about 3 900 a day. Run the report through a Phase 2
+deployment near that volume, and read the four rules again. Then choose a
+correction against that reading.
 
 The register marked this item closed until 2026-09-04. The measurement shipped
 and the correction did not, so it now reads open. The test is whether the

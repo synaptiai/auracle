@@ -6,7 +6,7 @@ The pull request failed on its first run. The guard blocked the synthetic
 merge commit that GitHub builds for every pull request.
 
 `c51b773` fixed a real gap: `git show --name-only` prints no file list for a
-merge, so a merge that edited the register was never checked. That fix used
+merge. So a merge that edited the register was never checked. That fix used
 `-m --first-parent`, which overcorrected. A merge then reports every change on
 the branch as its own. GitHub's merge commit carries a generated message,
 `Merge <sha> into <sha>`, which can never cite a decision. So every pull
@@ -40,7 +40,7 @@ No runtime component changes.
 ## Constraints
 
 The original finding must survive. A merge that edits the register on its own
-belongs to no other commit, so the merge itself carries the citation.
+belongs to no other commit. So the merge itself carries the citation.
 
 The rule must still bite on the commit that made the change. A branch that
 edits the register without a citation still fails, whether or not it merges

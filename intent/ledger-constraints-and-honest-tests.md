@@ -17,7 +17,7 @@ escalations query, so the record strands unseen.
 
 Three tests also claimed more than they checked.
 
-The triage case overrode a subject but not a body, so both cases resolved to
+The triage case overrode a subject but not a body. So both cases resolved to
 the same intent, nothing was selected, and the provenance loop never ran.
 
 Three assertions read like step order. The helper sorts by step id, which is

@@ -20,18 +20,18 @@ DEC-40 rejects a console that parks its own drafts, and a console that is the
 only approval path.
 
 DEC-41 permits a threshold for each intent above the labelled-case trigger. It
-requires each case to record what labelled it, and it requires the artifact to
+requires each case to record what labelled it. It requires the artifact to
 record the count and the accuracy of each kind. Without that record a model
-label and a person label would be one thing, and section 5 rests on the
+label and a person label would be one thing. Section 5 rests on the
 difference.
 
 Neither row rewrites the row it supersedes. DEC-11 and DEC-13 keep their text,
 as DEC-27 kept its text when DEC-36 replaced the partition key.
 
-Six statements go stale, and this change corrects all six: section 4.9 of the
-register, two source comments, two paragraphs of `docs/v2-roadmap.md`, and the
-handoff. Three statements that stay true are left alone, because DEC-40 keeps
-the rule they state.
+Six statements go stale. This change corrects all six. They are section 4.9
+of the register, two source comments, two paragraphs of
+`docs/v2-roadmap.md`, and the handoff. Three statements that stay true are
+left alone, because DEC-40 keeps the rule they state.
 
 ## Affected users and systems
 

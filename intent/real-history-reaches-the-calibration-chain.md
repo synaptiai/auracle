@@ -52,9 +52,9 @@ resolver every daemon calls. No runtime ingress path changes.
   from that half and reads none of its cases.
 - DEC-05. The two gates stay independent. No path joins a coverage value to
   an agreement value.
-- DEC-35, DEC-37, DEC-38, DEC-39. A record belongs to a conversation, a later
-  turn carries the turns before it, a reply takes no turn number of its own,
-  and the jobs that score a disposition still read first turns only.
+- DEC-35, DEC-37, DEC-38, DEC-39. A record belongs to a conversation. A later
+  turn carries the turns before it, a reply takes no turn number of its own.
+  The jobs that score a disposition still read first turns only.
 - DEC-10. The induction job clusters first turns, so a follow-up never spends
   one of the 25 intents.
 

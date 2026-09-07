@@ -4,7 +4,7 @@
 
 Two of the three gate numbers had never been measured. Paragraph 4.10 says the
 thresholds are fitted on the fit half. That sentence was not true of the two
-coverage numbers, and no job could make it true, because nothing said whether a
+coverage numbers, and no job could make it true. Nothing said whether a
 draft was really grounded.
 
 The second gate is the only defence against a confident error. Its two numbers
@@ -13,13 +13,13 @@ decided the automatic path on the strength of a seed.
 ## Proposed outcome
 
 A job fits both numbers on labelled data and records what it measured. Every
-gold case carries its claims, each naming the document it is tested against and
+gold case carries its claims. Each names the document it is tested against and
 whether that document really supports it.
 
 The two numbers are fitted by different rules, because they answer different
 questions. Above the review value a draft runs automatically, so such a draft
 must be truly grounded: a precision floor. Below the block value the engine
-escalates instead of showing a person, so such a draft must really be
+escalates instead of showing a person. So such a draft must really be
 ungrounded: a floor on negative predictive value.
 
 ## Affected users and systems

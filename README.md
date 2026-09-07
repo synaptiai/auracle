@@ -44,10 +44,10 @@ The list below carries the decisions, and the map carries the picture.
 3. The classifier takes nine samples at a temperature above zero.
    At temperature zero every sample matches, so agreement would measure nothing.
 4. The sample agreement gate compares the samples against a threshold (DEC-13, DEC-41).
-   Below the labelled-case trigger that is one global threshold, because 25 separate
-   thresholds need about 2 400 labelled tickets (section 3.3). Above it the gate reads
-   the threshold fitted for the ticket's own intent, and falls back to the global one
-   for an intent that could not be fitted.
+   Below the labelled-case trigger that is one global threshold. 25 separate
+   thresholds need about 2 400 labelled tickets (section 3.3). Above it the gate
+   reads the threshold fitted for the ticket's own intent. It falls back to the
+   global one for an intent that could not be fitted.
 5. The retriever merges BM25 ranks and dense ranks with reciprocal rank fusion (DEC-21).
    Ranks fuse because raw scores differ in scale: BM25 has no upper limit and cosine stops at one.
 6. The composer writes the answer with citations or abstains (DEC-07).
@@ -152,21 +152,21 @@ A model that offers none fails the call, so the setting never degrades to
 silent retention. You own the pin and the position it implies.
 
 **The ledger stores customer message text (DEC-17, DEC-19).**
-`turn.body_text` holds each inbound message and `turn.approved_reply_text`
-holds the reply a person approved. Both live for the life of the conversation.
+`turn.body_text` holds each inbound message and `turn.approved_reply_text` holds the reply a person approved. Both live for the life of the conversation.
 Earlier versions kept that text only until the queue row was acked.
+
 This repository ships no retention job and no purge job.
 You are the data controller, so you own the retention period and the erasure
 path. Plan both before you carry real traffic.
 
 **Labeled real history lives outside this repository (DEC-18, DEC-31).**
-The offline jobs accept a labeled half drawn from your own mailbox.
-Such a half holds real customer text, so it stays under `corpus/`.
-That directory is gitignored and must stay that way.
-Every number this repository publishes is measured on the synthetic corpus.
-An artifact fitted on your history records `gold_source: "real"` and belongs
-to your deployment alone.
-You are the data controller, so you own its retention and its erasure.
+
+The offline jobs accept a labeled half drawn from your own mailbox. Such a half holds
+real customer text, so it stays under `corpus/`. That directory is gitignored
+and must stay that way. Every number this repository publishes is measured on
+the synthetic corpus. An artifact fitted on your history records `gold_source:
+"real"` and belongs to your deployment alone. You are the data controller, so
+you own its retention and its erasure.
 
 **The prompt-log path is off by default (section 6).**
 It needs an explicit override.
@@ -174,12 +174,12 @@ If you activate it, you give irrevocable commercial rights to the inputs and the
 The provider pays a discount of 1 percent for this right.
 
 **No standard yet verifies Article 50(2) text marking (section 4.9).**
-EU AI Act Article 50(1) applies now.
-Article 50(2) applies from 2 December 2026.
-This system adds provenance metadata to each generated text (DEC-33).
-The metadata is structured, so a machine can read it after export.
-A line of disclosure prose does not survive that test.
-Adapters carry this metadata in headers where they permit it.
+
+EU AI Act Article 50(1) applies now. Article 50(2) applies from 2 December
+2026. This system adds provenance metadata to each generated text (DEC-33). The
+metadata is structured, so a machine can read it after export. A line of
+disclosure prose does not survive that test. Adapters carry this metadata in
+headers where they permit it.
 
 C2PA covers images, audio and video. Text has no equivalent standard.
 The architecture cannot decide if this method satisfies Article 50(2).
@@ -226,12 +226,12 @@ Run `pnpm run gold-report` to regenerate it.
 - Action match: awaiting a re-run. See below.
 
 Containment is a property of the corpus, so it is measured here. It fell from
-0.805 to 0.7970 when the corpus grew, because the generator drew every case
-again and the share of high-tier first turns moved with it.
+0.805 to 0.7970 when the corpus grew. The generator drew every case again, and
+the share of high-tier first turns moved with it.
 
 Action match is not a property of the corpus. It needs a classifier, so it
 needs a run. The published figure was 0.793 over 815 cases of the 2124-case
-corpus, and that corpus no longer exists: this repository now ships 8200
+corpus. That corpus no longer exists, because this repository now ships 8200
 cases. Rather than carry a number whose population is gone, the figure is
 withdrawn until `pnpm run gold-report` runs against the current corpus.
 
@@ -252,7 +252,7 @@ number in this README depends on which of the two the field names. Read the
 field as provenance and not as a different result.
 
 A fitted threshold does not move these rates. The offline stub answers every
-sample of one ticket alike, so agreement is 1.0 on all 3128 scored cases and no
+sample of one ticket alike, so agreement is 1.0 on all 3128 scored cases. No
 threshold below 1.0 changes a decision. The gate is wired and it binds at
 runtime. This corpus cannot show it.
 
@@ -262,7 +262,7 @@ The second gate has been fitted and then measured on the half that fitted
 nothing (DEC-31). Both runs used `z-ai/glm-5.3-flash`.
 
 `pnpm run fit-groundedness` chose the pair on the fit half: block 0.75 and
-review 1.00. Two full passes produced that same pair, and the second reports a
+review 1.00. Two full passes produced that same pair. The second reports a
 spend of at least 0.1708 US dollars over 1043 drafts.
 `pnpm run report-groundedness` then measured the pair on the report half, over
 1053 drafts.
@@ -281,11 +281,11 @@ shown to hold.
 
 No threshold fixes that. Review is already 1.00 and nothing is stricter, so
 the residual is the judge's error. Plan for roughly 8 automatic writes in a
-thousand acting on an unsupported claim, and size the blast radius of an
-internal write accordingly.
+thousand acting on an unsupported claim. Size the blast radius of an internal
+write accordingly.
 
-The fit does not ship as a live artifact. `groundedness/` is ignored, because
-a committed fit would move your gate to a number fitted on this repository's
+The fit does not ship as a live artifact. `groundedness/` is ignored. A
+committed fit would move your gate to a number fitted on this repository's
 synthetic corpus. `groundedness/reference-v2.json` is a tracked copy you can
 read. No loader finds it. Fit your own.
 

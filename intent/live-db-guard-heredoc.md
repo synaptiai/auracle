@@ -15,7 +15,7 @@ a command that targets a live host.
 ## Proposed outcome
 
 A heredoc body leaves the scan only when the line that opens it hands the
-body to a data consumer, for example `git commit -F -` or `cat >`.
+body to a data consumer. `git commit -F -` and `cat >` are examples.
 Every other opener keeps its body, because it may execute it.
 Prose that names a database command no longer blocks a commit.
 A command aimed at a live database still blocks.
@@ -45,7 +45,7 @@ implementation detail of the guard.
 ## Open questions
 
 None. An earlier draft skipped a body unless the opening line named a known
-interpreter, so an unlisted shell kept its body out of the scan. The rule now
-inverts: a body leaves the scan only when the opening line hands it to a known
-data consumer. An unknown command keeps its body, so the fixed lists no longer
-decide the safe case.
+interpreter. An unlisted shell then kept its body out of the scan. The rule
+now inverts. A body leaves the scan only when the opening line hands it to a
+known data consumer. An unknown command keeps its body, so the fixed lists no
+longer decide the safe case.

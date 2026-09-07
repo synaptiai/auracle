@@ -264,9 +264,10 @@ python3 scripts/check-docs.py
 ```
 
 It proves that each diagram declares and explains every box it draws an edge
-to, that every relative link resolves, and that the register's design table accounts for
-every open item. CI runs it and its cases on every pull request. It decides
-structure and reference. It does not decide whether a document is true.
+to. It also proves that every relative link resolves. And it proves that the
+register's design table accounts for every open item. CI runs it and its
+cases on every pull request. It decides structure and reference. It does not
+decide whether a document is true.
 
 The script strips markdown structure first.
 Headings and list items count as their own units.

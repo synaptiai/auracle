@@ -12,8 +12,9 @@ has one meaning, so this document introduces no friendlier word for a thing the
 register already names.
 
 `scripts/check-docs.py` reads this file. It proves that each diagram declares
-every box it draws an edge to, that every box has a legend row, and that three
-of the four rules in section 1 survive an edit.
+every box it draws an edge to. It also proves that every box has a legend
+row. And it proves that three of the four rules in section 1 survive an
+edit.
 
 The checker decides structure and reference. It does not decide whether a
 diagram is true. Only a reader does that.
@@ -128,7 +129,7 @@ Read the two arrows into the outbox together. A reversible internal write goes
 automatically. A customer reply does not, so it waits (DEC-12).
 
 Two kinds of work wait for a person, and they wait in different places. A
-customer reply parks as a draft in the adapter, and the reviewer opens it in
+customer reply parks as a draft in the adapter. The reviewer opens it in
 the tool they already use (DEC-11). A gated internal write has nothing to park
 there, so it parks in the ledger and calls no adapter (DEC-34). The escalations
 report is how a person finds that second kind.
@@ -313,14 +314,14 @@ erDiagram
 
 **The database declares no foreign key.** All fourteen schema files declare
 none, and `SCHEMA_VERSION` is not among them because the migration runner
-creates it. So every line above is a join the application makes and the database does
-not enforce. A broken line says so. Delete a conversation row and no row
-disappears with it.
+creates it. So every line above is a join the application makes and the
+database does not enforce. A broken line says so. Delete a conversation row
+and no row disappears with it.
 
 `DOCUMENT` stands alone. The retriever searches it by words and by meaning, and
 no ledger row points at it.
 
-Read `TICKET_EPOCH` beside `RUN`. The epoch is a number that increases, and it
+Read `TICKET_EPOCH` beside `RUN`. The epoch is a number that increases. It
 makes a write from an old owner fail rather than corrupt the state.
 
 ## Where to go next

@@ -27,7 +27,7 @@ during a server fault, and the same escalation when a thread root is gone.
 
 ## Constraints
 
-The worst failure of a mail egress is a reply to the wrong person, so the
+The worst failure of a mail egress is a reply to the wrong person. So the
 lookup still verifies every candidate against the parsed Message-ID (DEC-11).
 `findDraftByIdemKey` already draws this distinction and this matches it.
 

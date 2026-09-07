@@ -245,11 +245,13 @@ hashes elsewhere. The fencing epoch below covers that case, because it is
 keyed on the ticket. The cost is a procedure to rebalance the partitions at
 each deployment.
 
-**The fencing epoch.** During a rebalance, two consumers can own one partition
-for a short time. Each write carries its epoch. The `ticket_epoch` table records
-the highest epoch. The ledger refuses each write that has a lower epoch. The
-ledger does the refusal and the write in one operation. This is the only design
-that is safe when a process stops for an unknown time.
+**The fencing epoch.**
+
+During a rebalance, two consumers can own one partition for a short time. Each
+write carries its epoch. The `ticket_epoch` table records the highest epoch.
+The ledger refuses each write that has a lower epoch. The ledger does the
+refusal and the write in one operation. This is the only design that is safe
+when a process stops for an unknown time.
 
 **Liveness.** A run that does not insert its outbox record must not go to the
 `queued` state. It must go to the `superseded` state and stop. If both runs go
@@ -380,11 +382,13 @@ BM25 is more important here than in the general case. Support tickets contain
 many error codes, part numbers and account numbers. Dense retrieval is weak on
 these tokens. BM25 is also more useful on a small corpus.
 
-**The reranker.** DEC-21 makes the reranker active. It gives the largest single
-increase in quality, approximately 17 points of MRR@3. The reranker needs a
-minimum of 50 candidates. At 20 candidates it is worse than no reranker. On a
-small corpus, 50 candidates can be a large part of the corpus. This is
-acceptable and inexpensive.
+**The reranker.**
+
+DEC-21 makes the reranker active. It gives the largest single increase in
+quality, approximately 17 points of MRR@3. The reranker needs a minimum of 50
+candidates. At 20 candidates it is worse than no reranker. On a small corpus,
+50 candidates can be a large part of the corpus. This is acceptable and
+inexpensive.
 
 **Freshness.** Each indexed document declares an `owner` and a `review_by` date.
 The system removes each document that is out of date from the automatic path.
@@ -427,10 +431,10 @@ Use two thresholds, a block and a review:
 | Below the review threshold | Send to a person for review |
 | Below the block threshold | Block. Do not send |
 
-The seeds are 0.80 and 0.70. They are seeds and not the operative pair.
-`pnpm run fit-groundedness` fits the pair on the fit half, and a process
-holding a coverage artifact runs the fitted values. It says which it took at
-startup, so a seeded run and a fitted run are never confused for each other.
+The seeds are 0.80 and 0.70. They are seeds and not the operative pair. `pnpm
+run fit-groundedness` fits the pair on the fit half, and a process holding a
+coverage artifact runs the fitted values. It says which it took at startup. So
+a seeded run and a fitted run are never confused.
 
 The two thresholds decide the automatic path only. A customer reply is
 gated by DEC-12 before the policy engine reads either one.
@@ -492,12 +496,14 @@ Each customer reply must have three items:
 
 The bridge refuses to send a reply that does not have all three items.
 
-**Why the park needs a key.** The adapter creates the draft before the ledger
-can record its handle. A crash between the two used to leave a draft that no
-row named. The next run then parked a second one. The customer then saw two
-replies. The key travels with the reply, so the adapter recognises the repeat
-and returns the first draft. The mail adapter carries the key in a header,
-because a mailbox gives an appended message no other stable handle.
+**Why the park needs a key.**
+
+The adapter creates the draft before the ledger can record its handle. A crash
+between the two used to leave a draft that no row named. The next run then
+parked a second one. The customer then saw two replies. The key travels with
+the reply, so the adapter recognises the repeat and returns the first draft.
+The mail adapter carries the key in a header, because a mailbox gives an
+appended message no other stable handle.
 
 **Two different obligations.** EU AI Act Article 50(1) applies now.
 Article 50(2) applies from 2 December 2026. The grace period of four months
@@ -505,11 +511,12 @@ applies to systems that were on the market before 2 August 2026. This system was
 not.
 
 **CAUTION: The marking method for text is not certain.**
-**C2PA covers images, audio and video. Text has no equivalent standard.**
-**V1 adds provenance as structured metadata on the message record. It also adds**
-**the metadata to adapter headers where the adapter permits this. This document**
-**cannot decide if the method satisfies Article 50(2). Get legal advice before**
-**you go live.**
+
+**C2PA covers images, audio and video. Text has no equivalent standard.** **V1
+adds provenance as structured metadata on the message record. It also adds**
+**the metadata to adapter headers where the adapter permits this. This
+document** **cannot decide if the method satisfies Article 50(2). Get legal
+advice before** **you go live.**
 
 ### 4.10 Evaluation
 
@@ -540,17 +547,21 @@ possible.
 Limit: action match scores the routing only. It cannot show if a reply was good.
 It is sufficient to control merges. It is not sufficient to publish.
 
-**Method 2. Human review.** This method gives the numbers for the README. The
-gold set is split in two. Fit the thresholds on one half. Report each published
-number from the other half. See DEC-31.
+**Method 2. Human review.**
+
+This method gives the numbers for the README. The gold set is split in two. Fit
+the thresholds on one half. Report each published number from the other half.
+See DEC-31.
 
 DEC-31 governs the split, not the size. The maintainer ruled the size an
 implementation detail of it, so a corpus may grow and the discipline still
 holds. The set held 770 cases, then 2124, and now holds 8200. The first growth
-answered a precision floor read against an interval: 0.985 asks for 253 drafts
-above the review threshold, and 770 cases offered 172, so the corpus could
-never fit the gate it exists to fit. The second answers the labelled-case
-trigger of DEC-41, which section 3.3 puts near 7 700.
+answered a precision floor read against an interval. 0.985 asks for 253 drafts
+above the review threshold, and 770 cases offered 172. So the corpus could
+never fit the gate it exists to fit.
+
+The second answers the labelled-case trigger of DEC-41, which section 3.3 puts
+near 7 700.
 
 Do not use one set of cases for both tasks. That method is selection on the test
 data. A simulation of 2 000 trials shows the effect. If you select the best of 13
@@ -565,12 +576,14 @@ The strata need care. DEC-39 scores first turns only, so the report half of
 4100 cases yields 3128 scored cases. The three risk tiers hold 1359, 1134 and
 635 of them.
 
-The widest stratum interval is under 8 points wide, on the high tier.
-Widths here are full widths, lower bound to upper bound. The corpus growth
-narrowed this one: at the earlier half size the same tier held 57 cases and
-its interval was 25 points wide. It was never 5 points, and the split still
-makes it worse than an undivided set would. Treat the strata as an indication only
-and read the counts from the artifact, not from this paragraph.
+The widest stratum interval is under 8 points wide, on the high tier. Widths
+here are full widths, lower bound to upper bound. The corpus growth narrowed
+this one. At the earlier half size the same tier held 57 cases. Its interval
+was 25 points wide.
+
+The interval was never 5 points wide, and the split still makes it worse than
+an undivided set would. Treat the strata as an indication only and read the counts from the
+artifact, not from this paragraph.
 
 **Method 3. Judge triage.** A model selects the cases that go to a person. It
 does not give the published number. A judge has the same failures as the system
@@ -588,9 +601,8 @@ first day of Phase 2. It needs no labels. It has no counterfactual problem.
 
 `pnpm run bands` reads it from the ledger, with the other three metrics
 `bands.yaml` defines. It reports one UTC day against the 30 most recent
-measured days before it.
-The baseline excludes the day it judges, and a window too thin or too flat to
-carry a band says so instead of stating one.
+measured days before it. The baseline excludes the day it judges. A window too
+thin or too flat to carry a band says so instead of stating one.
 
 **Sensitivity.** To find a change of 5 percent in containment you need
 approximately 470 cases. To find a change of 2 percent you need approximately
@@ -623,16 +635,16 @@ it, the job fits a threshold for each intent that clears the data floor
 
 **`bands`**. Obeys DEC-18, DEC-19.
 
-This job reports the four control-band metrics for one day, against a baseline
-of the 30 most recent measured days before it. It reads the ledger and writes
-an artifact. It issues only SELECT statements, and it opens its connection
-read-only, so it is safe against a live database.
+This job reports the four control-band metrics for one day. It judges that day
+against a baseline of the 30 most recent measured days before it. It reads the
+ledger and writes an artifact. It issues only SELECT statements, and it opens
+its connection read-only, so it is safe against a live database.
 
 The artifact stays with the adopter. It describes their own traffic, so the
 directory is ignored and nothing real enters the repository (DEC-18). The
 runbook states that position (DEC-19).
 
-It observes and it does not correct: the three-sigma action is a pull request,
+It observes and it does not correct. The three-sigma action is a pull request,
 and the job states that one is warranted rather than opening it.
 
 TypeScript has no mature library for isotonic regression or HDBSCAN. This is
@@ -688,30 +700,35 @@ actions where a duplicate is worse operate at-most-once and escalate. No
 configuration gives exactly-once delivery to a system with no idempotency
 support.
 
-**Partitions exchange one failure for another.** Partitions remove concurrent
-runs on one ticket. They add head-of-line delay in each partition. They also add
-a rebalance period where two consumers can overlap. The fencing epoch covers the
-rebalance period. V1 does not correct the head-of-line delay. It will appear as
-latency on busy partitions.
+**Partitions exchange one failure for another.**
+
+Partitions remove concurrent runs on one ticket. They add head-of-line delay in
+each partition. They also add a rebalance period where two consumers can
+overlap. The fencing epoch covers the rebalance period. V1 does not correct the
+head-of-line delay. It will appear as latency on busy partitions.
 
 That prediction is now checkable. `pnpm run latency` reports queue wait and
-service time per partition, as percentiles rather than as an average, because
-an average is where a tail hides. The limit stands: this measures the delay and
-does not correct it.
+service time per partition. It reports percentiles rather than an average,
+because an average is where a tail hides. The limit stands: this measures the
+delay and does not correct it.
 
 The consumer no longer sleeps through an arrival, because intake signals it.
 That removes the poll interval from the wait. It leaves the head-of-line
 delay: a message queued behind a batch still waits for the batch. Section 7
 item 7 carries the figures and their bounds.
 
-**Fencing needs the target to agree.** The ledger applies the epoch check
-because the system owns the ledger. External adapters do not know about epochs.
-A stopped run cannot damage the ledger. It can still reach an external system.
-The write limit contains this risk. The fencing does not.
+**Fencing needs the target to agree.**
 
-**The groundedness check is a model call.** It can be wrong. It decreases
-confident errors. It does not remove them. The write limit makes V1 safe. The
-check does not. If DEC-12 changes, this component is not sufficient alone.
+The ledger applies the epoch check because the system owns the ledger. External
+adapters do not know about epochs. A stopped run cannot damage the ledger. It
+can still reach an external system. The write limit contains this risk. The
+fencing does not.
+
+**The groundedness check is a model call.**
+
+It can be wrong. It decreases confident errors. It does not remove them. The
+write limit makes V1 safe. The check does not. If DEC-12 changes, this
+component is not sufficient alone.
 
 **Replay cannot measure a counterfactual.** It is correct for routing only. See
 paragraph 4.10.
@@ -719,27 +736,29 @@ paragraph 4.10.
 **Action match scores routing only.** It controls merges. It does not measure
 answer quality. Do not use it as a quality measurement.
 
-**The model data position is configurable.** See DEC-17 and DEC-19. The adopter
-is the data controller. One exception applies. The prompt-log path is off by
-default and needs an explicit override. If you make it active, you give irrevocable commercial
-rights to the inputs and the outputs. The discount is 1 percent.
+**The model data position is configurable.**
+
+See DEC-17 and DEC-19. The adopter is the data controller. One exception
+applies. The prompt-log path is off by default and needs an explicit override.
+If you make it active, you give irrevocable commercial rights to the inputs and
+the outputs. The discount is 1 percent.
 
 **One gate has a fit. The other does not.** `pnpm run calibrate` fits the
 agreement threshold and `pnpm run fit-groundedness` fits the two coverage
-thresholds. Each writes its own artifact, and nothing joins the two: DEC-05
-keeps the gates independent and the second artifact refuses to carry an
+thresholds. Each writes its own artifact, and nothing joins the two. DEC-05
+keeps the gates independent, and the second artifact refuses to carry an
 agreement value.
 
 The coverage pair has been fitted, twice. Two full passes over the fit half
-against `z-ai/glm-5.3-flash` produced the same pair: a block threshold of 0.75
-and a review threshold of 1.00. The second run cost 0.1708 US dollars, and the
-job reports that as a floor because 19 faulted drafts carry spend nothing can
-attribute (DEC-25).
+against `z-ai/glm-5.3-flash` produced the same pair. The block threshold is
+0.75 and the review threshold is 1.00. The second run cost 0.1708 US dollars.
+The job reports that as a floor, because 19 faulted drafts carry spend nothing
+can attribute (DEC-25).
 
 The shipped fit read 1043 drafts and dropped 19. Its block threshold holds a
-negative predictive value of 0.947 over the 360 drafts below it, with an
-interval from 0.919 to 0.966. Its review threshold holds a precision of 1.000
-over the 499 drafts at or above it, with an interval from 0.992 to 1.000. Both
+negative predictive value of 0.947 over the 360 drafts below it. That interval
+runs from 0.919 to 0.966. Its review threshold holds a precision of 1.000 over
+the 499 drafts at or above it. That interval runs from 0.992 to 1.000. Both
 floors are read against the lower bound, so neither rests on a point estimate.
 
 The first run read 1056 drafts, dropped 6, and reached 0.950 and 0.998 on the
@@ -748,43 +767,42 @@ moved with the attrition, which is what a live provider does.
 
 A review threshold of 1.00 means every claim must be cited or a person reads
 the draft. That is the value the evidence produced, not a value chosen for
-strictness. No lower threshold held the 0.985 precision floor on its interval,
-and the floor is not lowered to make a friendlier number appear. It costs
-coverage: 47.8 percent of drafts reach the automatic path, and the rest go to
-a person.
+strictness. No lower threshold held the 0.985 precision floor on its interval.
+The floor is not lowered to make a friendlier number appear. It costs coverage:
+47.8 percent of drafts reach the automatic path, and the rest go to a person.
 
-**The report half was then measured at that pair, and it does not confirm the
-review floor.** DEC-31 exists for this. The numbers above chose the threshold,
-so they carry a selection effect; the numbers below chose nothing.
+**The report half was then measured at that pair, and it does not confirm the review floor.** DEC-31 exists for this. The numbers above chose the threshold, so
+they carry a selection effect; the numbers below chose nothing.
 
 The run scored 1053 drafts of the report half and dropped 9, which is 0.9
 percent. The block threshold holds a negative predictive value of 0.9847 over
-327 drafts, and its interval runs from 0.9647 to 0.9935. That clears the 0.9
-floor on the lower bound, as the fit half did.
+327 drafts. Its interval runs from 0.9647 to 0.9935. That clears the 0.9 floor
+on the lower bound, as the fit half did.
 
-The review threshold holds a precision of 0.9923 over 520 drafts, and its
-interval runs from 0.9804 to 0.9970. The lower bound is below the 0.985 floor.
-The fit half read 0.9889 on the same bound and cleared it.
+The review threshold holds a precision of 0.9923 over 520 drafts. Its interval
+runs from 0.9804 to 0.9970. The lower bound is below the 0.985 floor. The fit
+half read 0.9889 on the same bound and cleared it.
 
 Read that difference carefully. The fit half made 1 error in 505 drafts on the
-first run and 0 in 499 on the second, against 4 in 520 on the report half.
+first run and 0 in 499 on the second. The report half made 4 in 520.
 
 Test it with Fisher's exact test, not with a two-proportion test. Two
-proportions rest on a normal approximation that fails at counts this small,
-and it fails loudly here: on the second run it returns z = 1.963 against a
-threshold of 1.96, which would call the halves different on the strength of
-rounding. Fisher gives p = 0.37 for the first run and p = 0.12 for the second.
-Neither is evidence of a difference.
+proportions rest on a normal approximation that fails at counts this small. It
+fails loudly here. On the second run it returns z = 1.963 against a threshold
+of 1.96. That calls the halves different on the strength of rounding.
+
+Fisher gives p = 0.37 for the first run and p = 0.12 for the second. Neither is
+evidence of a difference.
 
 The two runs must not be pooled to sharpen this. They scored the same 4100
-drafts, so they are not independent samples of the half, and pooling them
-would inflate the count that decides the answer.
+drafts, so they are not independent samples of the half. Pooling them would
+inflate the count that decides the answer.
 
 So the honest reading is not that the fit half was flattered.
 
 It is that a floor of 0.985 needs more support than 520 drafts give. The
 support figure the fit job uses, 253 drafts, is what a run with NO errors
-needs: at 253 drafts and no error the lower bound is 0.98504, which clears by
+needs. At 253 drafts and no error the lower bound is 0.98504. That clears by
 four ten-thousandths. Neither run was perfect, so neither had the support the
 figure implies.
 
@@ -796,25 +814,26 @@ shown to fail its floor. It is not shown to hold it either, and a design
 document must not report the second as the first.
 
 Nothing here can be tightened. The review threshold is already 1.00 and no
-stricter value exists. The 4 drafts were scored at full coverage by the judge
-and carried an unsupported claim anyway, so the residual is the judge's error
-and not the threshold's. Raising the gate cannot remove it, and this is the
-limit an adopter must plan around: at the strictest coverage gate this design
-admits, roughly 8 automatic writes in a thousand still act on a claim the
-sources do not support.
+stricter value exists. The judge scored the 4 drafts at full coverage, and they
+carried an unsupported claim anyway. So the residual is the judge's error and
+not the threshold's.
+
+Raising the gate cannot remove it, and this is the limit an adopter must plan
+around. One coverage gate is the strictest this design admits. At that gate roughly 8
+automatic writes in a thousand still act on an unsupported claim.
 
 The block threshold is the one with room to move, and it did not need it.
 
-The artifact does not travel. `groundedness/` is ignored, because a committed
-fit would move every adopter's second gate to a number fitted on this
-repository's synthetic corpus. `groundedness/reference-v2.json` is a tracked
-copy so a reader can check these numbers against the file that produced them.
-Its name sits outside the `v<n>.json` shape the version scanner reads, so no
-loader finds it and no checkout adopts it.
+The artifact does not travel. `groundedness/` is ignored. A committed fit would
+move every adopter's second gate to a number fitted on this repository's
+synthetic corpus. `groundedness/reference-v2.json` is a tracked copy so a
+reader can check these numbers against the file that produced them. Its name
+sits outside the `v<n>.json` shape the version scanner reads. So no loader
+finds it, and no checkout adopts it.
 
 The agreement threshold is still the paragraph 4.5 seed. The synthetic corpus
-cannot fit it: the offline stub answers every sample of one ticket alike, so
-agreement is 1.0 on every case and no threshold below 1.0 changes a decision.
+cannot fit it. The offline stub answers every sample of one ticket alike, so
+agreement is 1.0 on every case. No threshold below 1.0 changes a decision.
 
 Both halves once drew their claims from one table of 56 sentences over 14
 documents. The corpus now carries 312 sentences over 39 documents, 156 to each
@@ -824,44 +843,45 @@ no protection against a judge that mis-read one sentence, because that sentence
 depressed both halves alike.
 
 Each document now carries a fit block and a report block. The two halves share
-no sentence, so a judge that mis-reads one wording moves one half only and the
+no sentence. So a judge that mis-reads one wording moves one half only, and the
 disagreement is visible. The report sentence paraphrases its fit counterpart
 rather than testing a new fact. So the halves stay matched in difficulty, and a
 precision gap between them means the judge disagreed. It does not mean one pool
 was harder.
 
-The loader refuses a corpus that breaks either rule. A sentence reaching both
-halves is named by digest, never printed, because a sentence on a real half is
-the customer's own text.
+The loader refuses a corpus that breaks either rule. A sentence reaching both halves is named by digest and never printed. That is
+because a sentence on a real half is the customer's own text.
 
 The two halves also held different shares of grounded drafts, 43 percent
 against 51 percent. Precision counts grounded drafts above a threshold against
-all drafts above it, so the report half was the easier one and a published
+all drafts above it. So the report half was the easier one, and a published
 precision read high. Both halves now hold 2050 fully grounded drafts of 4100.
 
-The loader tests that gap with an equivalence test, and not with a
-significance test. The two answer different questions. A significance test
-asks whether a gap is real; the question here is whether a gap is small. They
-come apart in both directions. A gap of 5.5 points over 600 drafts a side is
-not significant and would have passed, while the 7.3 point gap that motivated
-this check is significant over 385 and refused. A larger corpus was allowed a
-larger gap.
+The loader tests that gap with an equivalence test, and not with a significance
+test. The two answer different questions. A significance test asks whether a
+gap is real; the question here is whether a gap is small. They come apart in
+both directions.
+
+A gap of 5.5 points over 600 drafts a side is not significant, and it would
+have passed. By contrast the 7.3 point gap that motivated this check is
+significant over 385, and it is refused. A larger corpus was allowed a larger gap.
 
 So the halves must show the gap is small. Two one-sided tests at 5 percent put
-the whole 90 percent interval for the difference inside a margin of 5 points.
+the whole 90 percent interval inside a margin of 5 points.
 
 The interval carries the Agresti-Caffo correction, which adds one success and
 one failure to each half before the standard error.
 
-At a share of exactly 0 or exactly 1 the textbook standard error is zero, so
-the interval collapses to a point and any sample size passes. One draft a side
-would then demonstrate closeness, which is the trivial pass this guard
-replaced a significance test to remove. Away from the boundary the two agree
-to four decimal places.
+At a share of exactly 0 or exactly 1 the textbook standard error is zero. The
+interval then collapses to a point, and any sample size passes. One draft a
+side would then demonstrate closeness. That is the trivial pass this guard
+replaced a significance test to remove. Away from the boundary the two agree to
+four decimal places.
+
 Sample size now works the right way round. A half too small to demonstrate
-closeness is refused rather than passed by default, and such a half is already
-too small to hold the precision floor. The margin is a stated judgement: 5
-points is where this repository stops asking a reader to compensate.
+closeness is refused rather than passed by default. Such a half is already too
+small to hold the precision floor. The margin is a stated judgement: 5 points
+is where this repository stops asking a reader to compensate.
 
 One limit remains, and it is not a fault of the job. A paraphrase pair tests
 one fact twice. So a judge that mis-reads the fact itself, rather than one
@@ -869,57 +889,60 @@ wording of it, still moves both halves together.
 
 The two floors the coverage fit holds have reasons of their own. The review
 floor is 0.985. One minus that floor is the rate at which an internal write
-acts on a claim the sources do not support, with no person reading it. This
-gate is the only defence against a confident error, so it backstops the
-agreement gate. A backstop must be at least as strict as the gate it backs, and
-the agreement gate operates at 0.985. The value once matched paragraph 4.5 by
-coincidence, and DEC-05 keeps the two gates independent, so a borrowed number
-justified nothing.
+acts on an unsupported claim. No person reads it. This gate is the only defence
+against a confident error, so it backstops the agreement gate.
 
-The block floor is 0.9. Below block a draft is thrown away and no person reads
-it, so the cost of a miss there is work and not correctness.
+A backstop must be at least as strict as the gate it backs. The agreement gate
+operates at 0.985. The value once matched paragraph 4.5 by coincidence. DEC-05
+keeps the two gates independent, so a borrowed number justified nothing.
+
+The block floor is 0.9. Below block the system throws a draft away and no
+person reads it. So the cost of a miss there is work and not correctness.
 
 The agreement fit reads its floor the same way, and for the same reason. Both
 searches computed an interval, recorded it, and chose on a point estimate. The
 agreement search maximises coverage, so it prefers a wide band and the fault is
-rarer there. It is not absent: where the only band clearing the floor is a
-narrow one at the top, that band won however few samples it held. Sharing the
-rule joins no value between the gates, so DEC-05 stands.
+rarer there. It is not absent.
+
+Sometimes the only band clearing the floor is a narrow one at the top. That
+band won however few samples it held. Sharing the rule joins no value between
+the gates, so DEC-05 stands.
 
 Each floor is read against the lower bound of a 95 percent interval, never a
 point estimate. A point estimate carries no sample size: three drafts that
 agree read 1.000 and clear any floor. The first run of this job fitted the
-block threshold on exactly three drafts, and its own recorded interval read
-0.4385 to 1. So a floor also sets a minimum support, which is 253 drafts for
-0.985 and 35 for 0.9.
+block threshold on exactly three drafts. Its own recorded interval read 0.4385
+to 1. So a floor also sets a minimum support, which is 253 drafts for 0.985 and
+35 for 0.9.
 
 The coverage job refuses when the measured classes do not separate. A gold set
 carries per-claim ground truth, so the job knows which drafts were truly
-grounded, and it compares that against what the gate measured. Unsupported
-claims carry a grade, and the artifact reports coverage for each. A separation
-that comes from the easy grades alone protects nothing.
+grounded. It compares that against what the gate measured. Unsupported claims
+carry a grade, and the artifact reports coverage for each. A separation that
+comes from the easy grades alone protects nothing.
 
-A fitted artifact reaches the policy engine, and each gate takes its own.
-Every process resolves its gate numbers once at startup and logs a line per
-gate, so one fitted gate beside one seeded gate reads correctly. A seeded
-agreement gate logs `gate_thresholds_seeded` and a fitted one
-`gate_thresholds_fitted` with the version. The coverage pair logs
-`coverage_thresholds_seeded` or `coverage_thresholds_fitted` the same way. The
-gold report records the agreement provenance beside its gate value, so a
+A fitted artifact reaches the policy engine, and each gate takes its own. Every
+process resolves its gate numbers once at startup and logs a line per gate. So
+one fitted gate beside one seeded gate reads correctly. A seeded agreement gate
+logs `gate_thresholds_seeded` and a fitted one `gate_thresholds_fitted` with
+the version. The coverage pair logs `coverage_thresholds_seeded` or
+`coverage_thresholds_fitted` the same way.
+
+The gold report records the agreement provenance beside its gate value. So a
 published number names the gate that produced it.
 
-The coverage artifact once had no reader, so the two coverage numbers stayed
-at their seeds however often the job ran. That was the same open loop this
+The coverage artifact once had no reader. The two coverage numbers stayed at
+their seeds however often the job ran. That was the same open loop this
 resolver closed for the other gate, and it is closed now. The gates stay
 independent: two artifacts, read separately, and neither supplies a number to
 the other (DEC-05).
 
-**A fitted threshold cannot move the published numbers.** The gold report runs
-against the offline stub, which answers each sample by matching a phrase. Every
-sample of one ticket therefore agrees, and agreement is 1.0 on every scored
-case. DEC-39 scores the 3128 first turns of the report half. No threshold below
-1.0 changes a decision. A run at 0.60 and a run at
-0.75 publish the same rates, and only the recorded provenance differs.
+**A fitted threshold cannot move the published numbers.** The gold report runs against the offline stub, which answers each sample by matching a phrase.
+Every sample of one ticket therefore agrees, and agreement is 1.0 on every
+scored case. DEC-39 scores the 3128 first turns of the report half. No
+threshold below 1.0 changes a decision.
+
+A run at 0.60 and a run at 0.75 publish the same rates. Only the recorded provenance differs.
 
 The wiring is real and the runtime gate does move. The synthetic corpus cannot
 exercise it, because a deterministic stub has no disagreement to measure.
@@ -931,10 +954,10 @@ carry history, per DEC-37. Its artifact records the turn population as `scope`.
 The replay and the gold report still score first turns only, per DEC-39.
 
 Two caveats stand on the synthetic corpus. An invented agent reply names the
-topic of its own thread, so a follow-up turn is easier to label than a real one.
-A follow-up body is also drawn from five fixed strings, so later turns repeat
-each other. Treat a multi-turn number from synthetic data as an upper bound,
-and re-fit on real labelled history before you publish one.
+topic of its own thread. So a follow-up turn is easier to label than a real
+one. A follow-up body is also drawn from five fixed strings, so later turns
+repeat each other. Treat a multi-turn number from synthetic data as an upper
+bound. Re-fit on real labelled history before you publish one.
 
 Real labelled history now reaches all three jobs (DEC-18, DEC-31). A gold
 half declares its provenance, and the set is closed: `synthetic` or `real`.
@@ -1021,10 +1044,10 @@ Item 6 was a schema migration procedure for adopters.
 in `schema_version`.
 
 Item 7 asks for a correction for head-of-line delay in a partition. It stays
-open, and the measurement now says why. `db/005_run_timing.sql` adds the
-timing columns. The service time of a run is the difference between its
-finish and its creation, and the wait is the difference between its pickup
-and its arrival. `pnpm run latency` reads both per partition (DEC-27).
+open, and the measurement now says why. `db/005_run_timing.sql` adds the timing
+columns. The service time of a run is the difference between its finish and its
+creation. The wait is the difference between its pickup and its arrival. `pnpm
+run latency` reads both per partition (DEC-27).
 
 The first loaded reading came from a synthetic history of 2397 runs over 45
 days. It reported 1.37 per cent utilisation across two consumers. Depth ran
@@ -1038,11 +1061,13 @@ waits that are high and uniform. R2 needs skew. R3 needs a heavy tail
 causing most of the wait. R4 needs one harmed class.
 
 The sleep is now gone. Intake signals the consumer inside the enqueue
-transaction, and the loop wakes on that signal. `CONSUMER_INTERVAL_MS`
-remains as a ceiling for a lost signal. Wait p50 and p95 fall from 2.4 to 2.6 s and 4.7
-to 4.8 s to a figure the poll no longer sets. What remains is the signal and
-the pickup. The seeder models that as zero, so the register quotes no number
-for it: nothing here measures a live notification.
+transaction, and the loop wakes on that signal. `CONSUMER_INTERVAL_MS` remains
+as a ceiling for a lost signal. Wait p50 and p95 fall to a figure the poll no longer sets. Before the signal
+they were 2.4 to 2.6 s and 4.7 to 4.8 s.
+
+What remains is the signal and the pickup. The seeder models that as zero, so
+the register quotes no number for it: nothing here measures a live
+notification.
 
 The correction this item asks for is still unchosen. Removing the sleep
 removes the floor, and it corrects at most a small part of the head-of-line
@@ -1057,9 +1082,9 @@ Those runs wait behind the batch ahead of them. That wait is the delay this
 item names, and a signal cannot shorten a run already under way.
 
 Service time is where the hours are, and it is not the consumer. The median
-runs 30 to 48 s and the 95th percentile 2.5 to 3 hours, against model calls
-of about 14 s. DEC-12 puts a person on every customer reply, and the run row
-resolves when that person answers, so most of that figure is human time.
+runs 30 to 48 s and the 95th percentile 2.5 to 3 hours. Model calls take about
+14 s. DEC-12 puts a person on every customer reply, and the run row resolves
+when that person answers. So most of that figure is human time.
 
 The question reopens on volume. This history runs at 53 tickets a day and
 two consumers, which is 1.37 per cent of their capacity. Saturating those two

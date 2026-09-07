@@ -11,17 +11,17 @@ Two senders on one ticket therefore derived one key. The outbox
 no reply was sent. Nothing named the cause.
 
 This needs no attacker. A copied colleague replying to all keeps the thread
-root, so the ticket id is the same and the sender is not.
+root. So the ticket id is the same and the sender is not.
 
 The addressing path disagreed with the membership check for the same reason.
 A message that names another thread's root gets a new conversation, and keeps
 that root as its ticket id. The mail egress resolves the recipient from the
-ticket id, so it addressed the reply to the person who wrote the original.
+ticket id. So it addressed the reply to the person who wrote the original.
 
 Three further defects came from the same fix commit. A null sender always
-passed the membership check, and `fromAddress` is null whenever the From header
+passed the membership check. `fromAddress` is null whenever the From header
 is missing, so a sender opted out by omitting it. The park guard threw on a
-transient IMAP error and left the journal row in `parking`, which escalates
+transient IMAP error and left the journal row in `parking`. That escalates
 every later run on that ticket forever. The attempt ceiling counted consecutive
 scans, so one provider outage abandoned every queued message.
 

@@ -6,8 +6,8 @@
 It was still half a conversation. The prompts of turn N saw what the customer
 wrote and never what the system answered.
 
-A threshold fitted on that prompt is fitted on a conversation that reads as a
-monologue, which is not the conversation the runtime holds.
+A threshold fitted on that prompt is fitted on a conversation that reads as
+a monologue. That is not the conversation the runtime holds.
 
 `conversationHistory` said so in place: "Agent turns enter when the reply path
 records them." No path recorded them.
@@ -15,11 +15,11 @@ records them." No path recorded them.
 ## Proposed outcome
 
 `turn` carries `approved_reply_text`. The approval writes it inside the
-transaction that moves the run, so the reply commits with the state change or
-not at all.
+transaction that moves the run. So the reply commits with the state change
+or not at all.
 
 History returns both halves of a turn, the customer's message first and the
-reply that answered it second, both under that turn's number.
+reply that answered it second. Both sit under that turn's number.
 
 ## Affected users and systems
 
@@ -33,7 +33,7 @@ A reply takes no turn number of its own. `turn_number` stays the inbound
 sequence, because DEC-38 derives the idempotency key from it.
 
 A ledger-only park writes nothing. DEC-34 compensation is an internal write
-with no customer-visible text, and recording one would show a customer's own
+with no customer-visible text. Recording one would show a customer's own
 history an action they never saw.
 
 A V1-era run has no conversation and a park from before DEC-38 carries no

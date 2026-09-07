@@ -29,7 +29,7 @@ The key gains the turn. A retry of one turn still derives one key. A caller
 with no conversation derives the V1 key unchanged.
 
 Every derivation site gains it, not only the automatic path. The approval path
-derives its key from the parked record, so an approved reply keys on the turn
+derives its key from the parked record. So an approved reply keys on the turn
 that requested it. `c61b42a` completes that half; the two paths would otherwise
 derive two keys for one request.
 

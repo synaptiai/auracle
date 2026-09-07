@@ -11,19 +11,21 @@ It was not defence. It was the only path in that function that skipped DEC-35,
 and it was a hole.
 
 The message id is supplied by the sender on both ingress paths. On the mail
-path one email is enough: set the Message-ID header to the victim's root and
-send no References, and both the ticket id and the message id match the
-victim's turn. The attacker's message then resolved to the victim's
-conversation and the victim's turn number, its text ran through the pipeline
-inside that conversation, and the approved reply overwrote the victim's turn
-row, which every later prompt reads.
+path one email is enough. Set the Message-ID header to the victim's root and
+send no References. Both the ticket id and the message id match the
+victim's turn.
+
+The attacker's message then resolved to the victim's conversation and the
+victim's turn number. Its text ran through the pipeline inside that
+conversation. The approved reply overwrote the victim's turn row, which
+every later prompt reads.
 
 A second hole came from the same commit. A conversation that names nobody
-accepted every sender for ever, so once one existed on a ticket it absorbed
-everyone the other conversations refused, and their messages mixed.
+accepted every sender for ever. So once one existed on a ticket it absorbed
+everyone the other conversations refused. Their messages mixed.
 
 Third, the permanent-error class reached one refusal in the mail egress and
-not the two beside it, so those still spent the whole attempt ceiling on a
+not the two beside it. So those still spent the whole attempt ceiling on a
 case that can never clear.
 
 ## Proposed outcome
@@ -58,4 +60,4 @@ Obeys DEC-35. Corrects an implementation detail of `742b616`.
 
 A conversation is claimed by its first named sender. A customer who opens a
 thread from one address and continues from a second gets a second
-conversation, and their history does not follow them.
+conversation. Their history does not follow them.

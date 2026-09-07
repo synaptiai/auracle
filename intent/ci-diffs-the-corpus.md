@@ -4,7 +4,7 @@
 
 `AGENTS.md` states that the committed fixtures match the generator byte for
 byte. Nothing checked it. A contributor could edit a fixture by hand, or change
-the generator and forget to regenerate, and no job would notice.
+the generator and forget to regenerate. No job would notice.
 
 `REVIEW.md` recorded the gap honestly. The gap stayed open anyway.
 

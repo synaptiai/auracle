@@ -15,6 +15,16 @@ Rule 2 applies to prose only. A numbered procedure and a table are not
 paragraphs, and counting their entries as sentences would forbid a list of
 seven steps. That exclusion is a decision, not an oversight.
 
+Rule 1 measures a sentence, so it reads a unit and not a line. A unit is a
+paragraph, a list item or a table cell. Lines join inside a unit and never
+across one. Every document here wraps its prose near 80 columns, so a
+sentence measured line by line is two short fragments and the rule enforces
+nothing.
+
+Rule 2 reads the prose that opens a block. A block whose prose runs into a
+list still holds prose, and skipping the whole block let a paragraph of any
+length pass as long as a bullet followed it.
+
 Code fences drop out entirely. Inline code collapses to one word, because a
 path or an identifier is one term to a reader.
 
@@ -31,7 +41,27 @@ LIST_ITEM = re.compile(r"^(\d+\.|[-*+])\s")
 HEADING = re.compile(r"^#{1,6}\s+")
 QUOTE = re.compile(r"^>\s?")
 WORD = re.compile(r"[A-Za-z0-9_-]+")
-SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+CELL_SPLIT = re.compile(r"(?<!\\)\|")
+SENTENCE_SPLIT = re.compile(r"(?<=[.!?])[*_'\")\]]*\s+")
+# A full stop that ends a word rather than a sentence. `No.` is absent on
+# purpose: this repository writes "No. It never retries", where `No` is the
+# whole sentence. An abbreviation this list does not hold still ends a
+# sentence here, and the count is then two short ones rather than one long.
+ABBREVIATION = re.compile(
+    r"(?:^|\s)(?:e\.g|i\.e|etc|vs|cf|approx|Fig|Dr|Mr|Ms|St|Inc|Ltd|Jr|Sr)\.$"
+)
+
+
+def sentences(text: str) -> list[str]:
+    """Splits on a sentence boundary, and never inside an abbreviation."""
+    parts = SENTENCE_SPLIT.split(text)
+    joined: list[str] = []
+    for part in parts:
+        if joined and ABBREVIATION.search(joined[-1]):
+            joined[-1] = f"{joined[-1]} {part}"
+        else:
+            joined.append(part)
+    return joined
 
 
 def normalize(text: str) -> str:
@@ -46,11 +76,36 @@ def units(line: str, is_table: bool) -> list[str]:
     """Returns the parts of a line that carry a sentence."""
     if not (is_table and line.startswith("|")):
         return [line]
-    cells = [c.strip() for c in line.strip("|").split("|")]
+    # An escaped pipe is content, not a cell wall. Splitting on it broke one
+    # 24-word cell into two short fragments and the cell shipped clean.
+    cells = [c.strip() for c in CELL_SPLIT.split(line.strip("|"))]
     # The separator row under a table header carries no prose.
     if all(set(c) <= set("-: ") for c in cells):
         return []
     return cells
+
+
+def prose_units(lines: list[str], is_list: bool, is_table: bool) -> list[str]:
+    """Returns the units a sentence may span, in order.
+
+    A cell never joins its neighbour and an item never joins the next one.
+    Joining a whole block instead would read a row of two short cells as one
+    long sentence, and a list of short bullets the same way.
+    """
+    if is_table:
+        return [cell for line in lines for cell in units(line, True)]
+    if is_list:
+        items: list[list[str]] = []
+        for line in lines:
+            # A continuation line is indented, and the caller has already
+            # stripped that indent. So anything that is not a new marker
+            # belongs to the item above it.
+            if LIST_ITEM.match(line) or not items:
+                items.append([line])
+            else:
+                items[-1].append(line)
+        return [" ".join(item) for item in items]
+    return [" ".join(lines)]
 
 
 def read_text(path: str) -> tuple[str, list[str]]:
@@ -83,22 +138,33 @@ def check_file(path: str) -> list[str]:
         is_list = any(LIST_ITEM.match(line) for line in lines)
         is_table = any(line.startswith("|") for line in lines)
 
-        for line in lines:
-            for unit in units(line, is_table):
-                for sentence in SENTENCE_SPLIT.split(unit):
-                    count = len(WORD.findall(sentence))
-                    if count > MAX_WORDS:
-                        findings.append(
-                            f"{path}: rule 1, {count} words: {sentence[:80]}"
-                        )
+        for unit in prose_units(lines, is_list, is_table):
+            for sentence in sentences(unit):
+                count = len(WORD.findall(sentence))
+                if count > MAX_WORDS:
+                    findings.append(
+                        f"{path}: rule 1, {count} words: {sentence[:80]}"
+                    )
 
-        if is_list or is_table:
+        if is_table:
             continue
-        paragraph = " ".join(lines)
-        sentences = [s for s in SENTENCE_SPLIT.split(paragraph) if s.strip()]
-        if len(sentences) > MAX_SENTENCES:
+        # The prose that opens the block, which stops at the first list
+        # marker. `is_list` is true for the whole block, so returning here
+        # skipped rule 2 for a paragraph of any length that a bullet
+        # happened to follow. Two files on the pinned list are shaped that
+        # way today, and both pass only because their prose is short.
+        prose = []
+        for line in lines:
+            if LIST_ITEM.match(line):
+                break
+            prose.append(line)
+        if not prose:
+            continue
+        paragraph = " ".join(prose)
+        counted = [s for s in sentences(paragraph) if s.strip()]
+        if len(counted) > MAX_SENTENCES:
             findings.append(
-                f"{path}: rule 2, {len(sentences)} sentences: {paragraph[:70]}"
+                f"{path}: rule 2, {len(counted)} sentences: {paragraph[:70]}"
             )
     return findings
 

@@ -2,7 +2,7 @@
 
 ## Problem
 
-`db/005_run_timing.sql` added three columns to the run row and stated the two
+`db/005_run_timing.sql` added three columns to the run row. It stated the two
 quantities they exist for: a queue wait and a service time. Its header said
 why. "Choosing a correction needs production latency data from Phase 2. These
 columns make that data collectible from the ledger alone."
@@ -11,10 +11,10 @@ Four call sites wrote them. Nothing read them. Section 7 item 7 said so in as
 many words: "Nothing reads them yet."
 
 The consequence was not that a column sat idle. Section 6 concedes that
-partitions trade concurrent runs on one ticket for head-of-line delay, and
+partitions trade concurrent runs on one ticket for head-of-line delay. It
 predicts it "will appear as latency on busy partitions". An operator had no
 way to see that. The runbook mentioned latency once, in the deadline
-escalation row, where it told them to check a latency the system did not
+escalation row. There it told them to check a latency the system did not
 expose.
 
 This is the third instance of one pattern here. A fitted agreement threshold
@@ -28,8 +28,8 @@ was the last one the register still admitted to.
 per partition, and writes `latency/v<n>.json`.
 
 Every statement is a SELECT, so the job is safe against a live database. A
-test greps the module for any verb that could change the ledger, because a
-claim that a module cannot damage production has to be enforced rather than
+test greps the module for any verb that could change the ledger. A claim
+that a module cannot damage production has to be enforced rather than
 stated.
 
 ## Affected users and systems
@@ -57,15 +57,17 @@ No daemon changes, and no live traffic passes through any of this.
 
 **The aggregation runs in the database.** A ledger holds one row per run and
 an adopter's is large. Pulling every timestamp to the client to sort it is the
-shape a first draft naturally takes and the one that breaks at scale.
+shape a first draft naturally takes. It is also the one that breaks at
+scale.
 
-**`percentile_disc`, not `percentile_cont`.** Interpolation is the monitoring
-convention because a histogram has already discarded its observations. This
-reads a ledger that still holds every one, so each figure is a duration a real
-run took. Falsifying this showed the cost concretely: under `percentile_cont`
-the p50 of ten runs at one through ten minutes is 5.5 minutes, which no run
-recorded. An interpolated p99 is the wrong thing to hand an operator asking
-how bad it got.
+**`percentile_disc`, not `percentile_cont`.**
+
+Interpolation is the monitoring convention because a histogram has already
+discarded its observations. This reads a ledger that still holds every one, so
+each figure is a duration a real run took. Falsifying this showed the cost
+concretely. Under `percentile_cont` the p50 of ten runs at one through ten
+minutes is 5.5 minutes. No run recorded that value. An interpolated p99 is the
+wrong thing to hand an operator asking how bad it got.
 
 **Percentiles, never an average.** Head-of-line delay is a tail phenomenon and
 an average is where it hides. A partition whose every hundredth ticket waits
@@ -79,21 +81,15 @@ knows least about. It is counted separately instead.
 one both show few finished runs. That count is what separates them.
 
 **Each exclusion carries its own count.** One label per remedy. A run with no
-intake row and two hosts that disagree about the time are different problems,
-and one count covering both sends an operator to neither. So the report names
+intake row and two hosts that disagree about the time are different problems.
+One count covering both sends an operator to neither. So the report names
 five: `unmeasured`, `unordered`, `unfinished`, `unstamped` and `never_ran`.
 
-**The service population keys on the run's state, not on a null finish time.**
-`db/005` leaves existing rows with a null finish, so keying on the timestamp
-reported every run older than the migration as unfinished forever. An upgraded
-ledger then showed every partition permanently stalled, and that count is the
-one the runbook sends an operator to read.
+**The service population keys on the run's state, not on a null finish
+time.** `db/005` leaves existing rows with a null finish. Keying on the timestamp reported every run older than the migration as unfinished forever. An upgraded ledger then showed every partition permanently stalled. That count is the one the runbook sends an operator to read.
 
 **A run that never entered service is excluded from service time.**
-`abandonMessage` files a run already terminal, so its creation and its finish
-are one timestamp and its service time is exactly zero. It did not take no
-time; it never ran. The path fires when a partition is failing, so counting
-those zeros would let a broken partition manufacture the figures that make it
+`abandonMessage` files a run already terminal, so its creation and its finish are one timestamp. Its service time is exactly zero. It did not take no time; it never ran. The path fires when a partition is failing. Counting those zeros would let a broken partition manufacture the figures that make it
 look fastest.
 
 **The artifact is ignored, like `triage/`.** A latency report describes the
@@ -105,8 +101,8 @@ these.
 
 None changes. Open item 7 asks for the data a correction needs, and this
 collects it. Choosing a correction is still open, and this job deliberately
-does not choose one: the artifact records `role: observation` and the
-validator refuses any other value, so the file cannot be read as a decision
+does not choose one. The artifact records `role: observation` and the
+validator refuses any other value. So the file cannot be read as a decision
 nobody made.
 
 - DEC-17, DEC-19. The adopter is the data controller. The report never leaves
@@ -117,6 +113,6 @@ nobody made.
 
 ## Open questions
 
-Which correction the data should motivate. That is item 7 itself, and it stays
-open until an adopter has run this against real traffic for long enough for
-the tail to mean something.
+Which correction the data should motivate. That is item 7 itself. It stays
+open until an adopter has run this against real traffic for long enough.
+Only then does the tail mean something.

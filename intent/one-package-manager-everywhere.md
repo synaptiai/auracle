@@ -13,22 +13,24 @@ user at run time:
 - `src/approval/cli.ts` prints `usage: npm run approve`.
 
 Two more name it inside an error an operator reads while the database is
-wrong: `src/kb/loader.ts` tells them to run `npm run db:migrate`.
+wrong. `src/kb/loader.ts` tells them to run `npm run db:migrate`.
 
 `AGENTS.md` states that an `npm install` produces a tree that no workflow
 validates. So the tools handed a user an instruction the repository disowns.
 
 The taxonomy-induction job had a second problem. It is step 1 of phase 1, and
 it was the only job with no script. A reader reached it as
-`node dist/jobs/run-taxonomy-induction.js`, which needs a build first and
+`node dist/jobs/run-taxonomy-induction.js`, which needs a build first. It
 matches no other entry in the table beside it.
 
 The eval workflow had a third. `.github/workflows/agent-evals.yml` set
 `EVAL_BEHAVIOUR` to 1 on every push and on a nightly schedule. That bypassed
-the opt-in gate `8982a15` added. The behaviour layer spends model calls, and
-`run_behaviour_case` reads the agent's stdout rather than the repository, so
-the synthetic-fixture case passes when an agent writes the file and prints
-`Done.` The schedule paid for a check that cannot fail correctly.
+the opt-in gate `8982a15` added.
+
+The behaviour layer spends model calls. `run_behaviour_case` reads the
+agent's stdout rather than the repository. So the synthetic-fixture case
+passes when an agent writes the file. And it prints `Done.` The schedule
+paid for a check that cannot fail correctly.
 
 ## Proposed outcome
 

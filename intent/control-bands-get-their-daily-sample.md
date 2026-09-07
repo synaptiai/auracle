@@ -4,12 +4,12 @@
 
 `bands.yaml` defines four metrics, a 30-day window, a daily sample and three
 graduated actions. No module under `src/` read that file. Its four baselines
-are null, and its own header says they stay null until a full window of daily
+are null. Its own header says they stay null until a full window of daily
 samples exists. Nothing computed a daily sample, so they could never fill.
 
 `run.approval_edit_distance` showed the same shape on one column. It had one
-writer outside the tests. That writer's comment says the value lands on the run
-so a daily sample can be computed from ledger data alone. Nine offline job
+writer outside the tests. That writer's comment says the value lands on the run.
+So a daily sample can be computed from ledger data alone. Nine offline job
 directories held no reader for it.
 
 The runbook told an operator in Phase 2 to watch the bands and wait. It named
@@ -41,7 +41,7 @@ never writes to it.
 
 - Every statement is a SELECT, and the connection opens read-only. The job is
   safe against a live database.
-- The artifact stays with the adopter. It describes their own traffic, so the
+- The artifact stays with the adopter. It describes their own traffic. So the
   directory is ignored like `latency/` and `triage/`, and nothing real enters
   the repository (DEC-18).
 - No baseline is written into `bands.yaml`. Those are an adopter's production
@@ -56,11 +56,11 @@ never writes to it.
 
 ## Decisions affected
 
-None. This is an implementation detail of the section 4.10 online measurement
-and of step 3 of Phase 2 in section 5.
+None. This is an implementation detail of the section 4.10 online measurement.
+It is also part of step 3 of Phase 2 in section 5.
 
 The policy engine now returns which rule decided, beside the verdict it already
-returned. The rules and their order do not change, and a test compares the two
+returned. The rules and their order do not change. A test compares the two
 functions across every combination of their inputs. DEC-03, DEC-05, DEC-06,
 DEC-07, DEC-12, DEC-13 and DEC-34 each keep the effect they had.
 

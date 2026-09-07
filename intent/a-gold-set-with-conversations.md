@@ -15,13 +15,14 @@ intent, so a conversation had no shape to take.
 
 ## Proposed outcome
 
-A case is one turn. Turns of one thread share a `conversation_id`, number from
-1, and repeat the intent, the queue and the disposition of the thread. The
-turn that another turn follows carries the reply that answered it. The last
-turn carries none, because the reply to it is what a run would produce.
+A case is one turn. Turns of one thread share a `conversation_id`, number
+from 1. They also repeat the intent, the queue and the disposition of the
+thread. The turn that another turn follows carries the reply that answered
+it. The last turn carries none, because the reply to it is what a run would
+produce.
 
 That mirrors the ledger, where `turn.approved_reply_text` also hangs off the
-turn it answered and takes no turn number of its own.
+turn it answered. It takes no turn number of its own.
 
 Both halves still hold 385 cases, and a half is filled with whole threads. A
 thread that straddled the split would leak DEC-31, so the loader refuses one.
@@ -55,19 +56,19 @@ Obeys DEC-35, DEC-38, DEC-39, DEC-18 and DEC-31. Corrects section 6, which
 claimed a fit that never ran.
 
 One text rule, in one place. `goldCaseText` composes a case exactly as the
-intake adapter composes `ticket.ticketText`, which the ledger stores in
-`turn.body_text` and reads back as history. The replay used a single newline
-and the history builder dropped the subject; both now call that function, so
-an offline prompt and a runtime prompt cannot diverge.
+intake adapter composes `ticket.ticketText`. The ledger stores that in
+`turn.body_text` and reads it back as history. The replay used a single
+newline and the history builder dropped the subject. Both now call that
+function, so an offline prompt and a runtime prompt cannot diverge.
 
 ## Open questions
 
-An invented reply names the topic of its own thread, so a synthetic follow-up
-is easier to label than a real one. A follow-up body also comes from five
-fixed strings. Section 6 records both caveats. The real corpus exporter still
-folds a thread into one record and models no turns.
+An invented reply names the topic of its own thread. So a synthetic
+follow-up is easier to label than a real one. A follow-up body also comes
+from five fixed strings. Section 6 records both caveats. The real corpus
+exporter still folds a thread into one record and models no turns.
 
 The induction job reads every turn, which DEC-02 wants: a follow-up is
-history. Later turns raise the distinct text count from 114 to 220 across the
-770 cases, so they add variety rather than duplication. The clustering itself
-is untested against them, because the job needs a model.
+history. Later turns raise the distinct text count from 114 to 220 across
+the 770 cases. So they add variety rather than duplication. The clustering
+itself is untested against them, because the job needs a model.

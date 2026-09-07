@@ -2,7 +2,7 @@
 
 ## Problem
 
-`503da0e` folded the conversation into the idempotency key, and asserted that a
+`503da0e` folded the conversation into the idempotency key. It asserted that a
 conversation id is stable across every retry of one turn. That assertion was
 false on the path the commit was written to serve.
 

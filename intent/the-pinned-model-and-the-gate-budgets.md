@@ -27,19 +27,19 @@ columns. No such report exists.
 
 ## Proposed outcome
 
-A truncated answer is refused where it is detectable, at the model boundary,
-and it carries the cost of the call it refused. The run that met it ends,
+A truncated answer is refused where it is detectable, at the model boundary.
+It carries the cost of the call it refused. The run that met it ends,
 records its spend and escalates with a reason of its own.
 
 An operator who follows the documented default start reaches a working model.
 The runbook, the README and the contributor guide name the model that serves
-them, and one test binds the runbook's value to the code's.
+them. One test binds the runbook's value to the code's.
 
 The coverage gate measures what it claims to measure. An unreadable answer
 raises, and never becomes a verdict. An unknown outcome escalates, as it does
 for an unknown delivery.
 
-The reader takes a verdict that opens a line, so a model that reasons aloud
+The reader takes a verdict that opens a line. So a model that reasons aloud
 still resolves and prose about a verdict does not. The line may carry the
 markup a model reaches for. Two verdicts are unreadable rather than the first
 one found.
@@ -76,5 +76,5 @@ statement. The decisions above constrain the work and none of them changes.
 ## Open questions
 
 None outstanding. The judge was measured against the real model on a sample of
-the committed gold set, and the figures are reported in the pull request
+the committed gold set. The figures are reported in the pull request
 beside the values the seeds assume. The measurement is not a fit.

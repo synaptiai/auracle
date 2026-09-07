@@ -4,7 +4,7 @@
 
 The synthetic-fixture guard matched only paths holding `/fixtures/`.
 `REVIEW.md` extends the rule to fixtures, evals and examples. The fixture
-modules under `src/` and the eval cases were outside the guard, which is most
+modules under `src/` and the eval cases were outside the guard. That is most
 of the surface the rule names.
 
 Widening it alone would have blocked every legitimate edit. The repository
@@ -12,8 +12,8 @@ uses reserved addresses such as `sam.smith@example.test`, and the email
 pattern matched those too.
 
 `REVIEW.md` said two rules have no CI surface. Five are not enforced on a
-pull request. The table also mixed two different things: a job that runs a
-guard's own cases, and a job that applies the rule to the change.
+pull request. The table also mixed two different things. One job runs a
+guard's own cases, and a job applies the rule to the change.
 
 `.gitignore` declared `/gold-report/` a run artifact that is never committed.
 `gold-report/v1.json` is tracked, and `README.md` quotes its numbers.

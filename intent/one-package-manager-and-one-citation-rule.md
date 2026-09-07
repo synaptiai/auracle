@@ -7,9 +7,9 @@ the local tree came from pnpm. The workflow ran `npm ci`, which reads
 `package-lock.json`. The two trees were never compared.
 
 `pnpm-workspace.yaml` also existed, which pnpm reads at the root. A note in
-this work called that file a leftover. The note was wrong, and `8acf000`
-corrects it: each package the file names needs a lifecycle script that pnpm
-blocks by default. The file stays.
+this work called that file a leftover. The note was wrong.
+`8acf000` corrects it: each package the file names needs a lifecycle script
+that pnpm blocks by default. The file stays.
 
 The DEC-citation guard checked two different things. The commit hook read the
 whole message. The pull-request mode read the subject alone, so a citation in

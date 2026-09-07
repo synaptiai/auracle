@@ -12,7 +12,7 @@ no longer existed. That happened during this work.
 Twenty errors were hiding there. Three were real defects rather than noise.
 The mail adapter declared `performAction` and `readBack` with no parameters,
 so the class did not match the port it implements. A reranker case passed a
-document body to a helper that took two arguments and dropped it, so the
+document body to a helper that took two arguments and dropped it. So the
 overlap it meant to measure ran against an empty body. A relay fake omitted
 a port method.
 

@@ -14,23 +14,23 @@ customer could write a marker of their own and forge an agent turn. The gates
 cannot catch that, because they read retrieved documents alone.
 
 The turn lookup that makes DEC-38 safe had no test. Delete it and every test
-still passed, while a message redelivered after its ack took a second turn,
+still passed. A message redelivered after its ack took a second turn,
 derived a second key, and served the customer twice.
 
-Six more paths swallowed the error they handled: the webhook discarded every
-intake failure, the duplicate-draft guard answered null when its search threw,
-the ack ignored a zero-row delete, and the relay recorded no cause for a send
+Six more paths swallowed the error they handled. The webhook discarded every
+intake failure. The duplicate-draft guard answered null when its search threw.
+The ack ignored a zero-row delete. The relay recorded no cause for a send
 it could not complete.
 
 ## Proposed outcome
 
 A join is checked against the sender. A marker inside a body loses its
-brackets. A message with no id of its own gets one derived from its content,
-so a redelivery under a new delivery id is still one turn. Every swallowed
+brackets. A message with no id of its own gets one derived from its content.
+So a redelivery under a new delivery id is still one turn. Every swallowed
 error is recorded, and the ones that mean an inconsistent ledger now throw.
 
 A message that fails five times leaves the queue as an escalated run that
-names the cause, instead of being retried on every scan forever.
+names the cause. It is not retried on every scan forever.
 
 Each fix carries a test proved to fail without it.
 
@@ -42,7 +42,7 @@ the operator views.
 ## Constraints
 
 DEC-26 pins the prompt. The renderer changes only a body that carries a forged
-marker or exceeds the ceiling, and the committed corpus renders byte for byte
+marker or exceeds the ceiling. The committed corpus renders byte for byte
 as before, so no pin moves.
 
 DEC-17 requires the data guarantee to be configurable and documented. It is

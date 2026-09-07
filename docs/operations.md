@@ -545,11 +545,10 @@ export on. That is a fact about the machine and not about the message, so it
 counts as unreadable.
 
 A thread where one message states no readable date falls back to delivery
-order. The export
-reports every fallback, and it reports every message it dropped: a message
-with no body text, a message from neither party, and an agent message that
-precedes every customer turn. Read those counts. They name what the corpus
-does not hold.
+order. The export reports every fallback, and it reports every message it
+dropped. A dropped message may have no body text or come from neither
+party. It may also be an agent message that precedes every customer turn.
+Read those counts. They name what the corpus does not hold.
 
 Leave `CORPUS_AGENT_ADDRESSES` unset and the export records the customer's
 half of each conversation. It warns when you do. A threshold fitted on half a
@@ -605,9 +604,9 @@ Each file holds `split`, `source`, `count` and `tickets`. Set `source` to
 That directory is gitignored, and a labeled half never enters the repository
 (DEC-18).
 
-Name both halves on every command. The job you run reads one of them. It takes
-identifiers from the other to prove the two are disjoint (DEC-31), and reads
-none of that half's cases.
+Name both halves on every command. The job you run reads one of them. It
+takes identifiers from the other to prove the two are disjoint (DEC-31). It
+reads none of that half's cases.
 A job that gets one path without the other refuses to run.
 
 ```sh
@@ -625,18 +624,19 @@ the highest groundedness artifact and refuses when none exists. It applies that
 pair to the half that chose nothing, which is what makes the number publishable
 (DEC-31). It refuses the fit half outright.
 
-The two coverage jobs cost about the same. Each makes one model call per claim,
-so a half of this size is some four thousand calls across several hours.
+The two coverage jobs cost about the same. Each makes one model call per
+claim. So a half of this size is some four thousand calls across several
+hours.
 
 Each job appends every scored draft to a resume file under `groundedness/`.
 A run that dies continues from where it stopped when you start it again.
-Three runs died before this existed and each discarded every draft it had paid
-for: a provider having a bad hour, a connect timeout that outlasted every
-retry, and a killed shell.
+Three runs died before this existed, and each discarded every draft it had
+paid for. The causes were a provider having a bad hour, a connect timeout
+that outlasted every retry, and a killed shell.
 
 The file records a hash of each case identifier, never the identifier (DEC-18).
 Its header names the model, the prompt and the half. A file describing any
-other run is refused rather than mixed in, because samples from two runs
+other run is refused rather than mixed in. Samples from two runs would
 publish a number from neither. Delete the file to start over, and set
 `GROUNDEDNESS_RESUME` to put it elsewhere.
 
@@ -645,7 +645,7 @@ names each conversation whose turn order the mailbox decided. Read that list
 before you label: those turn numbers are a guess.
 
 `pnpm run fit-groundedness` needs one more thing than the other two. It
-resolves each cited document against the shipped fixture set, so a real half
+resolves each cited document against the shipped fixture set. So a real half
 whose claims cite your own documents is refused. The refusal names the case
 and the document by digest, not in the clear (DEC-18). That job stays on
 synthetic data until a real knowledge base reaches it.
@@ -663,7 +663,7 @@ The jobs also do not check where you keep the two halves. The export refuses
 to write outside `corpus/`; reading is your own path to name.
 
 The jobs refuse an overlap. Two halves that share a case fail, and so do two
-that share a conversation: a thread split across the halves would fit and
+that share a conversation. A thread split across the halves would fit and
 publish on one customer's problem.
 
 The size rule of the shipped corpus does not apply here. Your halves hold
@@ -718,15 +718,15 @@ Each gate logs a line of its own at startup. Read `gate_thresholds_fitted` or
 One line covering both gates could not report a mixed state.
 
 The gates stay independent. Neither artifact supplies a number to the other
-gate, and no path joins a coverage value to an agreement value (DEC-05).
+gate. No path joins a coverage value to an agreement value (DEC-05).
 
 The `gold_source` field on that line names the data behind the number. It
 reads `synthetic` for the shipped corpus and `real` for a half of your own
 history. The `model_ver` and `prompt_ver` fields name the pins the fit ran
 under.
 
-Read those two. The consumer refuses to start when a fitted coverage pair was
-produced under a model that is not the one `MODEL_VER` names.
+Read those two. The consumer checks the model behind a fitted coverage pair.
+It refuses to start when that model is not the one `MODEL_VER` names.
 
 A threshold is one model's judgement of what coverage means. A model that
 reads claims more generously reaches the same number on weaker evidence.
@@ -748,8 +748,8 @@ adopter's gates to numbers fitted on somebody else's corpus. Each deployment
 runs `pnpm run calibrate` against its own fit half.
 
 Never rename an artifact by hand. The loader picks the file by its name and
-reads the version from inside it, and it refuses a file where the two
-disagree. Copy the whole `calibration/` directory instead.
+reads the version from inside it. It refuses a file where the two disagree.
+Copy the whole `calibration/` directory instead.
 
 Keep one file per version. A case-sensitive filesystem holds `v1.json` and
 `V1.json` as two files, and both name version 1. The loader refuses that
@@ -792,22 +792,22 @@ can approve. That is the opposite of what the band is for.
 The artifact reports coverage for each grade of unsupported claim. An
 `unstated_detail` names a specific the document gestures at and never states,
 and it is the grade that matters. A fit whose separation comes from the easy
-grades alone protects nothing, and the per-grade figures are how you see it.
+grades alone protects nothing. The per-grade figures are how you see it.
 
 A job creates and reads the directory before it spends, and reads it again to
 mint the version it writes. The first step creates the directory the way the
-writer does, so a revoked permission on the parent faults before the first
+writer does. So a revoked permission on the parent faults before the first
 model call. A file dropped in during a run still costs that run. The check
 removes a directory that was already unusable, not every fault.
 
 Every gate journal row records the numbers that decided it. A rolling restart
-gives one consumer a new fit while another still holds the old one, so two
+gives one consumer a new fit while another still holds the old one. So two
 identical tickets can decide differently for a legitimate reason. The journal
 row says which numbers each run applied.
 
 `pnpm run gold-report` reads the calibration artifact. A clean checkout carries none,
 so it scores through the seeds and the artifact says `gate_source: seed`. A
-machine that holds a fit publishes different rates, and its artifact names the
+machine that holds a fit publishes different rates. Its artifact names the
 version and the turn population behind them. The gate is part of the number.
 
 
@@ -844,7 +844,7 @@ every morning would then look like an excursion.
 
 The baseline covers the 30 most recent measured days before the day you
 asked for. It never includes that day. A day inside its own baseline pulls
-the mean toward itself, so a bad day reads less bad the worse it gets.
+the mean toward itself. So a bad day reads less bad the worse it gets.
 
 `bands.yaml` holds no baseline. `pnpm run bands` computes one from your ledger
 whenever the window holds enough days, so that number stays with you. A
@@ -868,12 +868,13 @@ Each line has a code in the artifact, in `shortfall_code`. Read that rather
 than the sentence if a tool consumes the file.
 
 The provider line has a cost worth knowing before you meet it. A band
-compares a day against the thirty before it, so a change of provider silences
-every metric until the window clears. Upgrading this software is such a
-change: a run records its provider from this version onward, and a run written
-before it recorded none. The first day carrying both is a day that disagrees
-with itself, and the window covering that day emits no verdict for about a
-month.
+compares a day against the thirty before it. So a change of provider silences
+every metric until the window clears.
+
+Upgrading this software is such a change. A run records its provider from
+this version onward, and a run written before it recorded none. The first
+day carrying both is a day that disagrees with itself. The window covering
+that day emits no verdict for about a month.
 
 The artifact names the day's own provider in `provider`. It reads `mixed` when
 the day's runs disagreed, and null when none of them recorded one. An artifact
@@ -881,7 +882,7 @@ written before the field existed has no `provider` key, and the reader treats
 that as null.
 
 The baseline is 30 daily samples, not 30 calendar days. The job reads 60 days
-to find them. A quiet day yields no sample, so demanding 30 consecutive days
+to find them. A quiet day yields no sample. So demanding 30 consecutive days
 would let one quiet weekend blind the band for a month.
 
 #### The counts beside each metric
@@ -909,15 +910,16 @@ one at approval, and the relay writes the other when it gives up on a
 delivery. Neither table records that moment, so the run is the only day the
 report can use.
 
-So a recent day is provisional. Running the command again for the same day can
-return a different value, and each run writes a new version rather than
-replacing the last. The edit distance prints the count of runs still awaiting
-approval beside it, and the delivery count prints the records the relay has
-not resolved. Both say how much of that day could still arrive.
+So a recent day is provisional. Running the command again for the same day
+can return a different value. Each run writes a new version rather than
+replacing the last. The edit distance prints the count of runs still
+awaiting approval beside it. The delivery count prints the records the relay
+has not resolved. Both say how much of that day could still arrive.
 
-A count of zero means no known contribution is outstanding. It does not prove
-the day is final. A run of that day which is still working, or which stopped
-between steps, appears in neither count and can still acquire a value later.
+A count of zero means no known contribution is outstanding. It does not
+prove the day is final. A run of that day may still be working, or it may
+have stopped between steps. Either way, it appears in neither count and can
+still acquire a value later.
 
 ### What happened on this run
 
@@ -978,14 +980,16 @@ Four of these name a model answer this system could not read:
 rather than record one. `classifier_no_label` is not one of them: those
 samples were readable.
 
-The journal entry carries the shape of the fault, and `costUnknown` when the
-provider reported no cost for the call it refused. The shapes are `truncated`
-(the answer budget ran out), `no-content` (the response carried no text),
-`no-cost`, `no-usage`, `no-choices`, `no-choice`, `no-message`, `no-data`,
-`no-item`, `no-vector` and `bad-vector` (the response had a shape this system
-cannot read), `empty` (the
-model answered nothing), `no-verdict` and `conflicting` (the judge named no
-verdict, or two), and `no-label` (no sample named a known intent).
+The journal entry carries the shape of the fault. It also carries
+`costUnknown` when the provider reported no cost for the call it refused.
+
+The shapes are `truncated` (the answer budget ran out) and `no-content`
+(the response carried no text). `no-cost`, `no-usage`, `no-choices`,
+`no-choice`, `no-message`, `no-data`, `no-item`, `no-vector` and
+`bad-vector` mean the response had a shape this system cannot read.
+`empty` means the model answered nothing. `no-verdict` and `conflicting`
+mean the judge named no verdict, or two. `no-label` means no sample named
+a known intent.
 
 The coverage fit retries a transport fault five times before it gives up.
 It waits four times longer after each attempt, because the faults arrive in
@@ -1050,10 +1054,10 @@ that.
 
 The console reads no `.env` file, as `pnpm run escalations` and `pnpm run
 triage` do not. Name `DATABASE_URL` on the command line, as above. It refuses
-to start when it cannot reach that ledger, so a wrong URL fails at startup
+to start when it cannot reach that ledger. So a wrong URL fails at startup
 rather than one page at a time.
 
-The console answers only the host names it was started for, and it refuses a
+The console answers only the host names it was started for. It refuses a
 form post that did not come from one of its own pages. Those two checks are
 the approval's defence.
 
@@ -1076,41 +1080,40 @@ A read from a script needs no header. An approval does: send
 browser sends one of the two, and a page that did not come from this console
 can send neither.
 
-Binding to loopback is not a defence. Any page the operator has open can post to a loopback port,
-and a name an attacker controls can resolve to 127.0.0.1, which gives their
-page a same-origin handle on this console. A reverse proxy that authenticates
-does not help either, because the browser it is being used through is already
-authenticated.
+Binding to loopback is not a defence. Any page the operator has open can
+post to a loopback port. A name an attacker controls can resolve to
+127.0.0.1. That gives their page a same-origin handle on this console. A
+reverse proxy that authenticates does not help either, because the browser
+it is being used through is already authenticated.
 
-The console authenticates nobody. Anyone who reaches it can approve a reply,
-so treat reaching it as the whole access control and place it accordingly.
+The console authenticates nobody. Anyone who reaches it can approve a
+reply. So treat reaching it as the whole access control, and place it
+accordingly.
 
 Five surfaces read live data: runs, one run in detail, the approval queue, the
 control bands and the partition latency.
 
 Two of them show a dash where the gate values go. The console reads the
-escalation module, which reports what a person needs to work the queue and
-carries neither agreement nor coverage. The dash says "not read by the
-console" and means exactly that: it is not a claim that the run failed to
-reach a gate.
+escalation module. That module reports what a person needs to work the
+queue, and it carries neither agreement nor coverage. The dash says "not
+read by the console" and means exactly that. It is not a claim that the
+run failed to reach a gate.
 
-**The console makes one write, and it is the approval.** Every other statement
-it issues is a SELECT, so it is otherwise as safe against a live database as
-`pnpm run bands` and `pnpm run latency`. That claim is its own, not inherited:
-`console/src/select-only.test.ts` refuses any SQL keyword in the package,
-refuses a call to `pool.query`, and holds the approval to one module.
+**The console makes one write, and it is the approval.** Every other statement it issues is a SELECT. So it is otherwise as safe against a live database as `pnpm run bands` and `pnpm run latency`. That claim is its own, not inherited. `console/src/select-only.test.ts` refuses any SQL keyword in
+the package, refuses a call to `pool.query`, and holds the approval to one
+module.
 
-Approving in the console calls the same function `pnpm run approve` calls, so
-the transaction and the fencing epoch are the same whichever path an operator
-used. The command line keeps working.
+Approving in the console calls the same function `pnpm run approve` calls.
+So the transaction and the fencing epoch are the same whichever path an
+operator used. The command line keeps working.
 
 The console captures no reply text, so it records no approval-edit distance.
 Edit the draft in the helpdesk, then approve. The relay sends the parked draft
-exactly as the helpdesk holds it, so text typed anywhere else is recorded and
-never sent. `pnpm run approve --read-back` is the path that measures an edit:
-it reads the draft back from the target system after the person changed it.
+exactly as the helpdesk holds it. So text typed anywhere else is recorded and
+never sent. `pnpm run approve --read-back` is the path that measures an edit.
+It reads the draft back from the target system after the person changed it.
 
-A run whose parked draft is gone offers no approve button, and the command
+A run whose parked draft is gone offers no approve button. The command
 line reports the same `draft_missing` for it.
 
 The console never parks a draft. A draft parks in the helpdesk and nowhere
@@ -1133,7 +1136,7 @@ An absolute number is not the signal. One partition sitting well above the
 others is.
 
 `CONSUMER_INTERVAL_MS` is the ceiling for a lost signal. A partition whose
-`p50` sits near half that value has lost its signal, and every partition
+`p50` sits near half that value has lost its signal. Every partition
 sitting there means the database refused the listener. Check the consumer log
 for `arrival_signal_lost` or `arrival_signal_unavailable`.
 
@@ -1173,7 +1176,7 @@ hundredth ticket waits an hour has an unremarkable mean.
 Read the counts beside the figures. A `p99` over four runs is not a `p99`.
 
 `--since` filters on pickup time, not on arrival. So a run picked up before
-the window and still running falls outside it, and that is the run holding up
+the window and still running falls outside it. That is the run holding up
 a partition. Drop the window when you hunt a stalled one.
 
 ## 7.2 The counts beside the figures
@@ -1192,7 +1195,7 @@ names one cause, because each sends you somewhere different.
 A run the job could not measure never enters a figure as a zero. A zero would
 flatter exactly the runs the ledger understands least.
 
-The job observes. It does not correct the delay, and V2 open item 7 stays
+The job observes. It does not correct the delay. V2 open item 7 stays
 open until an adopter chooses a correction on data like this.
 `docs/v2-roadmap.md` states what that choice needs.
 
@@ -1220,10 +1223,12 @@ Action match compares each routing decision with the disposition people
 actually recorded.
 Careful labelling decides the value of every later number.
 
-**Phase 2. Live with gates.** The system does internal writes automatically.
-Each customer reply parks as a draft and waits for approval. You measure the
-approval-edit distance. This value is the most useful early signal. It shows
-how far each draft was from a reply a person can send.
+**Phase 2. Live with gates.**
+
+The system does internal writes automatically. Each customer reply parks as a
+draft and waits for approval. You measure the approval-edit distance. This
+value is the most useful early signal. It shows how far each draft was from a
+reply a person can send.
 
 `pnpm run bands` computes it, and the other three band metrics, for one day.
 Run it daily. See "Control bands" above for the command and for the lines it

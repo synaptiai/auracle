@@ -5,7 +5,7 @@
 `gold-report/v2.json` recorded `"method": "human-review"` for numbers that an
 offline stub produced. No person graded that run.
 
-Section 4.10 names method 2 "Human review", so the field names a slot in the
+Section 4.10 names method 2 "Human review". So the field names a slot in the
 register and cannot say who scored. The truth sat in `model_ver`, and the
 warning sat in a code comment and in `README.md`.
 
