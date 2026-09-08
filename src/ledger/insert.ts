@@ -62,7 +62,7 @@ export interface FencedOutboxInput {
  * Mirrors TerminalRunState in the coordinator; the ledger cannot import
  * upward, and these names are ledger data, not coordinator types.
  */
-const TERMINAL_RUN_STATES: ReadonlySet<string> = new Set([
+export const TERMINAL_RUN_STATES: ReadonlySet<string> = new Set([
   'resolved',
   'escalated',
   'superseded',

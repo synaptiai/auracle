@@ -15,12 +15,23 @@ import { STEP_ORDER, agreementThresholdFromJournal, readGateThresholds } from '.
 
 const REPO_ROOT = new URL('../../', import.meta.url).pathname;
 
-/** Source with comments blanked, so prose about writing never trips a scan. */
+/**
+ * Source with prose blanked, so writing about writing never trips a scan.
+ *
+ * Three kinds of prose, and each one tripped a scan before it was blanked.
+ * JavaScript comments are the obvious kind. SQL comments are not: they live
+ * inside a template literal, so stripping JavaScript comments leaves them,
+ * and a note explaining why a statement digests a body rather than returning
+ * it reads to a scanner as a statement returning a body.
+ *
+ * Import lines are the third. A module path is not a statement, and
+ * `../ledger/insert.js` reads as an INSERT to a scan that looks for the word.
+ */
 function codeOf(relative: string): string {
-  return readFileSync(join(REPO_ROOT, relative), 'utf8').replace(
-    /\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
-    '',
-  );
+  return readFileSync(join(REPO_ROOT, relative), 'utf8')
+    .replace(/^import[^;]*;$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')
+    .replace(/^\s*--[^\n]*$/gm, '');
 }
 
 describe('the canonical step order', () => {
@@ -60,23 +71,66 @@ describe('the canonical step order', () => {
 // The console reads this module against whatever database it is pointed at,
 // and the module's own header promises that cannot damage one. A statement
 // added later would break that promise and nothing else here would notice.
-describe('the run-journal reader never writes', () => {
-  it('issues no statement that could change the ledger', () => {
-    const code = codeOf('src/journal/query.ts');
-    for (const verb of [
-      'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'DROP', 'ALTER', 'CREATE', 'GRANT',
-      'MERGE', 'COPY', 'REFRESH', 'VACUUM', 'CALL',
-    ]) {
-      // Case-insensitive: SQL is not, and a lower-case statement would pass a
-      // scan that only knew the shouted spelling.
-      expect(code, `query.ts contains a ${verb} statement`).not.toMatch(
-        new RegExp(`\\b${verb}\\b`, 'i'),
-      );
+describe('the read modules never write', () => {
+  // Each module's header promises a console can point it at any database
+  // without damaging one. A statement added later would break that promise
+  // and nothing else here would notice.
+  const readers = [
+    'src/journal/query.ts',
+    'src/conversation/query.ts',
+    'src/documents/query.ts',
+  ];
+
+  // Every statement these modules issue is a literal that starts with SELECT.
+  //
+  // A verb list was tried and defeated three ways, each of which compiled and
+  // shipped: `SELECT setval('schema_version_seq', 1)` writes through a
+  // function and names no forbidden verb; `DO $$ BEGIN EXECUTE 'trunc' ||
+  // 'ate table run'; END $$` names neither `DO` nor `EXECUTE` in the list and
+  // builds the verb at runtime; and `const verb = 'DEL' + 'ETE'` defeats any
+  // list by never spelling the word. A scan over identifiers cannot close
+  // that, because the thing being tested is what the database is asked to do
+  // rather than which words appear.
+  //
+  // So this reads the call sites instead. Each `query(` in these modules must
+  // take a literal or a module constant, and every such constant must begin
+  // with SELECT. A dynamic string cannot be checked here and is refused
+  // outright, which is the only honest answer a static scan can give it.
+  it.each(readers)('%s asks the database only for SELECT statements', (reader) => {
+    const code = codeOf(reader);
+    const calls = [...code.matchAll(/\.query[<(]/g)];
+    expect(calls.length, `${reader} issues no statement at all`).toBeGreaterThan(0);
+
+    // The first argument of each call, up to the comma or the closing paren.
+    for (const call of code.matchAll(/\.query(?:<[^>]*>)?\(\s*([^,)]+)/g)) {
+      const argument = call[1]!.trim();
+      const literal = /^(['"`])([\s\S]*)$/.exec(argument);
+      if (literal !== null) {
+        const statement = literal[2]!;
+        expect(statement.trimStart().toUpperCase(), `${reader} issues a non-SELECT literal`)
+          .toMatch(/^SELECT\b/);
+        // Beginning with SELECT is not the same as reading. A statement can
+        // write through a function — `SELECT setval(...)` advances a sequence
+        // and passes every check that looks at the leading verb — and a
+        // semicolon lets a second statement ride behind the first.
+        expect(statement, `${reader} writes through a function`).not.toMatch(
+          /\b(?:setval|nextval|dblink|lo_import|lo_export|pg_write|pg_advisory)\w*\s*\(/i,
+        );
+        expect(statement.replace(/;\s*$/, ''), `${reader} chains a second statement`)
+          .not.toContain(';');
+        continue;
+      }
+      // A named constant: it must be one this module defines as a SELECT.
+      expect(argument, `${reader} builds a statement rather than naming one`)
+        .toMatch(/^[A-Z][A-Z0-9_]*$/);
+      const defined = new RegExp(`const ${argument} = \`\\s*SELECT\\b`).test(code)
+        || new RegExp(`const ${argument} = \`[\\s\\S]{0,40}?SELECT\\b`).test(code);
+      expect(defined, `${reader}'s ${argument} is not a SELECT this module defines`).toBe(true);
     }
   });
 
-  it('still reads, so the scan is not passing over an empty file', () => {
-    expect(codeOf('src/journal/query.ts')).toMatch(/\bSELECT\b/);
+  it.each(readers)('%s still reads, so the scan is not passing over nothing', (reader) => {
+    expect(codeOf(reader)).toMatch(/\bSELECT\b/);
   });
 
   // DEC-18. The journal holds a parked draft, an action payload and a fault
@@ -84,16 +138,61 @@ describe('the run-journal reader never writes', () => {
   // an operator surface. The scan covers the statements rather than the whole
   // file, because the reader tests for the presence of those keys by name and
   // that is the guard, not a leak.
-  it('selects no draft text, no payload and no fault message', () => {
+  // The drafted reply is returned now, and DEC-40 is why: a console may
+  // approve a parked draft, and an approver who cannot read the reply cannot
+  // approve it. It comes out of the `step_journal.result` object this module
+  // already selects, so no statement names it.
+  //
+  // Scoped to this module on purpose, and not over `readers`. The
+  // conversation reader selects `turn.body_text` and returns it, which is its
+  // whole job: issue #48 decided the console shows the customer's message and
+  // the runbook states the posture that follows. A shared list would have to
+  // carry an exemption for the one module the rule was never about, which
+  // reads as a rule with a hole rather than two rules.
+  //
+  // What this cannot check: everything the module returns from a park or a
+  // compose row travels inside the `step_journal.result` object, which the
+  // statement selects wholesale. So a field added to a returned record — a
+  // fault message, an action payload — is invisible here, and the case below
+  // covers that instead. This one is about the columns a statement reaches.
+  it('reaches no column of customer text directly', () => {
     const statements = codeOf('src/journal/query.ts').match(/`[^`]*SELECT[^`]*`/g) ?? [];
     expect(statements.length).toBeGreaterThan(0);
     for (const statement of statements) {
       for (const column of ['payload', 'ticket_id', 'ticket_text', 'sender', 'message_id']) {
         expect(statement, `a statement reads ${column}`).not.toContain(column);
       }
-      // Spelled apart from the loop: the draft column shares its name with a
-      // substring of nothing else here, and a bare list entry reads as a typo.
-      expect(statement).not.toMatch(/\bbody\b/);
+      // `document.body` may be read, and only to digest it. The digest
+      // answers whether a document changed since the run read it; the text
+      // itself would put the corpus on the wire to answer that, and the
+      // console has its own reader for a document a person opens.
+      const bodies = [...statement.matchAll(/\bbody\b/g)];
+      for (const hit of bodies) {
+        const around = statement.slice(Math.max(0, hit.index! - 24), hit.index! + 12);
+        expect(around, 'a statement returns a body rather than digesting it')
+          .toMatch(/sha256\(/);
+      }
+    }
+  });
+
+  // The two fields the module withholds, checked where they actually travel.
+  //
+  // Both ride inside `step_journal.result`, which the statement selects
+  // wholesale — so the statement scan above cannot see them, and adding
+  // `faultText: stringAt(result, 'error')` to the returned record passed it.
+  // The park record's shape is the thing to pin: it reports that a fault and
+  // a payload were recorded, and carries neither.
+  it('returns the fault message and the action payload as presence alone', () => {
+    const code = codeOf('src/journal/query.ts');
+    const record = /function toParkRecord\([\s\S]*?\n}/.exec(code)?.[0];
+    expect(record, 'toParkRecord was not found, so this scan checked nothing').toBeDefined();
+    // Reads the keys, and only to ask whether they are there.
+    for (const key of ['error', 'payload']) {
+      for (const hit of record!.matchAll(new RegExp(`'${key}'`, 'g'))) {
+        const around = record!.slice(Math.max(0, hit.index! - 40), hit.index!);
+        expect(around, `the ${key} key is read for its value rather than its presence`)
+          .toMatch(/\bhas\(/);
+      }
     }
   });
 
@@ -109,48 +208,55 @@ describe('the run-journal reader never writes', () => {
   });
 
   // The case above reads parameters, and a blender does not need two of them.
-  // `readRunJournal` already returns both gates in one object, so
-  // `confidence(journal: RunJournal): number` takes one argument, mentions
-  // neither gate in its signature, and passes. It also compiles, ships, and
-  // puts a blended score on the console.
+  // `readRunJournal` returns both gates in one object, so a blender takes one
+  // argument and mentions neither gate in its signature.
   //
-  // What cannot be legitimate is an exported function that reads both
-  // readings and answers with a number. `readRunJournal` touches both and is
-  // not one, because it returns the journal; `agreementThresholdFromJournal`
-  // returns a number and touches one. The pair is the rule.
-  it('exports no function that reads both gates and returns a number', () => {
+  // Parsing declarations was tried twice and defeated twice. A regex over
+  // `export function NAME(...): TYPE {` misses an arrow constant, and
+  // `([^{]+)\{` captures nothing useful when the return type is itself an
+  // object — so both of these compiled, shipped, and passed:
+  //
+  //   export const confidence = (j: RunJournal): number => …
+  //   export function confidence(j: RunJournal): { score: number } { … }
+  //
+  // So this does not parse. It splits the module at each `export` and asks
+  // one question of the text that follows: does it read both gates. Anything
+  // that does must be named here, which makes adding one a deliberate act
+  // rather than a shape the scan has not met yet.
+  //
+  // `readRunJournal` is the one legitimate reader: it returns the journal,
+  // which is both gates side by side and no number combining them. That is
+  // exactly what DEC-05 permits and what a blender is not.
+  it('exports nothing that reads both gates, beyond the reader that returns them', () => {
     const code = codeOf('src/journal/query.ts');
-    const pattern = /export (?:async )?function (\w+)\([^)]*\)\s*:\s*([^{]+)\{/g;
-    const checked: string[] = [];
-    for (const match of code.matchAll(pattern)) {
-      const [, name, returns] = match;
-      // The body, by brace matching from the opening brace of the signature.
-      // A regex to the next `}` stops at the first nested block and would
-      // read a blend written below one as absent.
-      let depth = 0;
-      let end = match.index! + match[0].length - 1;
-      for (let i = end; i < code.length; i += 1) {
-        if (code[i] === '{') depth += 1;
-        else if (code[i] === '}') {
-          depth -= 1;
-          if (depth === 0) { end = i; break; }
-        }
-      }
-      const body = code.slice(match.index! + match[0].length, end);
-      const answersNumber = /\bnumber\b/.test(returns!);
-      // Coverage has more than one name now. The gate row carries a fraction
-      // called `groundedness` and a verdict per claim beside it, so a blend
-      // can reach coverage by counting the supported claims and never write
-      // the word. Every name for the same reading counts as reading it.
-      const readsCoverage = /\bgroundedness\b|\bclaimVerdicts\b|\bsupported\b|\bcoverage\b/
-        .test(body);
-      const readsBoth = /\bagreement\b/.test(body) && readsCoverage;
-      checked.push(name!);
-      expect(answersNumber && readsBoth, `${name!} blends the two gates`).toBe(false);
+    const permitted = new Set(['readRunJournal']);
+    const chunks = code.split(/\bexport\s+/).slice(1);
+    expect(chunks.length).toBeGreaterThan(3);
+
+    const named: string[] = [];
+    for (const chunk of chunks) {
+      const declared = /^(?:async\s+)?(function|const|interface|type|class)\s+(\w+)/.exec(chunk);
+      if (declared === null) continue;
+      const [, kind, name] = declared as unknown as [string, string, string];
+      named.push(name);
+      // A type is not a blender. `RunJournal` declares both gates because
+      // that is the shape the reader returns, side by side and uncombined —
+      // which is what DEC-05 permits. Only code can average them.
+      if (kind === 'interface' || kind === 'type') continue;
+      // Every spelling of coverage. The gate row carries a fraction called
+      // `groundedness` and a verdict per claim beside it, so a blend can
+      // reach coverage by counting supported claims and never write the word.
+      const readsCoverage =
+        /\bgroundedness\b|\bclaimVerdicts\b|\bsupported\b|\bcoverage\b/.test(chunk);
+      const readsBoth = /\bagreement\b/.test(chunk) && readsCoverage;
+      if (!readsBoth) continue;
+      expect(permitted.has(name), `${name} reads both gates and is not permitted to`).toBe(true);
     }
-    // Not vacuous: the scan found the exported functions it is meant to read.
-    expect(checked).toContain('readRunJournal');
-    expect(checked).toContain('agreementThresholdFromJournal');
+
+    // Not vacuous: the split found the module's exports, and the permitted
+    // one is among them.
+    expect(named).toContain('readRunJournal');
+    expect(named).toContain('agreementThresholdFromJournal');
   });
 });
 

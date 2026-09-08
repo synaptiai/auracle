@@ -162,6 +162,9 @@ describe('a run with a full journal', () => {
       reason: 'auto',
       blockThreshold: 0.7,
       reviewThreshold: 0.8,
+      // Coverage detail beside the fraction. This fixture journals none, and
+      // the shape stays exact so a field appearing here has to be looked at.
+      claimVerdicts: null,
     });
   });
 
@@ -199,6 +202,10 @@ describe('a run with a full journal', () => {
       abstained: false,
       claimCount: 3,
       staleDocumentIds: ['doc-a'],
+      // This fixture journals neither, and the shape stays exact so a field
+      // appearing here has to be looked at rather than absorbed.
+      claims: null,
+      citedBodies: null,
       provider: 'stub',
     });
     expect(result?.steps.find((s) => s.stepId === 'execute')?.idemKey).toBe('idem-abc');
@@ -314,6 +321,211 @@ describe('a retrieval the reader cannot take at its word', () => {
     const read = await readRunJournal(pool, runId);
     expect(read?.documentsMalformed).toBe(true);
     expect(read?.documents).toBeNull();
+  });
+});
+
+describe('what the reader now returns about a draft and its claims', () => {
+  // DEC-40: a console may approve a parked draft, and an approver who cannot
+  // read the reply cannot approve it. This used to be a boolean.
+  it('returns the parked draft, and says when there is none', async () => {
+    const withDraft = await journal([
+      {
+        stepId: 'park',
+        status: 'done',
+        result: {
+          draftExternalId: 'hd-1', actionClass: 'send_reply',
+          delivery: 'at_most_once', body: 'We refunded the duplicate charge.',
+        },
+      },
+    ]);
+    const park = (await readRunJournal(pool, withDraft))?.steps[0]?.park;
+    expect(park?.draftRecorded).toBe(true);
+    expect(park?.draftBody).toBe('We refunded the duplicate charge.');
+
+    const marker = await journal([
+      { stepId: 'park', status: 'parking', result: { actionClass: 'send_reply', parkKey: 'k' } },
+    ]);
+    const none = (await readRunJournal(pool, marker))?.steps[0]?.park;
+    expect(none?.draftRecorded).toBe(false);
+    expect(none?.draftBody).toBeNull();
+  });
+
+  // The fault message names two customer addresses in the one adapter that
+  // builds it, so its presence is reported and its text is not.
+  it('still withholds the fault message and the action payload', async () => {
+    const runId = await journal([
+      {
+        stepId: 'park',
+        status: 'failed',
+        result: {
+          actionClass: 'send_reply', parkKey: 'k',
+          error: 'expected ada@customer.example but the thread is from bob@customer.example',
+          payload: { queue: 'billing' },
+        },
+      },
+    ]);
+    const read = await readRunJournal(pool, runId);
+    expect(read?.steps[0]?.park?.failureRecorded).toBe(true);
+    expect(read?.steps[0]?.park?.payloadRecorded).toBe(true);
+    expect(JSON.stringify(read)).not.toContain('customer.example');
+    expect(JSON.stringify(read)).not.toContain('billing');
+  });
+
+  it('returns each claim with the document it cites (DEC-07)', async () => {
+    const runId = await journal([
+      {
+        stepId: 'compose',
+        status: 'done',
+        result: {
+          abstained: false, claimCount: 2, staleDocumentIds: [], provider: 'stub',
+          claims: [
+            { text: 'Refunds post in five days.', docId: 'SYN-1' },
+            { text: 'Your subscription is unchanged.', docId: 'SYN-2' },
+          ],
+          citedBodies: { 'SYN-1': 'body one', 'SYN-2': 'body two' },
+        },
+      },
+    ]);
+    const compose = (await readRunJournal(pool, runId))?.steps[0]?.compose;
+    expect(compose?.claims).toEqual([
+      { text: 'Refunds post in five days.', docId: 'SYN-1' },
+      { text: 'Your subscription is unchanged.', docId: 'SYN-2' },
+    ]);
+    expect(compose?.citedBodies).toEqual({ 'SYN-1': 'body one', 'SYN-2': 'body two' });
+  });
+
+  // Whole or not at all. The verdicts index into this list, so a dropped
+  // member would attribute every later verdict to the wrong claim.
+  it('refuses a claim list holding an unreadable member, rather than shortening it', async () => {
+    const runId = await journal([
+      {
+        stepId: 'compose',
+        status: 'done',
+        result: {
+          abstained: false, claimCount: 2, staleDocumentIds: [], provider: 'stub',
+          claims: [{ text: 'fine', docId: 'SYN-1' }, { text: 7, docId: 'SYN-2' }],
+        },
+      },
+    ]);
+    expect((await readRunJournal(pool, runId))?.steps[0]?.compose?.claims).toBeNull();
+  });
+
+  it('returns the verdicts by position, beside the fraction and never instead of it', async () => {
+    const runId = await journal([
+      {
+        stepId: 'gate',
+        status: 'done',
+        result: {
+          groundedness: 0.5, decision: 'gated', reason: 'customer_visible',
+          thresholds: THRESHOLDS,
+          // Each entry carries a claim text the reader must not pass through.
+          // Without one here the assertion below could not fail: the fixture
+          // held no such key, so `verdictsOf` had nothing to leak.
+          claimVerdicts: [
+            { claimIndex: 0, supported: true, text: 'Refunds post in five days.' },
+            { claimIndex: 1, supported: false, text: 'Your bank decides when.' },
+          ],
+        },
+      },
+    ]);
+    const coverage = (await readRunJournal(pool, runId))?.coverage;
+    expect(coverage?.groundedness).toBe(0.5);
+    expect(coverage?.claimVerdicts).toEqual([
+      { claimIndex: 0, supported: true },
+      { claimIndex: 1, supported: false },
+    ]);
+    // The claims joined are the draft, so carrying the text here would store
+    // the reply a second time.
+    expect(JSON.stringify(coverage)).not.toContain('Refunds post');
+  });
+
+  it('refuses a verdict list holding an unreadable member', async () => {
+    const runId = await journal([
+      {
+        stepId: 'gate',
+        status: 'done',
+        result: {
+          groundedness: 0.5, decision: 'gated', reason: 'customer_visible',
+          thresholds: THRESHOLDS,
+          claimVerdicts: [{ claimIndex: 0, supported: true }, { claimIndex: 'one', supported: false }],
+        },
+      },
+    ]);
+    expect((await readRunJournal(pool, runId))?.coverage?.claimVerdicts).toBeNull();
+  });
+});
+
+describe('whether a cited document still says what the run read', () => {
+  it('says unchanged when the body still matches the recorded digest', async () => {
+    await indexDoc('SYN-SAME', 'a document', '2027-01-01');
+    const { rows } = await pool.query(
+      "SELECT encode(sha256(convert_to(body, 'UTF8')), 'hex') AS h FROM document WHERE doc_id = 'SYN-SAME'",
+    );
+    const runId = await journal([
+      {
+        stepId: 'retrieve',
+        status: 'done',
+        result: {
+          docIds: ['SYN-SAME'], embed_model_ver: 'e1',
+          documents: [{
+            docId: 'SYN-SAME', title: 'a document', owner: 'support-team',
+            reviewBy: '2027-01-01', bodyHash: (rows[0] as { h: string }).h,
+          }],
+        },
+      },
+    ]);
+    const doc = (await readRunJournal(pool, runId))?.documents?.[0];
+    expect(doc?.bodyUnchanged).toBe(true);
+    expect(doc?.titleAtRun).toBe('a document');
+  });
+
+  it('says changed when the body has moved since', async () => {
+    await indexDoc('SYN-MOVED', 'a document', '2027-01-01');
+    const runId = await journal([
+      {
+        stepId: 'retrieve',
+        status: 'done',
+        result: {
+          docIds: ['SYN-MOVED'], embed_model_ver: 'e1',
+          documents: [{
+            docId: 'SYN-MOVED', title: 'the title it had', owner: 'support-team',
+            reviewBy: '2027-01-01', bodyHash: 'a'.repeat(64),
+          }],
+        },
+      },
+    ]);
+    const doc = (await readRunJournal(pool, runId))?.documents?.[0];
+    expect(doc?.bodyUnchanged).toBe(false);
+    // Today's title and the run's title are both reported, and they differ.
+    expect(doc?.titleAtRun).toBe('the title it had');
+    expect(doc?.title).toBe('a document');
+  });
+
+  // Three answers, not two. Null is the question being unanswerable.
+  it('says nothing when the run recorded no digest, or the document is gone', async () => {
+    await indexDoc('SYN-NOHASH', 'a document', '2027-01-01');
+    const noHash = await journal([
+      {
+        stepId: 'retrieve',
+        status: 'done',
+        result: { docIds: ['SYN-NOHASH'], embed_model_ver: 'e1' },
+      },
+    ]);
+    expect((await readRunJournal(pool, noHash))?.documents?.[0]?.bodyUnchanged).toBeNull();
+
+    const gone = await journal([
+      {
+        stepId: 'retrieve',
+        status: 'done',
+        result: {
+          docIds: ['SYN-GONE'], embed_model_ver: 'e1',
+          documents: [{ docId: 'SYN-GONE', title: 't', owner: 'o', reviewBy: '2027-01-01', bodyHash: 'b'.repeat(64) }],
+        },
+      },
+    ]);
+    const missing = (await readRunJournal(pool, gone))?.documents?.[0];
+    expect(missing?.resolved).toBe(false);
+    expect(missing?.bodyUnchanged).toBeNull();
   });
 });
 
@@ -580,12 +792,14 @@ describe('the four park shapes', () => {
       parkKey: null,
       turnNumber: 2,
       draftRecorded: true,
+      draftBody: 'the composed rationale a person reads',
       payloadRecorded: true,
       failureRecorded: false,
     });
-    // Recorded, not returned. The rationale is written for a person to read
-    // in the approval queue, and the payload names an account (DEC-18).
-    expect(JSON.stringify(step)).not.toContain('the composed rationale');
+    // The rationale is returned, because it is written for a person to read
+    // when they approve this write (DEC-34). The payload is not: it names an
+    // account, and no surface reads it.
+    expect(step?.park?.draftBody).toBe('the composed rationale a person reads');
     expect(JSON.stringify(step)).not.toContain('500');
   });
 
@@ -643,7 +857,10 @@ describe('the four park shapes', () => {
     expect(step?.park?.draftExternalId).toBe('draft-77');
     expect(step?.park?.draftRecorded).toBe(true);
     expect(step?.park?.payloadRecorded).toBe(false);
-    expect(JSON.stringify(step)).not.toContain('the parked reply');
+    // Returned now, and DEC-40 is why: a console may approve this draft, and
+    // an approver who cannot read the reply cannot approve it. This case
+    // asserted its absence while the module withheld it.
+    expect(step?.park?.draftBody).toBe('the parked reply');
   });
 });
 
@@ -701,6 +918,13 @@ describe('the retrieved documents', () => {
       kind: null,
       owner: null,
       reviewBy: null,
+      // This fixture's retrieve row records no snapshot, so nothing here can
+      // say what the document was or whether it moved. Null is the question
+      // being unanswerable, not a "no".
+      titleAtRun: null,
+      ownerAtRun: null,
+      reviewByAtRun: null,
+      bodyUnchanged: null,
     });
   });
 

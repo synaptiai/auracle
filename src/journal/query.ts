@@ -35,13 +35,24 @@
  * position it was recorded at and nothing else. See `RetrievedDocument`.
  *
  * Every statement is a SELECT. The module never writes, so it is safe to run
- * against a live database. It reads document metadata, journal keys and two
- * measurements; it reads no draft text, no action payload and no fault
- * message, because each of those can carry a customer's own words or address
- * into an operator surface (DEC-18).
+ * against a live database.
+ *
+ * It returns the drafted reply and what each claim cited. It did not, on the
+ * ground that DEC-18 keeps a customer's words off an operator surface. DEC-18
+ * governs the public repository and not a render surface, so that was this
+ * module's choice rather than a decision, and it made DEC-40 unusable: a
+ * console may approve a parked draft, and an approver who cannot read the
+ * reply cannot approve it.
+ *
+ * Two things stay withheld, and neither is a judgement call. The action
+ * payload is a machine record with no reader. The fault message interpolates
+ * whatever an adapter threw, and `src/adapters/imap-smtp.ts` builds one that
+ * names two customer addresses — so its presence is reported and its text is
+ * not.
  */
 import type { Pool, PoolClient } from 'pg';
 
+import { escalationHead } from '../escalations/reason.js';
 import { agreementThresholdFor } from '../policy/policy.js';
 import type { GateThresholds } from '../policy/policy.js';
 
@@ -104,8 +115,37 @@ export interface ComposeRecord {
    * run the ledger knows least about.
    */
   readonly staleDocumentIds: readonly string[] | null;
+  /**
+   * Each claim of the draft, with the document it cites (DEC-07).
+   *
+   * Null when the row recorded no list, never the empty list: the composer
+   * refuses an uncited line, so a run that composed made at least one claim,
+   * and an empty list would say it made none.
+   *
+   * The claims joined are the draft. A reader wanting the reply reads
+   * `park.draftBody`, which is what the approval compares against; these
+   * carry the citation, which the draft does not.
+   */
+  readonly claims: readonly CitedClaim[] | null;
+  /**
+   * The body of each cited document, as it read when the run cited it.
+   *
+   * Keyed by document id. Only the cited documents carry text; every fused
+   * document carries a hash on the retrieve row, and a reader comparing the
+   * two can say whether a document changed since.
+   *
+   * Null when the row recorded none, which is a run journalled before this
+   * was written rather than a run that cited nothing.
+   */
+  readonly citedBodies: Readonly<Record<string, string>> | null;
   /** What answered the run's model calls: `stub` or `model` (issue #23). */
   readonly provider: string | null;
+}
+
+/** One claim of a drafted reply, and the document it cites (DEC-07). */
+export interface CitedClaim {
+  readonly text: string;
+  readonly docId: string;
 }
 
 /**
@@ -140,13 +180,20 @@ export interface ParkRecord {
   readonly parkKey: string | null;
   /** DEC-38: the conversation turn, so approval derives this turn's key. */
   readonly turnNumber: number | null;
-  /**
-   * Whether a draft was recorded, rather than the draft.
-   *
-   * The parked text is what a customer will read and what the edit-distance
-   * measurement compares against. It stays in the ledger (DEC-18).
-   */
+  /** Whether a draft was recorded. Null text and a false flag differ. */
   readonly draftRecorded: boolean;
+  /**
+   * The parked reply, as the system drafted it.
+   *
+   * Null when the row recorded none, which the flag above distinguishes from
+   * a draft that is present and empty — the ledger cannot hold the second,
+   * and a reader that collapsed them would say so.
+   *
+   * What this is not: the text the relay will send. The relay sends the
+   * helpdesk copy, which a person may have edited since (DEC-11). A surface
+   * showing this has to say which one it is showing.
+   */
+  readonly draftBody: string | null;
   /** Whether an action payload was recorded. The payload itself stays put. */
   readonly payloadRecorded: boolean;
   /**
@@ -160,8 +207,8 @@ export interface ParkRecord {
    * does return.
    *
    * That last sentence is true of the coordinator's own escalations and not
-   * of every value under the key. `escalationReason` is returned verbatim,
-   * and the relay writes two interpolated strings into it:
+   * of every value under the key. The relay writes two interpolated strings
+   * into it:
    * `delivery_unknown: ${sendFailure}` (`src/relay/relay.ts:345`) and
    * `malformed_payload: ${errorText(error)}` (`src/relay/relay.ts:262`). The
    * first quotes whatever the adapter threw from `sendDraft`, and an SMTP
@@ -169,11 +216,12 @@ export interface ParkRecord {
    * `intake_abandoned after N attempts: ${reason}` is a third.
    *
    * So the key is not a closed vocabulary and a reader must not treat it as
-   * one. `src/escalations/query.ts` has returned the same value since before
-   * this module existed, so the exposure is the ledger's rather than this
-   * reader's; what belongs here is the accurate statement. The console trims
-   * the interpolated tail before it renders the value — see `escalationHead`
-   * in `console/src/render.ts`.
+   * one. This reader trims the interpolated tail itself, through
+   * `escalationHead` in `src/escalations/reason.ts`. The console had its own
+   * copy and applied it correctly, which left the value untrimmed for every
+   * other consumer of a journal — a hazard one careless caller away rather
+   * than a leak. The trim is idempotent, so a caller that applies it again
+   * gets the same answer.
    */
   readonly failureRecorded: boolean;
 }
@@ -310,6 +358,19 @@ export interface CoverageReading {
   readonly blockThreshold: number | null;
   /** Section 4.7: below this, a person sees it. Null when not journalled. */
   readonly reviewThreshold: number | null;
+  /**
+   * Which claims the judge supported, by position into the compose row's
+   * claim list.
+   *
+   * By position, not by text: the claims joined are the draft, and recording
+   * the text here would put the whole reply in the ledger a second time.
+   *
+   * Null when the row recorded none. Never trusted over `groundedness`: that
+   * fraction is what `evaluatePolicy` read, and a reader renders it rather
+   * than recounting these. Two numbers computed twice will disagree, and only
+   * one of them decided anything.
+   */
+  readonly claimVerdicts: readonly ClaimVerdict[] | null;
 }
 
 /**
@@ -326,6 +387,12 @@ export interface CoverageReading {
  *     below are today's, not the ones the run retrieved. Only the id is a
  *     historical fact.
  */
+/** Whether the judge supported one claim, named by its position. */
+export interface ClaimVerdict {
+  readonly claimIndex: number;
+  readonly supported: boolean;
+}
+
 export interface RetrievedDocument {
   readonly docId: string;
   /**
@@ -348,6 +415,27 @@ export interface RetrievedDocument {
   readonly owner: string | null;
   /** DEC-23: the review date, as `YYYY-MM-DD`. */
   readonly reviewBy: string | null;
+  /**
+   * The title the run recorded, which is not `title` above.
+   *
+   * `document` rows are updated in place on reindex, so the fields above are
+   * today's. These are what the run read. Null on a run journalled before the
+   * snapshot was written.
+   */
+  readonly titleAtRun: string | null;
+  /** DEC-23: the owner the run recorded. */
+  readonly ownerAtRun: string | null;
+  /** DEC-23: the review date the run recorded. */
+  readonly reviewByAtRun: string | null;
+  /**
+   * Whether the document's body still matches what the run read.
+   *
+   * True means the stored digest and today's body agree. False means the
+   * document changed since, so a claim resting on it rests on text that is no
+   * longer there. Null means the run recorded no digest, or the id no longer
+   * resolves — neither of which is an answer to the question.
+   */
+  readonly bodyUnchanged: boolean | null;
 }
 
 /** Everything one run journalled. */
@@ -429,7 +517,19 @@ const SELECT_DOCUMENTS = `
          d.title                              AS title,
          d.kind                               AS kind,
          d.owner                              AS owner,
-         to_char(d.review_by, 'YYYY-MM-DD')   AS review_by
+         to_char(d.review_by, 'YYYY-MM-DD')   AS review_by,
+         -- Digested here rather than shipped, so the whole corpus does not
+         -- cross the wire to answer whether one document moved. sha256 is
+         -- core Postgres, so this needs no extension.
+         --
+         -- convert_to, never a cast. body::bytea is an I/O conversion: it
+         -- parses the text as bytea escape syntax, so a body holding a
+         -- Windows path or a regex raises invalid input syntax and takes the
+         -- whole run-detail read down with it, and a body that happens to be
+         -- valid escape syntax digests as the decoded bytes and reports a
+         -- document changed that never did. convert_to takes the UTF-8 bytes,
+         -- which is what createHash(body, utf8) hashes on the writer side.
+         encode(sha256(convert_to(d.body, 'UTF8')), 'hex')  AS body_digest
     FROM unnest($1::text[]) WITH ORDINALITY AS ids(doc_id, ord)
     LEFT JOIN document d ON d.doc_id = ids.doc_id
    ORDER BY ids.ord`;
@@ -456,6 +556,113 @@ function stringAt(result: Record<string, unknown> | null, key: string): string |
 }
 
 /** Whether the journal recorded the key at all, whatever it holds. */
+/** What a run recorded about one retrieved document (DEC-23). */
+interface DocumentSnapshot {
+  readonly title: string | null;
+  readonly owner: string | null;
+  readonly reviewBy: string | null;
+  readonly bodyHash: string | undefined;
+}
+
+/**
+ * What the retrieve row recorded about each document it fused, by id.
+ *
+ * Null when the row recorded none. Unlike the claim list this is read
+ * per-entry rather than whole: a snapshot is one document's own record, so an
+ * unreadable entry costs that document its comparison and says nothing false
+ * about the others.
+ */
+function snapshotOf(
+  result: Record<string, unknown> | null,
+): Record<string, DocumentSnapshot> | null {
+  const raw = result === null ? undefined : result['documents'];
+  if (!Array.isArray(raw)) return null;
+  const byId: Record<string, DocumentSnapshot> = {};
+  for (const entry of raw) {
+    if (!isObject(entry)) continue;
+    const docId = entry['docId'];
+    if (typeof docId !== 'string') continue;
+    const hash = entry['bodyHash'];
+    byId[docId] = {
+      title: typeof entry['title'] === 'string' ? entry['title'] : null,
+      owner: typeof entry['owner'] === 'string' ? entry['owner'] : null,
+      reviewBy: typeof entry['reviewBy'] === 'string' ? entry['reviewBy'] : null,
+      bodyHash: typeof hash === 'string' ? hash : undefined,
+    };
+  }
+  return byId;
+}
+
+/**
+ * The per-claim verdicts a gate row recorded, or null when it recorded none.
+ *
+ * Whole or not at all. These index into the compose row's claim list, so a
+ * dropped member shifts every later verdict onto the wrong claim.
+ */
+function verdictsOf(result: Record<string, unknown> | null): ClaimVerdict[] | null {
+  const raw = result === null ? undefined : result['claimVerdicts'];
+  if (!Array.isArray(raw)) return null;
+  const verdicts: ClaimVerdict[] = [];
+  for (const entry of raw) {
+    if (!isObject(entry)) return null;
+    const claimIndex = entry['claimIndex'];
+    const supported = entry['supported'];
+    if (typeof claimIndex !== 'number' || !Number.isInteger(claimIndex)) return null;
+    if (typeof supported !== 'boolean') return null;
+    verdicts.push({ claimIndex, supported });
+  }
+  return verdicts;
+}
+
+/**
+ * The claims a compose row recorded, or null when it recorded none.
+ *
+ * Taken whole or not at all. A list holding one unreadable member is not a
+ * shorter list of claims: the count would then disagree with `claimCount`,
+ * and the gate row's verdicts are recorded by position into this list — so a
+ * dropped member would attribute every later verdict to the wrong claim.
+ */
+function claimsOf(result: Record<string, unknown> | null): CitedClaim[] | null {
+  const raw = result === null ? undefined : result['claims'];
+  if (!Array.isArray(raw)) return null;
+  const claims: CitedClaim[] = [];
+  for (const entry of raw) {
+    if (!isObject(entry)) return null;
+    const text = entry['text'];
+    const docId = entry['docId'];
+    if (typeof text !== 'string' || typeof docId !== 'string') return null;
+    claims.push({ text, docId });
+  }
+  return claims;
+}
+
+/**
+ * The cited document bodies a compose row recorded, or null when it recorded
+ * none.
+ *
+ * Per entry, unlike the claim list above, and the difference is the shape
+ * rather than a preference. A claim list is indexed into: the gate row's
+ * verdicts name a position, so dropping a member moves every later verdict
+ * onto the wrong claim and the list has to be refused whole. A map keyed by
+ * document id is not indexed into, and a missing key is already how it says
+ * it holds nothing for a document — so refusing the map over one unreadable
+ * entry would answer a question about every other document with silence.
+ *
+ * `snapshotOf` keys by id and behaves the same way, for the same reason.
+ */
+function citedBodiesOf(
+  result: Record<string, unknown> | null,
+): Record<string, string> | null {
+  const raw = result === null ? undefined : result['citedBodies'];
+  if (!isObject(raw)) return null;
+  const bodies: Record<string, string> = {};
+  for (const [docId, body] of Object.entries(raw)) {
+    if (typeof body !== 'string') continue;
+    bodies[docId] = body;
+  }
+  return bodies;
+}
+
 function has(result: Record<string, unknown> | null, key: string): boolean {
   return result !== null && Object.hasOwn(result, key);
 }
@@ -535,6 +742,7 @@ function toParkRecord(result: Record<string, unknown> | null): ParkRecord {
     parkKey: stringAt(result, 'parkKey'),
     turnNumber: numberAt(result, 'turnNumber'),
     draftRecorded: has(result, 'body'),
+    draftBody: stringAt(result, 'body'),
     payloadRecorded: has(result, 'payload'),
     failureRecorded: has(result, 'error'),
   };
@@ -570,6 +778,8 @@ function toComposeRecord(
       Array.isArray(stale) && stale.every((id) => typeof id === 'string')
         ? (stale as string[])
         : null,
+    claims: claimsOf(result),
+    citedBodies: citedBodiesOf(result),
     provider: stringAt(result, 'provider'),
   };
 }
@@ -606,7 +816,8 @@ function toStep(row: Record<string, unknown>): JournalStep {
     compose: stepId === 'compose' ? toComposeRecord(status, result) : null,
     park: stepId === 'park' ? toParkRecord(result) : null,
     idemKey: stepId === 'execute' ? stringAt(result, 'idemKey') : null,
-    escalationReason: stepId === 'escalate' ? stringAt(result, 'reason') : null,
+    escalationReason:
+      stepId === 'escalate' ? escalationHead(stringAt(result, 'reason')) : null,
   };
 }
 
@@ -706,6 +917,7 @@ export async function readRunJournal(
           reason: stringAt(gated, 'reason'),
           blockThreshold: thresholds?.groundednessBlock ?? null,
           reviewThreshold: thresholds?.groundednessReview ?? null,
+          claimVerdicts: verdictsOf(gated),
         };
 
   // A retrieval that finished. A failed one carries a shape and no ids, and
@@ -726,21 +938,40 @@ export async function readRunJournal(
   let documents: RetrievedDocument[] | null = null;
   if (readable) {
     const docIds = rawIds as string[];
+    // What the run recorded about each document, keyed by id. Absent on a run
+    // journalled before the snapshot was written, and every field below then
+    // answers null rather than guessing from today's row.
+    const snapshot = snapshotOf(retrieved);
     documents =
       docIds.length === 0
         ? []
         : ((await pool.query(SELECT_DOCUMENTS, [docIds])).rows as unknown as Record<
             string,
             unknown
-          >[]).map((row) => ({
-            docId: String(row['doc_id']),
-            position: Number(row['position']),
-            resolved: row['resolved'] === true,
-            title: (row['title'] as string | null) ?? null,
-            kind: (row['kind'] as string | null) ?? null,
-            owner: (row['owner'] as string | null) ?? null,
-            reviewBy: (row['review_by'] as string | null) ?? null,
-          }));
+          >[]).map((row) => {
+            const docId = String(row['doc_id']);
+            const recorded = snapshot?.[docId];
+            const digest = row['body_digest'] as string | null;
+            return {
+              docId,
+              position: Number(row['position']),
+              resolved: row['resolved'] === true,
+              title: (row['title'] as string | null) ?? null,
+              kind: (row['kind'] as string | null) ?? null,
+              owner: (row['owner'] as string | null) ?? null,
+              reviewBy: (row['review_by'] as string | null) ?? null,
+              titleAtRun: recorded?.title ?? null,
+              ownerAtRun: recorded?.owner ?? null,
+              reviewByAtRun: recorded?.reviewBy ?? null,
+              // Three answers, not two. Null is "the question cannot be
+              // asked": the run recorded no digest, or the id no longer
+              // resolves so there is no body to compare against.
+              bodyUnchanged:
+                recorded?.bodyHash === undefined || digest === null
+                  ? null
+                  : recorded.bodyHash === digest,
+            };
+          });
   }
 
   return { runId, steps, agreement, coverage, documents, documentsMalformed };
