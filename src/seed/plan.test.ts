@@ -54,6 +54,50 @@ function quantile(sorted: readonly number[], p: number): number {
   return sorted[Math.floor(sorted.length * p)] ?? 0;
 }
 
+describe('the claims a planned run makes', () => {
+  const plan = planHistory({ seed: 0x41726361, days: 3, endDay: '2026-06-30', partitions: 4, provider: 'stub' });
+
+  it('cites only documents the run retrieved (DEC-07)', () => {
+    for (const run of plan) {
+      for (const claim of run.claims) {
+        expect(run.docIds, run.runId).toContain(claim.docId);
+      }
+    }
+  });
+
+  it('makes exactly the number of claims the compose row reports', () => {
+    for (const run of plan) {
+      expect(run.claims.length, run.runId).toBe(run.claimCount);
+    }
+  });
+
+  // The invariant the whole change rests on. The gate row records one
+  // fraction and the verdicts record the same fact claim by claim. A reader
+  // that recounts them must reach the number the policy engine read, or the
+  // ledger holds two answers and says nothing about which one decided.
+  it('supports exactly the share of claims the coverage records', () => {
+    let checked = 0;
+    for (const run of plan) {
+      if (run.gate === null) continue;
+      const supported = run.claims.filter((claim) => claim.supported).length;
+      expect(supported / run.claims.length, run.runId).toBeCloseTo(run.gate.groundedness, 10);
+      checked += 1;
+    }
+    // Non-vacuity: a plan with no gated run would pass the loop above having
+    // compared nothing.
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it('composes no claim when the run abstained', () => {
+    const abstains = plan.filter((run) => run.abstained);
+    expect(abstains.length).toBeGreaterThan(0);
+    for (const run of abstains) {
+      expect(run.claims, run.runId).toEqual([]);
+      expect(run.gate, run.runId).toBeNull();
+    }
+  });
+});
+
 describe('the planner is deterministic', () => {
   it('gives byte-identical plans from one seed', () => {
     expect(JSON.stringify(planHistory(OPTIONS))).toBe(JSON.stringify(planHistory(OPTIONS)));

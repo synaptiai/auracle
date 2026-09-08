@@ -160,6 +160,51 @@ describe('composeAnswer (section 4.7, DEC-07)', () => {
   });
 });
 
+// The gate journals a verdict per claim by position, not by text, so the
+// drafted reply is not stored a second time. `checkGroundedness` drops a
+// blank claim before it judges, so a blank one here would shift every later
+// index and attribute each verdict to the wrong claim.
+describe('a claim is never blank, which is what lets a verdict be an index', () => {
+  const cases: readonly (readonly [string, string])[] = [
+    ['trailing spaces after the marker', '[doc:doc-1]    '],
+    ['a tab after the marker', '[doc:doc-1]\t'],
+    ['the marker alone', '[doc:doc-1]'],
+    ['a marker with no space', '[doc:doc-1]text'],
+  ];
+
+  for (const [name, text] of cases) {
+    it(`abstains rather than compose an empty claim: ${name}`, async () => {
+      const provider = new FakeProvider([{ text }]);
+      const result = await composeAnswer(
+        { question: 'Where is my refund?', docs: [doc()] },
+        deps(provider),
+      );
+      // Either it refused outright, or every claim it made carries text.
+      if (!result.abstained) {
+        for (const claim of result.claims) {
+          expect(claim.text.trim(), name).not.toBe('');
+        }
+      }
+    });
+  }
+
+  it('composes claims whose text survives a trim, in draft order', async () => {
+    const provider = new FakeProvider([
+      { text: ['[doc:doc-1]   Refunds post in five days.', '[doc:doc-1] And no sooner.'].join('\n') },
+    ]);
+    const result = await composeAnswer(
+      { question: 'Where is my refund?', docs: [doc()] },
+      deps(provider),
+    );
+    expect(result.abstained).toBe(false);
+    expect(result.claims.map((claim) => claim.text))
+      .toEqual(['Refunds post in five days.', 'And no sooner.']);
+    // The draft is the claims joined, which is why storing them twice would
+    // store the reply twice.
+    expect(result.draft).toBe('Refunds post in five days. And no sooner.');
+  });
+});
+
 describe('conversation history in the prompt (DEC-37)', () => {
   it('offers earlier turns as context, ahead of the retrieved documents', async () => {
     const provider = new FakeProvider([

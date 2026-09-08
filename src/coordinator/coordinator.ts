@@ -17,7 +17,7 @@
 //      is not an error: the run goes to 'escalated' and keeps its partial
 //      work (DEC-25).
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 
 import type { EgressAdapter, ReplyProvenance } from '../adapters/types.js';
@@ -320,6 +320,47 @@ async function priorParkUnresolved(
  * 'awaiting_approval'. One call walks the whole machine; each hop inside is
  * journaled before it acts and written through the fenced ledger path.
  */
+
+/**
+ * A document body as a fixed-length fact about what it said.
+ *
+ * `document` rows are updated in place on reindex, so a reader comparing
+ * today's body against this can say whether the document changed since the
+ * run read it. Storing the digest rather than a second copy of every fused
+ * body keeps the journal from carrying the whole corpus once per run.
+ */
+function digestOf(body: string): string {
+  return createHash('sha256').update(body, 'utf8').digest('hex');
+}
+
+/**
+ * The bodies of the documents the claims actually cite.
+ *
+ * Only the cited ones. A run fuses about eight documents and cites two or
+ * three, and the uncited five carry a hash on the `retrieve` row already —
+ * enough to say whether they changed, without copying text no claim rests on.
+ *
+ * Keyed by id and deduplicated, because two claims commonly cite one
+ * document and the journal should hold its text once.
+ *
+ * A cited id that is not in the fused set cannot occur: the composer refuses
+ * a citation naming a document it was not given. It is skipped rather than
+ * asserted, because this is a write-before-act journal entry and a throw here
+ * would lose the run over a record about it.
+ */
+function citedBodiesOf(
+  claims: readonly { readonly docId: string }[],
+  docs: readonly RetrievedDoc[],
+): Record<string, string> {
+  const byId = new Map(docs.map((doc) => [doc.docId, doc.body]));
+  const cited: Record<string, string> = {};
+  for (const claim of claims) {
+    const body = byId.get(claim.docId);
+    if (body !== undefined) cited[claim.docId] = body;
+  }
+  return cited;
+}
+
 export async function coordinateTicket(
   deps: CoordinatorDeps,
   input: CoordinateInput,
@@ -352,6 +393,10 @@ export async function coordinateTicket(
         input.partition
         ?? partitionOf(input.conversationId ?? input.ticketId, deps.partitionCount),
       ...(input.conversationId == null ? {} : { conversationId: input.conversationId }),
+      // DEC-35: the turn this run answers, so a turn joins to the run that
+      // answered it without going through the park journal. An automatic run
+      // parks nothing, so that join reached no automatic run at all.
+      ...(input.turnNumber === undefined ? {} : { turnNumber: input.turnNumber }),
       epoch: input.epoch,
       state: 'received',
       promptVer: deps.pins.promptVer,
@@ -527,6 +572,22 @@ export async function coordinateTicket(
   progress.stepsUsed++;
   await journalFinish('retrieve', 'done', {
     docIds: docs.map((doc) => doc.docId),
+    // What each fused document was when this run read it (DEC-23).
+    //
+    // `document` rows are updated in place on reindex, so today's title and
+    // review date are not the ones the run retrieved. Only the id was a
+    // historical fact. These are, and the hash says whether the body still
+    // matches without storing a second copy of the corpus.
+    //
+    // No score and no rank: DEC-21 fuses ranks and keeps neither, and a
+    // position recorded here would claim the fusion set the order.
+    documents: docs.map((doc) => ({
+      docId: doc.docId,
+      title: doc.title,
+      owner: doc.owner,
+      reviewBy: doc.reviewBy,
+      bodyHash: digestOf(doc.body),
+    })),
     // DEC-26 truthfulness: the step's model_ver column carries the chat pin;
     // the embedding pin is recorded here.
     embed_model_ver: embedModelVer,
@@ -566,6 +627,25 @@ export async function coordinateTicket(
   await journalFinish('compose', composed.abstained ? 'abstained' : 'done', {
     abstained: composed.abstained,
     claimCount: composed.claims.length,
+    // The mapping DEC-07 already requires to exist. The composer resolves
+    // every claim to a retrieved document and refuses an uncited line, and
+    // until now only the count of them survived the write — so a reader could
+    // learn that four claims were made and never which document carried one.
+    claims: composed.claims.map((claim) => ({ text: claim.text, docId: claim.docId })),
+    // The cited documents as they read at this moment, and only the cited
+    // ones. Journalled here rather than at `retrieve`, because `retrieve`
+    // runs first and nothing there knows which documents a claim will cite.
+    //
+    // The retrieve row stores a hash and this one stores text, and the two
+    // are not in tension. A hash answers whether a document changed; it
+    // cannot answer what the claim actually rested on once someone edits the
+    // document. Evidence a person can read has to be the text, so the run
+    // keeps the text for the documents its claims rest on and the cheaper
+    // answer for the rest. `README.md` states what that means for retention.
+    //
+    // Bounded by the retrieval limit above, so a run stores at most that many
+    // bodies however many claims it makes.
+    citedBodies: citedBodiesOf(composed.claims, docs),
     staleDocumentIds: composed.staleDocuments.map((doc) => doc.docId),
     // What actually answered this run's model calls (issue #23).
     //
@@ -655,6 +735,29 @@ export async function coordinateTicket(
   progress.stepsUsed++;
   await journalFinish('gate', 'done', {
     groundedness: grounded.groundedness,
+    // Which claim the judge did not support, beside the fraction rather than
+    // instead of it. The fraction is what `evaluatePolicy` read, and a reader
+    // renders that value rather than recounting it from these: two numbers
+    // computed twice will disagree, and only one of them decided anything.
+    //
+    // Coverage detail, and coverage only. Agreement sits on the `classify`
+    // row and nothing here touches it, so DEC-05 holds: the ledger still
+    // never holds the two gates in one object.
+    // The claim's position, not its text. `composed.draft` is the claim texts
+    // joined, so storing them here would put the whole drafted reply in the
+    // ledger a second time — and two copies are two places an erasure path
+    // has to reach, and two things that can drift.
+    //
+    // The index is sound because `checkGroundedness` drops a blank claim and
+    // the composer cannot emit one: `parseClaims` trims each line before its
+    // pattern runs, so the captured text ends on a non-whitespace character.
+    // `composer.test.ts` holds that shut, because an index into a list that
+    // silently lost a member would attribute every later verdict to the
+    // wrong claim.
+    claimVerdicts: grounded.claims.map((claim, index) => ({
+      claimIndex: index,
+      supported: claim.supported,
+    })),
     decision,
     // Which rule decided, not only what it decided. `gated` alone is
     // ambiguous between a rule that returns before the agreement gate is

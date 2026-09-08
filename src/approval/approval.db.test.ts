@@ -242,6 +242,17 @@ describe('approval completion path (DEC-12 end to end)', () => {
     const approval = await approveRun(pool, runId);
     expect(approval.outcome).toBe('approved');
 
+    // DEC-42. Recorded on every approval, and this is the console's own call:
+    // no final body, so no edit distance. An adopter reading the ledger meets
+    // that pair, and a test asserting the two always travel together would be
+    // asserting something the system does not do.
+    const approver = await pool.query(
+      'SELECT approved_by, approval_edit_distance FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(approver.rows[0]?.approved_by).toBe('unattributed');
+    expect(approver.rows[0]?.approval_edit_distance).toBeNull();
+
     const idemKey = deriveIdemKey({
       actionClass: CUSTOMER_REPLY_ACTION_CLASS,
       ticketId,
@@ -535,4 +546,31 @@ describe('approval completion path (DEC-12 end to end)', () => {
   afterAll(async () => {
     await pool.end();
   });
+
+  // DEC-42: what a trusted proxy supplies reaches the column, and what it
+  // cannot supply is recorded as nobody rather than left null.
+  it('records the approver a caller named', async () => {
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const { runId } = await parkReply(ticketId);
+    expect((await approveRun(pool, runId, { approvedBy: 'ops-oncall' })).outcome)
+      .toBe('approved');
+    const { rows } = await pool.query(
+      'SELECT approved_by FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(rows[0]?.approved_by).toBe('ops-oncall');
+  });
+
+  it('records nobody when the named approver is not a value it will keep', async () => {
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const { runId } = await parkReply(ticketId);
+    expect((await approveRun(pool, runId, { approvedBy: 'a'.repeat(300) })).outcome)
+      .toBe('approved');
+    const { rows } = await pool.query(
+      'SELECT approved_by FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(rows[0]?.approved_by).toBe('unattributed');
+  });
+
 });

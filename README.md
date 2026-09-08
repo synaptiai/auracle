@@ -17,7 +17,7 @@ A customer reply is not reversible: the customer reads it and acts on it.
 So each reply waits for approval by a person (DEC-12).
 
 The design authority is `docs/v1-architecture.md`.
-That document holds decisions DEC-01 to DEC-41.
+That document holds decisions DEC-01 to DEC-42.
 This README states the compliance position per DEC-19.
 No machine check can decide who controls the data, so the documents carry that position.
 
@@ -26,7 +26,7 @@ No machine check can decide who controls the data, so the documents carry that p
 | Document | What it gives you |
 |---|---|
 | [The architecture map](docs/architecture-map.md) | Three diagrams of the system, with a legend for every box |
-| [The decision register](docs/v1-architecture.md) | DEC-01 to DEC-41. The only design authority |
+| [The decision register](docs/v1-architecture.md) | DEC-01 to DEC-42. The only design authority |
 | [The runbook](docs/operations.md) | What an operator runs, and in what order |
 | [The V2 roadmap](docs/v2-roadmap.md) | What is left, what blocks it, and who owns each blocker |
 | [The contributing guide](CONTRIBUTING.md) | A clean checkout to a merged change |
@@ -154,6 +154,11 @@ silent retention. You own the pin and the position it implies.
 **The ledger stores customer message text (DEC-17, DEC-19).**
 `turn.body_text` holds each inbound message and `turn.approved_reply_text` holds the reply a person approved. Both live for the life of the conversation.
 Earlier versions kept that text only until the queue row was acked.
+
+**The step journal stores drafted replies and cited documents (DEC-17, DEC-19).**
+`step_journal.result` holds the claims of each draft on every run that composed one. The claims joined are the drafted reply. So the journal holds that reply, whether or not a person saw it.
+
+It also holds the body of each document a claim cited. It holds the title, owner and review date of every document the run retrieved. A run that parks holds the draft a second time, under the park step. An erasure path that clears the two `turn` columns alone leaves all of this behind.
 
 This repository ships no retention job and no purge job.
 You are the data controller, so you own the retention period and the erasure

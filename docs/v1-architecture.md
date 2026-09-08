@@ -89,6 +89,7 @@ statement is an implementation detail. You can change it.
 | DEC-39 | Replay scores first turns only. Multi-turn quality uses online metrics and a human-labelled cohort | Simulated customers; a judge scoring later turns |
 | DEC-40 | Gated actions park in the helpdesk draft state. A read-only operator console may also approve one | A console that parks its own drafts; a console that is the only approval path |
 | DEC-41 | Above the labelled-case trigger the system fits a threshold for each intent. Each case records what labelled it, and the artifact records the count and the accuracy of each kind | One global threshold above the trigger; per-intent thresholds with no record of what labelled the cases |
+| DEC-42 | The ledger records an approver, and names it unverified. A trusted proxy supplies the identity. Without one the approval records `unattributed` | An authenticating console; no record of who approved; a header trusted on any bind |
 
 ---
 
@@ -495,6 +496,27 @@ Each customer reply must have three items:
 3. An idempotency key for the park, derived under DEC-24.
 
 The bridge refuses to send a reply that does not have all three items.
+
+**Who approved it.** Obeys DEC-42.
+
+The ledger records that a person approved a reply. It did not record which
+person. Reaching the console is the whole access control. So an incident could
+not separate the operator from anyone else who reached the port.
+
+The approval records an approver. The value is a claim, not an authentication.
+A caller supplies it. The approval bounds what it keeps. A value that is too
+long, or that carries a control character, names nobody.
+
+An approval that names nobody records `unattributed`. That is a recorded fact
+and not a missing row. A null in the column means no approval reached the run.
+
+Only a trusted proxy may name an approver. Anyone reaching a console can set a
+header. So a console reads one only where the operator names its proxy. Until
+a caller does that, every approval records `unattributed`.
+
+This grants no authority. It changes no gate, and it does not decide who may
+approve. DEC-12 still puts a person on every customer reply. DEC-40 still
+permits the console to be that person's interface.
 
 **Why the park needs a key.**
 
@@ -1121,6 +1143,7 @@ decision only when a row enters the table in section 2.
 | 7. Head-of-line delay | `99dc14d7-da9d-4a92-a9dc-d7c0685c6992.md` | proposed. The measurement shipped, the poll floor is gone, and the correction is unchosen |
 | (none) | `8dcb8fcb-39dc-4911-a695-2282b6081f07.md` operator console | ratified as DEC-40 |
 | (none) | `38f6dcea-8473-4cf4-9aef-c13936a0442f.md` a threshold for each intent | ratified as DEC-41 |
+| (none) | issue #49 the approver a reply carries | ratified as DEC-42 |
 | (none) | `ab98fd60-4327-4891-bb4e-00e51e66bdbd.md` partition concurrency | a trace. No row needed |
 | (none) | `bbc657f2-8083-47be-84e9-672825e2158d.md` online A/B tests | proposed, blocked |
 | (none) | `af2c0364-dc11-4547-a0b0-90f51592ae2b.md` ledger implementation | V1 background |

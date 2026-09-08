@@ -37,6 +37,13 @@ export interface FencedRunInput {
   costMicros?: number;
   /** DEC-35: the conversation this run serves. Null on a V1-era run. */
   conversationId?: string;
+  /**
+   * DEC-35: the turn of the conversation this run answers.
+   *
+   * Absent on a V1-era run, on a replay run, and on any run the coordinator
+   * received without one. The column takes null there, which is not turn one.
+   */
+  turnNumber?: number;
   stepsUsed?: number;
   deadlineAt: Date;
 }
@@ -111,6 +118,10 @@ export function runInsertStatement(withClock: boolean, withFinish = false): stri
     'deadline_at',
     'enqueued_at',
     'conversation_id',
+    // DEC-35: the turn this run answered. Fixed rather than optional, because
+    // a run with no turn writes null here and a reader joins on the column
+    // rather than assuming turn one.
+    'turn_number',
   ];
   if (withClock) columns.push('created_at');
   if (withFinish) columns.push('finished_at');
@@ -188,6 +199,7 @@ export async function fencedInsert(
         run.deadlineAt.toISOString(),
         run.enqueuedAt ?? null,
         run.conversationId ?? null,
+        run.turnNumber ?? null,
       ];
       if (clock !== undefined) values.push(clock.createdAt.toISOString());
       // A run inserted already terminal never transitions, so this insert is

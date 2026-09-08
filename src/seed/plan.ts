@@ -487,6 +487,8 @@ export interface PlannedRun {
   classification: PlannedClassification;
   /** The documents the `retrieve` step returned, best first. */
   docIds: readonly string[];
+  /** The claims, their citations and their verdicts (DEC-07, DEC-05). */
+  claims: readonly PlannedClaim[];
   /** How many cited claims the composer produced. Zero for an abstain. */
   claimCount: number;
   /** The gate step's inputs and verdict, or null for a run that never gated. */
@@ -789,11 +791,55 @@ function draftFor(intentId: string, ticketId: string, docIds: readonly string[])
     + `Ticket ${ticketId} stays open until you confirm this resolved it.`;
 }
 
+/** One claim of a seeded draft, and the document it cites (DEC-07). */
+export interface PlannedClaim {
+  text: string;
+  docId: string;
+  /**
+   * What the groundedness judge said about it.
+   *
+   * Derived from the run's own coverage rather than drawn, because the
+   * fraction is `supported / claimCount` and a verdict list that disagreed
+   * with it would put two numbers in the ledger where one decided.
+   */
+  supported: boolean;
+}
+
+/**
+ * The claims a seeded draft makes, and which of them the judge supported.
+ *
+ * The composer refuses an uncited line (DEC-07), so every claim names a
+ * document the run retrieved. The supported count is fixed by the coverage
+ * the run already drew: a reader that recounted these must reach the fraction
+ * the gate row records.
+ *
+ * The unsupported ones come last. Nothing in the system depends on that, and
+ * it makes the seeded corpus readable when a person opens one run.
+ */
+function claimsFor(
+  intentId: string,
+  docIds: readonly string[],
+  claimCount: number,
+  groundedness: number,
+): PlannedClaim[] {
+  const supportedCount = Math.round(groundedness * claimCount);
+  const subject = intentId.replace(/-/g, ' ');
+  return Array.from({ length: claimCount }, (_, i) => ({
+    text: `Point ${i + 1} about your ${subject}, as the published guidance states it.`,
+    // Round-robin over what the run retrieved, so two claims commonly cite
+    // one document — which is the shape the journal has to hold.
+    docId: docIds[i % docIds.length]!,
+    supported: i < supportedCount,
+  }));
+}
+
 /** Everything a run's journal records beyond its timing, its state and its provider. */
 export interface RunDetail {
   classification: PlannedClassification;
   docIds: string[];
   claimCount: number;
+  /** The claims, their citations and their verdicts (DEC-07, DEC-05). */
+  claims: PlannedClaim[];
   gate: PlannedGate | null;
   park: PlannedPark | null;
   actionClass: string;
@@ -892,6 +938,10 @@ function planDetail(
       classification,
       docIds,
       claimCount: 0,
+      // Empty, never a claim with no verdict. An abstain composes nothing,
+      // and `checkGroundedness` refuses an empty claim list outright, so
+      // there is no gate row for these verdicts to disagree with.
+      claims: [],
       gate: null,
       park: null,
       actionClass,
@@ -943,7 +993,10 @@ function planDetail(
       // `approveRun` refuses.
       : { actionClass, delivery, body, payload: actionPayload, turnNumber: 1 };
 
-  return { classification, docIds, claimCount, gate, park, actionClass, delivery, actionPayload };
+  const claims = claimsFor(intent.id, docIds, claimCount, groundedness);
+  return {
+    classification, docIds, claimCount, claims, gate, park, actionClass, delivery, actionPayload,
+  };
 }
 
 /** A planned run before its journal detail is drawn. */

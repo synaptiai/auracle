@@ -69,6 +69,45 @@ export interface ApproveOptions {
    * edited (DEC-11). A read-back that finds no draft refuses the approval.
    */
   readonly readDraft?: DraftReadBack;
+  /**
+   * DEC-42: who approved, as a claim rather than an authentication.
+   *
+   * A caller supplies this only when a trusted proxy named the approver. The
+   * console reads that header only when the operator names the proxy, and
+   * passes nothing otherwise — because anyone reaching the port can set a
+   * header, and a forgeable audit trail is worse than none.
+   *
+   * Absent records `unattributed`, which is a statement that nobody was
+   * named. It is not the same as the column's null, which is a run no
+   * approval reached.
+   */
+  readonly approvedBy?: string;
+}
+
+/** DEC-42: what the ledger records when no trusted proxy named an approver. */
+export const UNATTRIBUTED = 'unattributed';
+
+/**
+ * A principal a header claimed, reduced to something an audit column can hold.
+ *
+ * The bound and the character check live here rather than in the caller, so a
+ * console that forgets them cannot bypass them: this function is the one
+ * chokepoint every approval path goes through.
+ *
+ * A control character in an audit value is a log-injection primitive — it
+ * lets one recorded approver forge the appearance of another line — and this
+ * value arrives from a header. A value that fails either check names nobody,
+ * so it records `unattributed` rather than throwing: DEC-42 already says an
+ * unnamed approver is a recorded fact, and refusing the approval over the
+ * audit field would put a customer reply behind a header's formatting.
+ */
+export function approverFrom(claimed: string | undefined): string {
+  const named = claimed?.trim();
+  if (named === undefined || named === '') return UNATTRIBUTED;
+  // Generous for a proxy-supplied principal, and far below what `text` takes.
+  if (named.length > 256) return UNATTRIBUTED;
+  if (/[\u0000-\u001f\u007f]/.test(named)) return UNATTRIBUTED;
+  return named;
 }
 
 /** What the coordinator's `park` step recorded in the journal. */
@@ -244,23 +283,31 @@ export async function approveRun(
         }
       : undefined;
 
-  const afterWrite =
-    finalBody === undefined && reply === undefined
-      ? undefined
-      : async (client: PoolClient): Promise<void> => {
-          if (finalBody !== undefined) {
-            // Section 4.2 rule 1 applied to the measurement: the edit
-            // distance commits with the approval, or not at all.
-            await recordApprovalEditDistance(client, {
-              runId,
-              parkedBody: park.body,
-              finalBody,
-            });
-          }
-          if (reply !== undefined) {
-            await recordApprovedReply(client, reply);
-          }
-        };
+  // DEC-42: recorded on every approval, so the absence of a proxy is a
+  // recorded fact rather than a missing row. Trimmed, and a caller that
+  // supplies only whitespace named nobody.
+  const approver = approverFrom(options?.approvedBy);
+
+  const afterWrite = async (client: PoolClient): Promise<void> => {
+    if (finalBody !== undefined) {
+      // Section 4.2 rule 1 applied to the measurement: the edit distance
+      // commits with the approval, or not at all.
+      await recordApprovalEditDistance(client, {
+        runId,
+        parkedBody: park.body,
+        finalBody,
+      });
+    }
+    if (reply !== undefined) {
+      await recordApprovedReply(client, reply);
+    }
+    // DEC-42, in the approval transaction for the same reason: an approver
+    // recorded outside it would name a person for a move that did not commit.
+    await client.query('UPDATE run SET approved_by = $2 WHERE run_id = $1', [
+      runId,
+      approver,
+    ]);
+  };
 
   const moved = await fencedTransition(pool, {
     runId,
@@ -275,7 +322,7 @@ export async function approveRun(
       delivery: park.delivery,
       payload: outboxPayload,
     },
-    ...(afterWrite === undefined ? {} : { afterWrite }),
+    afterWrite,
   });
 
   switch (moved.outcome) {

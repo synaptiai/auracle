@@ -32,14 +32,33 @@ describe('the run insert statement without a clock', () => {
       'deadline_at',
       'enqueued_at',
       'conversation_id',
+      'turn_number',
     ]) {
       expect(NO_CLOCK).toContain(column);
     }
   });
 
-  it('binds exactly twelve placeholders', () => {
-    expect(NO_CLOCK).toContain('$12');
-    expect(NO_CLOCK).not.toContain('$13');
+  // The exact list, in order.
+  //
+  // Counting placeholders proves nothing: `runInsertStatement` builds them
+  // from this same list, so the two agree whatever the list holds. What can
+  // go wrong is a column added here without a value pushed in
+  // `fencedTransition`, and no string check on the statement can see that.
+  // Pinning the list makes such a change fail here, so its author has to open
+  // this file and the values beside it.
+  it('names exactly these columns, in this order', () => {
+    const columns = NO_CLOCK.slice(NO_CLOCK.indexOf('(') + 1, NO_CLOCK.indexOf(')'))
+      .split(',').map((name) => name.trim());
+    expect(columns).toEqual([
+      'run_id', 'ticket_id', 'partition', 'epoch', 'state', 'prompt_ver',
+      'model_ver', 'cost_micros', 'steps_used', 'deadline_at', 'enqueued_at',
+      'conversation_id', 'turn_number',
+    ]);
+    expect(NO_CLOCK).toContain(`$${columns.length}`);
+    expect(NO_CLOCK).not.toContain(`$${columns.length + 1}`);
+    // The plain form still omits `created_at`, which is what leaves the
+    // column DEFAULT in charge of every production row.
+    expect(NO_CLOCK).not.toContain('created_at');
   });
 });
 
@@ -49,8 +68,10 @@ describe('the run insert statement with a clock', () => {
   });
 
   it('binds one more placeholder than the plain form', () => {
-    expect(WITH_CLOCK).toContain('$13');
-    expect(WITH_CLOCK).not.toContain('$14');
+    const plain = NO_CLOCK.slice(NO_CLOCK.indexOf('(') + 1, NO_CLOCK.indexOf(')'))
+      .split(',').length;
+    expect(WITH_CLOCK).toContain(`$${plain + 1}`);
+    expect(WITH_CLOCK).not.toContain(`$${plain + 2}`);
   });
 
   // Same columns, one added. A form that reordered or dropped a column

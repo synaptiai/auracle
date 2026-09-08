@@ -83,7 +83,7 @@ Set `AURACLE_TEST_MAIL_REUSE=1` to keep the mail server warm the same way.
 
 ## Architecture
 
-The authoritative design is `docs/v1-architecture.md`. It holds 41 numbered decisions, DEC-01 to DEC-41. The decisions are the only design authority. If a statement does not trace to a DEC, the statement is an implementation detail. You can change an implementation detail. You cannot change a DEC.
+The authoritative design is `docs/v1-architecture.md`. It holds 42 numbered decisions, DEC-01 to DEC-42. The decisions are the only design authority. If a statement does not trace to a DEC, the statement is an implementation detail. You can change an implementation detail. You cannot change a DEC.
 
 Core shape: TypeScript, a Postgres ledger (`tsvector` and `pgvector`), a plain state machine, a transactional outbox. No orchestration framework. Models come through OpenRouter.
 

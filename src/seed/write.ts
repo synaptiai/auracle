@@ -13,6 +13,8 @@
  * the daemon closure — so a daemon that ever imported this file fails that
  * guard. The seeder may hold the clock; nothing a daemon reaches may.
  */
+import { createHash } from 'node:crypto';
+
 import type { Pool, PoolClient } from 'pg';
 
 import { deriveIdemKey } from '../ledger/keys.js';
@@ -22,6 +24,7 @@ import {
   type FencedRunInput,
 } from '../ledger/insert.js';
 import { indexDocument } from '../retriever/retriever.js';
+import { UNATTRIBUTED } from '../approval/approve.js';
 import { SEED_THRESHOLDS } from '../policy/policy.js';
 import { SEED_DOCUMENTS, mulberry32, type PlannedRun } from './plan.js';
 
@@ -180,6 +183,20 @@ async function writeJournal(client: PoolClient, run: PlannedRun): Promise<void> 
   });
   await step('retrieve', 'done', {
     docIds: run.docIds,
+    // What each fused document was when the run read it (DEC-23). The
+    // coordinator records this, so a seeded row that omitted it would be a
+    // shape no reader could take at face value. No score and no rank: DEC-21
+    // keeps neither.
+    documents: run.docIds.map((docId) => {
+      const doc = SEED_DOCUMENTS.find((d) => d.docId === docId)!;
+      return {
+        docId: doc.docId,
+        title: doc.title,
+        owner: doc.owner,
+        reviewBy: doc.reviewBy,
+        bodyHash: createHash('sha256').update(doc.body, 'utf8').digest('hex'),
+      };
+    }),
     // DEC-26 truthfulness: the step's model_ver column carries the chat pin
     // and the embedding pin is recorded in the result. Both are 'seed' here,
     // which is what tells a reader no model answered this run.
@@ -202,6 +219,17 @@ async function writeJournal(client: PoolClient, run: PlannedRun): Promise<void> 
     // (DEC-23). Recorded because the coordinator records it: a reader that
     // found the key missing could not tell an empty list from an old row.
     staleDocumentIds: [],
+    // The claim-to-document mapping DEC-07 requires to exist, and the bodies
+    // of the documents the claims actually cite. Only the cited ones: the
+    // rest carry their hash on the retrieve row, which is what the
+    // coordinator writes.
+    claims: run.claims.map((claim) => ({ text: claim.text, docId: claim.docId })),
+    citedBodies: Object.fromEntries(
+      [...new Set(run.claims.map((claim) => claim.docId))].map((docId) => [
+        docId,
+        SEED_DOCUMENTS.find((d) => d.docId === docId)!.body,
+      ]),
+    ),
     provider: run.provider,
   });
   // No gate row for an abstain. The coordinator escalates before the gate
@@ -209,6 +237,14 @@ async function writeJournal(client: PoolClient, run: PlannedRun): Promise<void> 
   if (run.gate !== null && run.reason !== null) {
     await step('gate', 'done', {
       groundedness: run.gate.groundedness,
+      // Which claim the judge did not support, beside the fraction rather
+      // than instead of it. Derived from the run's own coverage, so a reader
+      // that recounts these reaches the fraction above. Coverage detail only:
+      // agreement sits on the classify row and DEC-05 keeps them apart.
+      claimVerdicts: run.claims.map((claim, index) => ({
+        claimIndex: index,
+        supported: claim.supported,
+      })),
       decision: run.gate.decision,
       reason: run.reason,
       // The numbers this verdict was reached under, from the policy engine's
@@ -251,6 +287,14 @@ async function writeJournal(client: PoolClient, run: PlannedRun): Promise<void> 
     await client.query('UPDATE run SET approval_edit_distance = $2 WHERE run_id = $1', [
       run.runId,
       run.editDistance,
+    ]);
+    // DEC-42: a run an approval reached records an approver. The seeded
+    // history has no proxy in front of it, so it records what a console on an
+    // unnamed bind records — which is the value an adopter reading a seeded
+    // ledger should expect to see, rather than an invented operator name.
+    await client.query('UPDATE run SET approved_by = $2 WHERE run_id = $1', [
+      run.runId,
+      UNATTRIBUTED,
     ]);
   }
 }
@@ -308,6 +352,10 @@ export async function writeHistory(pool: Pool, plan: readonly PlannedRun[]): Pro
       runId: run.runId,
       ticketId: run.ticketId,
       conversationId: run.conversationId,
+      // DEC-35: every seeded run answers turn one of its conversation, which
+      // is what `writeConversation` records and what the idem key derived
+      // below already assumes.
+      turnNumber: 1,
       partition: run.partition,
       epoch: 1n,
       state: run.state,

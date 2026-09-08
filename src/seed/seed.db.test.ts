@@ -6,6 +6,8 @@
 //
 // Three days rather than forty-five. The property is the same at either size
 // and the suite runs against a container.
+import { createHash } from 'node:crypto';
+
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -99,8 +101,11 @@ describe('the document corpus the seeder writes', () => {
 });
 
 describe('the seeded history', () => {
-  beforeEach(async () => {
+  beforeAll(async () => {
     await applyLedgerSchema(pool);
+  });
+
+  beforeEach(async () => {
     await truncate();
   });
 
@@ -190,8 +195,11 @@ describe('the seeded history', () => {
 });
 
 describe('the readers over the seeded history', () => {
-  beforeEach(async () => {
+  beforeAll(async () => {
     await applyLedgerSchema(pool);
+  });
+
+  beforeEach(async () => {
     await truncate();
     await writeHistory(pool, planHistory(OPTIONS));
   });
@@ -273,11 +281,135 @@ describe('the readers over the seeded history', () => {
 // misread it: `approveRun` threw `awaits approval but journals no park step`
 // on every parked run in the history, which is an exception rather than an
 // `ApproveOutcome`. That is the defect these cases hold shut.
+describe('what the ledger holds about a claim and an approver', () => {
+  let plan: PlannedRun[];
+
+  beforeAll(async () => {
+    await applyLedgerSchema(pool);
+  });
+
+  beforeEach(async () => {
+    await truncate();
+    plan = planHistory(OPTIONS);
+    await writeHistory(pool, plan);
+  });
+
+  async function resultOf(runId: string, stepId: string): Promise<Record<string, unknown> | null> {
+    const { rows } = await pool.query(
+      'SELECT result FROM step_journal WHERE run_id = $1 AND step_id = $2',
+      [runId, stepId],
+    );
+    return (rows[0]?.result as Record<string, unknown> | undefined) ?? null;
+  }
+
+  it('records each claim with the document it cites (DEC-07)', async () => {
+    const gated = plan.find((run) => run.gate !== null && run.claims.length > 0);
+    expect(gated).toBeDefined();
+    const compose = await resultOf(gated!.runId, 'compose');
+    const claims = compose?.['claims'] as { text: string; docId: string }[];
+    expect(claims).toHaveLength(gated!.claimCount);
+    const retrieve = await resultOf(gated!.runId, 'retrieve');
+    const docIds = retrieve?.['docIds'] as string[];
+    for (const claim of claims) {
+      expect(typeof claim.text).toBe('string');
+      expect(docIds).toContain(claim.docId);
+    }
+  });
+
+  // The verdicts and the fraction record the same fact. A reader renders the
+  // fraction, because that is what `evaluatePolicy` read; if the two ever
+  // disagreed the ledger would hold two answers and name neither.
+  it('records verdicts that recount to the coverage the gate row holds', async () => {
+    let checked = 0;
+    for (const run of plan) {
+      if (run.gate === null) continue;
+      const gate = await resultOf(run.runId, 'gate');
+      const verdicts = gate?.['claimVerdicts'] as { claimIndex: number; supported: boolean }[];
+      expect(verdicts, run.runId).toHaveLength(run.claimCount);
+      const supported = verdicts.filter((v) => v.supported).length;
+      expect(supported / verdicts.length, run.runId)
+        .toBeCloseTo(gate?.['groundedness'] as number, 10);
+      checked += 1;
+      if (checked === 12) break;
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it('keeps agreement off the gate row, so the two gates stay apart (DEC-05)', async () => {
+    const gated = plan.find((run) => run.gate !== null)!;
+    const gate = await resultOf(gated.runId, 'gate');
+    expect(Object.keys(gate ?? {})).not.toContain('agreement');
+    const classify = await resultOf(gated.runId, 'classify');
+    expect(Object.keys(classify ?? {})).not.toContain('groundedness');
+    expect(Object.keys(classify ?? {})).not.toContain('claimVerdicts');
+  });
+
+  it('snapshots what each retrieved document said, and no rank or score', async () => {
+    const run = plan[0]!;
+    const retrieve = await resultOf(run.runId, 'retrieve');
+    const docs = retrieve?.['documents'] as Record<string, unknown>[];
+    expect(docs).toHaveLength(run.docIds.length);
+    for (const doc of docs) {
+      expect(Object.keys(doc).sort())
+        .toEqual(['bodyHash', 'docId', 'owner', 'reviewBy', 'title']);
+      expect(String(doc['bodyHash'])).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it('stores the body of a cited document once, and not of an uncited one', async () => {
+    const gated = plan.find((run) => run.gate !== null && run.claims.length > 0)!;
+    const compose = await resultOf(gated.runId, 'compose');
+    const bodies = compose?.['citedBodies'] as Record<string, string>;
+    const cited = new Set(gated.claims.map((claim) => claim.docId));
+    expect(new Set(Object.keys(bodies))).toEqual(cited);
+    for (const docId of gated.docIds) {
+      if (!cited.has(docId)) expect(bodies[docId]).toBeUndefined();
+    }
+  });
+
+  it('names the turn each run answered, so a turn joins to its run (DEC-35)', async () => {
+    const { rows } = await pool.query(
+      'SELECT count(*)::int AS n FROM run WHERE turn_number IS NULL',
+    );
+    expect(rows[0]?.n).toBe(0);
+    const joined = await pool.query(
+      `SELECT count(*)::int AS n FROM turn t
+         JOIN run r ON r.conversation_id = t.conversation_id
+                   AND r.turn_number = t.turn_number`,
+    );
+    expect(joined.rows[0]?.n).toBeGreaterThan(0);
+  });
+
+  // DEC-42. The seeded history has no proxy in front of it, so it records
+  // what a console on an unnamed bind records rather than an invented name.
+  it('records an approver on an approved run, and null on a run no approval reached', async () => {
+    const approved = await pool.query(
+      'SELECT count(*)::int AS n FROM run WHERE approved_by = $1',
+      ['unattributed'],
+    );
+    expect(approved.rows[0]?.n).toBeGreaterThan(0);
+    const untouched = await pool.query(
+      `SELECT count(*)::int AS n FROM run
+        WHERE approved_by IS NULL AND approval_edit_distance IS NULL`,
+    );
+    expect(untouched.rows[0]?.n).toBeGreaterThan(0);
+    // Deliberately not asserted: that an approver never appears without an
+    // edit distance. It holds of this seeder, which models an approver who
+    // always edits, and it is false of the system. `approveRun` records the
+    // approver on every approval and the distance only when a final body was
+    // captured — and the console captures none. `approve.db.test.ts` holds
+    // that shape, which is the one an adopter will actually read.
+  });
+});
+
 describe('the journal a seeded run leaves', () => {
   let plan: PlannedRun[];
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     await applyLedgerSchema(pool);
+  });
+
+  beforeEach(async () => {
     await truncate();
     plan = planHistory(OPTIONS);
     await writeHistory(pool, plan);
@@ -309,12 +441,34 @@ describe('the journal a seeded run leaves', () => {
       expect(steps.get('retrieve')!.result).toEqual({
         docIds: run.docIds,
         embed_model_ver: 'seed',
+        // DEC-23: what each fused document was when the run read it. The
+        // shape stays exact rather than partial, because a seeded row that
+        // drifted from what `coordinateTicket` writes is a row every reader
+        // would have to special-case.
+        documents: run.docIds.map((docId) => {
+          const doc = SEED_DOCUMENTS.find((d) => d.docId === docId)!;
+          return {
+            docId: doc.docId,
+            title: doc.title,
+            owner: doc.owner,
+            reviewBy: doc.reviewBy,
+            bodyHash: createHash('sha256').update(doc.body, 'utf8').digest('hex'),
+          };
+        }),
       });
       expect(steps.get('compose')!.status).toBe(run.abstained ? 'abstained' : 'done');
       expect(steps.get('compose')!.result).toEqual({
         abstained: run.abstained,
         claimCount: run.claimCount,
         staleDocumentIds: [],
+        // DEC-07: the mapping the composer already had to resolve.
+        claims: run.claims.map((claim) => ({ text: claim.text, docId: claim.docId })),
+        citedBodies: Object.fromEntries(
+          [...new Set(run.claims.map((claim) => claim.docId))].map((docId) => [
+            docId,
+            SEED_DOCUMENTS.find((d) => d.docId === docId)!.body,
+          ]),
+        ),
         provider: 'stub',
       });
       if (run.escalation !== null) {
@@ -325,6 +479,12 @@ describe('the journal a seeded run leaves', () => {
           groundedness: run.gate.groundedness,
           decision: run.gate.decision,
           reason: run.reason,
+          // Coverage detail beside the fraction, never instead of it, and
+          // never joined to agreement (DEC-05).
+          claimVerdicts: run.claims.map((claim, index) => ({
+            claimIndex: index,
+            supported: claim.supported,
+          })),
           // DEC-07: the numbers the verdict was reached under, so a reader
           // holding a ledger written across a rolling restart can tell which
           // pair each run was judged by.

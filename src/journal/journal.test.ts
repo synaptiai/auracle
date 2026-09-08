@@ -138,7 +138,13 @@ describe('the run-journal reader never writes', () => {
       }
       const body = code.slice(match.index! + match[0].length, end);
       const answersNumber = /\bnumber\b/.test(returns!);
-      const readsBoth = /\bagreement\b/.test(body) && /\bgroundedness\b/.test(body);
+      // Coverage has more than one name now. The gate row carries a fraction
+      // called `groundedness` and a verdict per claim beside it, so a blend
+      // can reach coverage by counting the supported claims and never write
+      // the word. Every name for the same reading counts as reading it.
+      const readsCoverage = /\bgroundedness\b|\bclaimVerdicts\b|\bsupported\b|\bcoverage\b/
+        .test(body);
+      const readsBoth = /\bagreement\b/.test(body) && readsCoverage;
       checked.push(name!);
       expect(answersNumber && readsBoth, `${name!} blends the two gates`).toBe(false);
     }
