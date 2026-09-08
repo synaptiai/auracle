@@ -19,9 +19,12 @@
  * every queue row is already a link — so with the script removed the page
  * loses highlighting and keyboard movement and loses nothing else.
  *
- * Served inline under a CSP hash rather than from a path. A hash pins this
- * exact text: a script the page did not ship cannot run, and neither can this
- * one once a character changes without the hash changing with it.
+ * Served inline under a CSP hash rather than from a path. A hash permits this
+ * exact text and nothing else, so a script injected into a page cannot run.
+ *
+ * It is not an integrity check on this file. The hash is computed from this
+ * constant at startup, so an edit here produces a matching hash and runs. The
+ * bound is what a page may execute, not what a build may change.
  */
 export const CONSOLE_SCRIPT = `
 (function () {

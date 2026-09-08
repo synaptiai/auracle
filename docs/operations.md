@@ -1097,11 +1097,28 @@ The console authenticates nobody. Anyone who reaches it can approve a
 reply. So treat reaching it as the whole access control, and place it
 accordingly.
 
-Five surfaces read live data: runs, one run in detail, the approval queue, the
-control bands and the partition latency.
+Seven surfaces read live data. Runs, one run in detail, and the approval
+queue. One conversation and one document. The control bands and the partition
+latency.
 
-The console ships no JavaScript. Two controls work without one, and each is a
-link.
+The rail holds four of them, in two groups. The queue is the work an operator
+comes to do. The runs, the bands and the latency are what they audit.
+
+A conversation and a document are reached from the run that names them. The
+ledger orders conversations by when a problem opened. That is not when one
+last needed attention, so a listing would sort by the wrong thing.
+
+The console ships one script, and no more. It lights the document a claim
+cites, and it moves through the queue on the j and k keys. Every surface works
+without it: a claim carries an anchor to its source, and a queue row is a link.
+
+The script is pinned by a hash of its own text. So a script the page did not
+ship cannot run, and neither does one injected into a page.
+
+The hash is computed from the script at startup, not written down. So the two
+cannot drift apart. Neither can they catch an edit. A changed script gets a
+changed hash and runs. The bound is what a page may execute, not what a
+build may change.
 
 The runs surface filters by state. Each state in the ledger has a link, and
 the link asks the ledger for that state. It does not hide rows after the read.
@@ -1125,13 +1142,36 @@ The run detail surface reads one run's journal. It shows the steps the run
 journals and the documents the retriever returns. It shows the two gate values
 beside the thresholds that judged them.
 
-The approval queue shows a dash where the gate values go. It reads the
-escalation module, which reports what a person needs to work the queue and
-carries neither number. Reading the journal for every waiting run would be one
-statement for each row of an uncapped list. The dash says "not read by the
-console" and means that. Open the run to read them.
+The approval queue shows the reply before the button that sends it. An
+approver who cannot read a reply cannot approve it (DEC-40).
 
-Two blocks of the design do not ship. Both need data the ledger does not hold.
+It reads one journal, for the run it draws. Reading one for every waiting run
+would be a statement for each row of an uncapped list.
+
+The reply is drawn as its claims, because the claims joined are the draft.
+Each claim carries the document it cites. A claim the judge did not support is
+marked, and a claim nobody judged is marked apart from it. Those are different
+facts, and only the first is a warning.
+
+The heading says the system drafted this reply. It does not say the reply will
+be sent. The relay sends the helpdesk copy, and a person may have edited it
+since (DEC-11).
+
+The conversation surface reads a thread by turn. It names why a turn shows no
+reply, and six reasons exist.
+
+An internal write sent nothing. A person approved an action and no reply text
+was recorded. A draft still waits for a person. A run stopped. A run is still
+running. No run joins the turn at all.
+
+Two more reasons say why a turn shows no message. Nobody kept it, or the
+customer wrote nothing. None of the eight draws a blank.
+
+The document surface shows one document of the index. A citation is worth
+showing only if a person can check it. The text is today's, because the index is rewritten in
+place. A run detail says whether the body moved since that run read it.
+
+One block of the design does not ship. It needs data the ledger does not hold.
 
 No step carries a duration. `step_journal` has no timestamp and no sequence
 column, so no step has a start or an end. The order the surface draws is the
@@ -1149,9 +1189,11 @@ reason from a closed set. The relay and the consumer interpolate a message
 into the same field. An adapter message can quote a customer address. Read the
 whole text with `pnpm run escalations`.
 
-The console records the parked draft as present and never shows it. It holds the composed
-reply, and this console authenticates nobody. Read and edit it in the
-helpdesk, which is where DEC-11 keeps it.
+The console shows the parked draft. A console may approve a reply, and an
+approver has to read one first (DEC-40).
+
+Edit the draft in the helpdesk, which is where DEC-11 keeps it. This console
+captures no reply text, so it measures no approval-edit distance.
 
 The console records the approval it makes. The line names the run, the
 outcome, the `Host` and the address it came from. The ledger records that a
@@ -1171,6 +1213,89 @@ A park step names what the ledger holds. A park that crashed records a key and
 no draft. So a draft may sit in the helpdesk that nobody can name. A park the
 adapter refused records the fault. The surface names both, and shows neither
 message.
+
+### What the ledger stores about a customer
+
+The console shows this, so an operator reading it reads what the ledger holds.
+State the position before you carry real traffic (DEC-17, DEC-19).
+
+Seven columns hold text a customer wrote, would read, or is named in. Each
+lives for the life of its row, and nothing removes any of it.
+
+| Where | What | Written by |
+|---|---|---|
+| `turn.body_text` | the inbound message | intake, on every turn |
+| `turn.approved_reply_text` | the reply an approval dispatched | the approval path alone |
+| `step_journal.result` on `park` | the drafted reply | every gated run |
+| `step_journal.result` on `park` | the fault an adapter raised | a park the adapter refused |
+| `step_journal.result` on `compose` | the claims, which joined are the draft | every run that composed |
+| `step_journal.result` on `compose` | the body of each cited document | every run that cited one |
+| `step_journal.result` on `escalate` | the reason, which interpolates adapter text | the relay and the consumer |
+| `conversation.customer_address` | the participant the messages come from | the first sender that names itself |
+
+The last two hold an address rather than a message. An adapter builds a fault
+naming the expected recipient, and an SMTP rejection quotes one. Both reach a
+journal row verbatim.
+
+`intake.ticket_text` holds the inbound message as well, and is not listed. The
+consumer deletes that row on the ack and on the abandon, so it clears itself.
+A message stuck in retry holds text until one of those happens.
+
+The claims are the reply. So a run that composed holds a drafted reply, whether
+or not a person saw one. An automatic run holds one although it sent nothing
+to a customer.
+
+`run.approved_by` holds an operator's own identifier, not a customer's. It is
+what a header claimed and never an authenticated identity (DEC-42).
+
+**This repository ships no retention job and no purge job.** You are the data
+controller, so you own the retention period and the erasure path. The
+statements below are what an adopter runs to clear each field by age. None of
+them removes a run, so the control bands and the replay keep their history.
+
+```sql
+-- The customer's message and the reply a person sent, past 90 days.
+UPDATE turn
+   SET body_text = NULL, approved_reply_text = NULL
+ WHERE created_at < now() - interval '90 days';
+
+-- The drafted reply, the cited document bodies, the adapter fault and the
+-- escalation reason, past 90 days.
+UPDATE step_journal j
+   SET result = j.result - 'body' - 'claims' - 'citedBodies' - 'error' - 'reason'
+  FROM run r
+ WHERE r.run_id = j.run_id
+   AND j.step_id IN ('park', 'compose', 'escalate')
+   AND r.created_at < now() - interval '90 days';
+
+-- The participant of a conversation nobody will add a turn to.
+UPDATE conversation
+   SET customer_address = NULL
+ WHERE state <> 'open'
+   AND opened_at < now() - interval '90 days';
+```
+
+Each one leaves the keys a reader joins on. A cleared `turn` keeps its number
+and its ticket, so a conversation still shows the turn and names the absence.
+A cleared `park` row keeps `draftExternalId`, so an approval still derives its
+idempotency key. A cleared `compose` row keeps `claimCount`, so the coverage a
+gate recorded still has a denominator.
+
+Clearing an escalation reason costs an operator the word that named it. The
+escalations report reads that key, so a cleared run reports no reason. Choose
+the age with that in mind, or leave `reason` and accept the addresses it can
+carry.
+
+The three statements read three clocks: the turn's, the run's and the
+conversation's. A turn older than the window whose run is a recent retry loses
+its message and keeps the drafted reply.
+
+The `retrieve` row keeps the title and owner of each document the run read.
+Those are corpus metadata rather than a customer's words, so no statement here
+removes them.
+
+Clearing a draft does not reach the helpdesk. The draft parks there as well
+(DEC-11), and the adapter's own retention governs that copy.
 
 **The console makes one write, and it is the approval.** Every other statement it issues is a SELECT. So it is otherwise as safe against a live database as `pnpm run bands` and `pnpm run latency`. That claim is its own, not inherited. `console/src/select-only.test.ts` refuses any SQL keyword in
 the package, refuses a call to `pool.query`, and holds the approval to one
