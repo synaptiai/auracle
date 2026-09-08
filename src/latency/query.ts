@@ -119,6 +119,15 @@ export interface ServiceDistribution extends Distribution {
 
 export interface PartitionLatency {
   partition: number;
+  /**
+   * Runs this partition carried in the window.
+   *
+   * Not the same number as `wait.count` or `service.count`, which each count
+   * the runs one distribution could measure. A reader that showed either
+   * beside the partition would report a partition that ran 240 runs as having
+   * run the 200 whose arrival time was stamped.
+   */
+  runs: number;
   wait: WaitDistribution;
   service: ServiceDistribution;
 }
@@ -240,6 +249,7 @@ export async function readLatency(
 
   const partitions: PartitionLatency[] = rows.map((row: Record<string, unknown>) => ({
     partition: Number(row['partition']),
+    runs: toCount(row['runs']),
     wait: {
       count: toCount(row['wait_count']),
       unmeasured: toCount(row['wait_unmeasured']),

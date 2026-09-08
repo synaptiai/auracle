@@ -27,48 +27,65 @@ import { LOOKBACK_DAYS, METRICS } from 'auracle/dist/bands/metrics.js';
 import { humanValue } from 'auracle/dist/bands/run.js';
 import { probeLedger, requireDbUrl } from 'auracle/dist/db/config.js';
 import { LEDGER_STATES, listEscalations, listRuns, readRun } from 'auracle/dist/escalations/query.js';
+import { readRunJournal } from 'auracle/dist/journal/query.js';
+import { CLASSIFIER_K } from 'auracle/dist/classifier/classifier.js';
 import { readLatency } from 'auracle/dist/latency/query.js';
 import { humanMs } from 'auracle/dist/latency/run.js';
 
 import { approveFromConsole } from './approve.js';
 import { CONSOLE_CSS } from './css.js';
-import { createConsole } from './server.js';
-import type { BandRow, LatencyRow, RunDetail, RunRow } from './surfaces.js';
+import { allowedHosts } from './hosts.js';
+import { ledgerName } from './ledger-name.js';
+import { latencyCaveats, stepSays, toDetail, toRow } from './views.js';
+import { createConsole, RUNS_PAGE } from './server.js';
+import type { BandRow, LatencyRow, Percentile, RunDetail, RunRow, RunView } from './surfaces.js';
 
-/** Every ledger state, so the runs surface shows the whole ledger. */
-/**
- * Runs the list surface shows. Named, because the page says so: a list
- * silently truncated reads as the whole ledger.
- */
-const RUNS_PAGE = 200;
-
-function toRow(item: {
-  runId: string; ticketId: string; state: string; promptVer: string;
-  reason: string | null; costMicros: number; stepsUsed: number;
-}): RunRow {
+/** The run detail surface's view of one run, or null when there is no run. */
+async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
+  const found = await readRun(pool, runId, LEDGER_STATES);
+  if (found === null) return null;
+  // Two reads, because they answer different questions and one of them can
+  // come back empty: a run that journalled nothing is still a run, and the
+  // page says so rather than answering 404.
+  const journal = await readRunJournal(pool, runId);
+  const base = toDetail(found);
+  if (journal === null) {
+    return {
+      ...base,
+      steps: [], agreementThreshold: null, agreementDetail: null,
+      coverageBlock: null, coverageReview: null, intentId: null,
+      decision: null, policyReason: null, documents: null,
+    };
+  }
+  const agreement = journal.agreement;
   return {
-    runId: item.runId,
-    ticketId: item.ticketId,
-    state: item.state,
-    promptVer: item.promptVer,
-    reason: item.reason,
-    stepsUsed: item.stepsUsed,
+    ...base,
+    agreement: agreement?.agreement ?? null,
+    coverage: journal.coverage?.groundedness ?? null,
+    agreementThreshold: agreement?.threshold ?? null,
+    agreementDetail: agreement === null
+      ? null
+      : `${Math.round(agreement.agreement * CLASSIFIER_K)} of ${CLASSIFIER_K} samples`,
+    coverageBlock: journal.coverage?.blockThreshold ?? null,
+    coverageReview: journal.coverage?.reviewThreshold ?? null,
+    intentId: agreement?.intentId ?? null,
+    decision: journal.coverage?.decision ?? null,
+    policyReason: journal.coverage?.reason ?? null,
+    steps: journal.steps.map((step) => ({
+      stepId: step.stepId,
+      status: step.status,
+      says: stepSays(step, journal),
+      awaitingOutcome: step.awaitingOutcome,
+      malformed: step.resultMalformed,
+    })),
+    documents: journal.documents === null ? null : journal.documents.map((doc) => ({
+      position: doc.position,
+      docId: doc.docId,
+      title: doc.resolved ? doc.title : null,
+      kind: doc.kind,
+      owner: doc.owner,
+    })),
   };
-}
-
-/**
- * A run's two gate values.
- *
- * Not read here. The escalation module reports what a person needs to work
- * the queue, and it does not carry the gate numbers; showing them would need
- * a journal read this console has no module for, so they render as "not
- * reached" rather than as an invented zero. That is the same rule the bands
- * surface follows, and it is why `renderGates` takes nulls.
- */
-const GATES_NOT_READ = { agreement: null, coverage: null } as const;
-
-function toDetail(item: Parameters<typeof toRow>[0] & { draftExternalId: string | null }): RunDetail {
-  return { ...toRow(item), ...GATES_NOT_READ, draftExternalId: item.draftExternalId };
 }
 
 /**
@@ -80,6 +97,14 @@ function toDetail(item: Parameters<typeof toRow>[0] & { draftExternalId: string 
  * `parseDay` in the bands job is the precedent: name the variable and the
  * value that was wrong.
  */
+/**
+ * How long a shutdown waits for a request that is still running.
+ *
+ * Shorter than any ordinary supervisor's grace period, so the bounded wait
+ * ends before SIGKILL rather than after it.
+ */
+const SHUTDOWN_GRACE_MS = 5_000;
+
 function requirePort(raw: string | undefined): number {
   if (raw === undefined) return 8787;
   const port = Number(raw);
@@ -89,46 +114,17 @@ function requirePort(raw: string | undefined): number {
   return port;
 }
 
+
 /**
- * The `Host` values this console answers to.
+ * Closes the pool, once one exists.
  *
- * Derived from the bind, plus whatever `CONSOLE_ALLOWED_HOSTS` names. The
- * derivation alone is not enough, and each gap refused every request while
- * the console looked healthy:
- *
- *   - a reverse proxy forwards its own name, and the runbook recommends one;
- *   - an IPv6 bind produced `:::8787` where a browser sends `[::1]:8787`;
- *   - `0.0.0.0` is a bind address and never a `Host`;
- *   - on port 80 or 443 the browser omits the port entirely.
+ * Module-scoped so the top-level handler can reach it. A pool holding an idle
+ * client keeps the event loop alive, so a throw anywhere after the pool is
+ * built would otherwise hang the process at exit code 1 rather than ending
+ * it — which is the failure the double-end guard below is written for, on a
+ * path that could not call it.
  */
-export function allowedHosts(host: string, port: number): string[] {
-  const names = new Set<string>();
-  const add = (name: string): void => {
-    names.add(`${name}:${port}`);
-    // The browser omits the default port for the scheme.
-    if (port === 80 || port === 443) names.add(name);
-  };
-  for (const name of ['127.0.0.1', 'localhost', '[::1]']) add(name);
-  // A wildcard bind is not a name anyone sends.
-  if (host !== '0.0.0.0' && host !== '::') {
-    add(host.includes(':') && !host.startsWith('[') ? `[${host}]` : host);
-  }
-  for (const extra of (process.env['CONSOLE_ALLOWED_HOSTS'] ?? '').split(',')) {
-    const name = extra.trim();
-    if (name === '') continue;
-    // A `Host` header is a name and a port, never a URL. An entry carrying a
-    // scheme or a path matches nothing, so every request is refused while the
-    // console reports itself healthy — the same silent failure the derived
-    // names above are commented for twice. Refuse it by name instead.
-    if (/[\/\s]/.test(name)) {
-      throw new Error(
-        `CONSOLE_ALLOWED_HOSTS takes a host and a port, not a URL; got '${name}'`,
-      );
-    }
-    names.add(name.toLowerCase());
-  }
-  return [...names];
-}
+let closePool: (() => Promise<void>) | null = null;
 
 async function main(): Promise<void> {
   // Every configuration value is read and refused before a socket is opened.
@@ -164,6 +160,7 @@ async function main(): Promise<void> {
       }));
     }
   };
+  closePool = endPool;
 
   // An idle client that fails reaches the pool as an 'error' event, and with
   // no listener Node rethrows it outside every promise chain. The route's
@@ -197,13 +194,10 @@ async function main(): Promise<void> {
   }
 
   const server = createConsole({
-    listRuns: async (): Promise<RunRow[]> =>
-      (await listRuns(pool, LEDGER_STATES, RUNS_PAGE)).map(toRow),
+    listRuns: async (states): Promise<RunRow[]> =>
+      (await listRuns(pool, states, RUNS_PAGE)).map(toRow),
 
-    readRun: async (runId): Promise<RunDetail | null> => {
-      const found = await readRun(pool, runId, LEDGER_STATES);
-      return found === null ? null : toDetail(found);
-    },
+    readRun: async (runId): Promise<RunView | null> => readRunView(pool, runId),
 
     // Unbounded on purpose, and it is the one surface that should be.
     //
@@ -238,6 +232,13 @@ async function main(): Promise<void> {
       const at = (offset: number): Date =>
         new Date(Date.parse(`${day}T00:00:00.000Z`) + offset * 86_400_000);
       const rows = await readDays(pool, at(-LOOKBACK_DAYS), at(1));
+      // The window as days, so a day the ledger holds no row for still takes
+      // a place on the line.
+      const calendarDays: string[] = [];
+      for (let offset = -LOOKBACK_DAYS; offset <= 0; offset += 1) {
+        calendarDays.push(at(offset).toISOString().slice(0, 10));
+      }
+      const byDay = new Map(rows.map((row) => [row.day, row]));
       const today = rows.find((row) => row.day === day);
       const runs = today?.runs ?? 0;
 
@@ -269,19 +270,74 @@ async function main(): Promise<void> {
             ? null
             : `${evaluation.band.action} at ${evaluation.band.sigmaDistance.toFixed(2)} sigma`
               + `${evaluation.band.towardBad ? ', toward bad' : ''}`,
+          // The action alone, so the card can colour by it without parsing
+          // the sentence above back apart.
+          action: evaluation.band?.action ?? null,
+          count: evaluation.count,
+          baseline: evaluation.baseline === null ? null : {
+            mean: humanValue(evaluation.baseline.mean),
+            sigma: humanValue(evaluation.baseline.sigma),
+            days: evaluation.baseline.days,
+          },
+          // One entry per calendar day in the window, not one per row.
+          //
+          // The samples are the ones the baseline was computed over, drawn
+          // from that list rather than from a second read, so the line and
+          // the verdict cannot disagree. A day that measured nothing stays
+          // null, because the surface breaks the line there rather than
+          // dropping it to the floor.
+          //
+          // `readDays` groups over `run` and emits no row at all for a day
+          // that held none, so mapping the rows silently joined a quiet
+          // weekend across and compressed the axis. The gap the surface
+          // documents only appeared for a day that had runs and no value for
+          // this metric. Every absent day is now a null of its own.
+          history: calendarDays.map((iso) =>
+            byDay.get(iso)?.samples[definition.name]?.value ?? null),
         };
       });
     },
 
     readLatency: async (): Promise<LatencyRow[]> => {
       const report = await readLatency(pool);
+      // The bars compare across partitions, so they share one scale for each
+      // column. Scaling each row to its own maximum would draw the slowest
+      // partition and the fastest identically, which is the one comparison
+      // this surface exists to make.
+      const widest = (pick: (p: typeof report.partitions[number]) => (number | null)[]): number =>
+        Math.max(0, ...report.partitions.flatMap(pick).filter((v): v is number => v !== null));
+      const waitMax = widest((p) => [p.wait.p50Ms, p.wait.p95Ms, p.wait.p99Ms]);
+      const serviceMax = widest((p) => [p.service.p50Ms, p.service.p95Ms, p.service.p99Ms]);
+
+      const pct = (label: string, ms: number | null, max: number): Percentile => {
+        // Three cases, and a first version collapsed two of them. The floor
+        // exists so a percentile far below the widest still draws something
+        // rather than vanishing — but applied to a measured zero it drew a
+        // sliver, so a partition whose queue wait was genuinely zero looked
+        // like one with a wait too small to name. A zero is a measurement and
+        // it draws nothing.
+        const share = ms === null || ms === 0 || max <= 0 ? 0 : Math.max(0.02, ms / max);
+        return { label, text: humanMs(ms), share };
+      };
+
       return report.partitions.map((p) => ({
         partition: p.partition,
-        waitP50: humanMs(p.wait.p50Ms),
-        waitP95: humanMs(p.wait.p95Ms),
-        serviceP50: humanMs(p.service.p50Ms),
-        serviceP95: humanMs(p.service.p95Ms),
-        runs: p.wait.count,
+        wait: [
+          pct('p50', p.wait.p50Ms, waitMax),
+          pct('p95', p.wait.p95Ms, waitMax),
+          pct('p99', p.wait.p99Ms, waitMax),
+        ],
+        service: [
+          pct('p50', p.service.p50Ms, serviceMax),
+          pct('p95', p.service.p95Ms, serviceMax),
+          pct('p99', p.service.p99Ms, serviceMax),
+        ],
+        // The partition's own run count, not the count of runs one
+        // distribution could measure. `wait.count` is `count(wait_ms)`, so a
+        // partition whose runs mostly lack an arrival time would report the
+        // measured few as everything it ran.
+        runs: p.runs,
+        caveats: latencyCaveats(p),
       }));
     },
 
@@ -289,7 +345,14 @@ async function main(): Promise<void> {
       const outcome = await approveFromConsole({ pool, approveRun }, { runId });
       return outcome.outcome;
     },
-  }, CONSOLE_CSS, { allowedHosts: hosts });
+  }, CONSOLE_CSS, {
+    allowedHosts: hosts,
+    // The whole closed set. The filter offers every state the ledger can
+    // hold, so a state with no runs today still has a link that says so —
+    // an operator checking for escalations needs the empty answer too.
+    states: [...LEDGER_STATES],
+    ledger: ledgerName(connectionString),
+  });
 
   // `listen` reports a bind failure by event, after `main`'s promise has
   // already resolved, so the catch below never sees it. Without this the
@@ -321,11 +384,26 @@ async function main(): Promise<void> {
     const shutdown = (): void => {
       if (stopping) return;
       stopping = true;
-      server.close(() => {
+      let done = false;
+      const finish = (): void => {
+        if (done) return;
+        done = true;
         void endPool().then(() => {
           resolve();
         });
-      });
+      };
+      server.close(finish);
+      // A keep-alive socket sitting idle holds `close` open on its own, and
+      // an in-flight request holds it to Node's 300 s request timeout. The
+      // supervisor's grace period expires long before that and sends SIGKILL,
+      // which is the one signal that can cut an approval mid-flight — the
+      // state DEC-30 says a person must resolve. So idle sockets go at once,
+      // and a request still running gets a bounded wait rather than an
+      // unbounded one.
+      server.closeIdleConnections();
+      const cutoff = setTimeout(finish, SHUTDOWN_GRACE_MS);
+      // The timer must not itself keep the process alive.
+      cutoff.unref();
     };
     process.once('SIGINT', shutdown);
     process.once('SIGTERM', shutdown);
@@ -333,6 +411,19 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
+  // With the cause, the way `src/bands/run.ts` does it. A wrapped pg failure
+  // otherwise loses the sentence that says what actually broke, on the one
+  // path where the operator has nothing else to read.
+  const said = (fault: unknown): string => {
+    const head = fault instanceof Error ? fault.message : String(fault);
+    const cause = fault instanceof Error ? fault.cause : undefined;
+    return cause === undefined ? head : `${head}: ${said(cause)}`;
+  };
+  console.error(said(error));
   process.exitCode = 1;
+  // A pool with an idle client keeps the event loop alive, so a throw
+  // between the probe and `listen` would hang at exit code 1 rather than
+  // ending. The guarded span used to stop at the probe while its own comment
+  // claimed it reached `listen`; closing here covers the whole of it.
+  void closePool?.();
 });

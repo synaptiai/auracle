@@ -1058,8 +1058,10 @@ to start when it cannot reach that ledger. So a wrong URL fails at startup
 rather than one page at a time.
 
 The console answers only the host names it was started for. It refuses a
-form post that did not come from one of its own pages. Those two checks are
-the approval's defence.
+form post that did not come from one of its own pages. Those two checks stop
+a browser attack. They are not access control. Anyone who reaches the port
+can send both signals. So the network the console binds to decides who
+approves a reply.
 
 It derives the host names from the bind. That covers loopback under every
 spelling a browser sends, and it covers no other name. Put a reverse proxy in
@@ -1074,6 +1076,11 @@ CONSOLE_ALLOWED_HOSTS=console.internal.example,console.internal.example:8443 \
 Each entry is a host and a port, exactly as the browser sends it. Omit the
 port only for port 80 or 443. An unnamed proxy gets every request refused,
 and the console still looks healthy from the machine it runs on.
+
+Naming any host replaces the derived names. The variable used to add to them,
+so the console still answered `Host: localhost:8787`. A caller who reached
+the port directly then passed the check and skipped the proxy. Name loopback
+as well if you want it, and the list then says so.
 
 A read from a script needs no header. An approval does: send
 `Sec-Fetch-Site: same-origin`, or an `Origin` the console answers to. Every
@@ -1093,11 +1100,77 @@ accordingly.
 Five surfaces read live data: runs, one run in detail, the approval queue, the
 control bands and the partition latency.
 
-Two of them show a dash where the gate values go. The console reads the
-escalation module. That module reports what a person needs to work the
-queue, and it carries neither agreement nor coverage. The dash says "not
-read by the console" and means exactly that. It is not a claim that the
-run failed to reach a gate.
+The console ships no JavaScript. Two controls work without one, and each is a
+link.
+
+The runs surface filters by state. Each state in the ledger has a link, and
+the link asks the ledger for that state. It does not hide rows after the read.
+The runs list holds 200 rows. A filter applied after that read would show
+the newest 200 runs and call them the gated ones. A state the ledger has no
+such thing as answers 404.
+
+The rail carries a theme toggle. It sets a cookie and returns to the surface
+you were reading. The console answers dark until the cookie says otherwise.
+
+The approval queue lists every waiting run and draws one of them. The list
+holds every one, because a cap drops the oldest waiting replies off the end. A
+card for each row makes the page as long as the backlog. A queue of 476 runs
+renders 8 MB. The list selects, and the pane draws the selection.
+
+The rail also names the ledger the console is bound to. It names the host and
+the database, never the credentials. A refused request gets no rail at all, so
+it learns no database name.
+
+The run detail surface reads one run's journal. It shows the steps the run
+journals and the documents the retriever returns. It shows the two gate values
+beside the thresholds that judged them.
+
+The approval queue shows a dash where the gate values go. It reads the
+escalation module, which reports what a person needs to work the queue and
+carries neither number. Reading the journal for every waiting run would be one
+statement for each row of an uncapped list. The dash says "not read by the
+console" and means that. Open the run to read them.
+
+Two blocks of the design do not ship. Both need data the ledger does not hold.
+
+No step carries a duration. `step_journal` has no timestamp and no sequence
+column, so no step has a start or an end. The order the surface draws is the
+reader module's own, and the module says so. `cost_micros` on a journal row is
+the run's cost when that step finished, not the step's own cost.
+
+No document carries a rank. The retriever fuses ranks and keeps no score
+(DEC-21), and it journals an ordered list of ids. The reranker may reorder
+that list, and nothing stored names which order this is. So the surface shows the
+recorded position and calls it that. It names no channel either, because
+naming the fusion would claim the fusion set the order.
+
+The console trims an escalation reason at its first colon. The coordinator writes a
+reason from a closed set. The relay and the consumer interpolate a message
+into the same field. An adapter message can quote a customer address. Read the
+whole text with `pnpm run escalations`.
+
+The console records the parked draft as present and never shows it. It holds the composed
+reply, and this console authenticates nobody. Read and edit it in the
+helpdesk, which is where DEC-11 keeps it.
+
+The console records the approval it makes. The line names the run, the
+outcome, the `Host` and the address it came from. The ledger records that a
+run was approved and never which client asked. Reaching this console is the
+whole access control, so the console keeps that record itself.
+
+A fault answers a tag, not a reason. The log carries the reason under the same
+tag. An adapter or a driver message can quote a customer address, and this
+console authenticates nobody. Every other read here withholds such text, and
+the fault page now does the same.
+
+A refused request answers as a refusal. An oversized approval form answers
+413. An address the console cannot read answers 400. Neither reports the
+console as broken by a request it declined.
+
+A park step names what the ledger holds. A park that crashed records a key and
+no draft. So a draft may sit in the helpdesk that nobody can name. A park the
+adapter refused records the fault. The surface names both, and shows neither
+message.
 
 **The console makes one write, and it is the approval.** Every other statement it issues is a SELECT. So it is otherwise as safe against a live database as `pnpm run bands` and `pnpm run latency`. That claim is its own, not inherited. `console/src/select-only.test.ts` refuses any SQL keyword in
 the package, refuses a call to `pool.query`, and holds the approval to one

@@ -7,14 +7,17 @@
 // Three days rather than forty-five. The property is the same at either size
 // and the suite runs against a container.
 import { Pool } from 'pg';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
 import { applyLedgerSchema } from '../test-support/schema.js';
 import { readDays } from '../bands/query.js';
 import { readLatency } from '../latency/query.js';
-import { planHistory } from './plan.js';
-import { writeHistory } from './write.js';
+import { approveRun } from '../approval/approve.js';
+import { listEscalations } from '../escalations/query.js';
+import { evaluatePolicyDetailed, SEED_THRESHOLDS } from '../policy/policy.js';
+import { SEED_DOCUMENTS, planHistory, policyInputFor, type PlannedRun } from './plan.js';
+import { writeDocuments, writeHistory } from './write.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 8 });
 
@@ -23,7 +26,12 @@ await pool.query('SELECT 1');
 const OPTIONS = { seed: 0x41726361, days: 3, endDay: '2026-06-30', partitions: 4, provider: 'stub' };
 
 async function truncate(): Promise<void> {
-  await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn');
+  // `document` too: the seeder writes the small corpus a `retrieve` row's
+  // ids point at, and a case that counted rows would otherwise count another
+  // suite's index as well.
+  await pool.query(
+    'TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn, document',
+  );
 }
 
 /** Every column of the ledger a second run must reproduce exactly. */
@@ -45,6 +53,49 @@ async function ledgerFingerprint(): Promise<string> {
 afterAll(async () => {
   await truncate();
   await pool.end();
+});
+
+describe('the document corpus the seeder writes', () => {
+  // The schema once, the truncate per case. Every other block here re-applies
+  // the whole migration set before each test, and each replay is DDL against
+  // a database the run shares — which is where `applyLedgerSchema` deadlocks
+  // when the machine is short of memory. This block adds none of that.
+  beforeAll(async () => {
+    await applyLedgerSchema(pool);
+  });
+
+  beforeEach(async () => {
+    await truncate();
+  });
+
+  // Seeded documents are not inert. They go into `document`, which is the
+  // table the retriever searches, and every one carries a review date years
+  // out — so they pass the freshness filter and can be retrieved. Against a
+  // ledger that also serves live traffic, invented refund and data-deletion
+  // policy could ground a reply to a real customer.
+  it('refuses a ledger holding a document it did not write', async () => {
+    await pool.query(
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding)
+       VALUES ('KB-REAL-1', 'document', 'a real article', 'real text', 'support', '2027-01-01',
+               $1::vector)`,
+      [`[${Array.from({ length: 1536 }, () => 0).join(',')}]`],
+    );
+    await expect(writeDocuments(pool)).rejects.toThrow(/KB-REAL-1/);
+    // Nothing of its own landed beside it.
+    const after = await pool.query("SELECT count(*)::int AS n FROM document WHERE doc_id LIKE 'SYN-%'");
+    expect(after.rows[0]?.n).toBe(0);
+  });
+
+  it('writes the corpus into a ledger holding only its own documents', async () => {
+    const written = await writeDocuments(pool);
+    expect(written).toBe(SEED_DOCUMENTS.length);
+    // Counted from the ledger, so the number reports what landed rather than
+    // what the plan held.
+    const rows = await pool.query("SELECT count(*)::int AS n FROM document WHERE doc_id LIKE 'SYN-%'");
+    expect(rows.rows[0]?.n).toBe(SEED_DOCUMENTS.length);
+    // Re-applying is the retriever's own upsert, so it stays at the same count.
+    expect(await writeDocuments(pool)).toBe(SEED_DOCUMENTS.length);
+  });
 });
 
 describe('the seeded history', () => {
@@ -162,10 +213,25 @@ describe('the readers over the seeded history', () => {
       new Date('2026-07-01T00:00:00Z'),
     );
     const day = days.at(-1)!;
-    expect(day.samples.abstain_rate.value).not.toBeNull();
-    expect(day.samples.gate_pass_rate.value).not.toBeNull();
-    expect(day.samples.approval_edit_distance.value).not.toBeNull();
-    expect(day.samples.relay_delivery_unknown_count.value).not.toBeNull();
+    // Ranges, not presence. `not.toBeNull` passed on any wrong-but-present
+    // number, which is most of the ways a seeder can go wrong.
+    const rate = (v: number | null): number => {
+      expect(v).not.toBeNull();
+      return v as number;
+    };
+    // Three of the four are rates, so they live in [0, 1] by definition.
+    expect(rate(day.samples.abstain_rate.value)).toBeGreaterThanOrEqual(0);
+    expect(rate(day.samples.abstain_rate.value)).toBeLessThanOrEqual(1);
+    expect(rate(day.samples.gate_pass_rate.value)).toBeGreaterThanOrEqual(0);
+    expect(rate(day.samples.gate_pass_rate.value)).toBeLessThanOrEqual(1);
+    // db/003 declares this one a normalized distance in [0, 1]. It held a
+    // rounded token count near 24 until the seeder was corrected.
+    expect(rate(day.samples.approval_edit_distance.value)).toBeGreaterThanOrEqual(0);
+    expect(rate(day.samples.approval_edit_distance.value)).toBeLessThanOrEqual(1);
+    // A count, so a whole number that is not negative.
+    const unknowns = rate(day.samples.relay_delivery_unknown_count.value);
+    expect(Number.isInteger(unknowns)).toBe(true);
+    expect(unknowns).toBeGreaterThanOrEqual(0);
   });
 
   // No seeded run lands in a column that means the ledger is wrong.
@@ -195,5 +261,257 @@ describe('the readers over the seeded history', () => {
     const report = await readLatency(pool);
     expect(report.partitions).toHaveLength(OPTIONS.partitions);
     for (const p of report.partitions) expect(p.wait.count).toBeGreaterThan(0);
+  });
+});
+
+
+// The steps a seeded run journals, read back off the ledger.
+//
+// The seeder wrote a compose row and sometimes a gate row, and nothing else.
+// So every reader that walks the journal saw a run that never classified,
+// never retrieved and never parked — and the approval path did worse than
+// misread it: `approveRun` threw `awaits approval but journals no park step`
+// on every parked run in the history, which is an exception rather than an
+// `ApproveOutcome`. That is the defect these cases hold shut.
+describe('the journal a seeded run leaves', () => {
+  let plan: PlannedRun[];
+
+  beforeEach(async () => {
+    await applyLedgerSchema(pool);
+    await truncate();
+    plan = planHistory(OPTIONS);
+    await writeHistory(pool, plan);
+  });
+
+  async function stepsOf(runId: string): Promise<Map<string, { status: string; result: Record<string, unknown> }>> {
+    const { rows } = await pool.query(
+      'SELECT step_id, status, result FROM step_journal WHERE run_id = $1',
+      [runId],
+    );
+    return new Map(rows.map((r: { step_id: string; status: string; result: Record<string, unknown> }) =>
+      [r.step_id, { status: r.status, result: r.result }]));
+  }
+
+  it('writes the steps the run\'s own outcome implies, and no others', async () => {
+    for (const run of plan.slice(0, 40)) {
+      const steps = await stepsOf(run.runId);
+      expect([...steps.keys()].sort()).toEqual(
+        ['classify', 'retrieve', 'compose']
+          .concat(run.gate === null ? [] : ['gate'])
+          .concat(run.park === null ? [] : ['park'])
+          .concat(run.escalation === null ? [] : ['escalate'])
+          .sort(),
+      );
+      expect(steps.get('classify')!.result).toEqual({
+        intentId: run.classification.intentId,
+        agreement: run.classification.agreement,
+      });
+      expect(steps.get('retrieve')!.result).toEqual({
+        docIds: run.docIds,
+        embed_model_ver: 'seed',
+      });
+      expect(steps.get('compose')!.status).toBe(run.abstained ? 'abstained' : 'done');
+      expect(steps.get('compose')!.result).toEqual({
+        abstained: run.abstained,
+        claimCount: run.claimCount,
+        staleDocumentIds: [],
+        provider: 'stub',
+      });
+      if (run.escalation !== null) {
+        expect(steps.get('escalate')!.result).toEqual({ reason: run.escalation });
+      }
+      if (run.gate !== null) {
+        expect(steps.get('gate')!.result).toEqual({
+          groundedness: run.gate.groundedness,
+          decision: run.gate.decision,
+          reason: run.reason,
+          // DEC-07: the numbers the verdict was reached under, so a reader
+          // holding a ledger written across a rolling restart can tell which
+          // pair each run was judged by.
+          thresholds: {
+            agreement: SEED_THRESHOLDS.agreement,
+            groundednessBlock: SEED_THRESHOLDS.groundednessBlock,
+            groundednessReview: SEED_THRESHOLDS.groundednessReview,
+          },
+        });
+      }
+    }
+  });
+
+  // Read back through the engine, off the stored rows rather than the plan.
+  // A planner that agreed with the engine and a writer that dropped a field
+  // would pass the pure case and fail this one.
+  it('stores numbers the policy engine still reads as the stored reason', async () => {
+    const { rows } = await pool.query(
+      `SELECT c.run_id,
+              (c.result->>'agreement')::double precision AS agreement,
+              (g.result->>'groundedness')::double precision AS groundedness,
+              g.result->>'reason' AS reason
+         FROM step_journal c
+         JOIN step_journal g ON g.run_id = c.run_id AND g.step_id = 'gate'
+        WHERE c.step_id = 'classify'`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    const byId = new Map(plan.map((run) => [run.runId, run]));
+    for (const row of rows as { run_id: string; agreement: number; groundedness: number; reason: string }[]) {
+      const run = byId.get(row.run_id)!;
+      const input = policyInputFor(run)!;
+      expect(row.agreement).toBe(input.agreement);
+      expect(row.groundedness).toBe(input.groundedness);
+      expect(evaluatePolicyDetailed({ ...input, agreement: row.agreement, groundedness: row.groundedness }).reason)
+        .toBe(row.reason);
+    }
+  });
+
+  // Every identifier a `retrieve` row names resolves to a title. Without the
+  // corpus a reader holding this history sees five identifiers per run and
+  // can resolve none of them.
+  it('indexes every document its retrieve rows point at', async () => {
+    const cited = new Set(plan.flatMap((run) => run.docIds));
+    const { rows } = await pool.query('SELECT doc_id, title FROM document');
+    const titles = new Map(rows.map((r: { doc_id: string; title: string }) => [r.doc_id, r.title]));
+    expect(titles.size).toBe(SEED_DOCUMENTS.length);
+    for (const docId of cited) {
+      expect(titles.get(docId)?.length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  // The escalation queue reads its reason from the `escalate` step and from
+  // nowhere else, and `pnpm run escalations` and the operator console's runs
+  // list are both served by that statement. Every seeded escalation reported
+  // a null reason to both, so the console's Reason column was an em dash for
+  // all of them. Asserted through the reader rather than over the rows: a
+  // journal row the query does not join to would pass a row count and fail
+  // here.
+  it('gives the escalation queue a reason for every escalated run', async () => {
+    const items = await listEscalations(pool, { state: 'escalated' });
+    const planned = new Map(plan.map((run) => [run.runId, run]));
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.length).toBe(plan.filter((r) => r.state === 'escalated').length);
+    for (const item of items) {
+      expect(item.reason).toBe(planned.get(item.runId)!.escalation);
+      expect(item.reason).not.toBeNull();
+      // The pin that tells an operator this backlog is synthetic.
+      expect(item.promptVer).toBe('seed');
+    }
+  });
+
+  // The two vocabularies stay apart in the ledger, not only in the planner.
+  it('writes the escalation vocabulary on the escalate step alone', async () => {
+    const { rows } = await pool.query(
+      `SELECT s.result->>'reason' AS reason, count(*)::int AS n
+         FROM step_journal s WHERE s.step_id = 'escalate' GROUP BY 1 ORDER BY 1`,
+    );
+    // A subset, and named as one. Three days hold roughly 160 runs, and an
+    // unknown delivery is two per cent of the automatic ones, so this window
+    // need not contain a single relay escalation. The full set is covered in
+    // `plan.test.ts`, over forty-five days.
+    const reasons = rows.map((r: { reason: string }) => r.reason);
+    for (const reason of reasons) {
+      expect(['composer_abstained', 'policy_escalated', 'relay_delivery_unknown'])
+        .toContain(reason);
+    }
+    expect(reasons).toContain('composer_abstained');
+    expect(reasons).toContain('policy_escalated');
+    const crossed = await pool.query(
+      `SELECT count(*)::int AS n FROM step_journal
+        WHERE step_id = 'gate' AND result->>'reason' = ANY($1::text[])`,
+      [['composer_abstained', 'policy_escalated', 'relay_delivery_unknown']],
+    );
+    expect((crossed.rows[0] as { n: number }).n).toBe(0);
+  });
+
+  // A run names a conversation on its own row, so something has to hold one.
+  // Without it DEC-37 history is empty for every seeded turn, and the
+  // approval path rolls back rather than record a reply on a turn that is not
+  // there.
+  it('opens the conversation and the turn each run answers', async () => {
+    const { rows } = await pool.query(
+      `SELECT c.primary_ticket_id, c.turn_counter, t.turn_number, t.body_text
+         FROM conversation c
+         JOIN turn t ON t.conversation_id = c.conversation_id
+        WHERE c.conversation_id = $1`,
+      [plan[0]!.conversationId],
+    );
+    expect(rows).toHaveLength(1);
+    const row = rows[0] as { primary_ticket_id: string; turn_counter: number; turn_number: number; body_text: string };
+    expect(row.primary_ticket_id).toBe(plan[0]!.ticketId);
+    // The number intake's counter assigns first, and the number the park
+    // record cites (DEC-38).
+    expect(row.turn_number).toBe(1);
+    expect(row.turn_counter).toBe(2);
+    expect(row.body_text.length).toBeGreaterThan(0);
+    const counts = await pool.query('SELECT count(*)::int AS n FROM turn');
+    expect((counts.rows[0] as { n: number }).n).toBe(new Set(plan.map((r) => r.conversationId)).size);
+  });
+
+  // The reply a person approved becomes the agent's half of the conversation
+  // (DEC-37). A prompt built from a conversation that records only the
+  // customer reads as a monologue.
+  it('records the approved reply on the turn it answers', async () => {
+    const reply = plan.find(
+      (run) => run.state === 'awaiting_approval' && run.reason === 'customer_visible',
+    )!;
+    await approveRun(pool, reply.runId);
+    const { rows } = await pool.query(
+      'SELECT approved_reply_text FROM turn WHERE conversation_id = $1 AND turn_number = 1',
+      [reply.conversationId],
+    );
+    expect((rows[0] as { approved_reply_text: string }).approved_reply_text).toBe(reply.park!.body);
+  });
+
+  // The defect, stated as the outcome the approval path now returns. It threw
+  // here before, from `approveRun`'s own check that a parked run journals a
+  // park step, so no console and no operator could act on a seeded history at
+  // all.
+  it('lets a person approve a parked run', async () => {
+    const parked = plan.filter((run) => run.state === 'awaiting_approval');
+    expect(parked.length).toBeGreaterThan(0);
+    for (const run of parked.slice(0, 20)) {
+      const outcome = await approveRun(pool, run.runId);
+      expect(outcome.outcome).toBe('approved');
+      const { rows } = await pool.query(
+        'SELECT state FROM run WHERE run_id = $1',
+        [run.runId],
+      );
+      expect((rows[0] as { state: string }).state).toBe('resolved');
+    }
+  });
+
+  // And it relays: a customer reply carries the draft handle the relay sends
+  // against (DEC-11), a ledger-only park carries the payload `performAction`
+  // takes (DEC-34). A record with neither is one `approveRun` refuses.
+  it('queues an outbox record the relay can dispatch', async () => {
+    const parked = plan.filter((run) => run.state === 'awaiting_approval');
+    for (const run of parked.slice(0, 20)) {
+      await approveRun(pool, run.runId);
+      const { rows } = await pool.query(
+        "SELECT action_class, delivery, payload FROM outbox WHERE run_id = $1 AND step_id = 'approve'",
+        [run.runId],
+      );
+      expect(rows).toHaveLength(1);
+      const row = rows[0] as { action_class: string; delivery: string; payload: Record<string, unknown> };
+      expect(row.action_class).toBe(run.park!.actionClass);
+      expect(row.delivery).toBe(run.park!.delivery);
+      if (run.reason === 'customer_visible') {
+        expect(row.payload['draftExternalId']).toBe(run.park!.draftExternalId);
+      } else {
+        expect(row.payload).toEqual(run.park!.payload);
+      }
+    }
+  });
+
+  // The column's contract is a normalized distance in [0, 1] (db/003). The
+  // seeder wrote a rounded token count near 24, so the control band reported
+  // a mean twenty-four times the worst value the metric can take.
+  it('records an approval-edit distance on the scale the column declares', async () => {
+    const { rows } = await pool.query(
+      'SELECT approval_edit_distance AS d FROM run WHERE approval_edit_distance IS NOT NULL',
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows as { d: number }[]) {
+      expect(row.d).toBeGreaterThanOrEqual(0);
+      expect(row.d).toBeLessThanOrEqual(1);
+    }
   });
 });

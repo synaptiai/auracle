@@ -34,6 +34,20 @@ export interface GateValues {
   readonly agreement: number | null;
   /** Null when no coverage was measured for the run. */
   readonly coverage: number | null;
+  /**
+   * The threshold this run's agreement was compared against.
+   *
+   * Not stored. The ledger journals the whole threshold set beside the
+   * coverage value, and the intent beside the agreement; the scalar is the
+   * set applied to the intent. Null when either half is missing, because a
+   * threshold from a set this run did not carry is a different run's number.
+   */
+  readonly agreementThreshold?: number | null;
+  /** What the classifier saw, worded by the caller. */
+  readonly agreementDetail?: string | null;
+  /** DEC-07's two coverage lines, as journalled with the run. */
+  readonly coverageBlock?: number | null;
+  readonly coverageReview?: number | null;
 }
 
 /**
@@ -41,16 +55,74 @@ export interface GateValues {
  *
  * There is deliberately no function here that takes both and returns one
  * number. The absence is the rule: a caller cannot ask for a combined score
- * because nothing offers one.
+ * because nothing offers one. Each card is built from one gate's fields, and
+ * neither builder can see the other's.
  */
 export function renderGates(values: GateValues): string {
   return [
-    '<dl class="gates">',
-    '<dt class="lbl">Agreement</dt>',
-    `<dd class="m">${gateValue(values.agreement)}</dd>`,
-    '<dt class="lbl">Coverage</dt>',
-    `<dd class="m">${gateValue(values.coverage)}</dd>`,
-    '</dl>',
+    '<div class="gates">',
+    gateCard({
+      label: 'Sample agreement',
+      value: values.agreement,
+      detail: values.agreementDetail ?? null,
+      marks: values.agreementThreshold === undefined || values.agreementThreshold === null
+        ? []
+        : [{ at: values.agreementThreshold, name: 'threshold' }],
+    }),
+    gateCard({
+      label: 'Groundedness coverage',
+      value: values.coverage,
+      detail: null,
+      marks: [
+        ...(values.coverageBlock === undefined || values.coverageBlock === null
+          ? [] : [{ at: values.coverageBlock, name: 'block' }]),
+        ...(values.coverageReview === undefined || values.coverageReview === null
+          ? [] : [{ at: values.coverageReview, name: 'review' }]),
+      ],
+    }),
+    '</div>',
+  ].join('');
+}
+
+interface GateCard {
+  readonly label: string;
+  readonly value: number | null;
+  readonly detail: string | null;
+  readonly marks: readonly { readonly at: number; readonly name: string }[];
+}
+
+/**
+ * One gate, with the lines it was judged against.
+ *
+ * The bar is drawn only when there is a value. A track with no fill and a
+ * track filled to zero look alike at a glance, and only one of them is a
+ * measurement.
+ */
+function gateCard(gate: GateCard): string {
+  const named = gate.marks.length === 0
+    ? ''
+    : `<div class="m" style="font-size:11px; color:var(--mut)">${
+      gate.marks.map((m) => `${escapeHtml(m.name)} ${m.at.toFixed(3)}`).join(' · ')}</div>`;
+  const bar = gate.value === null ? '' : [
+    '<div class="track">',
+    `<i style="width:${(Math.min(1, Math.max(0, gate.value)) * 100).toFixed(1)}%;`,
+    ' background:var(--accent)"></i>',
+    ...gate.marks.map((m) =>
+      `<b style="left:${(Math.min(1, Math.max(0, m.at)) * 100).toFixed(1)}%"></b>`),
+    '</div>',
+  ].join('');
+  return [
+    '<div class="gate">',
+    `<div class="lbl">${escapeHtml(gate.label)}</div>`,
+    '<div style="display:flex; align-items:baseline; gap:9px; flex-wrap:wrap">',
+    `<span class="big">${gateValue(gate.value)}</span>`,
+    gate.detail === null
+      ? ''
+      : `<span class="m" style="font-size:11px; color:var(--dim)">${escapeHtml(gate.detail)}</span>`,
+    '</div>',
+    bar,
+    named,
+    '</div>',
   ].join('');
 }
 
@@ -68,7 +140,9 @@ function gateValue(value: number | null): string {
   // and this console reads neither value. Claiming the run did not reach the
   // gate would be an assertion about the ledger that nothing here checked.
   if (value === null) return '<span title="not read by the console">—</span>';
-  return escapeHtml(value.toFixed(2));
+  // Three places, not two. Agreement is a count out of nine, so 1/9 reads
+  // 0.111 and two places round two distinct sample counts onto one number.
+  return escapeHtml(value.toFixed(3));
 }
 
 export interface MetricValue {
@@ -106,4 +180,32 @@ export function renderMetricValue(metric: MetricValue): string {
   if (named === null) return `<span class="m">${escapeHtml(String(metric.value))}</span>`;
   return `<span class="m" data-shortfall="${escapeHtml(named)}">`
     + `${escapeHtml(String(metric.value))} <span class="mut">(${escapeHtml(named)})</span></span>`;
+}
+
+/**
+ * An escalation reason, without whatever was interpolated into it.
+ *
+ * The `escalate` journal row's `reason` is not a closed vocabulary. The
+ * coordinator writes one of its own `EscalationReason` values, but the relay
+ * writes `delivery_unknown: <what the adapter threw>` and
+ * `malformed_payload: <error text>`, and the consumer writes
+ * `intake_abandoned after N attempts: <reason>`. The first of those ends in
+ * `transport.sendMail`, and an SMTP rejection routinely quotes the recipient
+ * address.
+ *
+ * This console authenticates nobody, so a customer address must not reach it
+ * through a field nobody thought of as carrying one (DEC-18). The head before
+ * the first colon is the part the system chose; everything after it is the
+ * part something else wrote. An operator who needs the whole text reads it
+ * with `pnpm run escalations`.
+ *
+ * Escaping is not withholding. The tail would render harmlessly and still be
+ * on the screen.
+ */
+export function escalationHead(reason: string | null): string | null {
+  if (reason === null) return null;
+  const colon = reason.indexOf(':');
+  if (colon === -1) return reason;
+  // Named, so the page does not read as though the reason were simply short.
+  return `${reason.slice(0, colon).trim()} (detail withheld)`;
 }

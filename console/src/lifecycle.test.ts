@@ -68,7 +68,11 @@ describe('the console as a long-running process', () => {
   // resolved, so the top-level catch never sees it.
   it('handles a bind failure by name rather than by stack', () => {
     expect(MAIN).toMatch(/server\.on\(\s*'error'/);
-    expect(MAIN).toContain('CONSOLE_PORT');
+    // Inside the handler, not anywhere in the file. `CONSOLE_PORT` also names
+    // the header comment and three other lines, so a file-wide check held
+    // whatever the handler said.
+    const handler = MAIN.slice(MAIN.indexOf("server.on('error'"));
+    expect(handler.slice(0, handler.indexOf('});'))).toContain('CONSOLE_PORT');
   });
 
   // An approval cut off mid-flight leaves the operator unable to tell whether
@@ -81,7 +85,23 @@ describe('the console as a long-running process', () => {
     // inside the shutdown block, so the guard's own definition above cannot
     // satisfy the ordering by accident.
     const block = MAIN.slice(MAIN.indexOf('const shutdown ='));
-    expect(block.indexOf('server.close(')).toBeGreaterThan(-1);
-    expect(block.indexOf('server.close(')).toBeLessThan(block.indexOf('endPool()'));
+    // The pool is ended only through `finish`, and `finish` is what `close`
+    // calls. Asserting the two strings in order stopped describing the code
+    // once `finish` was named above the call that takes it.
+    expect(block).toMatch(/server\.close\(finish\)/);
+    expect(block).toMatch(/const finish[\s\S]*?endPool\(\)/);
+    expect(block.split('endPool()').length - 1).toBe(1);
+  });
+
+  // A keep-alive socket sitting idle holds `close` open on its own, and an
+  // in-flight request holds it to Node's 300 s request timeout. The
+  // supervisor's grace period expires first and sends SIGKILL, which is the
+  // one signal that can cut an approval mid-flight (DEC-30).
+  it('bounds the wait rather than holding the process open', () => {
+    const block = MAIN.slice(MAIN.indexOf('const shutdown ='));
+    expect(block).toMatch(/server\.closeIdleConnections\(\)/);
+    expect(block).toMatch(/setTimeout\(finish, SHUTDOWN_GRACE_MS\)/);
+    // Unreffed, or the timer is itself a reason the process stays alive.
+    expect(block).toMatch(/\.unref\(\)/);
   });
 });

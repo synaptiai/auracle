@@ -3,21 +3,33 @@
 // A band built from a history nobody can reproduce is a number nobody can
 // check, so determinism is the first property and it is asserted directly:
 // two plans from one seed are identical, and two seeds differ.
+import { createHash } from 'node:crypto';
+
 import { describe, expect, it } from 'vitest';
 
 import {
+  GATE_AGREEMENT,
+  GROUNDEDNESS_BLOCK,
+  GROUNDEDNESS_REVIEW,
   POLICY_REASONS,
+  SEED_THRESHOLDS,
   evaluatePolicyDetailed,
   passedAgreementGate,
   reachedAgreementGate,
   type PolicyReason,
 } from '../policy/policy.js';
 import { partitionOf } from '../coordinator/coordinator.js';
+import { CLASSIFIER_K } from '../classifier/classifier.js';
+import { loadTaxonomy } from '../fixtures/load.js';
 import {
+  SEED_DOCUMENTS,
+  SEED_INTENTS,
   dayBefore,
   logNormal,
+  logNormalUnit,
   mulberry32,
   planHistory,
+  policyInputFor,
   seededUuid,
   stateFor,
 } from './plan.js';
@@ -545,5 +557,410 @@ describe('logNormal', () => {
       .sort((a, b) => a - b);
     expect(draws[10_000]!).toBeGreaterThan(13_000);
     expect(draws[10_000]!).toBeLessThan(15_000);
+  });
+});
+
+// The steps a run journals, and the numbers that have to agree with them.
+//
+// A gate reason is a claim about two numbers. Drawn apart from them, the
+// claim and the numbers disagree on some fraction of the history, and a
+// console that renders a reason beside its agreement and its coverage shows
+// the disagreement on screen with nothing to say which side is wrong. So the
+// engine itself is the assertion here: every run is fed back through
+// `evaluatePolicyDetailed` and must come out with the reason it was planned
+// under.
+describe('the steps each run journals', () => {
+  const plan = planHistory(OPTIONS);
+
+  it('gets the planned reason back out of the policy engine', () => {
+    let gated = 0;
+    for (const run of plan) {
+      const input = policyInputFor(run);
+      if (input === null) {
+        // An abstain reaches no engine: the coordinator escalates before the
+        // gate step starts.
+        expect(run.abstained).toBe(true);
+        expect(run.reason).toBeNull();
+        continue;
+      }
+      gated += 1;
+      const outcome = evaluatePolicyDetailed(input);
+      expect(outcome.reason).toBe(run.reason);
+      expect(outcome.decision).toBe(run.gate!.decision);
+    }
+    // Every reason in the tables, not just the common ones.
+    expect(gated).toBeGreaterThan(0);
+    const seen = new Set(plan.map((r) => r.reason).filter((r) => r !== null));
+    expect(seen.size).toBe(POLICY_REASONS.length - 1);
+    // `no_read_back` is the one reason no table draws: every shipped adapter
+    // declares read-back, so a history that produced it would describe an
+    // adapter this repository does not have.
+    expect(seen.has('no_read_back')).toBe(false);
+  });
+
+  // The thresholds recorded are the engine's own exported set, so a reader
+  // sees the seed pair rather than a pair invented for the seeder.
+  it('judges every run against the policy engine\'s own seed thresholds', () => {
+    for (const run of plan) {
+      const input = policyInputFor(run);
+      if (input === null) continue;
+      expect(input.thresholds).toBe(SEED_THRESHOLDS);
+    }
+    expect(SEED_THRESHOLDS.agreement).toBe(GATE_AGREEMENT);
+    expect(SEED_THRESHOLDS.groundednessBlock).toBe(GROUNDEDNESS_BLOCK);
+    expect(SEED_THRESHOLDS.groundednessReview).toBe(GROUNDEDNESS_REVIEW);
+  });
+
+  // Agreement is a count of agreeing samples over CLASSIFIER_K. Any other
+  // value is a number the classifier cannot report, and a console rendering
+  // it as "0.63 of nine samples" would be describing an impossible run.
+  it('reports an agreement the classifier could have counted', () => {
+    for (const run of plan) {
+      const agreement = run.classification.agreement;
+      expect(Number.isInteger(agreement * CLASSIFIER_K)).toBe(true);
+      expect(agreement).toBeGreaterThan(0);
+      expect(agreement).toBeLessThanOrEqual(1);
+    }
+  });
+
+  // Coverage is `supported / claims.length`, so it is a ratio over the claim
+  // count journaled beside it. A coverage drawn free of that count is a value
+  // no composition could have produced.
+  it('reports a coverage the claim count beside it could produce', () => {
+    for (const run of plan) {
+      if (run.gate === null) {
+        expect(run.claimCount).toBe(0);
+        continue;
+      }
+      expect(run.claimCount).toBeGreaterThan(0);
+      const supported = run.gate.groundedness * run.claimCount;
+      expect(Math.abs(supported - Math.round(supported))).toBeLessThan(1e-9);
+      expect(run.gate.groundedness).toBeGreaterThanOrEqual(0);
+      expect(run.gate.groundedness).toBeLessThanOrEqual(1);
+    }
+  });
+
+  // DEC-13 keeps a high-risk intent off the automatic path whatever the gates
+  // read, so a run that got past the risk check cannot carry one. The reasons
+  // that return before that check can carry any intent, and must: DEC-12
+  // sends every customer reply to a person, and a refund reply is a customer
+  // reply first.
+  it('carries an intent the risk check allows', () => {
+    const tiers = new Map(SEED_INTENTS.map((intent) => [intent.id, intent.riskTier]));
+    let highTierReplies = 0;
+    for (const run of plan) {
+      const tier = tiers.get(run.classification.intentId);
+      expect(tier).toBe(run.classification.riskTier);
+      if (run.reason === 'high_risk') expect(tier).toBe('high');
+      if (run.reason !== null && reachedAgreementGate(run.reason)) expect(tier).not.toBe('high');
+      if (run.reason === 'customer_visible' && tier === 'high') highTierReplies += 1;
+    }
+    expect(highTierReplies).toBeGreaterThan(0);
+  });
+
+  // The documents a run cites must be documents the index holds, or a reader
+  // joins five identifiers to nothing.
+  it('cites documents the seeded index holds, without repeating one', () => {
+    const known = new Set(SEED_DOCUMENTS.map((doc) => doc.docId));
+    for (const run of plan) {
+      expect(run.docIds.length).toBeGreaterThanOrEqual(3);
+      // Five is the coordinator's own retrieval limit.
+      expect(run.docIds.length).toBeLessThanOrEqual(5);
+      expect(new Set(run.docIds).size).toBe(run.docIds.length);
+      for (const docId of run.docIds) expect(known.has(docId)).toBe(true);
+    }
+  });
+
+  // A park record `approveRun` refuses is a park record that leaves the run
+  // stuck: `parkRecordFrom` demands a non-empty body and either a draft
+  // handle or an action payload.
+  it('parks a record the approval path can read back', () => {
+    let drafts = 0;
+    let ledgerOnly = 0;
+    for (const run of plan) {
+      if (run.gate?.decision !== 'gated') {
+        expect(run.park).toBeNull();
+        continue;
+      }
+      const park = run.park!;
+      expect(typeof park.body).toBe('string');
+      expect(park.body.length).toBeGreaterThan(0);
+      expect(park.actionClass.length).toBeGreaterThan(0);
+      expect(['at_least_once', 'at_most_once']).toContain(park.delivery);
+      expect(Number.isInteger(park.turnNumber)).toBe(true);
+      if (run.reason === 'customer_visible') {
+        // DEC-11: the draft lives in the helpdesk, and the handle is what the
+        // relay sends against.
+        expect(park.draftExternalId).toMatch(/^SYN-DRAFT-/);
+        drafts += 1;
+      } else {
+        // DEC-34: a gated write with no draft parks in the ledger alone, and
+        // approval relays the journaled payload.
+        expect(park.draftExternalId).toBeUndefined();
+        expect(park.payload).toBeDefined();
+        ledgerOnly += 1;
+      }
+    }
+    expect(drafts).toBeGreaterThan(0);
+    expect(ledgerOnly).toBeGreaterThan(0);
+  });
+
+  // DEC-29 binds the delivery rule to the action class, and the coordinator
+  // refuses a compensation that declares anything else: a duplicate refund
+  // costs money, so an uncertain send escalates rather than retries (DEC-30).
+  it('pairs each action class with the delivery rule it declares', () => {
+    const performable = new Set(['route_ticket', 'close_ticket', 'compensate']);
+    for (const run of plan) {
+      if (run.actionClass === 'compensate') {
+        expect(run.delivery).toBe('at_most_once');
+        expect(run.reason === 'irreversible' || run.abstained).toBe(true);
+      } else {
+        expect(run.delivery).toBe('at_least_once');
+      }
+      if (run.actionClass === 'customer_reply') {
+        expect(run.reason === 'customer_visible' || run.abstained).toBe(true);
+      } else {
+        // Everything else rides `performAction`, and the helpdesk adapter
+        // refuses a class it cannot perform.
+        expect(performable.has(run.actionClass)).toBe(true);
+      }
+      // Each class carries the field its adapter demands.
+      if (run.actionClass === 'route_ticket') {
+        expect(typeof run.actionPayload['queue']).toBe('string');
+      }
+      if (run.actionClass === 'compensate') {
+        expect(typeof run.actionPayload['reason']).toBe('string');
+      }
+    }
+  });
+
+  // DEC-18. The draft is the one field a person reads, so it is the one that
+  // would carry a real address or a real name if anything did.
+  it('writes no address, no telephone number and no account identifier', () => {
+    let checked = 0;
+    for (const run of plan) {
+      if (run.park === null) continue;
+      checked += 1;
+      const body = run.park.body;
+      // Every token of a draft comes from the run's own intent, its ticket id
+      // and the documents it cited, each of which has a shape pinned above.
+      // Asserted as the whole string rather than as an absence, because a
+      // pattern that hunts for an address cannot say what a body may contain.
+      expect(body).toBe(
+        `Thank you for writing about your ${run.classification.intentId.replace(/-/g, ' ')}. `
+        + `The published guidance for this case is ${run.docIds.join(', ')}. `
+        + `Ticket ${run.ticketId} stays open until you confirm this resolved it.`,
+      );
+      expect(run.ticketId).toMatch(/^T-[0-9a-f]{8}$/);
+      expect(body).not.toMatch(/@/);
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+});
+
+// Why a run stopped, which is a different question from which policy rule
+// decided and is answered in a different vocabulary.
+//
+// `src/escalations/query.ts` reads the reason from the `escalate` step alone,
+// and that statement serves both `pnpm run escalations` and the operator
+// console's runs list. A seeded escalation that journals no such row reports
+// a null reason to the person working the queue.
+describe('why a seeded run escalated', () => {
+  const plan = planHistory(OPTIONS);
+
+  it('names a reason for every escalated run, and for no other run', () => {
+    let escalated = 0;
+    for (const run of plan) {
+      if (run.state === 'escalated') {
+        expect(run.escalation).not.toBeNull();
+        escalated += 1;
+      } else {
+        expect(run.escalation).toBeNull();
+      }
+    }
+    expect(escalated).toBeGreaterThan(0);
+  });
+
+  // Derived from what the run did, never drawn. A run that abstained at
+  // compose cannot report a policy escalation, and a console rendering the
+  // state beside the reason would show that contradiction on screen.
+  it('names the reason the run\'s own path produces', () => {
+    const seen = new Set<string>();
+    for (const run of plan) {
+      if (run.escalation === null) continue;
+      seen.add(run.escalation);
+      switch (run.escalation) {
+        case 'composer_abstained':
+          // DEC-07: an abstain is a correct output. It escalates before the
+          // gate step starts, so the run carries no gate row at all.
+          expect(run.abstained).toBe(true);
+          expect(run.reason).toBeNull();
+          expect(run.gate).toBeNull();
+          break;
+        case 'policy_escalated':
+          // The engine's `escalate` verdict, and nothing else.
+          expect(run.abstained).toBe(false);
+          expect(run.gate!.decision).toBe('escalate');
+          expect(evaluatePolicyDetailed(policyInputFor(run)!).decision).toBe('escalate');
+          break;
+        case 'relay_delivery_unknown':
+          // DEC-30: the relay could not establish the delivery state, so it
+          // escalated rather than retry blind. Only an automatic write
+          // reaches the relay at all.
+          expect(run.reason).toBe('auto');
+          expect(run.gate!.decision).toBe('auto');
+          expect(run.outbox).toEqual(['delivery_unknown']);
+          break;
+        default:
+          throw new Error(`unplanned escalation reason ${run.escalation}`);
+      }
+    }
+    expect([...seen].sort()).toEqual(
+      ['composer_abstained', 'policy_escalated', 'relay_delivery_unknown'],
+    );
+  });
+
+  // Two vocabularies, and the ledger holds both. A `PolicyReason` on an
+  // escalate row would land the run in a column no reader recognises, and an
+  // `EscalationReason` on a gate row would do the same to the control band.
+  it('keeps the escalation vocabulary out of the gate vocabulary', () => {
+    for (const run of plan) {
+      if (run.escalation !== null) {
+        expect(POLICY_REASONS).not.toContain(run.escalation);
+      }
+      if (run.reason !== null) {
+        expect(['composer_abstained', 'policy_escalated', 'relay_delivery_unknown'])
+          .not.toContain(run.reason);
+      }
+    }
+  });
+});
+
+// The taxonomy the planner copies must be the taxonomy the system curates.
+//
+// The planner reads no file, because a history that changed when somebody
+// edited a fixture is not reproducible from its seed. That copy is only safe
+// while something proves it is still a copy.
+describe('the seeded taxonomy', () => {
+  it('matches the curated taxonomy entry for entry', () => {
+    const curated = loadTaxonomy().intents.map((intent) => ({
+      id: intent.id,
+      riskTier: intent.risk_tier,
+    }));
+    expect(SEED_INTENTS).toEqual(curated);
+  });
+});
+
+// The knowledge base a run retrieves from.
+describe('the seeded documents', () => {
+  it('declares every column db/002 requires, with a synthetic identifier', () => {
+    for (const doc of SEED_DOCUMENTS) {
+      expect(doc.docId).toMatch(/^SYN-DOC-\d\d$/);
+      // DEC-22: the DDL CHECK refuses every other kind.
+      expect(['document', 'canonical_resolution']).toContain(doc.kind);
+      expect(doc.title.length).toBeGreaterThan(0);
+      expect(doc.body.length).toBeGreaterThan(0);
+      // DEC-23: an owner answers for the content, and a review date bounds it.
+      expect(doc.owner).toMatch(/^[a-z-]+$/);
+      expect(doc.reviewBy).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(doc.body).not.toMatch(/@/);
+    }
+    expect(new Set(SEED_DOCUMENTS.map((d) => d.docId)).size).toBe(SEED_DOCUMENTS.length);
+  });
+
+  // The coordinator calls `hybridSearch` with no `includeStale`, so its query
+  // filters on `review_by >= CURRENT_DATE`. A stale document could never
+  // reach a run this seeder models, so a stale document in the corpus would
+  // be an identifier no `retrieve` row can ever name.
+  it('holds no document a coordinator run could not retrieve', () => {
+    for (const doc of SEED_DOCUMENTS) {
+      expect(Date.parse(`${doc.reviewBy}T00:00:00Z`)).toBeGreaterThan(Date.now());
+    }
+  });
+});
+
+// The approval-edit distance, on the scale the column declares.
+describe('the approval-edit distance', () => {
+  const plan = planHistory(OPTIONS);
+
+  // db/003 stores a normalized token-level Levenshtein distance in [0, 1],
+  // which is what `approvalEditDistance` returns. The seeder drew a median of
+  // 24 and rounded it, which is a token count: `pnpm run bands` then reported
+  // a mean near 24 for a metric whose worst possible value is 1, and no band
+  // built from it could be compared with a live approval.
+  it('stays inside the range the column declares', () => {
+    const measured = plan.map((r) => r.editDistance).filter((d): d is number => d !== null);
+    expect(measured.length).toBeGreaterThan(0);
+    for (const distance of measured) {
+      expect(distance).toBeGreaterThanOrEqual(0);
+      expect(distance).toBeLessThanOrEqual(1);
+    }
+    // Most drafts survive nearly intact, and the tail is long because a
+    // person who rewrites a draft rewrites most of it. Both halves are the
+    // shape, not a wanted verdict.
+    const sorted = [...measured].sort((a, b) => a - b);
+    expect(quantile(sorted, 0.5)).toBeLessThan(0.15);
+    expect(quantile(sorted, 0.95)).toBeGreaterThan(0.25);
+  });
+
+  // The correction had to keep the shape and move only the scale, so the two
+  // draws stay the same two draws. A version of `logNormalUnit` that folded
+  // them into one would leave every later value in the stream shifted, which
+  // moves the reason and the abstain flag of every run after it.
+  it('takes the same two draws the millisecond version takes', () => {
+    const a = mulberry32(7);
+    const b = mulberry32(7);
+    logNormal(a, 24, 1.1);
+    logNormalUnit(b, 0.06, 1.1);
+    for (let i = 0; i < 8; i += 1) expect(b()).toBe(a());
+  });
+
+  it('clamps to the range rather than escaping it', () => {
+    const rng = mulberry32(3);
+    for (let i = 0; i < 5_000; i += 1) {
+      const value = logNormalUnit(rng, 0.9, 3);
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+// Everything the control band publishes, pinned to the value it had before
+// this journal detail existed.
+//
+// `pnpm run bands` reads the compose step's `abstained` and `provider` and
+// the gate step's `reason`; `docs/v1-architecture.md` quotes a mean service
+// time off the finish stamps. All of them come out of one shared draw
+// sequence, so a draw inserted anywhere but the end moves every one of them —
+// silently, and for a change that was only supposed to add detail.
+//
+// The digest is of the planner at commit d7d860e, the parent of this change,
+// taken by running that planner against these options rather than by copying
+// numbers out of a report. It covers, in order: run id, ticket id,
+// conversation id, partition, service time, enqueue stamp, pickup stamp,
+// finish stamp, state, abstain flag, gate reason and provider. Only
+// `editDistance` is left out, because correcting its scale is the point.
+//
+// So this case is evidence about those twelve fields and not about the bands
+// report, and the difference matters because a reader will reach for it as
+// the second. Three of the four control-band metrics are covered here:
+// `abstain_rate` through the abstain flag, `gate_pass_rate` through the gate
+// reason, and `relay_delivery_unknown_count` through the state, which the
+// unknown-delivery draw also sets. The fourth is `approval_edit_distance`,
+// which this digest cannot see by construction. `stays inside the range the
+// column declares` is what pins that one: a tenfold move in its mean passes
+// the digest and fails that case.
+describe('the history this change was not allowed to move', () => {
+  it('reproduces the planner it replaced, field for field', () => {
+    const plan = planHistory(OPTIONS);
+    const line = (r: typeof plan[number]): string => [
+      r.runId, r.ticketId, r.conversationId, r.partition, r.serviceMs,
+      r.enqueuedAt.toISOString(), r.createdAt.toISOString(),
+      r.finishedAt?.toISOString() ?? '',
+      r.state, String(r.abstained), r.reason ?? '', r.provider,
+    ].join('|');
+    expect(plan).toHaveLength(2397);
+    expect(createHash('sha256').update(plan.map(line).join('\n')).digest('hex'))
+      .toBe('af82ca6822be986d22b694c51e24edb90a70c4aaef314bc4c208fa2201198fda');
   });
 });

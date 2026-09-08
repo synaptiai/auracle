@@ -11,20 +11,69 @@
 // zero rather than an absence of one.
 import { describe, expect, it } from 'vitest';
 
-import { escapeHtml, renderGates, renderMetricValue } from './render.js';
+import { escalationHead, escapeHtml, renderGates, renderMetricValue } from './render.js';
 
 describe('the gate display', () => {
   it('shows agreement and coverage as two values, never one', () => {
     const html = renderGates({ agreement: 0.89, coverage: 0.94 });
-    expect(html).toContain('0.89');
-    expect(html).toContain('0.94');
-    // Neither mean, nor product, nor min: no combined score exists.
-    for (const combined of ['0.915', '0.92', '0.8366', '0.89 / 0.94']) {
-      expect(html).not.toContain(combined);
-    }
+    expect(html).toContain('0.890');
+    expect(html).toContain('0.940');
     // Each is labelled, so a reader cannot mistake one for the other.
     expect(html).toMatch(/agreement/i);
     expect(html).toMatch(/coverage/i);
+  });
+
+  /**
+   * Every number the gate display may show, and nothing else.
+   *
+   * A list of forbidden blends cannot state this rule. Two of the four blends
+   * the old list named are not catchable that way: the minimum of 0.89 and
+   * 0.94 is 0.89, which the case above requires to be present, and the
+   * product renders 0.837 at the three places `gateValue` uses rather than
+   * the 0.8366 the list looked for. A blended score shipped past both.
+   *
+   * So the rule is written as an allowlist over what reaches the page: the
+   * two gate values and the lines they were judged against, and no third
+   * number. Any mean, product, minimum, maximum or ratio is a number that is
+   * not in the set, whatever it happens to equal.
+   */
+  function numbersOn(html: string): string[] {
+    // Attributes first. A bar width is `${value * 100}` and a font size is a
+    // number too; neither is a value the operator reads, and leaving them in
+    // would make the allowlist a list of coincidences.
+    const text = html.replace(/\s\w[\w-]*="[^"]*"/g, ' ');
+    return [...text.matchAll(/\d+(?:\.\d+)?/g)].map((m) => m[0]);
+  }
+
+  it('puts no number on the page but the two gates and their thresholds', () => {
+    const html = renderGates({
+      agreement: 0.89,
+      coverage: 0.94,
+      agreementThreshold: 0.6,
+      coverageBlock: 0.7,
+      coverageReview: 0.8,
+      agreementDetail: '8 of 9 samples',
+    });
+    // How many times each may appear, not merely whether it may. A minimum
+    // blend renders 0.890 and a maximum renders 0.940 — both are already on
+    // the page, so a set of allowed values cannot see either one. A second
+    // 0.890 is what gives the minimum away.
+    const allowed = new Map([
+      ['0.890', 1], ['0.940', 1], ['0.600', 1], ['0.700', 1], ['0.800', 1],
+      ['8', 1], ['9', 1],
+    ]);
+    const seen = new Map<string, number>();
+    for (const number of numbersOn(html)) {
+      seen.set(number, (seen.get(number) ?? 0) + 1);
+    }
+    for (const [number, count] of seen) {
+      const permitted = allowed.get(number);
+      expect(permitted, `${number} is on the page and is not a gate value`).toBeDefined();
+      expect(count, `${number} appears ${count} times, not ${permitted}`).toBe(permitted);
+    }
+    // And the rule is not vacuous: the values it permits are actually there.
+    expect(seen.get('0.890')).toBe(1);
+    expect(seen.get('0.940')).toBe(1);
   });
 
   it('renders one gate when the other has no value', () => {
@@ -126,5 +175,59 @@ describe('escaping', () => {
       '&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;',
     );
     expect(escapeHtml("it's & more")).toBe('it&#39;s &amp; more');
+  });
+});
+
+describe('what reaches the page from a query string', () => {
+  // The route refuses a state outside the ledger's vocabulary, so this is not
+  // reachable today. The surfaces are pure functions that take what a caller
+  // hands them, and the guard lives in another file: this case is what stops
+  // the next caller from being the one that forgets.
+  it('escapes a filter state before it reaches the empty-list sentence', async () => {
+    const { renderRuns } = await import('./surfaces.js');
+    const html = renderRuns({
+      runs: [],
+      filter: { states: ['gated'], active: '<img src=x onerror=alert(1)>' },
+      limit: 200,
+    });
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img');
+  });
+});
+
+describe('an escalation reason on an operator surface', () => {
+  // The `escalate` row's reason key is not a closed vocabulary. The relay
+  // interpolates whatever the adapter threw, and an SMTP rejection quotes the
+  // recipient. This console authenticates nobody (DEC-18).
+  it('keeps a reason the coordinator chose, whole', () => {
+    for (const reason of [
+      'policy_escalated', 'egress_refused', 'composer_abstained', 'limit_cost',
+    ]) {
+      expect(escalationHead(reason)).toBe(reason);
+    }
+  });
+
+  it('drops what the relay interpolated, and says it did', () => {
+    const leaked = 'delivery_unknown: 550 5.1.1 <alice@example.com>: user unknown';
+    const head = escalationHead(leaked);
+    expect(head).toBe('delivery_unknown (detail withheld)');
+    expect(head).not.toContain('alice@example.com');
+    expect(head).not.toContain('550');
+  });
+
+  it('drops the payload error the relay writes on a malformed row', () => {
+    const head = escalationHead('malformed_payload: to=bob@example.com is not a field');
+    expect(head).toBe('malformed_payload (detail withheld)');
+    expect(head).not.toContain('bob@example.com');
+  });
+
+  it('drops the tail the consumer writes when intake gives up', () => {
+    const head = escalationHead('intake_abandoned after 3 attempts: smtp said carol@example.com');
+    expect(head).toBe('intake_abandoned after 3 attempts (detail withheld)');
+    expect(head).not.toContain('carol@example.com');
+  });
+
+  it('passes a null through as a null', () => {
+    expect(escalationHead(null)).toBeNull();
   });
 });

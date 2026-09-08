@@ -6,10 +6,16 @@
 // be stated as a package boundary rather than as a convention.
 //
 // Reads go through the query modules the jobs use — `readDays`, `readLatency`,
-// `listRuns`, `listEscalations`. The one write goes through
+// `listRuns`, `listEscalations`, `readRunJournal`. The one write goes through
 // `approveFromConsole`, which hands off to `approveRun`. This module issues no
 // statement itself, and `select-only.test.ts` holds that.
+//
+// It also ships no JavaScript. The state filter is a set of links and the
+// theme toggle is a cookie set on a redirect, because a console that can send
+// a customer reply is a poor place to widen the attack surface for the sake of
+// two controls that work without one.
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 
 import { isRunId } from './approve.js';
@@ -23,7 +29,7 @@ import {
   renderOutcome,
   renderRuns,
 } from './surfaces.js';
-import type { BandRow, LatencyRow, RunDetail, RunRow } from './surfaces.js';
+import type { BandRow, LatencyRow, RunDetail, RunRow, RunView, Shell, Theme } from './surfaces.js';
 
 /**
  * Everything the console reads or writes, injected.
@@ -33,8 +39,16 @@ import type { BandRow, LatencyRow, RunDetail, RunRow } from './surfaces.js';
  * route its caller did not hand it.
  */
 export interface ConsoleDeps {
-  readonly listRuns: () => Promise<RunRow[]>;
-  readonly readRun: (runId: string) => Promise<RunDetail | null>;
+  /**
+   * The runs page, restricted to `states`.
+   *
+   * The filter is a parameter rather than a client-side hide, because the
+   * page is capped: hiding rows after the cap would show an operator the
+   * gated runs that happen to fall inside the newest 200, and call it the
+   * gated runs.
+   */
+  readonly listRuns: (states: readonly string[]) => Promise<RunRow[]>;
+  readonly readRun: (runId: string) => Promise<RunView | null>;
   readonly listApprovals: () => Promise<RunDetail[]>;
   readonly readBands: () => Promise<BandRow[]>;
   readonly readLatency: () => Promise<LatencyRow[]>;
@@ -115,9 +129,18 @@ function sameOrigin(req: IncomingMessage, allowedHosts: ReadonlySet<string>): bo
  *
  * The rest are cheap: pages render live ledger rows, so they are not for a
  * cache, and the run id travels in the path, so it is not for a referrer.
+ *
+ * `style-src 'self' 'unsafe-inline'` and `script-src 'none'`. The surfaces
+ * carry inline `style` attributes, which the design's colour-by-verdict needs
+ * and which no directive can distinguish from an injected one — so the
+ * stylesheet keeps its inline allowance and scripts get none at all. This
+ * console ships no JavaScript, so `'none'` costs nothing and turns any future
+ * injected `<script>` into a refusal rather than a reply that leaves.
  */
 const SAFETY_HEADERS = {
-  'content-security-policy': "frame-ancestors 'none'",
+  'content-security-policy':
+    "frame-ancestors 'none'; default-src 'none'; style-src 'self' 'unsafe-inline'; "
+    + "img-src 'self'; form-action 'self'; base-uri 'none'; script-src 'none'",
   'x-frame-options': 'DENY',
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
@@ -129,7 +152,42 @@ function send(res: ServerResponse, status: number, body: string, type = 'text/ht
   res.end(body);
 }
 
+/**
+ * A page with no rail.
+ *
+ * Used for the refusal, which answers a request whose `Host` this console does
+ * not serve. The rail names the ledger this console is bound to, and a
+ * refused request is exactly the one that should not be told.
+ */
+function bare(title: string, says: string, theme: Theme): string {
+  return [
+    '<!doctype html><html><head><meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    `<title>${escapeHtml(title)} — Auracle console</title>`,
+    '<link rel="stylesheet" href="/console.css">',
+    `</head><body><div class="root" data-theme="${theme}"><div class="wrap">`,
+    `<div class="hdt">${escapeHtml(title)}</div>`,
+    `<p class="mut">${escapeHtml(says)}</p>`,
+    '</div></div></body></html>',
+  ].join('');
+}
+
 /** The form post body, which is the only input this console takes. */
+/**
+ * A form larger than the bound.
+ *
+ * Its own type, because the route answers it and the catch-all does not. It
+ * used to be a plain error, so an oversized body reached the 500 page: the
+ * request was refused rather than failed, and the two say different things
+ * to whoever sent it.
+ */
+class OversizedForm extends Error {
+  constructor() {
+    super('the approval form is larger than 64 KiB');
+    this.name = 'OversizedForm';
+  }
+}
+
 async function readForm(req: IncomingMessage): Promise<URLSearchParams> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -138,10 +196,63 @@ async function readForm(req: IncomingMessage): Promise<URLSearchParams> {
     size += buf.length;
     // A bound, because an operator console on an internal network is still a
     // socket anyone on it can post to.
-    if (size > 64 * 1024) throw new Error('the approval form is larger than 64 KiB');
+    if (size > 64 * 1024) throw new OversizedForm();
     chunks.push(buf);
   }
   return new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+}
+
+const THEMES: readonly Theme[] = ['dark', 'light'];
+const THEME_COOKIE = 'theme';
+/** A year. The operator sets this once and it is not a session preference. */
+const THEME_MAX_AGE = 31_536_000;
+
+/**
+ * The theme the operator chose, or the default.
+ *
+ * Parsed rather than pattern-matched. A cookie header holds several pairs and
+ * a value may be quoted, so a substring test for `light` would also match a
+ * cookie named `highlight` that some proxy set on the same host.
+ */
+export function readTheme(cookieHeader: string | undefined): Theme {
+  for (const pair of (cookieHeader ?? '').split(';')) {
+    const at = pair.indexOf('=');
+    if (at === -1) continue;
+    if (pair.slice(0, at).trim() !== THEME_COOKIE) continue;
+    const value = pair.slice(at + 1).trim().replace(/^"|"$/g, '');
+    if ((THEMES as readonly string[]).includes(value)) return value as Theme;
+  }
+  // Dark is the console's own default, and an unreadable cookie is not a
+  // reason to answer differently than a first visit does.
+  return 'dark';
+}
+
+/**
+ * Where the theme toggle may return to.
+ *
+ * An allowlist, because the target arrives in a query parameter. Without it
+ * `/theme?to=dark&back=https://elsewhere.example` is an open redirect on a
+ * host an operator trusts, and the redirect would carry them off a console
+ * that approves customer replies.
+ */
+function safeReturn(back: string | null, surfaces: readonly string[]): string {
+  if (back === null) return '/';
+  if (surfaces.includes(back)) return back;
+  // The run detail is the one path that is not a fixed string.
+  if (back.startsWith('/run/')) {
+    const id = decodeRunPath(back.slice('/run/'.length));
+    if (id !== null && isRunId(id)) return `/run/${encodeURIComponent(id)}`;
+  }
+  return '/';
+}
+
+/** A percent-escape that does not decode is a path nobody has, not a fault. */
+function decodeRunPath(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
 }
 
 export interface ConsoleOptions {
@@ -150,6 +261,16 @@ export interface ConsoleOptions {
    * which is what closes DNS rebinding.
    */
   readonly allowedHosts: readonly string[];
+  /**
+   * Every state a run may sit in, which is also the filter's vocabulary.
+   *
+   * Passed in rather than imported, so this module keeps its property of
+   * reaching nothing: the closed set lives in `src/escalations/query.ts` and
+   * the entry point hands it over.
+   */
+  readonly states: readonly string[];
+  /** Which ledger this console is bound to, for the rail. No credentials. */
+  readonly ledger: string;
 }
 
 export function createConsole(
@@ -159,6 +280,7 @@ export function createConsole(
 ): Server {
   const allowed = new Set(options.allowedHosts.map((h) => h.toLowerCase()));
   return createServer((req, res) => {
+    const theme = readTheme(req.headers.cookie);
     if (!sameOrigin(req, allowed)) {
       // Named, because the commonest cause is a proxy whose name nobody put
       // in `CONSOLE_ALLOWED_HOSTS`. Without the refused `Host` on record the
@@ -171,90 +293,212 @@ export function createConsole(
         secFetchSite: req.headers['sec-fetch-site'] ?? null,
         origin: req.headers.origin ?? null,
       }));
-      send(res, 403, page('Refused', '<p class="mut">This request did not come from the console.</p>'));
+      send(res, 403, bare('Refused', 'This request did not come from the console.', theme));
       return;
     }
-    void route(deps, css, req, res).catch((error: unknown) => {
-      const reason = error instanceof Error ? error.message : String(error);
-      console.error(JSON.stringify({ event: 'console_error', error: reason }));
-      // The message reaches the operator as well, because this console has
-      // one user and authenticates nobody: anyone who can read the fault can
-      // already approve a reply, so withholding it protects nothing and costs
-      // the operator the only diagnosis the page can give them.
-      send(res, 500, page('Error', `<p class="mut">${escapeHtml(reason)}</p>`));
+    void route(deps, css, options, theme, req, res).catch((error: unknown) => {
+      const reason = faultText(error);
+      // A tag rather than the text. An earlier version put the message on the
+      // page, arguing that anyone who can read a fault can already approve a
+      // reply. That answers whether an operator may see it and not whether a
+      // customer's words may reach an unauthenticated surface, which is the
+      // question every other read on this console is held to: the journal
+      // reader withholds the draft, the payload and the fault message, and an
+      // escalation reason is trimmed at its first colon. This path had no
+      // such trimming, and `error.message` is an open vocabulary — a driver
+      // fault or an adapter's rejection carries whatever it was handed.
+      //
+      // So the operator gets a tag and the log gets the text. They read the
+      // log already; the refused-request line above is written for them.
+      const tag = randomUUID().slice(0, 8);
+      console.error(JSON.stringify({ event: 'console_error', tag, error: reason }));
+      send(
+        res,
+        500,
+        bare('Error', `Something failed while reading the ledger. The console log names it ${tag}.`, theme),
+      );
     });
   });
+}
+
+/**
+ * A fault as one line, with what caused it.
+ *
+ * `src/bands/run.ts` unwraps `cause` for the same reason: a wrapped driver
+ * failure otherwise loses the only sentence that says what actually broke.
+ */
+function faultText(error: unknown): string {
+  const head = error instanceof Error ? error.message : String(error);
+  const cause = error instanceof Error ? error.cause : undefined;
+  return cause === undefined ? head : `${head}: ${faultText(cause)}`;
+}
+
+/** The shell for a surface, given what this request knows. */
+function shellFor(
+  options: ConsoleOptions,
+  theme: Theme,
+  path: string,
+  approvals: number | null,
+): Shell {
+  return { theme, path, approvals, ledger: options.ledger };
 }
 
 async function route(
   deps: ConsoleDeps,
   css: string,
+  options: ConsoleOptions,
+  theme: Theme,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
-  const url = new URL(req.url ?? '/', 'http://console.invalid');
+  let url;
+  try {
+    url = new URL(req.url ?? '/', 'http://console.invalid');
+  } catch {
+    // Node refuses most malformed targets before the handler. One that gets
+    // here is a bad request, and answering 500 would report the console as
+    // broken by a request it correctly declined to understand.
+    send(res, 400, bare('Refused', 'That address is not one this console can read.', theme));
+    return;
+  }
   const path = url.pathname;
+  const surfaces = ['/', '/approvals', '/bands', '/latency'];
+  const shell = (at: string, approvals: number | null = null): Shell =>
+    shellFor(options, theme, at, approvals);
 
   if (req.method === 'GET' && path === CSS_PATH) {
     send(res, 200, css, 'text/css');
     return;
   }
-  if (req.method === 'GET' && path === '/') {
-    send(res, 200, page('Runs', renderRuns(await deps.listRuns())));
-    return;
-  }
-  if (req.method === 'GET' && path.startsWith('/run/')) {
-    let runId: string;
-    try {
-      runId = decodeURIComponent(path.slice('/run/'.length));
-    } catch {
-      // A malformed percent-escape is a path nobody has, not a fault of ours.
-      send(res, 404, page('Run', '<p class="mut">No such run.</p>'));
+
+  if (req.method === 'GET' && path === '/theme') {
+    const to = url.searchParams.get('to');
+    if (to === null || !(THEMES as readonly string[]).includes(to)) {
+      send(res, 404, page('Not found', nothingFound(), shell('/')));
       return;
     }
+    // `SameSite=Strict` and `HttpOnly`: nothing on this console reads the
+    // cookie from script, because there is no script, and a cross-site
+    // navigation has no business changing what the operator sees.
+    //
+    // Not `Secure`. The console cannot know its own scheme — the runbook puts
+    // it behind a proxy that terminates the TLS — and a `Secure` cookie on a
+    // plain-http loopback console is one the browser silently drops, which
+    // would leave the toggle looking broken rather than looking off.
+    res.writeHead(303, {
+      ...SAFETY_HEADERS,
+      'set-cookie':
+        `${THEME_COOKIE}=${to}; Path=/; Max-Age=${THEME_MAX_AGE}; SameSite=Strict; HttpOnly`,
+      location: safeReturn(url.searchParams.get('back'), surfaces),
+    });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'GET' && path === '/') {
+    const wanted = url.searchParams.get('state');
+    // A state outside the ledger's own vocabulary is a page nobody has. It
+    // is not silently widened to every state: that would answer a question
+    // the operator did not ask, under a heading saying they did.
+    if (wanted !== null && !options.states.includes(wanted)) {
+      send(res, 404, page('Not found', nothingFound(), shell('/')));
+      return;
+    }
+    const states = wanted === null ? options.states : [wanted];
+    const runs = await deps.listRuns(states);
+    send(res, 200, page('Runs', renderRuns({
+      runs,
+      filter: { states: options.states, active: wanted },
+      limit: RUNS_PAGE,
+    }), shell('/')));
+    return;
+  }
+
+  if (req.method === 'GET' && path.startsWith('/run/')) {
+    const runId = decodeRunPath(path.slice('/run/'.length));
     // Checked before it reaches the ledger. `run_id` is a `uuid` column, so
     // an id of another shape makes Postgres raise rather than match nothing:
     // `/run/abc` answered 500 where this route promises 404, and spent a pool
     // connection to do it.
-    if (!isRunId(runId)) {
-      send(res, 404, page('Run', '<p class="mut">No such run.</p>'));
+    if (runId === null || !isRunId(runId)) {
+      send(res, 404, page('Run', nothingFound(), shell('/')));
       return;
     }
     const run = await deps.readRun(runId);
     if (run === null) {
-      send(res, 404, page('Run', '<p class="mut">No such run.</p>'));
+      send(res, 404, page('Run', nothingFound(), shell('/')));
       return;
     }
-    send(res, 200, page('Run detail', renderRunDetail(run)));
+    send(res, 200, page('Run detail', renderRunDetail(run), shell(`/run/${runId}`)));
     return;
   }
+
   if (req.method === 'GET' && path === '/approvals') {
     // The outcome of the approval just posted. Without it an operator sees a
     // reloaded queue and cannot tell an approval that landed from one that
     // did not — `draft_missing` and every other refusal read as success.
     const outcome = url.searchParams.get('outcome');
+    const waiting = await deps.listApprovals();
+    // The run the pane shows. Checked for shape before it is compared, so a
+    // query string cannot put arbitrary text through the comparison; a value
+    // that matches nothing waiting falls back to the head of the queue rather
+    // than to an empty pane, because an operator following a stale link has
+    // still come here to work the queue.
+    const wanted = url.searchParams.get('run');
+    const selected = wanted !== null && isRunId(wanted) ? wanted : null;
     send(res, 200, page(
       'Approval queue',
-      (outcome === null ? '' : renderOutcome(outcome))
-        + renderApprovals(await deps.listApprovals()),
+      renderApprovals(waiting, outcome === null ? '' : renderOutcome(outcome), selected),
+      shell('/approvals', waiting.length),
     ));
     return;
   }
+
   if (req.method === 'GET' && path === '/bands') {
-    send(res, 200, page('Control bands', renderBands(await deps.readBands())));
+    send(res, 200, page('Control bands', renderBands(await deps.readBands()), shell('/bands')));
     return;
   }
+
   if (req.method === 'GET' && path === '/latency') {
-    send(res, 200, page('Partition latency', renderLatency(await deps.readLatency())));
+    send(res, 200, page(
+      'Partition latency',
+      renderLatency(await deps.readLatency()),
+      shell('/latency'),
+    ));
     return;
   }
+
   if (req.method === 'POST' && path === '/approve') {
-    const form = await readForm(req);
+    let form;
+    try {
+      form = await readForm(req);
+    } catch (error) {
+      if (!(error instanceof OversizedForm)) throw error;
+      // Refused, not failed. The stream is destroyed rather than drained,
+      // because reading the rest of a body already past the bound is work
+      // done on behalf of whoever sent it.
+      req.destroy();
+      send(res, 413, bare('Refused', 'The approval form is larger than this console accepts.', theme));
+      return;
+    }
     const runId = form.get('runId') ?? '';
     // The run id is the whole request. Any other field is ignored, because
     // the relay sends the parked draft verbatim and a body posted here would
     // be recorded as the approved reply without ever reaching the customer.
     const outcome = await deps.approve(runId);
+    // The one write this console makes, and until now the only request it did
+    // not record. The ledger journals that a run was approved; it does not
+    // journal which client asked, and this console authenticates nobody, so
+    // reaching it is the whole access control. Without this line an incident
+    // has no console-side evidence separating the operator from anyone else
+    // who could reach the port.
+    console.error(JSON.stringify({
+      event: 'console_approved',
+      runId,
+      outcome,
+      host: req.headers.host ?? null,
+      from: req.socket.remoteAddress ?? null,
+    }));
     // See other, so a refresh cannot post the approval twice.
     res.writeHead(303, {
       ...SAFETY_HEADERS,
@@ -263,5 +507,19 @@ async function route(
     res.end();
     return;
   }
-  send(res, 404, page('Not found', '<p class="mut">No such page.</p>'));
+
+  send(res, 404, page('Not found', nothingFound(), shell('/')));
+}
+
+/**
+ * The cap the runs statement applies.
+ *
+ * Named here as well as in the entry point, because the footer says the list
+ * is a page rather than the ledger, and that sentence is only true if the two
+ * agree.
+ */
+export const RUNS_PAGE = 200;
+
+function nothingFound(): string {
+  return '<div class="wrap"><p class="mut">No such page.</p></div>';
 }
