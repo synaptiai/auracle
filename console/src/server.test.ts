@@ -19,6 +19,14 @@ const RUN = '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34';
 
 const CONVERSATION = '99999999-8888-4777-8666-555555555555';
 
+/** The message the drawn run answered, which an approver reads first. */
+const REQUEST = {
+  conversationId: CONVERSATION,
+  turnNumber: 1,
+  bodyText: 'There are two charges for the same month.',
+  absence: null,
+};
+
 /**
  * One drafted reply, its claims and their sources.
  *
@@ -76,6 +84,7 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
       ],
       conversationId: CONVERSATION,
       evidence: EVIDENCE,
+      request: REQUEST,
     }),
     listApprovals: async () => [{
       runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1',
@@ -83,6 +92,7 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
       agreement: 0.89, coverage: 0.94, draftExternalId: 'D-1',
     }],
     readApprovalEvidence: async () => ({
+      request: REQUEST,
       evidence: EVIDENCE,
       gates: {
         agreement: 0.89, coverage: 0.94, agreementThreshold: 0.6,
@@ -770,6 +780,7 @@ describe('the reply an approver reads before they send it', () => {
       readApprovalEvidence: async (runId: string) => {
         read.push(runId);
         return {
+          request: REQUEST,
           evidence: EVIDENCE,
           gates: {
             agreement: 0.89, coverage: 0.94, agreementThreshold: 0.6,
@@ -780,6 +791,118 @@ describe('the reply an approver reads before they send it', () => {
     }));
     await fetch(base + '/approvals');
     expect(read).toHaveLength(1);
+  });
+});
+
+describe('the message a reply answers', () => {
+  // The epic's first criterion, and the last of it to ship. An approver who
+  // reads a reply, its claims and its sources still cannot tell whether it
+  // answers the question — which is the shape of the defect this surface was
+  // built to fix, one step along.
+  it('shows the customer\'s message on the approval queue', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('The message this answers');
+    expect(html).toContain('There are two charges for the same month.');
+    // Above the reply it answers, not below it.
+    expect(html.indexOf('The message this answers'))
+      .toBeLessThan(html.indexOf('The reply, as the system drafted it'));
+  });
+
+  it('shows it on the run detail too', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(`${base}/run/${RUN}`)).text();
+    expect(html).toContain('There are two charges for the same month.');
+  });
+
+  // A later turn is context this does not show.
+  it('links the whole thread from beside the message', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain(`/conversation/${CONVERSATION}`);
+  });
+
+  it('names a message nobody kept, rather than drawing a blank', async () => {
+    const base = await startGuarded(deps({
+      readApprovalEvidence: async () => ({
+        request: { ...REQUEST, bodyText: null, absence: 'not_retained' },
+        evidence: EVIDENCE,
+        gates: {
+          agreement: 0.89, coverage: 0.94, agreementThreshold: 0.6,
+          agreementDetail: '8 of 9 samples', coverageBlock: 0.7, coverageReview: 0.8,
+        },
+      }),
+    }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('the text of this message was not kept');
+  });
+
+  // A run that answered no turn is not a turn whose text nobody kept. Drawing
+  // an absence about a turn that never existed would name a fact the ledger
+  // does not hold.
+  it('draws nothing at all for a run that answered no turn', async () => {
+    const base = await startGuarded(deps({
+      readApprovalEvidence: async () => ({
+        request: null,
+        evidence: EVIDENCE,
+        gates: {
+          agreement: 0.89, coverage: 0.94, agreementThreshold: 0.6,
+          agreementDetail: '8 of 9 samples', coverageBlock: 0.7, coverageReview: 0.8,
+        },
+      }),
+    }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).not.toContain('The message this answers');
+    expect(html).not.toContain('the text of this message was not kept');
+    // The reply is still there.
+    expect(html).toContain('The reply, as the system drafted it');
+  });
+
+  // The queue is uncapped, so a turn read per waiting row would be a
+  // statement for every row of a list that has been 476 long.
+  //
+  // Six waiting runs, because the fixture above holds one — and a test with
+  // one row passes whether the code reads once or once per row.
+  it('reads the message for the drawn selection alone', async () => {
+    const read: string[] = [];
+    const queue = Array.from({ length: 6 }, (_, i) => ({
+      runId: `0000000${i}-2222-4333-8444-555555555555`,
+      ticketId: `SYN-${i}`, state: 'awaiting_approval', promptVer: 'p1',
+      reason: 'customer_visible', stepsUsed: 4,
+      agreement: 0.89, coverage: 0.94, draftExternalId: 'D-1',
+    }));
+    const base = await startGuarded(deps({
+      listApprovals: async () => queue,
+      readApprovalEvidence: async (runId: string) => {
+        read.push(runId);
+        return {
+          request: REQUEST,
+          evidence: EVIDENCE,
+          gates: {
+            agreement: 0.89, coverage: 0.94, agreementThreshold: 0.6,
+            agreementDetail: '8 of 9 samples', coverageBlock: 0.7, coverageReview: 0.8,
+          },
+        };
+      },
+    }));
+    await fetch(base + '/approvals');
+    expect(read).toHaveLength(1);
+    // The one it drew, which is the head of the queue.
+    expect(read[0]).toBe(queue[0]!.runId);
+  });
+
+  // The name said "from the same builder", and the suite injects the request
+  // into `readRun` — so it could not check that. What it can check is that
+  // both surfaces render the same message identically, which is the property
+  // a reader cares about.
+  it('renders the same message on both surfaces', async () => {
+    const base = await startGuarded(deps());
+    const detail = await (await fetch(`${base}/run/${RUN}`)).text();
+    const queue = await (await fetch(base + '/approvals')).text();
+    for (const html of [detail, queue]) {
+      expect(html).toContain('The message this answers');
+      expect(html).toContain('There are two charges for the same month.');
+    }
   });
 });
 
@@ -794,6 +917,7 @@ describe('the evidence states that are not a list of claims', () => {
     const base = await startGuarded(deps({
       listApprovals: async () => [bare],
       readApprovalEvidence: async () => ({
+        request: REQUEST,
         evidence,
         gates: {
           agreement: 0.89, coverage: 0.94, agreementThreshold: 0.6,

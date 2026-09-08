@@ -190,7 +190,11 @@ const SELECT_TURNS = `
  */
 function messageAbsenceFor(bodyText: string | null): MessageAbsence | null {
   if (bodyText === null) return 'not_retained';
-  if (bodyText === '') return 'empty_message';
+  // Trimmed, because a message of spaces renders as a blank block and a blank
+  // is the one thing this is here to prevent. `intake.ticket_text` is a
+  // subject and a body joined by two newlines, so an empty body with an empty
+  // subject stores whitespace rather than the empty string.
+  if (bodyText.trim() === '') return 'empty_message';
   return null;
 }
 
@@ -257,6 +261,52 @@ export async function readConversation(
         runAttempts: Number(turn['attempts'] ?? 0),
       };
     }),
+  };
+}
+
+/** The message a run answered, and why it is absent when it is. */
+export interface AnsweredTurn {
+  readonly conversationId: string;
+  readonly turnNumber: number;
+  /** The customer's message, or null with `absence` naming why. */
+  readonly bodyText: string | null;
+  readonly absence: MessageAbsence | null;
+}
+
+/**
+ * The turn one run answered, or null when it answered none.
+ *
+ * One statement for one run, because the approval queue draws one selection
+ * and the queue itself is uncapped. Reading a turn per waiting run would be a
+ * statement for every row of a list that has been 476 long.
+ *
+ * Null covers three cases a surface reads the same way: a V1-era run with no
+ * conversation, a run recorded before `db/015` and so carrying no turn to join
+ * on, and a run whose turn row is gone. None of them is a message that was
+ * empty, which `absence` reports instead.
+ */
+export async function turnAnsweredBy(
+  pool: Pool,
+  runId: string,
+): Promise<AnsweredTurn | null> {
+  if (!UUID.test(runId)) return null;
+  const { rows } = await pool.query(
+    `SELECT t.conversation_id, t.turn_number, t.body_text
+       FROM run r
+       JOIN turn t
+         ON t.conversation_id = r.conversation_id
+        AND t.turn_number = r.turn_number
+      WHERE r.run_id = $1`,
+    [runId],
+  );
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (row === undefined) return null;
+  const bodyText = (row['body_text'] as string | null) ?? null;
+  return {
+    conversationId: String(row['conversation_id']),
+    turnNumber: Number(row['turn_number']),
+    bodyText,
+    absence: messageAbsenceFor(bodyText),
   };
 }
 

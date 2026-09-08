@@ -11,7 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
 import { applyLedgerSchema } from '../test-support/schema.js';
-import { conversationOfRun, readConversation } from './query.js';
+import { conversationOfRun, readConversation, turnAnsweredBy } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 4 });
 
@@ -294,5 +294,92 @@ describe('the conversation a run belongs to', () => {
     );
     expect(await conversationOfRun(pool, orphan)).toBeNull();
     expect(await conversationOfRun(pool, 'not-a-uuid')).toBeNull();
+  });
+});
+
+describe('the turn one run answered', () => {
+  it('names the message, so a surface can draw it beside the reply', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'there are two charges for the same month' });
+    const runId = await run(id, 1, 'awaiting_approval');
+    const answered = await turnAnsweredBy(pool, runId);
+    expect(answered?.conversationId).toBe(id);
+    expect(answered?.turnNumber).toBe(1);
+    expect(answered?.bodyText).toBe('there are two charges for the same month');
+    expect(answered?.absence).toBeNull();
+  });
+
+  // A message nobody kept is not a run that answered no turn. A surface draws
+  // the first as an absence and the second as nothing at all, so the reader
+  // has to tell them apart.
+  it('separates a message nobody kept from a run with no turn', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: null });
+    const kept = await run(id, 1, 'resolved');
+    expect((await turnAnsweredBy(pool, kept))?.absence).toBe('not_retained');
+
+    const noTurn = await run(id, null, 'resolved');
+    expect(await turnAnsweredBy(pool, noTurn)).toBeNull();
+  });
+
+  it('names an empty message as one the customer sent', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: '' });
+    const runId = await run(id, 1, 'resolved');
+    expect((await turnAnsweredBy(pool, runId))?.absence).toBe('empty_message');
+  });
+
+  // `intake.ticket_text` is a subject and a body joined by two newlines, so an
+  // empty body with an empty subject stores whitespace and not the empty
+  // string. It renders as a blank block, which is the one thing the absence
+  // codes exist to prevent.
+  it('names a message of whitespace as one the customer sent', async () => {
+    const cases: readonly (readonly [string, string])[] =
+      [['spaces', '   '], ['newlines', '\n\n'], ['a tab', '\t']];
+    for (const [name, body] of cases) {
+      const id = await conversation();
+      await turn(id, 1, { body });
+      const runId = await run(id, 1, 'resolved');
+      expect((await turnAnsweredBy(pool, runId))?.absence, name).toBe('empty_message');
+    }
+  });
+
+  it('answers null for a run the ledger does not hold, and for a bad id', async () => {
+    expect(await turnAnsweredBy(pool, randomUUID())).toBeNull();
+    expect(await turnAnsweredBy(pool, 'not-a-uuid')).toBeNull();
+  });
+
+  // The discriminator the join needs, and the one every other fixture here
+  // lacks: a run carrying a turn number and no conversation, while another
+  // conversation holds a turn of that number.
+  //
+  // Joining on the turn alone would hand back that other customer's message.
+  // `db/015` says as much of the column — "a null here is not a turn one, and
+  // a reader joins on it rather than assuming it" (DEC-35).
+  it('joins on the conversation as well as the turn', async () => {
+    const theirs = await conversation();
+    await turn(theirs, 1, { body: 'a message from another conversation' });
+
+    const orphan = randomUUID();
+    await pool.query(
+      `INSERT INTO run (run_id, ticket_id, partition, epoch, state, prompt_ver, model_ver,
+                        cost_micros, steps_used, deadline_at, conversation_id, turn_number)
+       VALUES ($1, 'SYN-9', 0, 1, 'resolved', 'p', 'm', 0, 0, now(), NULL, 1)`,
+      [orphan],
+    );
+
+    const answered = await turnAnsweredBy(pool, orphan);
+    expect(answered, 'a run with no conversation answers no turn').toBeNull();
+  });
+
+  it('takes the turn of its own conversation when two hold the same number', async () => {
+    const mine = await conversation();
+    const theirs = await conversation();
+    await turn(mine, 1, { body: 'MINE' });
+    await turn(theirs, 1, { body: 'THEIRS' });
+    const runId = await run(mine, 1, 'resolved');
+    const answered = await turnAnsweredBy(pool, runId);
+    expect(answered?.bodyText).toBe('MINE');
+    expect(answered?.conversationId).toBe(mine);
   });
 });

@@ -33,7 +33,8 @@ import {
   renderRuns,
 } from './surfaces.js';
 import type {
-  BandRow, DocumentPage, EvidenceView, GateReading, LatencyRow, RunDetail, RunRow, RunView, Shell,
+  BandRow, DocumentPage, EvidenceView, GateReading, LatencyRow, RequestView, RunDetail, RunRow,
+  RunView, Shell,
   ThreadView, Theme,
 } from './surfaces.js';
 
@@ -68,7 +69,11 @@ export interface ConsoleDeps {
    */
   readonly readApprovalEvidence: (
     runId: string,
-  ) => Promise<{ readonly evidence: EvidenceView; readonly gates: GateReading } | null>;
+  ) => Promise<{
+    readonly evidence: EvidenceView;
+    readonly gates: GateReading;
+    readonly request: RequestView | null;
+  } | null>;
   /**
    * The approval, with the approver a trusted proxy named (DEC-42).
    *
@@ -556,6 +561,7 @@ async function route(
         selected,
         read?.evidence ?? null,
         read?.gates ?? null,
+        read?.request ?? null,
       ),
       shell('/approvals', waiting.length),
     ));

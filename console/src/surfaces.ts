@@ -322,6 +322,21 @@ export interface GateReading {
   readonly coverageReview: number | null;
 }
 
+/**
+ * The message a run answered, as a surface draws it.
+ *
+ * Beside the reply rather than behind a link. An approver reading a reply and
+ * its sources still cannot tell whether it answers the question, and that is
+ * the same shape as the defect this evidence block was built for.
+ */
+export interface RequestView {
+  readonly conversationId: string;
+  readonly turnNumber: number;
+  readonly bodyText: string | null;
+  /** Named when there is no text. Never both null. */
+  readonly absence: string | null;
+}
+
 /** The drafted reply, its claims and the documents behind them. */
 export interface EvidenceView {
   /**
@@ -361,6 +376,8 @@ export interface RunView extends RunDetail {
   readonly evidence: EvidenceView;
   /** The conversation this run answered, when it answered one. */
   readonly conversationId: string | null;
+  /** The message this run answered, when it answered one. */
+  readonly request: RequestView | null;
 }
 
 /** The colour each journal status carries in the timeline. */
@@ -460,9 +477,13 @@ function evidence(documents: readonly DocumentView[] | null): string {
  * an approver came for. A claim nobody judged is not a refusal, and drawing
  * it as one would put a warning on a run the ledger never questioned.
  */
-function evidenceBlock(view: EvidenceView, draftId: string | null): string {
+function evidenceBlock(
+  view: EvidenceView,
+  draftId: string | null,
+  request: RequestView | null,
+): string {
   if (view.draftBody === null && view.claims === null) {
-    return nothing('This run composed no reply.');
+    return requestBlock(request) + nothing('This run composed no reply.');
   }
   // Null and empty are different answers, here as everywhere else on this
   // console. A run journalled no readable retrieval is not a run whose
@@ -475,6 +496,7 @@ function evidenceBlock(view: EvidenceView, draftId: string | null): string {
   const unread = (claims ?? []).filter((claim) => claim.supported === null).length;
 
   return [
+    requestBlock(request),
     '<div class="card"><header>',
     '<span class="lbl">The reply, as the system drafted it</span>',
     // Named precisely. The relay sends the helpdesk copy, which a person may
@@ -506,6 +528,36 @@ function evidenceBlock(view: EvidenceView, draftId: string | null): string {
     claims === null || claims.length === 0
       ? ''
       : sourceList(claims, sources, retrieved, view.documentsMalformed),
+  ].join('');
+}
+
+/**
+ * The message this run answered, above the reply it drafted.
+ *
+ * Null is a run that answered no turn: a V1-era run with no conversation, or
+ * one recorded before the turn was stored on it. That is not the same as a
+ * turn whose text nobody kept, which the absence names — so a run with no turn
+ * draws nothing here rather than an absence about a turn that never existed.
+ */
+function requestBlock(request: RequestView | null): string {
+  if (request === null) return '';
+  return [
+    '<div class="card"><header>',
+    '<span class="lbl">The message this answers</span>',
+    chip(`turn ${request.turnNumber}`),
+    '</header><div class="body">',
+    // Decided by the absence, not by re-testing the text. The reader trims
+    // before it names one, and a renderer comparing against the empty string
+    // disagreed with it: a message of spaces arrived named `empty_message`
+    // and was drawn as text, which is the blank the name exists to prevent.
+    request.absence !== null || request.bodyText === null
+      ? `<p class="absent">${escapeHtml(absenceSays(MESSAGE_ABSENCE, request.absence ?? 'not_retained'))}</p>`
+      : `<div class="prose">${escapeHtml(request.bodyText)}</div>`,
+    // A later turn is context this does not show, so the whole thread is one
+    // click away rather than assumed to be unnecessary.
+    `<p class="discl">Read the whole conversation <a href="/conversation/${
+      encodeURIComponent(request.conversationId)}">as a thread</a>.</p>`,
+    '</div></div>',
   ].join('');
 }
 
@@ -682,7 +734,7 @@ export function renderRunDetail(run: RunView): string {
     // makes a reply readable — but counting closing tags to escape the grid
     // is arithmetic that breaks silently. The span is declared instead.
     '<div class="full">',
-    evidenceBlock(run.evidence, run.draftExternalId),
+    evidenceBlock(run.evidence, run.draftExternalId, run.request),
     run.conversationId === null
       ? ''
       : `<p class="discl">This run answered a turn of <a href="/conversation/${
@@ -725,6 +777,8 @@ export interface ApprovalView extends RunDetail {
    * a list that has been 476 rows long.
    */
   readonly evidence: EvidenceView | null;
+  /** The message this run answered, when it answered one. */
+  readonly request: RequestView | null;
 }
 
 export function renderApprovals(
@@ -733,6 +787,7 @@ export function renderApprovals(
   selected: string | null,
   evidence: EvidenceView | null = null,
   gates: GateReading | null = null,
+  request: RequestView | null = null,
 ): string {
   const header = head(
     'Approval queue',
@@ -743,7 +798,7 @@ export function renderApprovals(
     return header + outcome + nothing('Nothing is waiting for a person.');
   }
   const shown = runs.find((run) => run.runId === selected) ?? runs[0]!;
-  const drawn: ApprovalView = { ...shown, evidence, gates };
+  const drawn: ApprovalView = { ...shown, evidence, gates, request };
   return [
     header,
     outcome,
@@ -798,7 +853,7 @@ function approvalCard(run: ApprovalView): string {
     // The reply, before the button that sends it.
     run.evidence === null
       ? nothing('The journal for this run has not been read.')
-      : evidenceBlock(run.evidence, run.draftExternalId),
+      : evidenceBlock(run.evidence, run.draftExternalId, run.request),
     run.draftExternalId === null
       ? '<p class="discl">No draft is parked, so this cannot be approved here.</p>'
       : [
@@ -909,7 +964,8 @@ function turnBlock(turn: TurnView): string {
     '</div>',
     '<div class="said">',
     '<div class="who">the customer wrote</div>',
-    turn.bodyText === null || turn.bodyText === ''
+    // The absence decides here too, for the reason above.
+    turn.messageAbsence !== null || turn.bodyText === null
       ? `<p class="absent">${escapeHtml(absenceSays(MESSAGE_ABSENCE, turn.messageAbsence ?? 'not_retained'))}</p>`
       : `<div class="prose">${escapeHtml(turn.bodyText)}</div>`,
     '</div>',

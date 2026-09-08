@@ -28,7 +28,7 @@ import { humanValue } from 'auracle/dist/bands/run.js';
 import { probeLedger, requireDbUrl } from 'auracle/dist/db/config.js';
 import { LEDGER_STATES, listEscalations, listRuns, readRun } from 'auracle/dist/escalations/query.js';
 import { readRunJournal } from 'auracle/dist/journal/query.js';
-import { conversationOfRun, readConversation } from 'auracle/dist/conversation/query.js';
+import { conversationOfRun, readConversation, turnAnsweredBy } from 'auracle/dist/conversation/query.js';
 import { readDocument } from 'auracle/dist/documents/query.js';
 import { CLASSIFIER_K } from 'auracle/dist/classifier/classifier.js';
 import { readLatency } from 'auracle/dist/latency/query.js';
@@ -40,7 +40,47 @@ import { allowedHosts, identityHeader } from './hosts.js';
 import { ledgerName } from './ledger-name.js';
 import { evidenceOf, latencyCaveats, stepSays, toDetail, toRow } from './views.js';
 import { createConsole, RUNS_PAGE } from './server.js';
-import type { BandRow, LatencyRow, Percentile, RunDetail, RunRow, RunView } from './surfaces.js';
+import type {
+  BandRow, LatencyRow, Percentile, RequestView, RunDetail, RunRow, RunView,
+} from './surfaces.js';
+
+/**
+ * The conversation to link at the foot of a run detail, or null.
+ *
+ * Null when the request already links it. `turnAnsweredBy` returns the
+ * conversation with the turn, so asking again is a second statement for an id
+ * this already has — and drawing both puts two links to one thread on one
+ * page.
+ *
+ * A run that answered no turn still belongs to a conversation when it carries
+ * one: a run recorded before `db/015` has the id and no turn to join on. That
+ * run has no request to carry the link, so it is asked for here.
+ */
+async function conversationLink(
+  pool: Pool,
+  runId: string,
+  request: RequestView | null,
+): Promise<string | null> {
+  if (request !== null) return null;
+  return conversationOfRun(pool, runId);
+}
+
+/**
+ * The message one run answered, shaped for a surface.
+ *
+ * One statement for one run. The approval queue draws one selection, and the
+ * queue is uncapped by design — a turn read per waiting row would be a
+ * statement for each row of a list that has been 476 long.
+ */
+async function requestFor(pool: Pool, runId: string): Promise<RequestView | null> {
+  const turn = await turnAnsweredBy(pool, runId);
+  return turn === null ? null : {
+    conversationId: turn.conversationId,
+    turnNumber: turn.turnNumber,
+    bodyText: turn.bodyText,
+    absence: turn.absence,
+  };
+}
 
 /** The run detail surface's view of one run, or null when there is no run. */
 async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
@@ -50,6 +90,7 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
   // come back empty: a run that journalled nothing is still a run, and the
   // page says so rather than answering 404.
   const journal = await readRunJournal(pool, runId);
+  const requested = await requestFor(pool, runId);
   const base = toDetail(found);
   if (journal === null) {
     return {
@@ -58,7 +99,8 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
       coverageBlock: null, coverageReview: null, intentId: null,
       decision: null, policyReason: null,
       evidence: { draftBody: null, claims: null, documents: null, documentsMalformed: false },
-      conversationId: await conversationOfRun(pool, runId),
+      conversationId: await conversationLink(pool, runId, requested),
+      request: requested,
     };
   }
   const agreement = journal.agreement;
@@ -83,7 +125,8 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
       malformed: step.resultMalformed,
     })),
     evidence: evidenceOf(journal),
-    conversationId: await conversationOfRun(pool, runId),
+    conversationId: await conversationLink(pool, runId, requested),
+    request: requested,
   };
 }
 
@@ -370,9 +413,24 @@ async function main(): Promise<void> {
 
     readApprovalEvidence: async (runId) => {
       const journal = await readRunJournal(pool, runId);
-      if (journal === null) return null;
+      // The request is read whichever way the journal goes. A run that
+      // journalled nothing still answered a turn, and the run detail draws it
+      // in both branches — so returning null here made one surface show the
+      // message and the other show nothing, for the same run.
+      const request = await requestFor(pool, runId);
+      if (journal === null) {
+        return {
+          request,
+          evidence: { draftBody: null, claims: null, documents: null, documentsMalformed: false },
+          gates: {
+            agreement: null, coverage: null, agreementThreshold: null,
+            agreementDetail: null, coverageBlock: null, coverageReview: null,
+          },
+        };
+      }
       const agreement = journal.agreement;
       return {
+        request,
         evidence: evidenceOf(journal),
         // DEC-05: two readings, side by side and never combined. The queue
         // drew a dash for both because it read no journal; it reads this one,

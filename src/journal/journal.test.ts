@@ -101,8 +101,14 @@ describe('the read modules never write', () => {
     const calls = [...code.matchAll(/\.query[<(]/g)];
     expect(calls.length, `${reader} issues no statement at all`).toBeGreaterThan(0);
 
-    // The first argument of each call, up to the comma or the closing paren.
-    for (const call of code.matchAll(/\.query(?:<[^>]*>)?\(\s*([^,)]+)/g)) {
+    // The whole first argument, not the text up to the first comma.
+    //
+    // A comma-terminated match read `SELECT t.conversation_id` out of a
+    // multi-column literal and checked that fragment alone — so appending
+    // `; SELECT setval(...)` to the end of such a statement passed every rule
+    // below, including the two the guard names in its own comment. A literal
+    // is read to its closing quote and a constant to its identifier.
+    for (const call of code.matchAll(/\.query(?:<[^>]*>)?\(\s*(`[^`]*`|'[^']*'|"[^"]*"|[A-Za-z_$][\w$]*)/g)) {
       const argument = call[1]!.trim();
       const literal = /^(['"`])([\s\S]*)$/.exec(argument);
       if (literal !== null) {
