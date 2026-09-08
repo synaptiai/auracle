@@ -116,15 +116,27 @@ export interface ComposeRecord {
    */
   readonly staleDocumentIds: readonly string[] | null;
   /**
-   * Each claim of the draft, with the document it cites (DEC-07).
+   * Every sentence of the draft in order, as the composer partitioned it
+   * (DEC-43), or null when the row recorded no list.
+   *
+   * A `docId` is the document that sentence rests on. Null is a courtesy
+   * sentence: it opens or closes the reply and cites nothing.
+   *
+   * Joined, these are the draft. `park.draftBody` holds that same text, which
+   * is what an approval compares against; these carry the partition, which the
+   * joined text does not.
+   */
+  readonly sentences: readonly ReplySentence[] | null;
+  /**
+   * The cited sentences alone, in draft order (DEC-07).
    *
    * Null when the row recorded no list, never the empty list: the composer
-   * refuses an uncited line, so a run that composed made at least one claim,
-   * and an empty list would say it made none.
+   * refuses a draft that cites nothing, so a run that composed made at least
+   * one claim, and an empty list would say it made none.
    *
-   * The claims joined are the draft. A reader wanting the reply reads
-   * `park.draftBody`, which is what the approval compares against; these
-   * carry the citation, which the draft does not.
+   * The gate row records a verdict by position into this list, so it holds
+   * the cited sentences only. A courtesy sentence entering it would move
+   * every later verdict onto the wrong claim.
    */
   readonly claims: readonly CitedClaim[] | null;
   /**
@@ -146,6 +158,17 @@ export interface ComposeRecord {
 export interface CitedClaim {
   readonly text: string;
   readonly docId: string;
+}
+
+/**
+ * One sentence of a drafted reply, and the document it rests on (DEC-43).
+ *
+ * A null `docId` is a courtesy sentence. It opens or closes the reply and
+ * cites nothing, so no coverage fraction counts it and no verdict names it.
+ */
+export interface ReplySentence {
+  readonly text: string;
+  readonly docId: string | null;
 }
 
 /**
@@ -615,23 +638,58 @@ function verdictsOf(result: Record<string, unknown> | null): ClaimVerdict[] | nu
 }
 
 /**
- * The claims a compose row recorded, or null when it recorded none.
+ * The drafted reply a compose row recorded, or null when it recorded none.
  *
  * Taken whole or not at all. A list holding one unreadable member is not a
- * shorter list of claims: the count would then disagree with `claimCount`,
- * and the gate row's verdicts are recorded by position into this list — so a
+ * shorter reply: the count would then disagree with `claimCount`, and the
+ * gate row's verdicts are recorded by position into the cited members — so a
  * dropped member would attribute every later verdict to the wrong claim.
+ *
+ * Reads a row written before DEC-43 as well. Such a row holds `claims`, whose
+ * members all cite, which is the same partition with no courtesy sentence in
+ * it. A reader that answered null for those rows would report every run
+ * before this change as having drafted nothing.
  */
-function claimsOf(result: Record<string, unknown> | null): CitedClaim[] | null {
-  const raw = result === null ? undefined : result['claims'];
+function sentencesOf(result: Record<string, unknown> | null): ReplySentence[] | null {
+  if (result === null) return null;
+  // DEC-43's key first. A row written before it holds `claims`, whose members
+  // are all cited — so the same partition, with nothing courteous in it.
+  const raw = result['sentences'] ?? result['claims'];
   if (!Array.isArray(raw)) return null;
-  const claims: CitedClaim[] = [];
+  const sentences: ReplySentence[] = [];
   for (const entry of raw) {
     if (!isObject(entry)) return null;
     const text = entry['text'];
     const docId = entry['docId'];
-    if (typeof text !== 'string' || typeof docId !== 'string') return null;
-    claims.push({ text, docId });
+    if (typeof text !== 'string') return null;
+    // A courtesy sentence records `docId: null` (DEC-43). A row that predates
+    // DEC-43 records every member with a string. Both writers emit the key,
+    // so an absent one is a malformed row and falls to the refusal below.
+    if (docId === null) {
+      sentences.push({ text, docId: null });
+      continue;
+    }
+    // Refused whole, and this is the branch that matters most. Demoting an
+    // unreadable docId to a courtesy sentence would drop the member from the
+    // claims, and every later gate verdict would then name the wrong claim.
+    if (typeof docId !== 'string') return null;
+    sentences.push({ text, docId });
+  }
+  return sentences;
+}
+
+/**
+ * The cited sentences of a partition, in draft order.
+ *
+ * The gate row's verdicts name a position in this list, so it is derived from
+ * the partition rather than read from a second key — two lists that must stay
+ * in step are two lists that can fall out of it.
+ */
+function claimsOf(sentences: readonly ReplySentence[] | null): CitedClaim[] | null {
+  if (sentences === null) return null;
+  const claims: CitedClaim[] = [];
+  for (const sentence of sentences) {
+    if (sentence.docId !== null) claims.push({ text: sentence.text, docId: sentence.docId });
   }
   return claims;
 }
@@ -767,6 +825,9 @@ function toComposeRecord(
   const abstained = result === null ? undefined : result['abstained'];
   if (typeof abstained !== 'boolean') return null;
   const stale = result === null ? undefined : result['staleDocumentIds'];
+  // Read once. The claims are derived from this list rather than parsed a
+  // second time, so the two can never describe different replies.
+  const sentences = sentencesOf(result);
   return {
     abstained,
     claimCount: numberAt(result, 'claimCount'),
@@ -778,7 +839,8 @@ function toComposeRecord(
       Array.isArray(stale) && stale.every((id) => typeof id === 'string')
         ? (stale as string[])
         : null,
-    claims: claimsOf(result),
+    sentences,
+    claims: claimsOf(sentences),
     citedBodies: citedBodiesOf(result),
     provider: stringAt(result, 'provider'),
   };

@@ -90,6 +90,14 @@ async function seedOldConversation(): Promise<{
      VALUES ($1, 'compose', 'done', $2::jsonb, 'p', 'm', 0)`,
     [runId, JSON.stringify({
       abstained: false, claimCount: 2, staleDocumentIds: [], provider: 'stub',
+      // Both keys on one row, deliberately. `sentences` is what a run writes
+      // today (DEC-43) and `claims` is what every run before it wrote, and a
+      // statement that reached one and not the other would clear the ledger
+      // for half of its own history.
+      sentences: [
+        { text: 'the courtesy opening', docId: null },
+        { text: 'the first sentence of the reply', docId: 'SYN-1' },
+      ],
       claims: [{ text: 'the first claim', docId: 'SYN-1' }],
       citedBodies: { 'SYN-1': 'the document body' },
     })],
@@ -153,6 +161,7 @@ describe('the erasure path the runbook publishes', () => {
     const park = journal?.steps.find((step) => step.stepId === 'park')?.park;
     const compose = journal?.steps.find((step) => step.stepId === 'compose')?.compose;
     expect(park?.draftBody).toBeNull();
+    expect(compose?.sentences).toBeNull();
     expect(compose?.claims).toBeNull();
     expect(compose?.citedBodies).toBeNull();
 
@@ -180,7 +189,8 @@ describe('the erasure path the runbook publishes', () => {
     ].join(' ');
     for (const cleared of [
       'the customer wrote this', 'and we answered that', 'the drafted reply',
-      'the first claim', 'the document body', 'ada@customer.example',
+      'the first claim', 'the courtesy opening', 'the first sentence of the reply',
+      'the document body', 'ada@customer.example',
       'bob@customer.example', '550 no such user',
     ]) {
       expect(everything, cleared).not.toContain(cleared);

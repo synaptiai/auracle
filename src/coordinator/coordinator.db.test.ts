@@ -993,4 +993,83 @@ describe('section 4.3 run coordinator', () => {
     );
     expect(drafts.rows).toHaveLength(0);
   });
+
+  // DEC-43, on the path that ships. Every other assertion on the compose row's
+  // partition builds that row by hand, so nothing proved the coordinator writes
+  // what a composition produced. It could have journalled the cited sentences
+  // while `park.body` held the whole reply, which is the drift its own comment
+  // claims to prevent — and both the approval comparison and the runbook's
+  // erasure statement rest on the two agreeing.
+  describe('the reply a run journals, against the reply it parked', () => {
+    // A courtesy opening and a courtesy closing around two claims. The
+    // composer's parser accepts this shape and the gate judges the two claims,
+    // so a row holding four members and a `claimCount` of two is the only
+    // consistent answer.
+    function courteousScript(): FakeStep[] {
+      return [
+        ...Array.from({ length: 9 }, () => ({ text: 'password_reset' })),
+        { vectors: [VEC] },
+        {
+          text: [
+            '[courtesy] Thanks for writing in about signing in.',
+            '[doc:d1] Open the account settings page and choose security.',
+            '[doc:d1] Choose reset password and follow the link we email you.',
+            '[courtesy] Reply here if that link does not arrive.',
+          ].join('\n'),
+        },
+        { text: 'VERDICT: SUPPORTED' },
+        { text: 'VERDICT: SUPPORTED' },
+      ];
+    }
+
+    it('journals every sentence of the reply, and they join to the parked body', async () => {
+      await indexFixtureDoc();
+      const ticketId = 'T-' + randomUUID().slice(0, 8);
+      const result = await coordinateTicket(
+        makeDeps(courteousScript(), undefined, helpdeskWith(ticketId)),
+        replyInput(ticketId, 1n),
+      );
+      expect(result.outcome).toBe('awaiting_approval');
+
+      const steps = await journalRows(result.runId);
+      const compose = steps.find((s) => s.step_id === 'compose')?.result as {
+        sentences: { text: string; docId: string | null }[];
+        claimCount: number;
+      };
+      const park = steps.find((s) => s.step_id === 'park')?.result as { body: string };
+
+      // Two facts, not the shape of the object. The reply the ledger describes
+      // is the reply the helpdesk holds.
+      expect(compose.sentences.map((sentence) => sentence.text).join(' ')).toBe(park.body);
+      // And the denominator still counts claims alone (DEC-05, DEC-43). A
+      // courtesy sentence entering `claimCount` would move the coverage the
+      // policy engine read.
+      expect(compose.sentences.filter((sentence) => sentence.docId !== null))
+        .toHaveLength(compose.claimCount);
+      expect(compose.claimCount).toBe(2);
+      // The uncited sentences reached the ledger. Journalling the claims alone
+      // would describe a reply the customer never reads.
+      expect(compose.sentences.filter((sentence) => sentence.docId === null))
+        .toHaveLength(2);
+    });
+
+    // The gate records a verdict by position among the cited sentences. A
+    // courtesy opening must not shift the first verdict onto the second claim.
+    it('records a verdict for each claim, counted past the courtesy opening', async () => {
+      await indexFixtureDoc();
+      const ticketId = 'T-' + randomUUID().slice(0, 8);
+      const result = await coordinateTicket(
+        makeDeps(courteousScript(), undefined, helpdeskWith(ticketId)),
+        replyInput(ticketId, 1n),
+      );
+
+      const steps = await journalRows(result.runId);
+      const gate = steps.find((s) => s.step_id === 'gate')?.result as {
+        claimVerdicts: { claimIndex: number; supported: boolean }[];
+        groundedness: number;
+      };
+      expect(gate.claimVerdicts.map((verdict) => verdict.claimIndex)).toEqual([0, 1]);
+      expect(gate.groundedness).toBe(1);
+    });
+  });
 });

@@ -627,11 +627,23 @@ export async function coordinateTicket(
   await journalFinish('compose', composed.abstained ? 'abstained' : 'done', {
     abstained: composed.abstained,
     claimCount: composed.claims.length,
-    // The mapping DEC-07 already requires to exist. The composer resolves
-    // every claim to a retrieved document and refuses an uncited line, and
-    // until now only the count of them survived the write — so a reader could
-    // learn that four claims were made and never which document carried one.
-    claims: composed.claims.map((claim) => ({ text: claim.text, docId: claim.docId })),
+    // The drafted reply, sentence by sentence, as the composer partitioned it
+    // (DEC-43). A `docId` is the document that sentence rests on; null is a
+    // courtesy sentence, which cites nothing and is never counted.
+    //
+    // The whole reply and not the claims alone: the claims are no longer the
+    // draft, so a row holding only them would describe a reply the customer
+    // never reads. Stored once, here. `park.body` holds the joined text for
+    // the approval to compare against, and nothing else copies it.
+    //
+    // Named `sentences` rather than `claims`, because a list holding courtesy
+    // sentences is not a list of claims. `docs/operations.md` names this key
+    // in the erasure statement, and `journal/query.ts` still reads a `claims`
+    // row written before this.
+    sentences: composed.sentences.map((sentence) => ({
+      text: sentence.text,
+      docId: sentence.docId,
+    })),
     // The cited documents as they read at this moment, and only the cited
     // ones. Journalled here rather than at `retrieve`, because `retrieve`
     // runs first and nothing there knows which documents a claim will cite.
@@ -743,10 +755,15 @@ export async function coordinateTicket(
     // Coverage detail, and coverage only. Agreement sits on the `classify`
     // row and nothing here touches it, so DEC-05 holds: the ledger still
     // never holds the two gates in one object.
-    // The claim's position, not its text. `composed.draft` is the claim texts
-    // joined, so storing them here would put the whole drafted reply in the
-    // ledger a second time — and two copies are two places an erasure path
-    // has to reach, and two things that can drift.
+    // The claim's position, not its text. The compose row already holds every
+    // sentence of the draft, so storing the text here would put the drafted
+    // reply in the ledger a second time — and two copies are two places an
+    // erasure path has to reach, and two things that can drift.
+    //
+    // The position is into the cited sentences, in draft order, which is what
+    // `composed.claims` is. A courtesy sentence never enters that list, so a
+    // reply that opens with one does not shift a verdict onto the wrong
+    // claim (DEC-43).
     //
     // The index is sound because `checkGroundedness` drops a blank claim and
     // the composer cannot emit one: `parseClaims` trims each line before its

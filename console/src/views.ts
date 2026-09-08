@@ -13,7 +13,9 @@ import type { JournalStep, RunJournal } from 'auracle/dist/journal/query.js';
 import { escalationHead } from './render.js';
 import type { PartitionLatency } from 'auracle/dist/latency/query.js';
 
-import type { ClaimView, DocumentView, EvidenceView, RunDetail, RunRow } from './surfaces.js';
+import type {
+  ClaimView, DocumentView, EvidenceView, RunDetail, RunRow, SentenceView,
+} from './surfaces.js';
 
 export function toRow(item: {
   runId: string; ticketId: string; state: string; promptVer: string;
@@ -151,33 +153,62 @@ export function latencyCaveats(p: PartitionLatency): string[] {
  * detail both draw this, and two assemblies of the same evidence would
  * eventually disagree about a run.
  *
- * The verdicts arrive keyed by position into the claim list, because the
- * claims joined are the draft and storing their text twice would put the
+ * The verdicts arrive keyed by position into the cited sentences, because the
+ * partition joined is the draft and storing their text twice would put the
  * whole reply in the ledger a second time. This is where position becomes
  * meaning again, and a verdict naming a claim that does not exist is dropped
  * rather than attached to the wrong one.
+ *
+ * The position is counted over the cited sentences alone (DEC-43). A courtesy
+ * sentence takes no verdict and advances no index, so a reply that opens with
+ * one does not shift every verdict onto the following claim.
  */
 export function evidenceOf(journal: RunJournal): EvidenceView {
   const park = journal.steps.find((step) => step.park !== null)?.park ?? null;
   const compose = journal.steps.find((step) => step.compose !== null)?.compose ?? null;
   const verdicts = journal.coverage?.claimVerdicts ?? null;
 
-  const claims: ClaimView[] | null =
-    compose?.claims == null
+  // Counted over the cited sentences, in draft order. `claimIndex` is what
+  // the citation marker numbers and what the gate recorded a verdict against;
+  // it is not the sentence's position in the reply.
+  let claimIndex = -1;
+  const sentences: SentenceView[] | null =
+    compose?.sentences == null
       ? null
-      : compose.claims.map((claim, index) => ({
-        index,
-        text: claim.text,
-        docId: claim.docId,
-        // Null, never false. A claim nobody judged and a claim the judge
-        // refused are different facts, and only the second is a warning.
-        //
-        // Ambiguity is an absence, not a first-wins. `verdictsOf` permits a
-        // list holding one index twice, and taking the first would render a
-        // refused claim as accepted on the strength of the entry that
-        // happened to come first.
-        supported: verdictFor(verdicts, index),
-      }));
+      : compose.sentences.map((sentence) => {
+        if (sentence.docId === null) {
+          return { text: sentence.text, docId: null, claimIndex: null, supported: null };
+        }
+        claimIndex += 1;
+        return {
+          text: sentence.text,
+          docId: sentence.docId,
+          claimIndex,
+          // Null, never false. A claim nobody judged and a claim the judge
+          // refused are different facts, and only the second is a warning.
+          //
+          // Ambiguity is an absence, not a first-wins. `verdictsOf` permits a
+          // list holding one index twice, and taking the first would render a
+          // refused claim as accepted on the strength of the entry that
+          // happened to come first.
+          supported: verdictFor(verdicts, claimIndex),
+        };
+      });
+
+  // Derived from the partition rather than mapped from `compose.claims`
+  // again, so the two can never number the same reply differently.
+  const claims: ClaimView[] | null =
+    sentences === null
+      ? null
+      : sentences.flatMap((sentence) =>
+        sentence.docId === null || sentence.claimIndex === null
+          ? []
+          : [{
+            index: sentence.claimIndex,
+            text: sentence.text,
+            docId: sentence.docId,
+            supported: sentence.supported,
+          }]);
 
   const documents: DocumentView[] | null =
     journal.documents === null
@@ -194,6 +225,7 @@ export function evidenceOf(journal: RunJournal): EvidenceView {
 
   return {
     draftBody: park?.draftBody ?? null,
+    sentences,
     claims,
     documents,
     documentsMalformed: journal.documentsMalformed,

@@ -191,6 +191,48 @@ export const SEED_INTENTS: readonly SeedIntent[] = [
 ];
 
 /**
+ * The documents a retriever would return for each intent.
+ *
+ * Retrieval was uniform over the whole corpus, so a refund question came back
+ * with the status page, the mobile application and account recovery — and no
+ * arrangement of those sentences answers it. A reader opening such a run sees
+ * a reply that makes no sense and concludes the system does not work, which
+ * is the correct conclusion about that ledger.
+ *
+ * The first entries are what a hybrid search would rank first for the intent.
+ * A run still fills the rest of its window from the remainder, because a
+ * retriever returns near misses too — and a claim citing one of those is how
+ * an unsupported claim gets a citation at all (DEC-07, DEC-21).
+ *
+ * An intent with no entry falls back to the whole corpus, which is the
+ * honest shape for `other`.
+ */
+const DOCUMENTS_FOR: Readonly<Record<string, readonly string[]>> = {
+  'refund-request': ['SYN-DOC-01', 'SYN-DOC-05'],
+  'billing-dispute': ['SYN-DOC-01', 'SYN-DOC-04'],
+  'cancel-subscription': ['SYN-DOC-05', 'SYN-DOC-01'],
+  'data-deletion-request': ['SYN-DOC-08'],
+  'chargeback-notice': ['SYN-DOC-01', 'SYN-DOC-02'],
+  'payment-failure': ['SYN-DOC-02', 'SYN-DOC-04'],
+  'plan-change-question': ['SYN-DOC-03', 'SYN-DOC-05'],
+  'invoice-copy-request': ['SYN-DOC-04'],
+  'account-recovery': ['SYN-DOC-06', 'SYN-DOC-07'],
+  'login-trouble': ['SYN-DOC-07', 'SYN-DOC-06'],
+  'sync-error-report': ['SYN-DOC-10', 'SYN-DOC-14'],
+  'export-broken': ['SYN-DOC-09', 'SYN-DOC-10'],
+  'integration-failure': ['SYN-DOC-12', 'SYN-DOC-10'],
+  'how-to-question': ['SYN-DOC-16', 'SYN-DOC-13'],
+  'pricing-question': ['SYN-DOC-03', 'SYN-DOC-04'],
+  'documentation-gap': ['SYN-DOC-16'],
+  'bug-minor-report': ['SYN-DOC-15', 'SYN-DOC-10'],
+  'onboarding-help': ['SYN-DOC-16'],
+  'notification-settings-help': ['SYN-DOC-13'],
+  'mobile-app-question': ['SYN-DOC-14'],
+  'api-usage-question': ['SYN-DOC-11', 'SYN-DOC-12'],
+  'status-inquiry': ['SYN-DOC-15'],
+};
+
+/**
  * The knowledge base a seeded run retrieves from.
  *
  * Small and fixed, because its job is to give the `docIds` in a retrieve row
@@ -489,6 +531,13 @@ export interface PlannedRun {
   docIds: readonly string[];
   /** The claims, their citations and their verdicts (DEC-07, DEC-05). */
   claims: readonly PlannedClaim[];
+  /**
+   * The reply in draft order, courtesy sentences included (DEC-43).
+   *
+   * Joined, these are `park.body`. `claims` is the cited subset, in the same
+   * order, which is what a gate verdict is recorded against.
+   */
+  sentences: readonly PlannedSentence[];
   /** How many cited claims the composer produced. Zero for an abstain. */
   claimCount: number;
   /** The gate step's inputs and verdict, or null for a run that never gated. */
@@ -733,7 +782,12 @@ const SEED_QUEUES: readonly string[] = ['SYN-QUEUE-BILLING', 'SYN-QUEUE-ACCOUNTS
  * count behind it is a value no composition could have produced, and the
  * journal records both side by side.
  */
-const CLAIM_COUNTS: readonly number[] = [3, 4, 5, 6, 7, 8, 9, 10];
+// A drafted reply makes a few claims, not ten. Ten produced a nine-sentence
+// answer that wandered into whatever the retriever returned last, which reads
+// as a broken system rather than a long one. Nothing published depends on
+// this: the README's containment and action-match figures come from the gold
+// corpus, and the control bands over a seeded history are a demonstration.
+const CLAIM_COUNTS: readonly number[] = [2, 3, 4, 5];
 
 /**
  * A coverage value inside [lo, hi), together with the claim count that gives it.
@@ -784,11 +838,97 @@ function coverageBandFor(reason: PolicyReason): { lo: number; hi: number } {
   return { lo: 0, hi: Infinity };
 }
 
-/** The draft a person sees, or the rationale they approve. DEC-18: invented throughout. */
-function draftFor(intentId: string, ticketId: string, docIds: readonly string[]): string {
-  return `Thank you for writing about your ${intentId.replace(/-/g, ' ')}. `
-    + `The published guidance for this case is ${docIds.join(', ')}. `
-    + `Ticket ${ticketId} stays open until you confirm this resolved it.`;
+/**
+ * The draft a person sees, or the rationale they approve.
+ *
+ * The claims joined, and nothing else. `src/composer/composer.ts` builds a
+ * draft as exactly that, so a seeder that wrote the two independently
+ * produced a ledger the system cannot: the park row said one thing and the
+ * compose row another, and every surface that renders the claims showed text
+ * the draft did not contain.
+ *
+ * DEC-18: invented throughout, and about nobody.
+ */
+function draftFor(sentences: readonly PlannedSentence[]): string {
+  return sentences.map((sentence) => sentence.text).join(' ');
+}
+
+/**
+ * Openings a reply may take, and closings it may end on (DEC-43).
+ *
+ * A courtesy sentence greets the customer or invites a reply. None of them
+ * says anything about the customer, the account, the policy or the outcome,
+ * which is what makes them citable to nothing.
+ *
+ * Invented throughout, and about nobody (DEC-18). None of them names a person
+ * or addresses one by name: a seeded corpus that greeted anybody would put a
+ * name in a public repository.
+ */
+export const COURTESY_OPENINGS: readonly string[] = [
+  'Thanks for getting in touch about this.',
+  'Thanks for writing in, and sorry for the trouble.',
+  'Thanks for the detail in your message, it helps.',
+  'Sorry you have hit this, and thanks for flagging it.',
+];
+
+export const COURTESY_CLOSINGS: readonly string[] = [
+  'Reply here if that does not sort it and we will take another look.',
+  'Let us know if anything above does not match what you are seeing.',
+  'If you need anything else on this, just reply to this message.',
+  'Happy to keep digging if this is not the answer you needed.',
+];
+
+/**
+ * The reply a run drafted, sentence by sentence (DEC-43).
+ *
+ * The composer writes the reply a support person would send. It may open with
+ * one courtesy sentence and close with one, and it may do neither. This draws
+ * all four shapes across the history, because a console that only ever met
+ * one of them proves nothing about the other three.
+ *
+ * The claims keep their order and stay contiguous, which is the shape the
+ * composer's parser accepts: a courtesy sentence between two claims is an
+ * uncited sentence in the body of the answer, and the parser refuses it.
+ */
+function replyFor(claims: readonly PlannedClaim[], seed: number): PlannedSentence[] {
+  const cited: PlannedSentence[] = claims.map((claim) => ({
+    text: claim.text,
+    docId: claim.docId,
+    supported: claim.supported,
+  }));
+  const shape = seed % 4;
+  const opens = shape === 0 || shape === 1;
+  const closes = shape === 0 || shape === 2;
+  return [
+    ...(opens
+      ? [{
+        text: COURTESY_OPENINGS[seed % COURTESY_OPENINGS.length]!,
+        docId: null,
+        supported: null,
+      }]
+      : []),
+    ...cited,
+    ...(closes
+      ? [{
+        text: COURTESY_CLOSINGS[seed % COURTESY_CLOSINGS.length]!,
+        docId: null,
+        supported: null,
+      }]
+      : []),
+  ];
+}
+
+/**
+ * One sentence of a seeded reply (DEC-43).
+ *
+ * A `docId` names the document the sentence rests on, and `supported` carries
+ * what the judge said about it. A courtesy sentence has neither: it opens or
+ * closes the reply, cites nothing, and no verdict names it.
+ */
+export interface PlannedSentence {
+  text: string;
+  docId: string | null;
+  supported: boolean | null;
 }
 
 /** One claim of a seeded draft, and the document it cites (DEC-07). */
@@ -806,31 +946,115 @@ export interface PlannedClaim {
 }
 
 /**
+ * Sentences a document does not contain, for the claims the judge refuses.
+ *
+ * Each is a concrete promise about a timescale or an outcome that no document
+ * in `SEED_DOCUMENTS` makes. That is what an unsupported claim is: a specific
+ * the retrieved text does not carry, which is exactly the failure the
+ * groundedness gate exists to catch (DEC-07, section 4.7).
+ *
+ * Invented throughout, and about nobody (DEC-18).
+ */
+export const UNSUPPORTED_CLAIMS: readonly string[] = [
+  'The refund usually reaches your bank within five working days.',
+  'A supervisor will call you back before the end of the day.',
+  'This change takes effect immediately and cannot be reversed.',
+  'We have applied a credit to your account as a goodwill gesture.',
+  'Your data is removed from every backup within twenty four hours.',
+  'The engineering team has already reproduced this on their side.',
+  'You will not be charged again while this is open.',
+  'The next invoice will show the corrected amount.',
+  'Your access continues unchanged until this is resolved.',
+  'We have escalated this to the team that owns the integration.',
+  'A replacement confirmation is on its way to you now.',
+  'This is a known issue and a fix is going out this week.',
+];
+
+/** The sentences of a document, which are what a claim can be grounded in. */
+function sentencesOf(body: string): string[] {
+  return body
+    .split('. ')
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 0)
+    .map((sentence) => (sentence.endsWith('.') ? sentence : `${sentence}.`));
+}
+
+/**
  * The claims a seeded draft makes, and which of them the judge supported.
  *
- * The composer refuses an uncited line (DEC-07), so every claim names a
- * document the run retrieved. The supported count is fixed by the coverage
- * the run already drew: a reader that recounted these must reach the fraction
- * the gate row records.
+ * A supported claim is a sentence of the document it cites. That is what
+ * grounding is: the composer must cite or abstain (DEC-07), and a claim the
+ * judge accepts is one the retrieved text carries. Inventing a sentence and
+ * calling it supported would model a ledger the system cannot produce, and it
+ * would give an operator nothing to check a citation against.
  *
- * The unsupported ones come last. Nothing in the system depends on that, and
- * it makes the seeded corpus readable when a person opens one run.
+ * An unsupported claim is a concrete promise no document makes. It still
+ * cites one, because the composer refuses an uncited line — which is why the
+ * groundedness gate exists as a second check rather than the citation being
+ * enough on its own.
+ *
+ * The supported count is fixed by the coverage the run already drew, so a
+ * reader recounting these reaches the fraction the gate row records.
+ *
+ * The unsupported ones come last. Nothing depends on that, and it makes a
+ * seeded run readable when a person opens one.
  */
 function claimsFor(
-  intentId: string,
   docIds: readonly string[],
   claimCount: number,
   groundedness: number,
+  seed: number,
 ): PlannedClaim[] {
   const supportedCount = Math.round(groundedness * claimCount);
-  const subject = intentId.replace(/-/g, ' ');
-  return Array.from({ length: claimCount }, (_, i) => ({
-    text: `Point ${i + 1} about your ${subject}, as the published guidance states it.`,
-    // Round-robin over what the run retrieved, so two claims commonly cite
-    // one document — which is the shape the journal has to hold.
-    docId: docIds[i % docIds.length]!,
-    supported: i < supportedCount,
+
+  // Every sentence the retrieved documents carry, interleaved by document so
+  // consecutive claims cite different ones and a document still comes round
+  // more than once. Taken in order and never reused: a document has three
+  // sentences, and a strict round-robin over documents wrapped past that and
+  // repeated a sentence within one reply.
+  const perDoc = docIds.map((docId) => ({
+    docId,
+    sentences: sentencesOf(SEED_DOCUMENTS.find((doc) => doc.docId === docId)!.body),
   }));
+  // Document by document, not pass by pass. `docIds` is ordered by relevance,
+  // so taking one sentence from each in turn reached the third document by
+  // the third claim — and the third is a near miss. A reply about a refund
+  // said something true about onboarding a workspace, which reads as a
+  // system that has not understood the question.
+  //
+  // Exhausting the closest document first keeps a short reply inside the
+  // documents that answer it, and a long one still reaches the rest.
+  const grounded: { readonly text: string; readonly docId: string }[] = [];
+  for (const doc of perDoc) {
+    for (const sentence of doc.sentences) grounded.push({ text: sentence, docId: doc.docId });
+  }
+  // Then the contiguous pairs, because a run can make more claims than its
+  // documents have sentences. A pair is still text the document carries, so
+  // it is still grounded, and it reads as one longer point rather than a
+  // sentence said twice.
+  for (const doc of perDoc) {
+    for (let i = 0; i + 1 < doc.sentences.length; i += 1) {
+      grounded.push({ text: `${doc.sentences[i]!} ${doc.sentences[i + 1]!}`, docId: doc.docId });
+    }
+  }
+
+  return Array.from({ length: claimCount }, (_, i) => {
+    if (i >= supportedCount) {
+      return {
+        // Distinct within one reply. Twelve of them and at most ten claims,
+        // so a run's unsupported claims are consecutive and never wrap onto
+        // one another — six of them did, and a reply said the same
+        // unsupported thing twice.
+        text: UNSUPPORTED_CLAIMS[(seed + i) % UNSUPPORTED_CLAIMS.length]!,
+        // It still cites a document, because the composer refuses an uncited
+        // line. That is why the groundedness gate is a second check.
+        docId: docIds[i % docIds.length]!,
+        supported: false,
+      };
+    }
+    const source = grounded[i]!;
+    return { text: source.text, docId: source.docId, supported: true };
+  });
 }
 
 /** Everything a run's journal records beyond its timing, its state and its provider. */
@@ -840,6 +1064,8 @@ export interface RunDetail {
   claimCount: number;
   /** The claims, their citations and their verdicts (DEC-07, DEC-05). */
   claims: PlannedClaim[];
+  /** The reply in draft order, courtesy sentences included (DEC-43). */
+  sentences: PlannedSentence[];
   gate: PlannedGate | null;
   park: PlannedPark | null;
   actionClass: string;
@@ -899,9 +1125,15 @@ function planDetail(
   // Five is the coordinator's own retrieval limit. Fewer is ordinary: the
   // lexical channel returns nothing for a query with no matching term.
   const docCount = 3 + Math.floor(rng() * 3);
-  const remaining = SEED_DOCUMENTS.map((doc) => doc.docId);
-  const docIds: string[] = [];
-  for (let i = 0; i < docCount; i += 1) {
+  // What a search would rank first for this intent, then near misses. A
+  // uniform draw over the corpus answered a refund question with the mobile
+  // application, and no ordering of those sentences is a reply.
+  const relevant = DOCUMENTS_FOR[intent.id] ?? [];
+  const docIds: string[] = [...relevant].slice(0, docCount);
+  const remaining = SEED_DOCUMENTS
+    .map((doc) => doc.docId)
+    .filter((docId) => !docIds.includes(docId));
+  while (docIds.length < docCount) {
     docIds.push(remaining.splice(Math.floor(rng() * remaining.length), 1)[0]!);
   }
 
@@ -942,6 +1174,10 @@ function planDetail(
       // and `checkGroundedness` refuses an empty claim list outright, so
       // there is no gate row for these verdicts to disagree with.
       claims: [],
+      // An abstain drafts no reply at all, so it has no sentences either. A
+      // courtesy sentence here would be a reply that greets the customer and
+      // then says nothing, which is not what an abstain produces (DEC-07).
+      sentences: [],
       gate: null,
       park: null,
       actionClass,
@@ -973,7 +1209,13 @@ function planDetail(
     },
   };
 
-  const body = draftFor(intent.id, ticketId, docIds);
+  // The claims first, because they are the reply's cited sentences, then the
+  // reply around them (DEC-43). One draw feeds both, so a run's opening and
+  // its unsupported claims come from the same seed.
+  const claimSeed = Math.floor(rng() * 997);
+  const claims = claimsFor(docIds, claimCount, groundedness, claimSeed);
+  const sentences = replyFor(claims, claimSeed);
+  const body = draftFor(sentences);
   const park: PlannedPark | null = decision !== 'gated'
     ? null
     : actionClass === CUSTOMER_REPLY_ACTION_CLASS
@@ -993,9 +1235,9 @@ function planDetail(
       // `approveRun` refuses.
       : { actionClass, delivery, body, payload: actionPayload, turnNumber: 1 };
 
-  const claims = claimsFor(intent.id, docIds, claimCount, groundedness);
   return {
-    classification, docIds, claimCount, claims, gate, park, actionClass, delivery, actionPayload,
+    classification, docIds, claimCount, claims, sentences, gate, park,
+    actionClass, delivery, actionPayload,
   };
 }
 

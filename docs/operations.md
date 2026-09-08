@@ -1148,10 +1148,15 @@ approver who cannot read a reply cannot approve it (DEC-40).
 It reads one journal, for the run it draws. Reading one for every waiting run
 would be a statement for each row of an uncapped list.
 
-The reply is drawn as its claims, because the claims joined are the draft.
-Each claim carries the document it cites. A claim the judge did not support is
-marked, and a claim nobody judged is marked apart from it. Those are different
-facts, and only the first is a warning.
+The reply is drawn sentence by sentence, because those sentences joined are the
+draft. Each claim carries the document it cites. A claim the judge did not
+support is marked, and a claim nobody judged is marked apart from it. Those are
+different facts, and only the first is a warning.
+
+A reply may open and close with a courtesy sentence (DEC-43). Such a sentence
+cites nothing, and the console draws it quieter than the claims around it. The
+summary line counts them, so an approver reads how much of the reply rests on
+no document.
 
 The heading says the system drafted this reply. It does not say the reply will
 be sent. The relay sends the helpdesk copy, and a person may have edited it
@@ -1228,7 +1233,7 @@ lives for the life of its row, and nothing removes any of it.
 | `turn.approved_reply_text` | the reply an approval dispatched | the approval path alone |
 | `step_journal.result` on `park` | the drafted reply | every gated run |
 | `step_journal.result` on `park` | the fault an adapter raised | a park the adapter refused |
-| `step_journal.result` on `compose` | the claims, which joined are the draft | every run that composed |
+| `step_journal.result` on `compose` | the reply, sentence by sentence | every run that composed |
 | `step_journal.result` on `compose` | the body of each cited document | every run that cited one |
 | `step_journal.result` on `escalate` | the reason, which interpolates adapter text | the relay and the consumer |
 | `conversation.customer_address` | the participant the messages come from | the first sender that names itself |
@@ -1241,9 +1246,9 @@ journal row verbatim.
 consumer deletes that row on the ack and on the abandon, so it clears itself.
 A message stuck in retry holds text until one of those happens.
 
-The claims are the reply. So a run that composed holds a drafted reply, whether
-or not a person saw one. An automatic run holds one although it sent nothing
-to a customer.
+The sentences are the reply. So a run that composed holds a drafted reply,
+whether or not a person saw one. An automatic run holds one although it sent
+nothing to a customer.
 
 `run.approved_by` holds an operator's own identifier, not a customer's. It is
 what a header claimed and never an authenticated identity (DEC-42).
@@ -1262,7 +1267,8 @@ UPDATE turn
 -- The drafted reply, the cited document bodies, the adapter fault and the
 -- escalation reason, past 90 days.
 UPDATE step_journal j
-   SET result = j.result - 'body' - 'claims' - 'citedBodies' - 'error' - 'reason'
+   SET result = j.result - 'body' - 'sentences' - 'claims' - 'citedBodies'
+                         - 'error' - 'reason'
   FROM run r
  WHERE r.run_id = j.run_id
    AND j.step_id IN ('park', 'compose', 'escalate')

@@ -219,11 +219,20 @@ async function writeJournal(client: PoolClient, run: PlannedRun): Promise<void> 
     // (DEC-23). Recorded because the coordinator records it: a reader that
     // found the key missing could not tell an empty list from an old row.
     staleDocumentIds: [],
-    // The claim-to-document mapping DEC-07 requires to exist, and the bodies
-    // of the documents the claims actually cite. Only the cited ones: the
-    // rest carry their hash on the retrieve row, which is what the
+    // The drafted reply, sentence by sentence, exactly as the coordinator
+    // writes it (DEC-43). A `docId` is the document the sentence rests on;
+    // null is a courtesy sentence, which cites nothing.
+    //
+    // The whole reply, not the claims alone. `park.body` is these joined, and
+    // a compose row holding only the cited ones would describe a reply that
+    // is not the one parked.
+    sentences: run.sentences.map((sentence) => ({
+      text: sentence.text,
+      docId: sentence.docId,
+    })),
+    // The bodies of the documents the claims actually cite. Only the cited
+    // ones: the rest carry their hash on the retrieve row, which is what the
     // coordinator writes.
-    claims: run.claims.map((claim) => ({ text: claim.text, docId: claim.docId })),
     citedBodies: Object.fromEntries(
       [...new Set(run.claims.map((claim) => claim.docId))].map((docId) => [
         docId,

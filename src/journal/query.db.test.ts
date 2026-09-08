@@ -202,8 +202,9 @@ describe('a run with a full journal', () => {
       abstained: false,
       claimCount: 3,
       staleDocumentIds: ['doc-a'],
-      // This fixture journals neither, and the shape stays exact so a field
-      // appearing here has to be looked at rather than absorbed.
+      // This fixture journals none of them, and the shape stays exact so a
+      // field appearing here has to be looked at rather than absorbed.
+      sentences: null,
       claims: null,
       citedBodies: null,
       provider: 'stub',
@@ -394,6 +395,57 @@ describe('what the reader now returns about a draft and its claims', () => {
     expect(compose?.citedBodies).toEqual({ 'SYN-1': 'body one', 'SYN-2': 'body two' });
   });
 
+  // DEC-43. The row holds the reply, not the claims, and a reader that took
+  // only the cited members would report a reply the customer never reads.
+  it('returns every sentence of the draft, courtesy sentences included (DEC-43)', async () => {
+    const runId = await journal([
+      {
+        stepId: 'compose',
+        status: 'done',
+        result: {
+          abstained: false, claimCount: 1, staleDocumentIds: [], provider: 'stub',
+          sentences: [
+            { text: 'Thanks for writing in.', docId: null },
+            { text: 'Refunds post in five days.', docId: 'SYN-1' },
+            { text: 'Reply here if it has not arrived.', docId: null },
+          ],
+        },
+      },
+    ]);
+    const compose = (await readRunJournal(pool, runId))?.steps[0]?.compose;
+    expect(compose?.sentences).toEqual([
+      { text: 'Thanks for writing in.', docId: null },
+      { text: 'Refunds post in five days.', docId: 'SYN-1' },
+      { text: 'Reply here if it has not arrived.', docId: null },
+    ]);
+    // The gate records a verdict by position into this list, so a courtesy
+    // sentence entering it would move every later verdict onto the wrong
+    // claim. Derived from the partition, never read from a second key.
+    expect(compose?.claims).toEqual([
+      { text: 'Refunds post in five days.', docId: 'SYN-1' },
+    ]);
+  });
+
+  // Every run composed before DEC-43 holds `claims`, whose members all cite.
+  // A reader answering null for those rows would report the whole history of
+  // this ledger as having drafted nothing.
+  it('reads a row written before DEC-43 as a partition that cites throughout', async () => {
+    const runId = await journal([
+      {
+        stepId: 'compose',
+        status: 'done',
+        result: {
+          abstained: false, claimCount: 1, staleDocumentIds: [], provider: 'stub',
+          claims: [{ text: 'Refunds post in five days.', docId: 'SYN-1' }],
+        },
+      },
+    ]);
+    const compose = (await readRunJournal(pool, runId))?.steps[0]?.compose;
+    expect(compose?.sentences).toEqual([
+      { text: 'Refunds post in five days.', docId: 'SYN-1' },
+    ]);
+  });
+
   // Whole or not at all. The verdicts index into this list, so a dropped
   // member would attribute every later verdict to the wrong claim.
   it('refuses a claim list holding an unreadable member, rather than shortening it', async () => {
@@ -408,6 +460,50 @@ describe('what the reader now returns about a draft and its claims', () => {
       },
     ]);
     expect((await readRunJournal(pool, runId))?.steps[0]?.compose?.claims).toBeNull();
+  });
+
+  // The twin of the case above, on the other field. An unreadable docId that
+  // was demoted to a courtesy sentence would leave the ledger reporting a
+  // shorter reply, drop the member from the claims, and move every later
+  // verdict onto the wrong claim.
+  it('refuses a partition whose member cites something that is not a document id', async () => {
+    for (const docId of [7, {}, ['SYN-1'], true]) {
+      const runId = await journal([
+        {
+          stepId: 'compose',
+          status: 'done',
+          result: {
+            abstained: false, claimCount: 2, staleDocumentIds: [], provider: 'stub',
+            sentences: [
+              { text: 'Thanks for writing in.', docId: null },
+              { text: 'fine', docId: 'SYN-1' },
+              { text: 'not fine', docId },
+            ],
+          },
+        },
+      ]);
+      const compose = (await readRunJournal(pool, runId))?.steps[0]?.compose;
+      expect(compose?.sentences, JSON.stringify(docId)).toBeNull();
+      expect(compose?.claims, JSON.stringify(docId)).toBeNull();
+    }
+  });
+
+  // Both writers emit the key from a `string | null` field, so a member
+  // without one is a malformed row rather than a courtesy sentence. Reading
+  // it as courteous would silently shorten the claims.
+  it('refuses a member that names no citation at all, rather than reading it as courtesy', async () => {
+    const runId = await journal([
+      {
+        stepId: 'compose',
+        status: 'done',
+        result: {
+          abstained: false, claimCount: 1, staleDocumentIds: [], provider: 'stub',
+          sentences: [{ text: 'a sentence with no docId key' }],
+        },
+      },
+    ]);
+    const compose = (await readRunJournal(pool, runId))?.steps[0]?.compose;
+    expect(compose?.sentences).toBeNull();
   });
 
   it('returns the verdicts by position, beside the fraction and never instead of it', async () => {

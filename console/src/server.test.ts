@@ -36,6 +36,23 @@ const REQUEST = {
  */
 const EVIDENCE = {
   draftBody: 'We refunded the duplicate charge. Your bank decides when it lands.',
+  // No courtesy sentence in this one, so the partition is the claims. DEC-43
+  // makes both ends optional, and this fixture is the reply that takes
+  // neither.
+  sentences: [
+    {
+      text: 'We refunded the duplicate charge.',
+      docId: 'SYN-DOC-01', claimIndex: 0, supported: true,
+    },
+    {
+      text: 'Your bank decides when it lands.',
+      docId: 'SYN-DOC-01', claimIndex: 1, supported: false,
+    },
+    {
+      text: 'Your subscription is unchanged.',
+      docId: 'SYN-DOC-99', claimIndex: 2, supported: null,
+    },
+  ],
   claims: [
     {
       index: 0, text: 'We refunded the duplicate charge.',
@@ -913,7 +930,39 @@ describe('the evidence states that are not a list of claims', () => {
     agreement: 0.89, coverage: 0.94, draftExternalId: 'D-1',
   };
 
-  async function queueWith(evidence: unknown): Promise<string> {
+  /**
+   * The evidence a case describes, with the DEC-43 partition filled in from
+   * its claims when the case does not state one.
+   *
+   * Every case here predates courtesy sentences and is about something else —
+   * a document that left the index, a claim nobody judged. Restating a
+   * partition in each one would bury what the case is actually asserting. A
+   * case that is about courtesy sentences states `sentences` itself, and this
+   * leaves it alone.
+   */
+  function withPartition(evidence: unknown): unknown {
+    if (typeof evidence !== 'object' || evidence === null) return evidence;
+    const row = evidence as Record<string, unknown>;
+    if ('sentences' in row) return row;
+    const claims = row['claims'];
+    // Explicitly null, never absent. `EvidenceView.sentences` is nullable and
+    // never optional, and leaving the key off handed the renderer `undefined`
+    // — which passes a `=== null` guard and then dies on `.length`. A case
+    // about a row with no partition could not be written until this was so.
+    if (!Array.isArray(claims)) return { ...row, sentences: null };
+    return {
+      ...row,
+      sentences: claims.map((claim: Record<string, unknown>) => ({
+        text: claim['text'],
+        docId: claim['docId'],
+        claimIndex: claim['index'],
+        supported: claim['supported'],
+      })),
+    };
+  }
+
+  async function queueWith(raw: unknown): Promise<string> {
+    const evidence = withPartition(raw);
     const base = await startGuarded(deps({
       listApprovals: async () => [bare],
       readApprovalEvidence: async () => ({
@@ -934,6 +983,9 @@ describe('the evidence states that are not a list of claims', () => {
   it('does not invent a retrieved count from a retrieval it does not have', async () => {
     const html = await queueWith({
       draftBody: 'a reply', documentsMalformed: false, documents: null,
+      sentences: [{
+        text: 'a claim', docId: 'SYN-DOC-01', claimIndex: 0, supported: true,
+      }],
       claims: [{ index: 0, text: 'a claim', docId: 'SYN-DOC-01', supported: true }],
     });
     expect(html).toContain('no retrieval journalled');
@@ -944,6 +996,9 @@ describe('the evidence states that are not a list of claims', () => {
   it('separates a retrieval it could not read from one that never happened', async () => {
     const html = await queueWith({
       draftBody: 'a reply', documentsMalformed: true, documents: null,
+      sentences: [{
+        text: 'a claim', docId: 'SYN-DOC-01', claimIndex: 0, supported: true,
+      }],
       claims: [{ index: 0, text: 'a claim', docId: 'SYN-DOC-01', supported: true }],
     });
     expect(html).toContain('could not be read');
@@ -973,10 +1028,171 @@ describe('the evidence states that are not a list of claims', () => {
   // saying every claim was accepted would vouch for a reply making no claims.
   it('names a claim list holding no claims, rather than vouching for it', async () => {
     const html = await queueWith({
-      draftBody: 'a reply', documentsMalformed: false, documents: [], claims: [],
+      draftBody: 'a reply', documentsMalformed: false, documents: [],
+      sentences: [], claims: [],
     });
     expect(html).toContain('claim list with no claims in it');
     expect(html).not.toContain('every claim of 0');
+  });
+
+  // DEC-43. The reply opens and closes with sentences no document stands
+  // behind, and this console has to draw them: they are part of what a
+  // customer reads, and an approver deciding on the claims alone would approve
+  // text nobody showed them.
+  const COURTEOUS = {
+    draftBody: 'Thanks for writing in. We refunded the duplicate charge. Reply here if it helps.',
+    documentsMalformed: false,
+    documents: [{
+      position: 1, docId: 'SYN-DOC-01', title: 'Refund policy', kind: 'document',
+      owner: 'support', bodyUnchanged: true, titleAtRun: 'Refund policy',
+    }],
+    sentences: [
+      { text: 'Thanks for writing in.', docId: null, claimIndex: null, supported: null },
+      {
+        text: 'We refunded the duplicate charge.',
+        docId: 'SYN-DOC-01', claimIndex: 0, supported: true,
+      },
+      { text: 'Reply here if it helps.', docId: null, claimIndex: null, supported: null },
+    ],
+    claims: [{
+      index: 0, text: 'We refunded the duplicate charge.',
+      docId: 'SYN-DOC-01', supported: true,
+    }],
+  };
+
+  it('draws the courtesy sentences of the reply, marked as citing nothing (DEC-43)', async () => {
+    const html = await queueWith(COURTEOUS);
+    expect(html).toContain('<span class="courtesy">Thanks for writing in.</span>');
+    expect(html).toContain('<span class="courtesy">Reply here if it helps.</span>');
+  });
+
+  // The whole reply, in the composer's order. Rendering the claims and
+  // appending the courtesy sentences would put them in an order the composer
+  // never chose, and the order is the reply.
+  it('draws the reply in draft order, courtesy sentences in place', async () => {
+    const html = await queueWith(COURTEOUS);
+    const opening = html.indexOf('Thanks for writing in.');
+    const claim = html.indexOf('We refunded the duplicate charge.');
+    const closing = html.indexOf('Reply here if it helps.');
+    expect(opening).toBeGreaterThan(-1);
+    expect(opening).toBeLessThan(claim);
+    expect(claim).toBeLessThan(closing);
+  });
+
+  // A citation marker on a sentence that cites nothing would point a reader
+  // at a source the composer never named for it.
+  it('gives a courtesy sentence no citation marker and no verdict mark', async () => {
+    const html = await queueWith(COURTEOUS);
+    const courtesy = /<span class="courtesy">Thanks for writing in\.<\/span>/.exec(html);
+    expect(courtesy).not.toBeNull();
+    // One citation marker on this reply, and it belongs to the one claim.
+    expect(html.match(/class="cite"/g) ?? []).toHaveLength(1);
+    expect(html).not.toContain('class="courtesy unsupported"');
+  });
+
+  // The summary is about the claims, and a reply whose claims all passed can
+  // still carry sentences no document stands behind. Saying only that every
+  // claim was accepted would describe part of the reply as though it were the
+  // whole of it.
+  it('says how much of the reply cites nothing, even when every claim passed', async () => {
+    const html = await queueWith(COURTEOUS);
+    expect(html).toContain('every claim of 1 carries a document the judge accepted');
+    expect(html).toContain('2 further sentences open or close the reply and cite nothing');
+  });
+
+  // The verdict is recorded by position among the cited sentences. A reply
+  // opening with a courtesy sentence must not shift the verdict onto the
+  // sentence after it.
+  it('numbers a citation by its position among the claims, not in the reply', async () => {
+    const html = await queueWith(COURTEOUS);
+    expect(html).toContain('id="claim-0"');
+    expect(html).not.toContain('id="claim-1"');
+    expect(html).toContain('>1</a>');
+  });
+
+  // Reachable in production: one unreadable member makes the whole partition
+  // null while `park.draftBody` survives. The reply is still shown, and the
+  // console says the citations are not available for it — which is a
+  // different fact from the reply having none.
+  it('shows a reply whose partition could not be read, and says so', async () => {
+    const html = await queueWith({
+      draftBody: 'We refunded the duplicate charge.',
+      documentsMalformed: false, documents: [], sentences: null, claims: null,
+    });
+    expect(html).toContain('We refunded the duplicate charge.');
+    expect(html).toContain('no claim list');
+    // No citation markers, because no sentence here carries a source.
+    expect(html).not.toContain('class="cite"');
+    expect(html).not.toContain('No draft was recorded for this run.');
+  });
+
+  // The other half of that pair. A run that parked nothing and recorded no
+  // partition composed no reply, and drawing an empty prose block would
+  // vouch for one.
+  it('names a run that recorded neither a draft nor a partition', async () => {
+    const html = await queueWith({
+      draftBody: null, documentsMalformed: false, documents: [],
+      sentences: null, claims: null,
+    });
+    expect(html).toContain('This run composed no reply.');
+  });
+
+  // A reply whose every sentence cites nothing. Reachable from a row written
+  // before DEC-43's parser, and it is the reply that most needs saying so:
+  // the console drew it in muted italic and said nothing at all, so the
+  // control DEC-43 names was the stylesheet alone.
+  it('says a reply no document stands behind, rather than drawing it quietly', async () => {
+    const html = await queueWith({
+      draftBody: 'We have already refunded your payment. It cleared on Tuesday.',
+      documentsMalformed: false, documents: [],
+      sentences: [
+        {
+          text: 'We have already refunded your payment.',
+          docId: null, claimIndex: null, supported: null,
+        },
+        { text: 'It cleared on Tuesday.', docId: null, claimIndex: null, supported: null },
+      ],
+      claims: [],
+    });
+    expect(html).toContain('We have already refunded your payment.');
+    expect(html).toContain('no document stands behind any of them');
+    // The reading that would have been a clean bill of health for it.
+    expect(html).not.toContain('every claim of 0');
+  });
+
+  it('says the same of a one-sentence reply that cites nothing', async () => {
+    const html = await queueWith({
+      draftBody: 'We have already refunded your payment.',
+      documentsMalformed: false, documents: [],
+      sentences: [{
+        text: 'We have already refunded your payment.',
+        docId: null, claimIndex: null, supported: null,
+      }],
+      claims: [],
+    });
+    expect(html).toContain('This reply is one sentence, and no document stands behind it.');
+  });
+
+  // Singular, and only when there is one. A summary that always appended the
+  // count would tell every ordinary reply that "0 further sentences open or
+  // close the reply", which is a false statement about that reply.
+  it('counts one courtesy sentence in the singular, and says nothing when there are none', async () => {
+    const one = await queueWith({
+      draftBody: 'a reply', documentsMalformed: false, documents: [],
+      sentences: [
+        { text: 'A charge is refundable.', docId: 'SYN-DOC-01', claimIndex: 0, supported: true },
+        { text: 'Reply here if that helps.', docId: null, claimIndex: null, supported: null },
+      ],
+      claims: [{ index: 0, text: 'A charge is refundable.', docId: 'SYN-DOC-01', supported: true }],
+    });
+    expect(one).toContain('1 further sentence opens or closes the reply and cites nothing');
+
+    const none = await queueWith({
+      draftBody: 'a reply', documentsMalformed: false, documents: [],
+      claims: [{ index: 0, text: 'A charge is refundable.', docId: 'SYN-DOC-01', supported: true }],
+    });
+    expect(none).toContain('every claim of 1 carries a document the judge accepted');
+    expect(none).not.toContain('further sentence');
   });
 
   // Both counts, independently. A ladder reported the unread claims only when

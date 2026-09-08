@@ -215,6 +215,12 @@ tbody tr:hover { background:var(--panel); }
   box-shadow: inset 0 -2px 0 var(--hot);
 }
 .claim.unread { box-shadow: inset 0 -2px 0 var(--rule2); }
+
+/* A courtesy sentence: it opens or closes the reply and cites nothing
+ * (DEC-43). Drawn quieter than the claims around it, so a reader can see at a
+ * glance which sentences of the reply no document stands behind. Muted rather
+ * than warned: it is not a defect, it is the part with no source. */
+.courtesy { color: var(--mut); font-style: italic; }
 /* Lit from its source, and the reverse. Applied by the one script this
  * console ships, and absent when it does not run. */
 .claim.lit, .src.lit { background: color-mix(in oklab, var(--accent) 22%, transparent); }

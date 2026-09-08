@@ -24,6 +24,9 @@ import { loadTaxonomy } from '../fixtures/load.js';
 import {
   SEED_DOCUMENTS,
   SEED_INTENTS,
+  COURTESY_CLOSINGS,
+  COURTESY_OPENINGS,
+  UNSUPPORTED_CLAIMS,
   dayBefore,
   logNormal,
   logNormalUnit,
@@ -86,6 +89,174 @@ describe('the claims a planned run makes', () => {
     // Non-vacuity: a plan with no gated run would pass the loop above having
     // compared nothing.
     expect(checked).toBeGreaterThan(0);
+  });
+
+  // `src/composer/composer.ts` builds a draft as `claims.map(c => c.text)
+  // .join(' ')`. A seeder that wrote the two independently produced a ledger
+  // the system cannot: the park row said one thing, the compose row another,
+  // and every surface that renders the claims showed text the draft did not
+  // contain.
+  it('makes the draft the whole partition joined, as the composer does', () => {
+    let checked = 0;
+    for (const run of plan) {
+      if (run.park === null || run.claims.length === 0) continue;
+      expect(run.park.body, run.runId).toBe(run.sentences.map((s) => s.text).join(' '));
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  // DEC-43. The claims are the cited subset, in draft order, which is what
+  // makes a gate verdict recorded by position sound.
+  it('keeps the claims as the cited sentences, in draft order', () => {
+    let checked = 0;
+    for (const run of plan) {
+      if (run.claims.length === 0) continue;
+      expect(
+        run.sentences.filter((s) => s.docId !== null).map((s) => ({
+          text: s.text, docId: s.docId, supported: s.supported,
+        })),
+        run.runId,
+      ).toEqual(run.claims.map((c) => ({
+        text: c.text, docId: c.docId, supported: c.supported,
+      })));
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  // The shape the composer's parser accepts: one optional courtesy sentence,
+  // the claims, one optional courtesy sentence. A seeded run outside it would
+  // model a ledger the system cannot produce, which is the defect this whole
+  // change came from.
+  it('drafts only replies the composer could have composed (DEC-43)', () => {
+    for (const run of plan) {
+      if (run.sentences.length === 0) continue;
+      const shape = run.sentences.map((s) => (s.docId === null ? 'c' : 'd')).join('');
+      expect(shape, run.runId).toMatch(/^c?d+c?$/);
+    }
+  });
+
+  // All four shapes, because a console that only ever met one of them proves
+  // nothing about the other three.
+  it('draws a reply that opens, one that closes, one that does both and one that does neither', () => {
+    const shapes = new Set<string>();
+    for (const run of plan) {
+      if (run.sentences.length === 0) continue;
+      const opens = run.sentences[0]?.docId === null;
+      const closes = run.sentences[run.sentences.length - 1]?.docId === null;
+      shapes.add(`${opens ? 'o' : '-'}${closes ? 'c' : '-'}`);
+    }
+    expect([...shapes].sort()).toEqual(['--', '-c', 'o-', 'oc']);
+  });
+
+  // An opening opens and a closing closes. The membership check elsewhere
+  // tests the union of the two lists, so a seeder that swapped them would
+  // pass it while every reply ended "Thanks for getting in touch about this."
+  it('opens from the openings and closes from the closings', () => {
+    let opened = 0;
+    let closed = 0;
+    for (const run of plan) {
+      if (run.sentences.length === 0) continue;
+      const first = run.sentences[0]!;
+      const last = run.sentences[run.sentences.length - 1]!;
+      if (first.docId === null) {
+        expect(COURTESY_OPENINGS, run.runId).toContain(first.text);
+        expect(COURTESY_CLOSINGS, run.runId).not.toContain(first.text);
+        opened += 1;
+      }
+      if (last.docId === null && last !== first) {
+        expect(COURTESY_CLOSINGS, run.runId).toContain(last.text);
+        expect(COURTESY_OPENINGS, run.runId).not.toContain(last.text);
+        closed += 1;
+      }
+    }
+    expect(opened).toBeGreaterThan(0);
+    expect(closed).toBeGreaterThan(0);
+  });
+
+  // The lists exist so a console meets more than one of each. A seeder that
+  // always took the first entry would pass every other check here.
+  it('varies the opening and the closing across the history', () => {
+    const openings = new Set<string>();
+    const closings = new Set<string>();
+    for (const run of plan) {
+      if (run.sentences.length === 0) continue;
+      const first = run.sentences[0]!;
+      const last = run.sentences[run.sentences.length - 1]!;
+      if (first.docId === null) openings.add(first.text);
+      if (last.docId === null && last !== first) closings.add(last.text);
+    }
+    expect(openings.size).toBeGreaterThan(1);
+    expect(closings.size).toBeGreaterThan(1);
+  });
+
+  // A courtesy sentence states nothing about the customer, the account, the
+  // policy or the outcome, so it can never be a sentence of a document. One
+  // that was would be a claim drawn without its citation.
+  it('grounds no courtesy sentence in any document', () => {
+    for (const run of plan) {
+      for (const sentence of run.sentences) {
+        if (sentence.docId !== null) continue;
+        for (const doc of SEED_DOCUMENTS) {
+          expect(doc.body, `${run.runId} ${sentence.text}`).not.toContain(sentence.text);
+        }
+      }
+    }
+  });
+
+  // An abstain drafts no reply. A courtesy sentence on one would be a run
+  // that greeted the customer and then said nothing (DEC-07).
+  it('drafts nothing at all for a run that abstained', () => {
+    let checked = 0;
+    for (const run of plan) {
+      if (!run.abstained) continue;
+      expect(run.sentences, run.runId).toEqual([]);
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  // A supported claim is a sentence of the document it cites. That is what
+  // grounding is, and it is what gives an operator something to check a
+  // citation against.
+  it('grounds a supported claim in the document it cites', () => {
+    let checked = 0;
+    for (const run of plan) {
+      for (const claim of run.claims) {
+        if (!claim.supported) continue;
+        const doc = SEED_DOCUMENTS.find((d) => d.docId === claim.docId)!;
+        expect(doc.body, `${run.runId} ${claim.docId}`).toContain(claim.text.replace(/\.$/, ''));
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  // And an unsupported one is a concrete promise no document makes, which is
+  // the failure the groundedness gate exists to catch.
+  it('grounds an unsupported claim in nothing at all', () => {
+    let checked = 0;
+    for (const run of plan) {
+      for (const claim of run.claims) {
+        if (claim.supported) continue;
+        for (const doc of SEED_DOCUMENTS) {
+          expect(doc.body, `${run.runId} ${doc.docId}`).not.toContain(claim.text.replace(/\.$/, ''));
+        }
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  // A run citing one document three times said the same sentence three times
+  // before this, which reads as a bug to anyone opening the run.
+  it('does not repeat a sentence within one reply', () => {
+    for (const run of plan) {
+      if (run.claims.length === 0) continue;
+      const texts = run.claims.map((claim) => claim.text);
+      expect(new Set(texts).size, run.runId).toBe(texts.length);
+    }
   });
 
   it('composes no claim when the run abstained', () => {
@@ -786,15 +957,21 @@ describe('the steps each run journals', () => {
       if (run.park === null) continue;
       checked += 1;
       const body = run.park.body;
-      // Every token of a draft comes from the run's own intent, its ticket id
-      // and the documents it cited, each of which has a shape pinned above.
-      // Asserted as the whole string rather than as an absence, because a
-      // pattern that hunts for an address cannot say what a body may contain.
-      expect(body).toBe(
-        `Thank you for writing about your ${run.classification.intentId.replace(/-/g, ' ')}. `
-        + `The published guidance for this case is ${run.docIds.join(', ')}. `
-        + `Ticket ${run.ticketId} stays open until you confirm this resolved it.`,
-      );
+      // Every sentence of a draft comes from one of three closed sets: the
+      // bodies of `SEED_DOCUMENTS`, `UNSUPPORTED_CLAIMS`, or the courtesy
+      // sentences (DEC-43). Asserted as membership rather than as an absence,
+      // because a pattern that hunts for an address cannot say what a body
+      // may contain.
+      expect(body).toBe(run.sentences.map((sentence) => sentence.text).join(' '));
+      for (const sentence of run.sentences) {
+        const grounded = SEED_DOCUMENTS.some(
+          (doc) => doc.body.includes(sentence.text.replace(/\.$/, '')),
+        );
+        const written = UNSUPPORTED_CLAIMS.includes(sentence.text)
+          || COURTESY_OPENINGS.includes(sentence.text)
+          || COURTESY_CLOSINGS.includes(sentence.text);
+        expect(grounded || written, sentence.text).toBe(true);
+      }
       expect(run.ticketId).toMatch(/^T-[0-9a-f]{8}$/);
       expect(body).not.toMatch(/@/);
     }

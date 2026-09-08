@@ -306,14 +306,32 @@ describe('what the ledger holds about a claim and an approver', () => {
     const gated = plan.find((run) => run.gate !== null && run.claims.length > 0);
     expect(gated).toBeDefined();
     const compose = await resultOf(gated!.runId, 'compose');
-    const claims = compose?.['claims'] as { text: string; docId: string }[];
-    expect(claims).toHaveLength(gated!.claimCount);
+    const sentences = compose?.['sentences'] as { text: string; docId: string | null }[];
+    const cited = sentences.filter((sentence) => sentence.docId !== null);
+    expect(cited).toHaveLength(gated!.claimCount);
     const retrieve = await resultOf(gated!.runId, 'retrieve');
     const docIds = retrieve?.['docIds'] as string[];
-    for (const claim of claims) {
+    for (const claim of cited) {
       expect(typeof claim.text).toBe('string');
       expect(docIds).toContain(claim.docId);
     }
+  });
+
+  // DEC-43. The compose row holds the reply, and `park.body` holds that same
+  // reply joined. A row holding the claims alone would describe a reply the
+  // customer never reads, which is the ledger state this change removed.
+  it('records the reply the run parked, sentence by sentence (DEC-43)', async () => {
+    const courteous = plan.find(
+      (run) => run.park !== null && run.sentences.some((sentence) => sentence.docId === null),
+    );
+    expect(courteous).toBeDefined();
+    const compose = await resultOf(courteous!.runId, 'compose');
+    const sentences = compose?.['sentences'] as { text: string; docId: string | null }[];
+    expect(sentences.map((sentence) => sentence.text).join(' '))
+      .toBe(courteous!.park!.body);
+    // A courtesy sentence records a null citation rather than omitting the
+    // key, so a reader cannot mistake it for a claim whose docId was lost.
+    expect(sentences.some((sentence) => sentence.docId === null)).toBe(true);
   });
 
   // The verdicts and the fraction record the same fact. A reader renders the
@@ -461,8 +479,12 @@ describe('the journal a seeded run leaves', () => {
         abstained: run.abstained,
         claimCount: run.claimCount,
         staleDocumentIds: [],
-        // DEC-07: the mapping the composer already had to resolve.
-        claims: run.claims.map((claim) => ({ text: claim.text, docId: claim.docId })),
+        // DEC-43: the reply in draft order, with the mapping DEC-07 already
+        // required the composer to resolve.
+        sentences: run.sentences.map((sentence) => ({
+          text: sentence.text,
+          docId: sentence.docId,
+        })),
         citedBodies: Object.fromEntries(
           [...new Set(run.claims.map((claim) => claim.docId))].map((docId) => [
             docId,

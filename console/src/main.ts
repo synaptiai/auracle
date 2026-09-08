@@ -98,7 +98,10 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
       steps: [], agreementThreshold: null, agreementDetail: null,
       coverageBlock: null, coverageReview: null, intentId: null,
       decision: null, policyReason: null,
-      evidence: { draftBody: null, claims: null, documents: null, documentsMalformed: false },
+      evidence: {
+        draftBody: null, sentences: null, claims: null,
+        documents: null, documentsMalformed: false,
+      },
       conversationId: await conversationLink(pool, runId, requested),
       request: requested,
     };
@@ -421,7 +424,10 @@ async function main(): Promise<void> {
       if (journal === null) {
         return {
           request,
-          evidence: { draftBody: null, claims: null, documents: null, documentsMalformed: false },
+          evidence: {
+        draftBody: null, sentences: null, claims: null,
+        documents: null, documentsMalformed: false,
+      },
           gates: {
             agreement: null, coverage: null, agreementThreshold: null,
             agreementDetail: null, coverageBlock: null, coverageReview: null,

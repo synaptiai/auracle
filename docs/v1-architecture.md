@@ -90,6 +90,7 @@ statement is an implementation detail. You can change it.
 | DEC-40 | Gated actions park in the helpdesk draft state. A read-only operator console may also approve one | A console that parks its own drafts; a console that is the only approval path |
 | DEC-41 | Above the labelled-case trigger the system fits a threshold for each intent. Each case records what labelled it, and the artifact records the count and the accuracy of each kind | One global threshold above the trigger; per-intent thresholds with no record of what labelled the cases |
 | DEC-42 | The ledger records an approver, and names it unverified. A trusted proxy supplies the identity. Without one the approval records `unattributed` | An authenticating console; no record of who approved; a header trusted on any bind |
+| DEC-43 | The composer writes the reply a support person would send, and labels each sentence a claim or a courtesy. Coverage counts claims alone | A draft that is its claims joined; a second model call that rewrites claims into prose |
 
 ---
 
@@ -404,12 +405,50 @@ time only.
 
 ### 4.7 Composer and groundedness check
 
-**`composer`**. Obeys DEC-07.
+**`composer`**. Obeys DEC-07, DEC-43.
 
 Each claim must have a citation to a retrieved text span. If the composer cannot
 cite a claim, the composer must abstain. An abstain result is a correct output.
 It is not a failure. It is also the least expensive way to find a gap in the
 knowledge.
+
+DEC-43 states what the composer writes. It writes the reply a support person
+would send. It does not write a list of claims.
+
+The composer partitions its own output into sentences. It labels each sentence.
+A claim cites a retrieved span. A courtesy sentence opens or closes the reply.
+A courtesy sentence states nothing about the customer, the account, the policy
+or the outcome.
+
+The draft is those sentences in order. So the text a customer reads is the text
+the gate scored. A second model call rewriting the claims into prose breaks that
+identity. It also restores the failure this section removed.
+
+The shape is one optional courtesy sentence, then the claims, then one optional
+courtesy sentence. The parser refuses anything else. A draft that cites nothing
+is an abstain.
+
+The bound is deliberate. A courtesy sentence is the one place an uncited fact
+can sit. The bound confines that place to the opening and the closing.
+
+The parser counts sentences, not lines. A courtesy line carrying two sentences
+delivers two uncited sentences under a bound that reads as one. Such a line is
+an abstain.
+
+No check proves that a courtesy sentence carries no fact. This system ships no
+such check. Consider a rule on digits and currency. It passes "we have already
+refunded your payment". It blocks a courtesy sentence that names a business day.
+A reader trusts a rule that does neither job.
+
+Three controls carry the risk instead. The parser refuses an uncited fact in
+the body of the reply. The console draws every uncited sentence as uncited. A
+customer reply always needs an approval (DEC-12).
+
+Coverage counts claims alone. A courtesy sentence never enters the fraction.
+
+So coverage describes the cited sentences of a reply. It does not describe the
+whole reply. A reply that opens and closes courteously scores on its
+claims. The console states how many sentences carry no source.
 
 **`groundedness`**. Obeys DEC-07.
 

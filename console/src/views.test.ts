@@ -4,7 +4,7 @@
 // nothing asserted them. The park branch is why that mattered.
 import { describe, expect, it } from 'vitest';
 
-import { latencyCaveats, stepSays, toDetail, toRow } from './views.js';
+import { evidenceOf, latencyCaveats, stepSays, toDetail, toRow } from './views.js';
 import type { JournalStep, RunJournal } from 'auracle/dist/journal/query.js';
 
 const RUN = '11111111-2222-4333-8444-555555555555';
@@ -141,5 +141,75 @@ describe('the runs a partition could not measure', () => {
     const excludedFields = [...Object.keys(states.wait), ...Object.keys(states.service)]
       .filter((key) => !countsOnly.has(key));
     expect(latencyCaveats(states)).toHaveLength(excludedFields.length);
+  });
+});
+
+// DEC-43. The gate records a verdict by position among the *cited* sentences,
+// and this is where that position becomes a mark on the page. A courtesy
+// sentence advancing the count would move every later verdict onto the wrong
+// claim, and the console would then vouch for a sentence the judge refused.
+describe('numbering the claims of a reply that opens with a courtesy sentence', () => {
+  function composed(): RunJournal {
+    return {
+      runId: RUN,
+      steps: [{
+        stepId: 'compose', recognized: true, status: 'done',
+        resultRecorded: true, resultMalformed: false, awaitingOutcome: false,
+        promptVer: 'p1', modelVer: 'm1', runCostMicrosAtStep: 0,
+        park: null, idemKey: null, escalationReason: null, faultShape: null,
+        compose: {
+          abstained: false, claimCount: 2, staleDocumentIds: [], provider: 'stub',
+          citedBodies: null,
+          sentences: [
+            { text: 'Thanks for writing in.', docId: null },
+            { text: 'A charge is refundable inside fourteen days.', docId: 'SYN-DOC-01' },
+            { text: 'We already sent your money back.', docId: 'SYN-DOC-01' },
+            { text: 'Reply here if that is not it.', docId: null },
+          ],
+          claims: [
+            { text: 'A charge is refundable inside fourteen days.', docId: 'SYN-DOC-01' },
+            { text: 'We already sent your money back.', docId: 'SYN-DOC-01' },
+          ],
+        },
+      }],
+      agreement: null,
+      // The judge accepted the first claim and refused the second. Two
+      // different verdicts on purpose: with both the same, an off-by-one
+      // would land on a verdict that happens to agree and prove nothing.
+      coverage: {
+        groundedness: 0.5, decision: 'gated', reason: 'customer_visible',
+        blockThreshold: 0.7, reviewThreshold: 0.8,
+        claimVerdicts: [
+          { claimIndex: 0, supported: true },
+          { claimIndex: 1, supported: false },
+        ],
+      },
+      documents: null, documentsMalformed: false,
+    } as unknown as RunJournal;
+  }
+
+  it('counts the position among the cited sentences, not in the reply', () => {
+    const evidence = evidenceOf(composed());
+    expect(evidence.sentences?.map((sentence) => sentence.claimIndex))
+      .toEqual([null, 0, 1, null]);
+  });
+
+  it('puts each verdict on the claim the gate judged', () => {
+    const evidence = evidenceOf(composed());
+    // The refusal belongs to the second claim, which is the third sentence.
+    // Counting courtesy sentences would move it onto nothing at all, and the
+    // claim the judge refused would then draw as accepted.
+    expect(evidence.sentences?.map((sentence) => sentence.supported))
+      .toEqual([null, true, false, null]);
+    expect(evidence.claims).toEqual([
+      {
+        index: 0, text: 'A charge is refundable inside fourteen days.',
+        docId: 'SYN-DOC-01', supported: true,
+      },
+      {
+        index: 1, text: 'We already sent your money back.',
+        docId: 'SYN-DOC-01', supported: false,
+      },
+    ]);
   });
 });

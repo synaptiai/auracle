@@ -312,6 +312,25 @@ export interface ClaimView {
   readonly supported: boolean | null;
 }
 
+/**
+ * One sentence of the drafted reply, as a surface draws it (DEC-43).
+ *
+ * A cited sentence carries the document it rests on and the judge's verdict.
+ * A courtesy sentence carries neither: it opens or closes the reply, and no
+ * document stands behind it.
+ *
+ * `claimIndex` is the position among the cited sentences, which is what the
+ * citation marker numbers and what the gate recorded a verdict against. It is
+ * not the position in the reply, and on a reply that opens with a courtesy
+ * sentence the two differ.
+ */
+export interface SentenceView {
+  readonly text: string;
+  readonly docId: string | null;
+  readonly claimIndex: number | null;
+  readonly supported: boolean | null;
+}
+
 /** The two gates as the journal recorded them, for one run. */
 export interface GateReading {
   readonly agreement: number | null;
@@ -347,7 +366,20 @@ export interface EvidenceView {
    * which one it is drawing.
    */
   readonly draftBody: string | null;
-  /** Null when the compose row recorded no claim list. */
+  /**
+   * Every sentence of the reply in order, courtesy sentences included
+   * (DEC-43). Null when the compose row recorded no partition.
+   *
+   * This is what a surface draws. Joined, it is the drafted reply.
+   */
+  readonly sentences: readonly SentenceView[] | null;
+  /**
+   * The cited sentences alone. Null when the compose row recorded no
+   * partition.
+   *
+   * The summary counts and the source list read this rather than filtering
+   * the partition again at each call site.
+   */
   readonly claims: readonly ClaimView[] | null;
   /** Null when the run journalled no retrieve step. */
   readonly documents: readonly DocumentView[] | null;
@@ -468,7 +500,7 @@ function evidence(documents: readonly DocumentView[] | null): string {
  * assemblies of the same evidence would eventually disagree about a run, and
  * the one an approver reads is the one that has to be right.
  *
- * The claims are the draft. `composed.draft` is those texts joined, so this
+ * The sentences are the draft. `composed.draft` is those texts joined, so this
  * renders them in order rather than rendering the draft beside them — which
  * would show the same sentences twice and leave a reader guessing which copy
  * carried the citation.
@@ -476,13 +508,19 @@ function evidence(documents: readonly DocumentView[] | null): string {
  * Three states per claim, not two. A claim the judge refused is the warning
  * an approver came for. A claim nobody judged is not a refusal, and drawing
  * it as one would put a warning on a run the ledger never questioned.
+ *
+ * A courtesy sentence is a fourth thing and not a fourth state (DEC-43). It
+ * opens or closes the reply, and no document stands behind it. Nothing proves
+ * it carries no fact, so this console draws it as what it is — part of the
+ * reply, visibly uncited — rather than leaving it indistinguishable from the
+ * sentences a judge accepted.
  */
 function evidenceBlock(
   view: EvidenceView,
   draftId: string | null,
   request: RequestView | null,
 ): string {
-  if (view.draftBody === null && view.claims === null) {
+  if (view.draftBody === null && view.sentences === null) {
     return requestBlock(request) + nothing('This run composed no reply.');
   }
   // Null and empty are different answers, here as everywhere else on this
@@ -491,6 +529,7 @@ function evidenceBlock(
   // one report as the second — then labelled every cited document gone.
   const retrieved = view.documents;
   const sources = new Map((retrieved ?? []).map((doc) => [doc.docId, doc]));
+  const sentences = view.sentences;
   const claims = view.claims;
   const unsupported = (claims ?? []).filter((claim) => claim.supported === false).length;
   const unread = (claims ?? []).filter((claim) => claim.supported === null).length;
@@ -505,10 +544,10 @@ function evidenceBlock(
       ? chip('parked in the ledger, no helpdesk draft')
       : chip(`helpdesk draft ${draftId}`),
     '</header><div class="body">',
-    claims === null
+    sentences === null
       ? view.draftBody === null
         ? nothing('No draft was recorded for this run.')
-        // A draft with no claim list is a run journalled before the claims
+        // A draft with no partition is a run journalled before the sentences
         // were written. The reply is shown whole, and the citations are not
         // available for it — which is a different thing from having none.
         : `<div class="prose">${escapeHtml(view.draftBody)}</div>`
@@ -518,12 +557,22 @@ function evidenceBlock(
       // clean bill of health: drawing an empty prose block and then saying
       // every claim was accepted would have this console vouch for a reply
       // that makes no claims.
-      : claims.length === 0
+      : sentences.length === 0
         ? nothing('This run recorded a claim list with no claims in it.')
-        : claimList(claims, sources),
-    claims === null || claims.length === 0
+        : replyProse(sentences, sources),
+    // Suppressed only when there is no partition at all. A reply whose
+    // sentences all cite nothing has no claims to summarise and is the one
+    // that most needs saying so: without this the console drew it in muted
+    // italic and said nothing, and DEC-43 rests on this console naming every
+    // uncited sentence as uncited.
+    sentences === null || sentences.length === 0
       ? ''
-      : claimSummary(claims.length, unsupported, unread),
+      : claimSummary(
+        (claims ?? []).length,
+        unsupported,
+        unread,
+        sentences.filter((sentence) => sentence.docId === null).length,
+      ),
     '</div></div>',
     claims === null || claims.length === 0
       ? ''
@@ -561,23 +610,36 @@ function requestBlock(request: RequestView | null): string {
   ].join('');
 }
 
-/** The claims in draft order, each marked with what the judge said. */
-function claimList(
-  claims: readonly ClaimView[],
+/**
+ * The reply in draft order, each cited sentence marked with what the judge
+ * said and each courtesy sentence marked as citing nothing (DEC-43).
+ *
+ * One pass over the whole partition rather than the claims alone. Rendering
+ * the claims and appending the courtesy sentences would put them in an order
+ * the composer did not choose, and the order is the reply.
+ */
+function replyProse(
+  sentences: readonly SentenceView[],
   sources: ReadonlyMap<string, DocumentView>,
 ): string {
-  return `<div class="prose">${claims.map((claim) => {
-    const mark = claim.supported === false
+  return `<div class="prose">${sentences.map((sentence) => {
+    // A courtesy sentence has no source, so it carries no citation marker and
+    // no verdict mark. It is still part of the reply and still shown, because
+    // the customer reads it.
+    if (sentence.docId === null || sentence.claimIndex === null) {
+      return `<span class="courtesy">${escapeHtml(sentence.text)}</span>`;
+    }
+    const mark = sentence.supported === false
       ? ' unsupported'
-      : claim.supported === null ? ' unread' : '';
-    const source = sources.get(claim.docId);
-    const title = source?.title ?? claim.docId;
+      : sentence.supported === null ? ' unread' : '';
+    const source = sources.get(sentence.docId);
+    const title = source?.title ?? sentence.docId;
     return [
-      `<span class="claim${mark}" id="claim-${escapeHtml(String(claim.index))}"`,
-      ` data-source="${escapeHtml(claim.docId)}">`,
-      escapeHtml(claim.text),
-      `<a class="cite" href="#src-${escapeHtml(claim.docId)}"`,
-      ` title="${escapeHtml(title)}">${escapeHtml(String(claim.index + 1))}</a>`,
+      `<span class="claim${mark}" id="claim-${escapeHtml(String(sentence.claimIndex))}"`,
+      ` data-source="${escapeHtml(sentence.docId)}">`,
+      escapeHtml(sentence.text),
+      `<a class="cite" href="#src-${escapeHtml(sentence.docId)}"`,
+      ` title="${escapeHtml(title)}">${escapeHtml(String(sentence.claimIndex + 1))}</a>`,
       '</span>',
     ].join('');
   }).join(' ')}</div>`;
@@ -594,8 +656,29 @@ function claimList(
  * Both counts, independently. A ladder reported the unread claims only when
  * nothing was refused, so a reply with one of each said nothing about the
  * claim nobody judged — the two-state collapse this block exists to refuse.
+ *
+ * The courtesy count is stated in every case, including the clean one
+ * (DEC-43). A reply whose claims the judge all accepted can still open and
+ * close with sentences no document stands behind, and a summary that said
+ * "every claim carries a document the judge accepted" and stopped there would
+ * describe part of the reply as though it were the whole.
  */
-function claimSummary(total: number, unsupported: number, unread: number): string {
+function claimSummary(
+  total: number,
+  unsupported: number,
+  unread: number,
+  courtesy: number,
+): string {
+  // A reply that cites nothing at all. `every claim of 0 carries a document
+  // the judge accepted` is true and useless, and it reads as a clean bill of
+  // health for a reply no document stands behind.
+  if (total === 0) {
+    return `<p class="discl">${escapeHtml(
+      courtesy === 1
+        ? 'This reply is one sentence, and no document stands behind it.'
+        : `This reply is ${courtesy} sentences, and no document stands behind any of them.`,
+    )}</p>`;
+  }
   const parts: string[] = [];
   if (unsupported > 0) {
     parts.push(`${unsupported} of ${total} claims cite a document that does not support them`);
@@ -603,9 +686,16 @@ function claimSummary(total: number, unsupported: number, unread: number): strin
   if (unread > 0) {
     parts.push(`${unread} of ${total} carry no recorded verdict`);
   }
-  const says = parts.length === 0
+  const aboutClaims = parts.length === 0
     ? `every claim of ${total} carries a document the judge accepted`
     : parts.join('; ');
+  // Appended, never substituted. A reply whose claims all passed still has to
+  // say how much of it cites nothing, and a courtesy count that replaced the
+  // verdict summary would answer a different question than the one asked.
+  const aboutCourtesy = courtesy === 1
+    ? '1 further sentence opens or closes the reply and cites nothing'
+    : `${courtesy} further sentences open or close the reply and cite nothing`;
+  const says = courtesy === 0 ? aboutClaims : `${aboutClaims}; ${aboutCourtesy}`;
   return `<p class="discl">${escapeHtml(says)}</p>`;
 }
 
