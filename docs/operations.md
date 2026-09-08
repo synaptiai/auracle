@@ -426,6 +426,13 @@ It shows every run that waits for a person.
 It prints a JSON array by default. The flag `--pretty` prints a table.
 Filter with `--since 24h` or `--state awaiting_approval`.
 
+The REASON column names why the run needs a person. It carries the escalation
+reason for a run that escalated. It carries the gate rule for a run that
+waits, because a waiting run has not escalated.
+
+The DRAFT column names what an approval acts on. It reads `payload` for a
+gated write that parked no customer draft (DEC-34).
+
 The command runs SELECT statements only, so it is safe on a live database.
 The command reads no `.env` file, so export `DATABASE_URL` in the shell
 when the target differs from the compose default.
@@ -1144,6 +1151,41 @@ beside the thresholds that judged them.
 
 The approval queue shows the reply before the button that sends it. An
 approver who cannot read a reply cannot approve it (DEC-40).
+
+Each row names what the ticket is about and which policy rule sent it to a
+person. It names how long the run has waited.
+
+It names the coverage as well, and whether the coverage decided anything.
+
+The gate row records a coverage on every run. A customer reply is gated before
+the engine reads either threshold (DEC-12). So most of a queue carries a
+number that judged nothing, and the row marks such a number `not read`. The
+gate panel says the same, so the row and the panel agree.
+The rule comes from the gate row, not the escalate row. A run awaiting a
+person has not escalated, so the escalate row is empty for every one of them.
+
+Chips above the list narrow it to one rule. The count in the header stays the
+whole queue, so a filter never reports a queue that has emptied.
+
+A run parks a helpdesk draft, or an action payload in the ledger (DEC-34).
+Both are approvable, and the button says which one it does. A run that parked
+neither is one the approval path refuses, and the queue says so instead.
+
+A run that parked an action shows that action's payload, field by field. An
+approver reads what they approve (DEC-40), and such a run has no drafted reply
+to read. The payload names the amount and the target.
+
+That payload can name an account. This console authenticates nobody, so put it
+behind a proxy before an operator approves a compensation through it.
+
+The warning says whether the act can be undone. A sent reply cannot be
+recalled. A compensation cannot be undone either, because the coordinator
+judges that class irreversible. It sends at most once, so an unconfirmed send
+escalates (DEC-30).
+
+The warning reads the action, not the rule that stopped the run. The engine
+tests five rules in order and reports the first that fired. So a compensation
+can stop on a rule that says nothing about permanence.
 
 It reads one journal, for the run it draws. Reading one for every waiting run
 would be a statement for each row of an uncapped list.

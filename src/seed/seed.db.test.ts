@@ -14,11 +14,16 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { dbUrl } from '../db/config.js';
 import { applyLedgerSchema } from '../test-support/schema.js';
 import { readDays } from '../bands/query.js';
+import { approvalEditDistance } from '../approval/edit_distance.js';
+import { approvedReplyFor } from './write.js';
 import { readLatency } from '../latency/query.js';
 import { approveRun } from '../approval/approve.js';
 import { listEscalations } from '../escalations/query.js';
 import { evaluatePolicyDetailed, SEED_THRESHOLDS } from '../policy/policy.js';
-import { SEED_DOCUMENTS, planHistory, policyInputFor, type PlannedRun } from './plan.js';
+import {
+  SEED_DOCUMENTS, followUpFor, inboundMessageFor, planHistory, policyInputFor,
+  type PlannedRun,
+} from './plan.js';
 import { writeDocuments, writeHistory } from './write.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 8 });
@@ -623,8 +628,226 @@ describe('the journal a seeded run leaves', () => {
     expect(row.turn_number).toBe(1);
     expect(row.turn_counter).toBe(2);
     expect(row.body_text.length).toBeGreaterThan(0);
+    // One turn per conversation, plus the follow-ups. Counted from the same
+    // rule the writer uses, so this says the writer wrote what it decided to
+    // rather than restating a number.
+    const followUps = plan.filter((r) => followUpFor(r.runId, r.state) !== null).length;
     const counts = await pool.query('SELECT count(*)::int AS n FROM turn');
-    expect((counts.rows[0] as { n: number }).n).toBe(new Set(plan.map((r) => r.conversationId)).size);
+    expect((counts.rows[0] as { n: number }).n)
+      .toBe(new Set(plan.map((r) => r.conversationId)).size + followUps);
+    expect(followUps).toBeGreaterThan(0);
+  });
+
+  // A conversation is a thread, and every seeded one held a single message —
+  // so the surface built to draw a thread had nothing to draw and the
+  // reply-absence states it distinguishes were unreachable from a seeded
+  // ledger (DEC-35, DEC-37).
+  it('writes a second turn nobody has answered, on a run still awaiting a person', async () => {
+    const chased = plan.find((run) => followUpFor(run.runId, run.state) !== null);
+    expect(chased).toBeDefined();
+    const { rows } = await pool.query(
+      `SELECT turn_number, body_text, created_at
+         FROM turn WHERE conversation_id = $1 ORDER BY turn_number`,
+      [chased!.conversationId],
+    );
+    expect(rows).toHaveLength(2);
+    const second = rows[1] as { turn_number: number; body_text: string; created_at: Date };
+    expect(second.turn_number).toBe(2);
+    expect(second.body_text).toBe(followUpFor(chased!.runId, chased!.state));
+    // After the message it follows. A chase that arrived first is not a chase.
+    expect(second.created_at.getTime()).toBeGreaterThan(chased!.enqueuedAt.getTime());
+    const conv = await pool.query(
+      'SELECT turn_counter FROM conversation WHERE conversation_id = $1',
+      [chased!.conversationId],
+    );
+    expect((conv.rows[0] as { turn_counter: number }).turn_counter).toBe(3);
+  });
+
+  // Only a run still waiting. A conversation the system answered and closed
+  // is not one a customer is chasing.
+  it('writes no follow-up on a conversation that reached a terminal state', () => {
+    for (const run of plan) {
+      if (run.state === 'awaiting_approval') continue;
+      expect(followUpFor(run.runId, run.state), run.runId).toBeNull();
+    }
+  });
+
+  // The run row and the run's own journal are two descriptions of one run.
+  // They disagreed on every seeded run — "steps 0" beside a step journal
+  // listing five entries — and this holds them together rather than
+  // restating the arithmetic that produced one of them.
+  it('reports a step count that agrees with the run\'s own journal', async () => {
+    const { rows } = await pool.query(
+      `SELECT r.run_id, r.steps_used,
+              count(*) FILTER (WHERE j.step_id <> 'escalate')::int AS journalled
+         FROM run r JOIN step_journal j ON j.run_id = r.run_id
+        GROUP BY r.run_id, r.steps_used`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows as { run_id: string; steps_used: number; journalled: number }[]) {
+      expect(row.steps_used, row.run_id).toBe(row.journalled);
+      expect(row.steps_used, row.run_id).toBeGreaterThan(0);
+    }
+  });
+
+  // A published control band measured a difference between a draft and
+  // nothing: the distance was drawn, and no approved reply text was ever
+  // written. The number now comes out of the text it describes.
+  it('records an approved reply, and a distance that measures it', async () => {
+    const { rows } = await pool.query(
+      `SELECT r.run_id, r.approval_edit_distance, t.approved_reply_text, j.result ->> 'body' AS parked
+         FROM run r
+         JOIN step_journal j ON j.run_id = r.run_id AND j.step_id = 'park'
+         JOIN turn t ON t.conversation_id = r.conversation_id AND t.turn_number = r.turn_number
+        WHERE r.approval_edit_distance IS NOT NULL
+          AND j.result ? 'draftExternalId'`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows as {
+      run_id: string; approval_edit_distance: number;
+      approved_reply_text: string | null; parked: string;
+    }[]) {
+      expect(row.approved_reply_text, row.run_id).not.toBeNull();
+      // Measured through the shipping function, against the two texts the
+      // ledger holds. A distance computed any other way here would prove
+      // something about this test rather than about the ledger.
+      expect(row.approval_edit_distance, row.run_id).toBeCloseTo(
+        approvalEditDistance(row.parked, row.approved_reply_text!),
+        10,
+      );
+    }
+  });
+
+  // The property the case above cannot see. It recomputes the column with
+  // the function that wrote it, so it holds however far the text drifts from
+  // the distance the planner drew — and that number is what the rest of the
+  // history is built around and what `bands.yaml` publishes.
+  it('records a distance close to the one the planner drew', async () => {
+    const drawn = new Map(
+      plan.filter((run) => run.editDistance !== null).map((run) => [run.runId, run.editDistance!]),
+    );
+    const { rows } = await pool.query(
+      'SELECT run_id, approval_edit_distance AS recorded FROM run WHERE approval_edit_distance IS NOT NULL',
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    let worst = 0;
+    for (const row of rows as { run_id: string; recorded: number }[]) {
+      const target = drawn.get(row.run_id);
+      expect(target, row.run_id).toBeDefined();
+      worst = Math.max(worst, Math.abs(row.recorded - target!));
+    }
+    // Loose here on purpose: this is one small day, and the bound that
+    // matters is measured over the shipped history in `plan.test.ts`, where
+    // it is a tenth of this and the population includes the rewrite branch.
+    expect(worst).toBeLessThan(0.05);
+  });
+
+  // The column a published control band averages. `pnpm run bands` reads it
+  // with no draft-backed predicate, so a number here with no text behind it
+  // is a number in the band — 223 of 812 on the default history were exactly
+  // that, because the writer fell back to the planner's draw.
+  it('records no edit distance for a park with no draft to measure against', async () => {
+    const { rows } = await pool.query(
+      `SELECT r.run_id, r.approval_edit_distance AS distance
+         FROM run r JOIN step_journal j ON j.run_id = r.run_id AND j.step_id = 'park'
+        WHERE NOT (j.result ? 'draftExternalId')`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows as { run_id: string; distance: number | null }[]) {
+      expect(row.distance, row.run_id).toBeNull();
+    }
+  });
+
+  // The tail itself, not the average error. The planner draws it on purpose,
+  // because a person who rewrites a draft rewrites most of it, and
+  // `bands.yaml` publishes this metric as `high_is_bad`.
+  //
+  // Asserted on the writer rather than on this small seeded day, which does
+  // not always draw one. An append-only writer saturated near 0.59, so no
+  // seeded run could represent a rewritten draft however many days ran.
+  it('can record a heavy edit at all', () => {
+    const body = plan.find((run) => run.park !== null)!.park!.body;
+    const rewritten = approvedReplyFor(body, 0.9, plan[0]!.runId);
+    expect(approvalEditDistance(body, rewritten)).toBeGreaterThan(0.8);
+  });
+
+  // DEC-34, DEC-37. `approveRun` writes the reply text only for a park that
+  // carries a helpdesk draft, because a ledger-only park sends no reply. The
+  // seeder wrote one anyway, so the ledger asserted a customer reply for a
+  // run that routed a ticket and sent nothing — and `consumer.ts` feeds that
+  // column to the composer as the agent's half of the conversation.
+  it('records no reply text for a run whose approval sends no reply', async () => {
+    // Every approved ledger-only park. The planner now leaves the distance
+    // null on these, so they are found by the park shape rather than by the
+    // distance that used to mark them.
+    const ledgerOnly = plan.filter(
+      (run) => run.state === 'awaiting_approval' && run.park !== null
+        && run.park.draftExternalId === undefined,
+    );
+    expect(ledgerOnly.length).toBeGreaterThan(0);
+    const { rows } = await pool.query(
+      `SELECT t.approved_reply_text AS text
+         FROM run r JOIN turn t
+           ON t.conversation_id = r.conversation_id AND t.turn_number = r.turn_number
+        WHERE r.run_id = ANY($1)`,
+      [ledgerOnly.map((run) => run.runId)],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows as { text: string | null }[]) expect(row.text).toBeNull();
+  });
+
+  // An approver who changed nothing is a real and common outcome, and the
+  // reply they sent is the draft. It is not an absence.
+  it('records the draft itself when the approver changed nothing', () => {
+    const body = 'A charge is refundable inside fourteen days. Reply here if that is not it.';
+    expect(approvedReplyFor(body, 0, '00000000-0000-4000-8000-000000000000')).toBe(body);
+  });
+
+  // The case above passes on a writer that never edits anything: nothing
+  // equals nothing at a distance of zero. This is the half that fails on one
+  // — some approvals changed the draft, and the ledger says by how much.
+  it('records an edit that actually happened, for an approval that made one', async () => {
+    const { rows } = await pool.query(
+      `SELECT r.approval_edit_distance AS distance, t.approved_reply_text AS approved,
+              j.result ->> 'body' AS parked
+         FROM run r
+         JOIN step_journal j ON j.run_id = r.run_id AND j.step_id = 'park'
+         JOIN turn t ON t.conversation_id = r.conversation_id AND t.turn_number = r.turn_number
+        WHERE r.approval_edit_distance > 0
+          AND j.result ? 'draftExternalId'`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows as { distance: number; approved: string; parked: string }[]) {
+      expect(row.approved).not.toBe(row.parked);
+      // A light edit keeps the draft and adds to it. A heavy one rewrites the
+      // tail, so it is not a prefix — asserted where the population contains
+      // both, in `plan.test.ts`, because this day carries no heavy edit.
+      expect(row.approved.startsWith(row.parked) || row.approved.length < row.parked.length)
+        .toBe(true);
+    }
+  });
+
+  // The message the ledger holds, not the function that makes one. The
+  // writer built its text from the intent id, and a test that only called
+  // the message table could not see that.
+  it('writes the intent\'s own message as the customer\'s, on every turn', async () => {
+    const { rows } = await pool.query(
+      `SELECT t.body_text, r.run_id
+         FROM turn t JOIN run r ON r.conversation_id = t.conversation_id
+        WHERE t.turn_number = 1`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    const byRun = new Map(plan.map((run) => [run.runId, run]));
+    for (const row of rows as { body_text: string; run_id: string }[]) {
+      const run = byRun.get(row.run_id)!;
+      expect(row.body_text, row.run_id).toBe(
+        inboundMessageFor(run.classification.intentId, Number.parseInt(run.runId.slice(0, 8), 16)),
+      );
+      // The two tells of the template it replaced.
+      expect(row.body_text, row.run_id).not.toContain('T-');
+      expect(row.body_text.toLowerCase(), row.run_id)
+        .not.toContain(run.classification.intentId.replace(/-/g, ' '));
+    }
   });
 
   // The reply a person approved becomes the agent's half of the conversation

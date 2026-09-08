@@ -15,6 +15,17 @@
 // holds, and the two are not the same document. Every omission of that kind
 // is named in `docs/operations.md`.
 import { escapeHtml, renderGates, renderMetricValue } from './render.js';
+// The engine's own record of which rules reach which gate. Re-deriving that
+// order here would be a second copy of it, free to drift from the one the
+// policy engine runs.
+import {
+  POLICY_REASONS, reachedAgreementGate, readCoverageGate,
+} from 'auracle/dist/policy/policy.js';
+// The class the coordinator derives `isIrreversible` from. Imported rather
+// than spelled here, so the console and the engine cannot disagree about
+// which action is the permanent one.
+import { COMPENSATION_ACTION_CLASS } from 'auracle/dist/adapters/types.js';
+import type { PolicyReason } from 'auracle/dist/policy/policy.js';
 import { CONSOLE_SCRIPT } from './script.js';
 import type { MetricValue } from './render.js';
 
@@ -23,7 +34,29 @@ export interface RunRow {
   readonly ticketId: string;
   readonly state: string;
   readonly promptVer: string;
+  /** Why the run escalated. Null for a run that has not escalated. */
   readonly reason: string | null;
+  /**
+   * Which policy rule sent the run to a person, from the gate row.
+   *
+   * The question a person working the queue asks first, and a different
+   * question from `reason` above. A waiting run has not escalated, so this
+   * is the only one of the two that can answer.
+   */
+  readonly gateReason: string | null;
+  /** The classified intent, so a row says what the ticket is about. */
+  readonly intentId: string | null;
+  /**
+   * Coverage the gate read, from the gate journal row.
+   *
+   * Named apart from `RunDetail.coverage`, which is the value the detail
+   * surface reads for one run. `GATES_NOT_READ` sets that one to null on the
+   * queue, and one name for both would have the queue erase what it just
+   * read.
+   */
+  readonly gateCoverage: number | null;
+  /** When the ledger opened the run, so a surface ordered by time shows it. */
+  readonly createdAt: Date | null;
   readonly stepsUsed: number;
 }
 
@@ -180,6 +213,48 @@ function chip(text: string, token?: Token): string {
  * Every surface can be empty, and an empty page with no sentence on it reads
  * as a console that failed rather than as a ledger that holds nothing.
  */
+/**
+ * How long ago something happened, in the coarsest unit that still says it.
+ *
+ * A person triaging a queue asks "how long has this waited", not "at what
+ * instant did it open". Minutes below an hour, hours below a day, days after
+ * that — one figure, because a second one is precision nobody acts on.
+ *
+ * Null is not "now". A run the ledger could not date has an unknown age, and
+ * printing `0m` for it would put the freshest possible label on the run least
+ * is known about.
+ *
+ * `now` is a parameter so this function can be asserted. Both call sites let
+ * it default to the wall clock, which is what an age on a live page means —
+ * the parameter exists for the tests, not for the surfaces.
+ */
+export function ageSays(at: Date | null, now: Date = new Date()): string {
+  if (at === null) return 'age unrecorded';
+  const ms = now.getTime() - at.getTime();
+  // A run stamped ahead of this clock. Two machines' clocks, or a backdated
+  // history: either way it has not waited a negative time, and a minus sign
+  // in a queue reads as a defect.
+  if (ms < 0) return 'not yet open';
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+/**
+ * A timestamp a person can read, in UTC.
+ *
+ * Always UTC and always said so. The ledger stores UTC, the bands page judges
+ * a UTC day, and a console silently rendering local time would have two
+ * surfaces disagree about which day a run belongs to.
+ */
+export function whenSays(at: Date | null): string {
+  if (at === null) return 'not recorded';
+  return `${at.toISOString().slice(0, 16).replace('T', ' ')}Z`;
+}
+
 function nothing(says: string): string {
   return `<div class="wrap"><p class="mut">${escapeHtml(says)}</p></div>`;
 }
@@ -237,8 +312,20 @@ export function renderRuns(view: RunsPage): string {
     `<td class="m"><a href="/run/${encodeURIComponent(run.runId)}">`,
     `${escapeHtml(run.runId.slice(0, 8))}</a></td>`,
     `<td class="m">${escapeHtml(run.ticketId)}</td>`,
+    // The column this table was ordered by and never showed. "Newest first"
+    // is a claim about time, and nothing on the page said what time.
+    `<td class="m">${escapeHtml(whenSays(run.createdAt))}`
+      + `<span class="dim"> · ${escapeHtml(ageSays(run.createdAt))}</span></td>`,
     `<td><span class="st">${escapeHtml(run.state)}</span></td>`,
-    `<td class="m">${escapeHtml(run.reason ?? '—')}</td>`,
+    `<td class="m">${escapeHtml(run.intentId ?? '—')}</td>`,
+    // Both reasons, because they answer different questions and only one of
+    // them can be non-null for any given run.
+    // The escalation reason, or the gate rule for a run that has not
+    // escalated. Vetted, like every other place this field is drawn.
+    `<td class="m">${escapeHtml(run.reason ?? gateRuleOrDash(run.gateReason))}</td>`,
+    // Kept. A backdated history writes runs in the same states a produced
+    // one reaches, and the pin is what tells an operator pointed at a demo
+    // ledger that they are not working real customer traffic.
     `<td class="m">${escapeHtml(run.promptVer)}</td>`,
     `<td class="m">${escapeHtml(String(run.stepsUsed))}</td>`,
     '</tr>',
@@ -251,7 +338,8 @@ export function renderRuns(view: RunsPage): string {
   return [
     header,
     '<table><thead><tr>',
-    '<th>Run</th><th>Ticket</th><th>State</th><th>Reason</th><th>Prompt</th><th>Steps</th>',
+    '<th>Run</th><th>Ticket</th><th>Opened</th><th>State</th>'
+      + '<th>Intent</th><th>Reason</th><th>Prompt</th><th>Steps</th>',
     '</tr></thead><tbody>',
     ...rows,
     '</tbody></table>',
@@ -264,6 +352,38 @@ export interface RunDetail extends RunRow {
   readonly agreement: number | null;
   readonly coverage: number | null;
   readonly draftExternalId: string | null;
+  /**
+   * Whether the park journalled an action payload (DEC-34).
+   *
+   * A ledger-only park has no helpdesk draft and is still approvable:
+   * `approveRun` relays the payload through `performAction`. The console
+   * drew a button only for a draft handle, so a third of the queue offered
+   * no approval on the surface built to approve it.
+   */
+  readonly payloadRecorded: boolean;
+  /**
+   * What the park will perform on approval, from the park row.
+   *
+   * Named on the button's warning, because approving a ledger-only park
+   * performs an action rather than sending a reply, and an operator is owed
+   * the name of the thing they are about to do.
+   */
+  readonly actionClass: string | null;
+  /**
+   * The delivery rule the park recorded (DEC-29, DEC-30).
+   *
+   * `at_most_once` never retries, so a send nobody can confirm escalates
+   * rather than repeating — which is a fact an approver is owed before they
+   * press the button. The query has always selected this and nothing read it.
+   */
+  readonly delivery: string | null;
+  /**
+   * What approving this run performs, when it parks an action rather than a
+   * reply (DEC-34, DEC-40).
+   *
+   * Null for a draft-backed park, whose act is the reply above it.
+   */
+  readonly payload: Readonly<Record<string, unknown>> | null;
 }
 
 /** One journal row, worded for the timeline. */
@@ -804,14 +924,7 @@ export function renderRunDetail(run: RunView): string {
       coverageBlock: run.coverageBlock,
       coverageReview: run.coverageReview,
     }),
-    // The thresholds never decide a customer reply: such a reply already
-    // needs approval (DEC-12), and the policy engine returns that verdict
-    // before it reads either one.
-    run.policyReason === 'customer_visible'
-      ? '<p class="discl" style="margin-top:14px">The policy engine returned'
-        + ' <span class="m">customer_visible</span> before it read either threshold.'
-        + ' A customer reply always waits for a person.</p>'
-      : '',
+    gatesNotReadSays(run.policyReason),
     '</div></div>',
     '<div class="card"><header>',
     '<span class="lbl">Retrieved evidence</span>',
@@ -871,6 +984,126 @@ export interface ApprovalView extends RunDetail {
   readonly request: RequestView | null;
 }
 
+/**
+ * The gate rules a queue can be narrowed to, in the order a person meets them.
+ *
+ * Derived from what is waiting rather than fixed, so a rule that nothing
+ * carries today does not offer a filter that empties the list. A run whose
+ * gate rule the ledger never recorded is reachable through `no gate rule
+ * journalled`, because a run nobody can explain is one a person still has to
+ * work — and a filter set that hid it would hide exactly that run.
+ */
+const UNRULED = 'unruled';
+
+function gateFilters(runs: readonly RunDetail[], active: string | null): string {
+  const rules = [...new Set(runs.map((run) => run.gateReason ?? UNRULED))].sort();
+  if (rules.length < 2) return '';
+  const one = (href: string, label: string, on: boolean, count: number): string =>
+    `<a href="${href}"${on ? ' class="on"' : ''}>${escapeHtml(label)}`
+      + `<span class="dim"> ${escapeHtml(String(count))}</span></a>`;
+  return [
+    '<div class="filters">',
+    '<span class="lbl">needs a person</span>',
+    '<div class="seg">',
+    one('/approvals', 'all', active === null, runs.length),
+    ...rules.map((rule) => one(
+      `/approvals?rule=${encodeURIComponent(rule)}`,
+      rule === UNRULED ? 'no gate rule' : gateRuleSays(rule),
+      active === rule,
+      runs.filter((run) => (run.gateReason ?? UNRULED) === rule).length,
+    )),
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
+/**
+ * What the gate panel has to say when a threshold decided nothing.
+ *
+ * The panel draws each value against its thresholds, which reads as a
+ * comparison that happened. The engine short-circuits: a customer reply is
+ * gated by DEC-12 before either threshold, and four other rules stop before
+ * one or both of them. Drawing a block line beside a coverage of 0.40 on such
+ * a run says it failed groundedness, which is impossible — a run that failed
+ * it would have escalated rather than waited.
+ *
+ * One note for both gates and both surfaces. Only `customer_visible` was
+ * named before, and only on the run detail, so the approval card contradicted
+ * the queue row two inches above it.
+ */
+function gatesNotReadSays(policyReason: string | null): string {
+  if (!isPolicyReason(policyReason)) return '';
+  const agreement = reachedAgreementGate(policyReason);
+  const coverage = readCoverageGate(policyReason);
+  if (agreement && coverage) return '';
+  const which = !agreement ? 'either threshold' : 'the coverage thresholds';
+  const rule = `<span class="m">${escapeHtml(policyReason)}</span>`;
+  const because = policyReason === 'customer_visible'
+    ? ' A customer reply always waits for a person.'
+    : '';
+  return `<p class="discl" style="margin-top:14px">The policy engine returned ${rule}`
+    + ` before it read ${which}. The marks below them are what the run would have been`
+    + ` judged against.${because}</p>`;
+}
+
+/**
+ * Whether a value from the ledger is a rule the policy engine writes.
+ *
+ * Two readers of this field disagreed about whether to check it: the coverage
+ * marker vetted it and the label beside it printed whatever the column held.
+ * One rule, one check.
+ *
+ * The vocabulary is compiled from the same package the engine is, so the two
+ * cannot drift within a build.
+ */
+function isPolicyReason(value: string | null): value is PolicyReason {
+  return value !== null && (POLICY_REASONS as readonly string[]).includes(value);
+}
+
+/**
+ * The rule a row names, in the engine's own words.
+ *
+ * A value outside the vocabulary is named as one rather than printed. The
+ * gate row is written by the policy engine and holds a closed set, so this is
+ * a shape the ledger should not contain — and an unbounded foreign string in
+ * a queue row is a layout a person cannot read as well as a claim this
+ * console cannot stand behind.
+ */
+function gateRuleSays(gateReason: string | null): string {
+  if (gateReason === null) return 'no gate rule journalled';
+  return isPolicyReason(gateReason) ? gateReason : 'a rule this console does not know';
+}
+
+/** The same, where a dash is the right way to say nothing was recorded. */
+function gateRuleOrDash(gateReason: string | null): string {
+  return gateReason === null ? '—' : gateRuleSays(gateReason);
+}
+
+/**
+ * What a row says about coverage, given the rule that decided the run.
+ *
+ * Three answers, not two. A coverage that decided is a number to act on. A
+ * coverage the engine never reached is a measurement, and saying so is the
+ * difference between informing a person and misleading them. No gate row at
+ * all says nothing.
+ */
+function coverageSays(coverage: number | null, gateReason: string | null): string {
+  if (coverage === null) return '';
+  const read = isPolicyReason(gateReason) && readCoverageGate(gateReason);
+  return read
+    ? ` · coverage ${escapeHtml(coverage.toFixed(2))}`
+    : ` · coverage ${escapeHtml(coverage.toFixed(2))} (not read)`;
+}
+
+/** The runs a chosen gate rule leaves, or all of them when none is chosen. */
+export function narrowToRule(
+  runs: readonly RunDetail[],
+  rule: string | null,
+): readonly RunDetail[] {
+  if (rule === null) return runs;
+  return runs.filter((run) => (run.gateReason ?? UNRULED) === rule);
+}
+
 export function renderApprovals(
   runs: readonly RunDetail[],
   outcome: string,
@@ -878,33 +1111,66 @@ export function renderApprovals(
   evidence: EvidenceView | null = null,
   gates: GateReading | null = null,
   request: RequestView | null = null,
+  rule: string | null = null,
 ): string {
+  // `runs` is everything waiting. The chips and the count are read from it
+  // rather than from the narrowed view, so a filter cannot make the queue
+  // report that it has emptied — and so each chip can say how many it holds.
+  const shownRuns = narrowToRule(runs, rule);
   const header = head(
     'Approval queue',
     'Every customer reply waits for a person. This list is not capped, so the oldest is on it.',
     [chip(`${runs.length} waiting`)],
-  );
-  if (runs.length === 0) {
-    return header + outcome + nothing('Nothing is waiting for a person.');
+  ) + gateFilters(runs, rule);
+  if (shownRuns.length === 0) {
+    return header + outcome + nothing(
+      rule === null
+        ? 'Nothing is waiting for a person.'
+        : 'Nothing waiting carries that rule.',
+    );
   }
-  const shown = runs.find((run) => run.runId === selected) ?? runs[0]!;
+  const shown = shownRuns.find((run) => run.runId === selected) ?? shownRuns[0]!;
   const drawn: ApprovalView = { ...shown, evidence, gates, request };
   return [
     header,
     outcome,
     '<div class="split">',
     '<div class="list">',
-    `<div class="lhd"><span class="lbl">Waiting · ${escapeHtml(String(runs.length))}</span></div>`,
-    ...runs.map((run) => [
+    `<div class="lhd"><span class="lbl">Waiting · ${escapeHtml(String(shownRuns.length))}`
+      + `${rule === null ? '' : escapeHtml(` · ${rule === UNRULED ? 'no gate rule' : gateRuleSays(rule)}`)}`
+      + '</span></div>',
+    ...shownRuns.map((run) => [
       `<a class="item${run.runId === shown.runId ? ' on' : ''}"`,
-      ` href="/approvals?run=${encodeURIComponent(run.runId)}">`,
-      `<div class="m" style="font-size:12.5px">${escapeHtml(run.ticketId)}</div>`,
-      `<div class="m" style="font-size:10.5px; color:var(--dim)">${escapeHtml(run.runId.slice(0, 8))}`,
-      ` · ${escapeHtml(run.reason ?? 'no reason journalled')}</div>`,
+      // `&amp;`, not `&`. A bare ampersand in an attribute is a character
+      // reference the parser has to guess at, and every other attribute on
+      // this console is escaped.
+      ` href="/approvals?run=${encodeURIComponent(run.runId)}`
+      + `${rule === null ? '' : `&amp;rule=${encodeURIComponent(rule)}`}">`,
+      '<div class="itop">',
+      `<span class="m" style="font-size:12.5px">${escapeHtml(run.ticketId)}</span>`,
+      // How long it has waited, on the row. The header says the oldest is on
+      // this list and nothing on it said how old anything was.
+      `<span class="age">${escapeHtml(ageSays(run.createdAt))}</span>`,
+      '</div>',
+      // Why this run is a person's, in the gate's own vocabulary. The
+      // escalation reason sat here and is null for every waiting run by
+      // construction, so the queue read "no reason journalled" 161 times.
+      `<div class="m" style="font-size:10.5px; color:var(--dim)">`,
+      `${escapeHtml(run.intentId ?? 'intent unrecorded')}`,
+      ` · ${escapeHtml(gateRuleSays(run.gateReason))}`,
+      // Coverage, and whether it decided anything (DEC-05, section 4.8).
+      //
+      // The gate row records `groundedness` whether or not the engine read
+      // it. A customer reply is gated by DEC-12 before either threshold, so
+      // printing "coverage 0.40" beside `customer_visible` says a run failed
+      // groundedness when it was never judged on it — and it says so on most
+      // of the queue, because most of the queue is customer replies.
+      `${coverageSays(run.gateCoverage, run.gateReason)}`,
+      '</div>',
       '</a>',
     ].join('')),
     '</div>',
-    `<div class="pane">${approvalCard(drawn)}</div>`,
+    `<div class="pane">${approvalCard(drawn, rule)}</div>`,
     '</div>',
   ].join('');
 }
@@ -916,7 +1182,7 @@ export function renderApprovals(
  * above a reply the approver could not read, which is DEC-40 permitting a
  * console to approve while the console withheld the thing being approved.
  */
-function approvalCard(run: ApprovalView): string {
+function approvalCard(run: ApprovalView, rule: string | null): string {
   return [
     '<div class="card"><header>',
     `<span class="m" style="font-size:12.5px">${escapeHtml(run.ticketId)}</span>`,
@@ -927,7 +1193,14 @@ function approvalCard(run: ApprovalView): string {
     // which ticket, what state it is in and why it stopped.
     '<dl class="kv">',
     `<dt>run</dt><dd><a href="/run/${encodeURIComponent(run.runId)}">${escapeHtml(run.runId)}</a></dd>`,
-    `<dt>reason</dt><dd>${escapeHtml(run.reason ?? '—')}</dd>`,
+    // The gate rule first, because it is the answer to why this is a person's
+    // to decide. The escalation reason stays beside it and is null for a run
+    // that has not escalated, which is every run on this queue.
+    `<dt>needs a person</dt><dd>${escapeHtml(gateRuleSays(run.gateReason))}</dd>`,
+    `<dt>intent</dt><dd>${escapeHtml(run.intentId ?? '—')}</dd>`,
+    `<dt>waiting</dt><dd>${escapeHtml(ageSays(run.createdAt))}`
+      + ` <span class="dim">· opened ${escapeHtml(whenSays(run.createdAt))}</span></dd>`,
+    `<dt>escalation</dt><dd>${escapeHtml(run.reason ?? '—')}</dd>`,
     `<dt>draft</dt><dd>${escapeHtml(run.draftExternalId ?? '—')}</dd>`,
     '</dl>',
     renderGates(run.gates === null
@@ -940,26 +1213,139 @@ function approvalCard(run: ApprovalView): string {
         coverageBlock: run.gates.coverageBlock,
         coverageReview: run.gates.coverageReview,
       }),
+    // The same note the run detail carries. Without it this panel drew a
+    // block line beside a coverage the engine never compared, two inches
+    // under a row that said the coverage was not read.
+    gatesNotReadSays(run.gateReason),
     // The reply, before the button that sends it.
     run.evidence === null
       ? nothing('The journal for this run has not been read.')
       : evidenceBlock(run.evidence, run.draftExternalId, run.request),
-    run.draftExternalId === null
-      ? '<p class="discl">No draft is parked, so this cannot be approved here.</p>'
-      : [
-          // No text box. The draft parks in the helpdesk and is edited there
-          // (DEC-11, DEC-40); the relay sends that draft verbatim, so a body
-          // typed here would be recorded and never sent.
-          '<div class="warnbar"><span class="dot" style="color:var(--accent); margin-top:5px"></span>',
-          '<div>The reply above is what the system drafted. The helpdesk holds the copy the',
-          ' relay sends, so edit it there — a person may have changed it since. This sends that',
-          ' copy as it stands, and a sent reply cannot be recalled.</div></div>',
-          '<form method="post" action="/approve">',
-          `<input type="hidden" name="runId" value="${escapeHtml(run.runId)}">`,
-          '<button class="btn primary" type="submit">Approve</button>',
-          '</form>',
-        ].join(''),
+    approveControl(run, rule),
     '</div></div>',
+  ].join('');
+}
+
+/**
+ * The approval, and what it will do (DEC-11, DEC-34, DEC-40).
+ *
+ * Three cases, and they were two. A gated write with no customer draft parks
+ * in the ledger alone and `approveRun` relays its journalled payload, so it
+ * has always been approvable — but this surface drew a button only for a
+ * helpdesk handle, and 51 of 161 waiting runs were a dead end on the page
+ * built to clear them.
+ *
+ * A park carrying neither is the third case. `approveRun` refuses it, so a
+ * button here would send a person to a failure.
+ *
+ * The warning differs because the act differs, and it says whether the act
+ * can be undone.
+ *
+ * An earlier version of this said an internal write was "reversible by
+ * design, because DEC-34 gates the irreversible ones separately". That was
+ * false. `coordinator.ts` sets `isIrreversible` from the compensation action
+ * class and the policy engine gates on it, and such a run parks in the
+ * ledger — this branch. So the irreversible writes are not elsewhere; they
+ * are here, and they were the one class this control did not warn about.
+ *
+ * The relay makes it worse rather than better: a compensation is
+ * `at_most_once`, so it never retries, and an unconfirmed send escalates as
+ * `delivery_unknown` (DEC-30). A person pressing this on a payment reversal
+ * is owed both facts.
+ */
+function approveControl(run: ApprovalView, rule: string | null): string {
+  if (run.draftExternalId === null && !run.payloadRecorded) {
+    return '<p class="discl">This run parked neither a helpdesk draft nor an action'
+      + ' payload, so there is nothing here to approve. An operator reconciles it by hand.</p>';
+  }
+  if (run.draftExternalId !== null) {
+    // No text box. The draft parks in the helpdesk and is edited there
+    // (DEC-11, DEC-40); the relay sends that draft verbatim, so a body typed
+    // here would be recorded and never sent.
+    return approveForm(
+      run.runId,
+      'Approve and send',
+      'The reply above is what the system drafted. The helpdesk holds the copy the'
+        + ' relay sends, so edit it there — a person may have changed it since. This sends that'
+        + ' copy as it stands, and a sent reply cannot be recalled.',
+      rule,
+    );
+  }
+  // Read from the action, not from which rule happened to fire first.
+  //
+  // A gate reason names the rule that stopped the run. The engine tests
+  // idempotency, read-back, customer visibility, irreversibility and risk in
+  // that order, so a compensation on an adapter with no idempotency key stops
+  // at `no_idempotency` and never reports `irreversible` — while still being
+  // the one action on this console that cannot be taken back.
+  //
+  // The coordinator derives `isIrreversible` from the action class, so this
+  // reads the same field it does rather than a second opinion about it. The
+  // delivery rule is read the same way, and it was selected by the query and
+  // used by nothing.
+  const permanent = run.actionClass === COMPENSATION_ACTION_CLASS;
+  const atMostOnce = run.delivery === 'at_most_once';
+  const says = 'No reply goes to a customer. This run parked an action in the ledger, and'
+    + ` approving it performs ${run.actionClass ?? 'the action'} through the adapter with the`
+    + ' payload the run journalled.'
+    + (permanent ? ' This action cannot be undone once it runs.' : '')
+    + (atMostOnce
+      ? ' It is sent at most once and never retried, so a send nobody can confirm'
+        + ' escalates rather than repeating.'
+      : '');
+  return payloadBlock(run.payload) + approveForm(run.runId, 'Approve and perform', says, rule);
+}
+
+/**
+ * The action an approval performs, field by field (DEC-34, DEC-40).
+ *
+ * A ledger-only park has no drafted reply, so this is what the approver is
+ * reading — and DEC-40 permits this console to approve exactly because they
+ * read it. The page named the action and showed nothing of its content, which
+ * is the shape that rule exists to prevent.
+ *
+ * Values are stringified rather than rendered structurally. An operator needs
+ * to see an amount and a target; a nested viewer would be a second surface
+ * with its own failure modes over a payload that is flat in every action this
+ * system ships.
+ */
+function payloadBlock(payload: Readonly<Record<string, unknown>> | null): string {
+  if (payload === null) {
+    return nothing('This run parked an action and recorded no payload for it.');
+  }
+  const rows = Object.entries(payload);
+  if (rows.length === 0) {
+    return nothing('This run parked an action whose payload is empty.');
+  }
+  return [
+    '<div class="card"><header>',
+    '<span class="lbl">What approving this performs</span>',
+    chip('the payload the run journalled'),
+    '</header><div class="body"><dl class="kv">',
+    ...rows.map(([key, value]) => `<dt>${escapeHtml(key)}</dt>`
+      + `<dd>${escapeHtml(typeof value === 'string' ? value : JSON.stringify(value) ?? 'null')}</dd>`),
+    '</dl></div></div>',
+  ].join('');
+}
+
+/** The warning and the one button, which every approval path shares. */
+function approveForm(
+  runId: string,
+  label: string,
+  says: string,
+  rule: string | null = null,
+): string {
+  return [
+    '<div class="warnbar"><span class="dot" style="color:var(--accent); margin-top:5px"></span>',
+    `<div>${escapeHtml(says)}</div></div>`,
+    // The filter rides on the action, not in a field: this form's only field
+    // is the run id, and that is what stops a posted body being recorded as
+    // an approved reply.
+    `<form method="post" action="/approve${
+      rule === null ? '' : `?rule=${encodeURIComponent(rule)}`}">`,
+    `<input type="hidden" name="runId" value="${escapeHtml(runId)}">`,
+    `<button class="btn primary" type="submit">${escapeHtml(label)}</button>`,
+    '</form>',
   ].join('');
 }
 

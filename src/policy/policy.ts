@@ -336,6 +336,40 @@ export function reachedAgreementGate(reason: PolicyReason): boolean {
 }
 
 /**
+ * Whether the run's coverage was compared against a threshold.
+ *
+ * The same hazard as `REACHES_AGREEMENT`, one gate later. `journalFinish`
+ * records `groundedness` on every gate row whether or not the engine read it,
+ * so a reader with the number in hand cannot tell a coverage that decided
+ * from one that was merely measured.
+ *
+ * Coverage is read last. Every reason that stops before the agreement
+ * comparison stops before this one too, and a run stopped by agreement never
+ * reaches it either. So this is `false` wherever `REACHES_AGREEMENT` is,
+ * plus `agreement`.
+ *
+ * Recorded rather than derived, and exhaustive over `PolicyReason`, so a new
+ * reason makes the compiler refuse this file. A surface that showed a
+ * coverage the engine never read told a person that six runs in ten had
+ * failed groundedness when none of them had been judged on it.
+ */
+const READS_COVERAGE: Record<PolicyReason, boolean> = {
+  no_idempotency: false,
+  no_read_back: false,
+  customer_visible: false,
+  irreversible: false,
+  high_risk: false,
+  agreement: false,
+  groundedness_block: true,
+  groundedness_review: true,
+  auto: true,
+};
+
+export function readCoverageGate(reason: PolicyReason): boolean {
+  return READS_COVERAGE[reason];
+}
+
+/**
  * Whether the agreement gate passed, for a run that reached it.
  *
  * Not the same question as whether every gate passed. The gates are

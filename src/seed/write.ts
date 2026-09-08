@@ -25,8 +25,11 @@ import {
 } from '../ledger/insert.js';
 import { indexDocument } from '../retriever/retriever.js';
 import { UNATTRIBUTED } from '../approval/approve.js';
+import { approvalEditDistance, tokenizeBody } from '../approval/edit_distance.js';
 import { SEED_THRESHOLDS } from '../policy/policy.js';
-import { SEED_DOCUMENTS, mulberry32, type PlannedRun } from './plan.js';
+import {
+  SEED_DOCUMENTS, followUpFor, inboundMessageFor, mulberry32, type PlannedRun,
+} from './plan.js';
 
 /** The embedding width db/002 pins. A shorter vector is refused by the column. */
 const EMBEDDING_DIMS = 1536;
@@ -147,12 +150,53 @@ async function writeConversation(client: PoolClient, run: PlannedRun): Promise<v
       inboundTextFor(run),
     ],
   );
+
+  // The customer wrote again while the reply waited (DEC-35, DEC-37).
+  //
+  // No run answers it, and that is the state rather than a gap: the first
+  // reply is still in the approval queue, so nothing has composed against
+  // this turn yet. The conversation surface names exactly that absence, and
+  // until now no seeded conversation could reach it — every one held a
+  // single turn, so a surface built for a thread drew a thread of one.
+  const followUp = followUpFor(run.runId, run.state);
+  if (followUp !== null) {
+    await client.query(
+      `INSERT INTO turn (conversation_id, turn_number, ticket_id, inbound_message_id,
+                         created_at, body_text)
+       VALUES ($1, 2, $2, $3, $4, $5)
+       ON CONFLICT (conversation_id, turn_number) DO NOTHING`,
+      [
+        run.conversationId,
+        run.ticketId,
+        `SYN-MSG-${run.ticketId.slice(2)}-2`,
+        // Hours after the first, which is when a person chases.
+        new Date(run.enqueuedAt.getTime() + 4 * 3_600_000),
+        followUp,
+      ],
+    );
+    // The counter is what intake would have left it at after two turns.
+    await client.query(
+      'UPDATE conversation SET turn_counter = 3 WHERE conversation_id = $1',
+      [run.conversationId],
+    );
+  }
 }
 
-/** The customer's message, as DEC-37 keeps it for the prompts of later turns. */
+/**
+ * The customer's message, as DEC-37 keeps it for the prompts of later turns.
+ *
+ * Drawn from the intent's own messages rather than built from the intent id.
+ * The id is what the classifier is supposed to work out, and a question that
+ * stated it wrote the answer into the paper.
+ *
+ * Keyed on the run id so the same run always carries the same message, and so
+ * one intent's two messages both appear across a history.
+ */
 function inboundTextFor(run: PlannedRun): string {
-  return `I need help with a ${run.classification.intentId.replace(/-/g, ' ')} `
-    + `on ticket ${run.ticketId}. Please tell me what happens next.`;
+  return inboundMessageFor(
+    run.classification.intentId,
+    Number.parseInt(run.runId.slice(0, 8), 16),
+  );
 }
 
 /**
@@ -293,10 +337,43 @@ async function writeJournal(client: PoolClient, run: PlannedRun): Promise<void> 
     await step('escalate', 'done', { reason: run.escalation });
   }
   if (run.editDistance !== null) {
-    await client.query('UPDATE run SET approval_edit_distance = $2 WHERE run_id = $1', [
-      run.runId,
-      run.editDistance,
-    ]);
+    // The text a person sent, and the distance it actually is from the draft.
+    //
+    // The distance was a drawn number with no text behind it, and
+    // `turn.approved_reply_text` stayed null on every approved run — so the
+    // conversation surface said "a person approved an action here; no reply
+    // text was recorded" for the whole history, and a published control band
+    // measured a difference between a draft and nothing.
+    //
+    // Recorded from the text rather than from the draw. The metric counts
+    // token edits, so a target lands on a whole token; storing the drawn
+    // value beside text a token away from it would put two answers in the
+    // ledger for one question.
+    // A reply text only where a reply is sent (DEC-34, DEC-37).
+    //
+    // `approveRun` writes `turn.approved_reply_text` only for a park that
+    // carries a helpdesk draft, and says why: a ledger-only park has no
+    // customer-visible text. Writing one anyway made the seeded ledger
+    // assert that a reply went out for a run that routed a ticket or applied
+    // a compensation and sent nothing — and `consumer.ts` feeds that column
+    // to the composer as the agent's half of the conversation.
+    // The planner leaves the distance null for a park with no helpdesk draft,
+    // so this is always a draft-backed park. Read rather than assumed: a
+    // fallback that wrote the drawn number here is what put 223 fabricated
+    // distances into a published band.
+    const parkedBody = run.park?.draftExternalId === undefined ? null : run.park.body;
+    if (parkedBody !== null) {
+      const approved = approvedReplyFor(parkedBody, run.editDistance, run.runId);
+      await client.query(
+        `UPDATE turn SET approved_reply_text = $3
+          WHERE conversation_id = $1 AND turn_number = $2`,
+        [run.conversationId, run.park?.turnNumber ?? 1, approved],
+      );
+      await client.query('UPDATE run SET approval_edit_distance = $2 WHERE run_id = $1', [
+        run.runId,
+        approvalEditDistance(parkedBody, approved),
+      ]);
+    }
     // DEC-42: a run an approval reached records an approver. The seeded
     // history has no proxy in front of it, so it records what a console on an
     // unnamed bind records — which is the value an adopter reading a seeded
@@ -306,6 +383,121 @@ async function writeJournal(client: PoolClient, run: PlannedRun): Promise<void> 
       UNATTRIBUTED,
     ]);
   }
+}
+
+/**
+ * Additions an approver makes to a draft before sending it (DEC-18).
+ *
+ * The commonest real edit is an added line: a person keeps what the system
+ * wrote and says one more thing. None of these states a fact about the
+ * account, so appending one never turns an approved reply into a claim no
+ * document supports.
+ *
+ * Invented throughout, and about nobody.
+ */
+const APPROVER_ADDITIONS: readonly string[] = [
+  'Thanks.',
+  'Hope that helps.',
+  'Thanks for bearing with us.',
+  'Sorry again for the trouble.',
+  'I will keep an eye on this one.',
+  'Do reply here if anything is still unclear.',
+  'I have added a note so the next person sees the history.',
+  'I will check back on this tomorrow in case it has not resolved.',
+];
+
+/**
+ * The reply a person sent, at a chosen distance from the draft.
+ *
+ * `approvalEditDistance` counts token edits over the longer token list, so
+ * appending `m` tokens to a draft of `n` gives `m / (n + m)`. Solving that
+ * for a target distance gives the number of tokens to add, which is why the
+ * edit is an addition rather than a rewrite: it is the edit an approver
+ * actually makes, and it is the one whose distance can be aimed.
+ *
+ * A target of zero adds nothing. That is an approver who sent the draft as it
+ * stood, which is a real and common outcome, and the reply text is then the
+ * draft itself rather than an absence.
+ */
+export function approvedReplyFor(
+  parkedBody: string,
+  target: number,
+  runId: string,
+): string {
+  const parkedTokens = tokenizeBody(parkedBody).length;
+  const wanted = Math.min(Math.max(target, 0), 1);
+  if (parkedTokens === 0) return parkedBody;
+
+  const pool = [...APPROVER_ADDITIONS]
+    .map((text) => ({ text, tokens: tokenizeBody(text).length }))
+    .sort((a, b) => b.tokens - a.tokens);
+  const start = Number.parseInt(runId.slice(0, 8), 16) % pool.length;
+
+  // Whether an addition can reach the target at all.
+  //
+  // Adding `m` tokens to a draft of `n` gives `m / (n + m)`, and the pool
+  // holds a fixed number of tokens — so the reachable distance falls as the
+  // draft grows. A split at a constant 0.5 truncated everything above the
+  // ceiling for that draft: on a 120-token draft a target of 0.40 recorded
+  // 0.314, and 106 of 589 draft-backed runs on the shipped history missed
+  // their draw. The split is the ceiling itself, computed per draft.
+  const poolTokens = pool.reduce((sum, entry) => sum + entry.tokens, 0);
+  const appendCeiling = poolTokens / (parkedTokens + poolTokens);
+
+  // A heavy edit is a rewrite, not an addition.
+  //
+  // Adding `m` tokens to a draft of `n` gives `m / (n + m)`, which approaches
+  // one only as the addition runs away — the pool holds 60 tokens, so an
+  // append could never record past 0.6 however large the target. The planner
+  // draws up to 1.0 on purpose, because a person who rewrites a draft
+  // rewrites most of it, and `bands.yaml` publishes that right tail. An
+  // append-only writer silently truncated it: a target of 1.000 recorded
+  // 0.545.
+  //
+  // Replacing the last `k` of `n` tokens costs exactly `k` substitutions over
+  // a text still `n` long, so the distance is `k / n` — exact at both ends,
+  // and it reads as what it is: the operator kept the opening and wrote the
+  // rest themselves.
+  if (wanted > appendCeiling) {
+    const replace = Math.min(Math.round(wanted * parkedTokens), parkedTokens);
+    const words = parkedBody.split(/\s+/).filter((word) => word !== '');
+    const kept = words.slice(0, Math.max(words.length - replace, 0)).join(' ');
+    // Exactly `replace` tokens, taken word by word from the pool and cycled.
+    //
+    // Whole sentences overshot: the replacement then had a different token
+    // count from the text it replaced, the totals stopped matching, and the
+    // distance drifted from `replace / parkedTokens`. A clipped closing line
+    // is what a heavy edit looks like anyway, and this is the tail of the
+    // distribution rather than the body of it.
+    const poolWords = pool.flatMap((entry) => entry.text.split(/\s+/));
+    const written: string[] = [];
+    for (let i = 0; written.length < replace; i += 1) {
+      written.push(poolWords[(start + i) % poolWords.length]!);
+    }
+    return kept === '' ? written.join(' ') : `${kept} ${written.join(' ')}`;
+  }
+
+  const addTokens = Math.round((wanted * parkedTokens) / (1 - wanted));
+  if (addTokens === 0) return parkedBody;
+
+  // Longest first, taking whatever still fits, and repeating the pool until
+  // the count is exact. The shortest line is one token, so a greedy pass that
+  // may repeat always lands on the target rather than near it — a pass that
+  // used each line once was quantised by sentence length, and missed by up to
+  // 0.10 in the middle of the range where most of the history sits.
+  const added: string[] = [];
+  let remaining = addTokens;
+  while (remaining > 0) {
+    const choice = pool.find((entry) => entry.tokens <= remaining);
+    // Unreachable while the pool holds a one-token line, and a `break`
+    // rather than a throw: a seeded fixture is not worth failing a run over,
+    // and the recorded distance is measured from the text either way.
+    if (choice === undefined) break;
+    added.push(choice.text);
+    remaining -= choice.tokens;
+  }
+  if (added.length === 0) added.push(pool[pool.length - 1]!.text);
+  return `${parkedBody} ${added.join(' ')}`;
 }
 
 /**
@@ -380,6 +572,11 @@ export async function writeHistory(pool: Pool, plan: readonly PlannedRun[]): Pro
       // which this is not, so a seeded run still contributes its service time.
       promptVer: 'seed',
       modelVer: 'seed',
+      // What the run counted, as the coordinator counts it. Seeded as the
+      // column default until now, so every run reported `steps 0` beside a
+      // step journal listing five entries — the same run, described twice,
+      // disagreeing on the same screen.
+      stepsUsed: run.stepsUsed,
       deadlineAt: new Date(run.createdAt.getTime() + 300_000),
       enqueuedAt: run.enqueuedAt,
     };

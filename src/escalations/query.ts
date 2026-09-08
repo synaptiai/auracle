@@ -23,6 +23,34 @@ export interface EscalationItem {
   /** Coordinator reason from the `escalate` step; null when not journaled. */
   readonly reason: string | null;
   /**
+   * The policy rule that sent this run to a person, from the `gate` step.
+   *
+   * Distinct from `reason` above, and the distinction is the whole point. A
+   * run awaiting approval has not escalated, so `reason` is null for every
+   * one of them by construction — the approval queue printed "no reason
+   * journalled" on all 161 waiting runs while the ledger held the answer.
+   *
+   * This is the answer: `customer_visible`, `high_risk`, `irreversible`,
+   * `no_idempotency` or a threshold. It is the first thing a person working
+   * the queue needs, because it says why the run is theirs.
+   */
+  readonly gateReason: string | null;
+  /** The classified intent, or null when the run journalled none. */
+  readonly intentId: string | null;
+  /** Groundedness coverage the gate read, or null when it never gated. */
+  readonly coverage: number | null;
+  /**
+   * When the ledger opened the run.
+   *
+   * Every surface that orders by time now states the time. The runs list
+   * said "newest first" and the approval queue said "the oldest is on it",
+   * and neither showed a date — while `pnpm run latency` reports p99 service
+   * times in hours, so age is exactly the quantity a person is triaging on.
+   */
+  readonly createdAt: Date | null;
+  /** Outbox status when a record is stuck: `delivery_unknown` or `malformed`. */
+  readonly outboxStatus: string | null;
+  /**
    * The prompt version the run was pinned to.
    *
    * Surfaced because this is the queue a person works from, and a seeded run
@@ -33,10 +61,26 @@ export interface EscalationItem {
    * customer escalations. `pnpm run seed-history` pins `seed`.
    */
   readonly promptVer: string;
-  /** Outbox status when a record is stuck: `delivery_unknown` or `malformed`. */
-  readonly outboxStatus: string | null;
   /** Park-record fields; present only on the gated path. */
   readonly draftExternalId: string | null;
+  /**
+   * Whether the park journalled an action payload (DEC-34).
+   *
+   * A gated write with no customer draft parks in the ledger alone, and
+   * `approveRun` relays that payload through `performAction`. Without this
+   * the console could not tell such a run from one that parked nothing, so
+   * it offered no approval at all — 51 of 161 waiting runs were a dead end
+   * on a surface whose whole job is approving them.
+   */
+  readonly payloadRecorded: boolean;
+  /**
+   * The payload the approval will perform, when the park recorded one.
+   *
+   * DEC-40 lets a console approve because the approver reads what they are
+   * approving. A ledger-only park has no drafted reply, so this is the whole
+   * of what they are about to do.
+   */
+  readonly payload: Readonly<Record<string, unknown>> | null;
   readonly actionClass: string | null;
   readonly delivery: string | null;
   readonly costMicros: number;
@@ -73,6 +117,20 @@ export const LEDGER_STATES = [
 /** The two states the escalation queue reports (section 4.3). */
 export const RUN_STATES_ESCALATION = ['escalated', 'awaiting_approval'] as const;
 
+/**
+ * Guarded casts, both of them.
+ *
+ * `(x ->> 'k')::float8` raises `22P02` on a value that is not a number, and
+ * that kills the whole statement rather than one row — the queue an operator
+ * came to work goes blank. The `gate_unreadable` path already writes a gate
+ * row with a different result shape, so this is a shape the ledger can hold.
+ * The same failure once took the run detail down through a `::bytea` cast.
+ *
+ * `payload` is tested for an object rather than for presence. `approveRun`
+ * refuses anything else, so a key-exists test would offer a button for a
+ * park the approval path throws on — and it throws bare, where every other
+ * refusal on that path returns an outcome the console can render.
+ */
 const RUN_SELECT_BODY = `
   SELECT r.run_id            AS run_id,
          r.ticket_id         AS ticket_id,
@@ -80,7 +138,15 @@ const RUN_SELECT_BODY = `
          r.prompt_ver        AS prompt_ver,
          r.cost_micros        AS cost_micros,
          r.steps_used        AS steps_used,
+         r.created_at        AS created_at,
          esc.result ->> 'reason'          AS reason,
+         gate.result ->> 'reason'          AS gate_reason,
+         CASE WHEN jsonb_typeof(gate.result -> 'groundedness') = 'number'
+              THEN (gate.result ->> 'groundedness')::float8 END AS coverage,
+         cls.result ->> 'intentId'         AS intent_id,
+         (jsonb_typeof(park.result -> 'payload') = 'object') AS payload_recorded,
+         CASE WHEN jsonb_typeof(park.result -> 'payload') = 'object'
+              THEN park.result -> 'payload' END AS payload,
          park.result ->> 'draftExternalId' AS draft_external_id,
          park.result ->> 'actionClass'     AS action_class,
          park.result ->> 'delivery'        AS delivery,
@@ -90,6 +156,10 @@ const RUN_SELECT_BODY = `
       ON esc.run_id = r.run_id AND esc.step_id = 'escalate'
     LEFT JOIN step_journal park
       ON park.run_id = r.run_id AND park.step_id = 'park'
+    LEFT JOIN step_journal gate
+      ON gate.run_id = r.run_id AND gate.step_id = 'gate'
+    LEFT JOIN step_journal cls
+      ON cls.run_id = r.run_id AND cls.step_id = 'classify'
     LEFT JOIN LATERAL (
       SELECT status FROM outbox
        WHERE run_id = r.run_id AND status IN ('delivery_unknown', 'malformed')
@@ -133,7 +203,15 @@ const OUTBOX_SELECT = `
          r.prompt_ver        AS prompt_ver,
          r.cost_micros        AS cost_micros,
          r.steps_used        AS steps_used,
+         r.created_at        AS created_at,
          esc.result ->> 'reason'           AS reason,
+         gate.result ->> 'reason'           AS gate_reason,
+         CASE WHEN jsonb_typeof(gate.result -> 'groundedness') = 'number'
+              THEN (gate.result ->> 'groundedness')::float8 END AS coverage,
+         cls.result ->> 'intentId'          AS intent_id,
+         (jsonb_typeof(park.result -> 'payload') = 'object') AS payload_recorded,
+         CASE WHEN jsonb_typeof(park.result -> 'payload') = 'object'
+              THEN park.result -> 'payload' END AS payload,
          park.result ->> 'draftExternalId' AS draft_external_id,
          park.result ->> 'actionClass'     AS action_class,
          park.result ->> 'delivery'        AS delivery,
@@ -144,6 +222,10 @@ const OUTBOX_SELECT = `
       ON esc.run_id = r.run_id AND esc.step_id = 'escalate'
     LEFT JOIN step_journal park
       ON park.run_id = r.run_id AND park.step_id = 'park'
+    LEFT JOIN step_journal gate
+      ON gate.run_id = r.run_id AND gate.step_id = 'gate'
+    LEFT JOIN step_journal cls
+      ON cls.run_id = r.run_id AND cls.step_id = 'classify'
    WHERE o.status IN ('delivery_unknown', 'malformed')`;
 
 function toItem(row: Record<string, unknown>): EscalationItem {
@@ -152,9 +234,23 @@ function toItem(row: Record<string, unknown>): EscalationItem {
     ticketId: row['ticket_id'] as string,
     state: row['state'] as string,
     reason: (row['reason'] as string | null) ?? null,
+    gateReason: (row['gate_reason'] as string | null) ?? null,
+    intentId: (row['intent_id'] as string | null) ?? null,
+    // Null, never zero. A run that never gated has no coverage, and zero is
+    // a real reading meaning the judge supported nothing.
+    coverage: typeof row['coverage'] === 'number' ? row['coverage'] : null,
+    createdAt: row['created_at'] instanceof Date ? row['created_at'] : null,
     promptVer: String(row['prompt_ver'] ?? ''),
     outboxStatus: (row['outbox_status'] as string | null) ?? null,
     draftExternalId: (row['draft_external_id'] as string | null) ?? null,
+    payloadRecorded: row['payload_recorded'] === true,
+    // The driver parses jsonb into a value. An object or nothing: the column
+    // is guarded to objects, and anything else is a malformed row.
+    payload:
+      typeof row['payload'] === 'object' && row['payload'] !== null
+        && !Array.isArray(row['payload'])
+        ? (row['payload'] as Record<string, unknown>)
+        : null,
     actionClass: (row['action_class'] as string | null) ?? null,
     delivery: (row['delivery'] as string | null) ?? null,
     costMicros: row['cost_micros'] as number,

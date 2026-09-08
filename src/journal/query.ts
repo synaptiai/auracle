@@ -217,8 +217,22 @@ export interface ParkRecord {
    * showing this has to say which one it is showing.
    */
   readonly draftBody: string | null;
-  /** Whether an action payload was recorded. The payload itself stays put. */
+  /** Whether an action payload was recorded (DEC-34). */
   readonly payloadRecorded: boolean;
+  /**
+   * The action payload itself, or null when the row recorded none.
+   *
+   * Returned because a person approves this. DEC-40 lets a console approve a
+   * parked action precisely because the approver reads what they are
+   * approving, and a ledger-only park has no drafted reply to read — the
+   * payload is the whole of the act. Withholding it put an Approve button
+   * over an action whose amount and target appeared nowhere on the page.
+   *
+   * It is the operator's own action, not a customer's message. The drafted
+   * reply beside it is customer text and is already returned; this is the
+   * queue name, the amount or the ticket the operator is about to act on.
+   */
+  readonly payload: Readonly<Record<string, unknown>> | null;
   /**
    * Whether the refusal recorded a message, rather than the message.
    *
@@ -792,6 +806,20 @@ export function agreementThresholdFromJournal(
   return agreementThresholdFor({ intent: intentId, thresholds });
 }
 
+/**
+ * The action payload a park recorded, when it recorded a usable one.
+ *
+ * Null for anything that is not a plain object, which is what `approveRun`
+ * accepts. An array or a scalar here is a malformed row, and reporting it as
+ * a payload would put a shape on the page that the approval path refuses.
+ */
+function payloadOf(
+  result: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const raw = result === null ? undefined : result['payload'];
+  return isObject(raw) ? raw : null;
+}
+
 function toParkRecord(result: Record<string, unknown> | null): ParkRecord {
   return {
     actionClass: stringAt(result, 'actionClass'),
@@ -802,6 +830,10 @@ function toParkRecord(result: Record<string, unknown> | null): ParkRecord {
     draftRecorded: has(result, 'body'),
     draftBody: stringAt(result, 'body'),
     payloadRecorded: has(result, 'payload'),
+    // An object or nothing. `approveRun` refuses any other shape, so a
+    // surface offering to perform it would be offering an action the
+    // approval path throws on.
+    payload: payloadOf(result),
     failureRecorded: has(result, 'error'),
   };
 }

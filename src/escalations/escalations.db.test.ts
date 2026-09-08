@@ -67,7 +67,8 @@ describe('escalations CLI queries', () => {
     const items = await listEscalations(pool);
 
     expect(items).toHaveLength(1);
-    expect(items[0]).toEqual({
+    const { createdAt, ...rest } = items[0]!;
+    expect(rest).toEqual({
       runId: run.runId,
       ticketId: run.ticketId,
       state: 'escalated',
@@ -75,13 +76,91 @@ describe('escalations CLI queries', () => {
       // produced one in the queue they work from.
       promptVer: 'p1',
       reason: 'limit_cost',
+      // This run escalated and never gated, so the queue has no rule to
+      // name and no coverage to report. Null and not a guess: a person
+      // reading `customer_visible` on a run that never reached the gate
+      // would be reading an invention.
+      gateReason: null,
+      coverage: null,
+      intentId: null,
       outboxStatus: null,
       draftExternalId: null,
+      payloadRecorded: false,
+      payload: null,
       actionClass: null,
       delivery: null,
       costMicros: 0,
       stepsUsed: 0,
     });
+    // Read off the row rather than compared to a clock this test does not
+    // own. The ledger stamps it, and a surface ordering by time needs it.
+    expect(createdAt).toBeInstanceOf(Date);
+  });
+
+  // The defect this queue was built with. `reason` reads the `escalate` row,
+  // and a run awaiting approval has not escalated — so every waiting run
+  // reported "no reason journalled" while the gate row held the answer. The
+  // two are different questions and the queue now answers both.
+  it('names the policy rule that sent a waiting run to a person', async () => {
+    const run = await seedRun('awaiting_approval');
+    await journalStep(run.runId, 'classify', { intentId: 'refund_request', agreement: 0.89 });
+    await journalStep(run.runId, 'gate', {
+      groundedness: 0.75, decision: 'gated', reason: 'customer_visible',
+    });
+    await journalStep(run.runId, 'park', {
+      draftExternalId: randomUUID(), actionClass: 'customer_reply',
+      delivery: 'at_least_once', body: 'a draft body',
+    });
+
+    const items = await listEscalations(pool);
+
+    expect(items[0]).toMatchObject({
+      // Null, because this run has not escalated. Reporting the gate rule
+      // here would answer a question about escalation with an answer about
+      // gating.
+      reason: null,
+      gateReason: 'customer_visible',
+      intentId: 'refund_request',
+      coverage: 0.75,
+    });
+  });
+
+  // DEC-34: a gated write with no customer draft parks in the ledger alone,
+  // and `approveRun` relays the journalled payload. The console could not
+  // tell such a run from one that parked nothing, so it offered no approval
+  // for 51 of 161 waiting runs.
+  it('says a ledger-only park carries an action payload (DEC-34)', async () => {
+    const ledgerOnly = await seedRun('awaiting_approval');
+    await journalStep(ledgerOnly.runId, 'park', {
+      actionClass: 'apply_credit', delivery: 'at_most_once',
+      body: 'a drafted note', payload: { amountMicros: 1_000 },
+    });
+
+    const items = await listEscalations(pool);
+
+    expect(items[0]).toMatchObject({
+      draftExternalId: null,
+      payloadRecorded: true,
+      // What approving it performs. DEC-40 lets this console approve because
+      // the approver reads what they are approving, and a ledger-only park
+      // has no drafted reply — this is the whole of the act.
+      payload: { amountMicros: 1_000 },
+      actionClass: 'apply_credit',
+    });
+  });
+
+  // The other half of that pair. A park that recorded neither is one
+  // `approveRun` refuses, and a console offering a button for it would send
+  // a person to a failure.
+  it('says a park carrying neither a handle nor a payload has no payload', async () => {
+    const run = await seedRun('awaiting_approval');
+    await journalStep(run.runId, 'park', {
+      actionClass: 'apply_credit', delivery: 'at_most_once', body: 'a drafted note',
+    });
+
+    const items = await listEscalations(pool);
+
+    expect(items[0]).toMatchObject({ draftExternalId: null, payloadRecorded: false });
   });
 
   it('surfaces an awaiting_approval run with its park record', async () => {
@@ -136,6 +215,72 @@ describe('escalations CLI queries', () => {
     const items = await listEscalations(pool);
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ runId: run.runId, outboxStatus: 'delivery_unknown' });
+  });
+
+  // A cast that raises takes the whole statement, not one row — the queue an
+  // operator came to work goes blank. The `gate_unreadable` path writes a
+  // gate row with a different result shape, so this is a shape the ledger
+  // holds. A `::bytea` cast of the same kind once took the run detail down.
+  it('survives a gate row whose groundedness is not a number', async () => {
+    const run = await seedRun('awaiting_approval');
+    await journalStep(run.runId, 'gate', {
+      groundedness: 'unreadable', decision: 'gated', reason: 'customer_visible',
+    });
+
+    const items = await listEscalations(pool);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.coverage).toBeNull();
+    expect(items[0]?.gateReason).toBe('customer_visible');
+  });
+
+  // `approveRun` refuses a payload that is not an object, and it throws bare
+  // rather than returning an outcome the console can render. A queue that
+  // tested for the key alone would put a button in front of a person that
+  // leads to a stack trace.
+  it('says a payload that is not an object is no payload', async () => {
+    for (const payload of [null, 'text', 7, ['a']]) {
+      await pool.query('TRUNCATE run, step_journal, outbox CASCADE');
+      const run = await seedRun('awaiting_approval');
+      await journalStep(run.runId, 'park', {
+        actionClass: 'compensate', delivery: 'at_most_once', body: 'a note', payload,
+      });
+      const items = await listEscalations(pool);
+      expect(items[0]?.payloadRecorded, JSON.stringify(payload)).toBe(false);
+    }
+  });
+
+  // The outbox statement is a second copy of the run SELECT, and it is the
+  // only one that answers for a run outside the two escalation states. A
+  // column added to one and not the other reports nothing about exactly the
+  // run an operator came here for — the one whose delivery is unknown.
+  it('carries the same fields for a stuck record as for a waiting run', async () => {
+    const run = await seedRun('resolved');
+    await journalStep(run.runId, 'classify', { intentId: 'chargeback-notice', agreement: 0.9 });
+    await journalStep(run.runId, 'gate', {
+      groundedness: 0.6, decision: 'gated', reason: 'high_risk',
+    });
+    await journalStep(run.runId, 'park', {
+      actionClass: 'apply_credit', delivery: 'at_most_once',
+      body: 'a drafted note', payload: { amountMicros: 1_000 },
+    });
+    await pool.query(
+      `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class, delivery, payload, status)
+       VALUES ($1, 'send', $2, 1, 'customer_reply', 'at_least_once', '{}', 'delivery_unknown')`,
+      [run.runId, 'idem-' + randomUUID()],
+    );
+
+    const items = await listEscalations(pool);
+
+    expect(items[0]).toMatchObject({
+      outboxStatus: 'delivery_unknown',
+      gateReason: 'high_risk',
+      intentId: 'chargeback-notice',
+      coverage: 0.6,
+      payloadRecorded: true,
+      actionClass: 'apply_credit',
+    });
+    expect(items[0]?.createdAt).toBeInstanceOf(Date);
   });
 
   it('ignores resolved runs without a stuck record', async () => {

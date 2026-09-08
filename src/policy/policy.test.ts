@@ -6,6 +6,7 @@ import {
   POLICY_REASONS,
   passedAgreementGate,
   reachedAgreementGate,
+  readCoverageGate,
   GATE_AGREEMENT,
   SEED_THRESHOLDS,
   makeThresholds,
@@ -579,5 +580,109 @@ describe('the reason a decision carries (section 4.8)', () => {
     expect(passedAgreementGate('groundedness_block')).toBe(true);
     expect(passedAgreementGate('groundedness_review')).toBe(true);
     expect(passedAgreementGate('agreement')).toBe(false);
+  });
+});
+
+// Which runs were judged on coverage at all.
+//
+// `journalFinish` records `groundedness` on every gate row whether or not the
+// engine compared it, so a reader holding the number cannot tell a coverage
+// that decided from one that was only measured. The console printed it beside
+// every rule, and on a seeded queue that told a person six runs in ten had
+// failed groundedness when none of them had been judged on it.
+describe('whether a run\'s coverage was read (DEC-05, section 4.8)', () => {
+  it('says no for every rule that stops before the comparison', () => {
+    for (const reason of [
+      'no_idempotency', 'no_read_back', 'customer_visible', 'irreversible', 'high_risk',
+    ] as const) {
+      expect(readCoverageGate(reason), reason).toBe(false);
+    }
+  });
+
+  // Agreement is compared first, and a run it stops never reaches coverage.
+  // This is the one reason that reaches the first gate and not the second.
+  it('says no for a run the agreement gate stopped', () => {
+    expect(reachedAgreementGate('agreement')).toBe(true);
+    expect(readCoverageGate('agreement')).toBe(false);
+  });
+
+  it('says yes only where a threshold decided', () => {
+    for (const reason of ['groundedness_block', 'groundedness_review', 'auto'] as const) {
+      expect(readCoverageGate(reason), reason).toBe(true);
+    }
+  });
+
+  // The table against the engine, not against itself.
+  //
+  // The cases above enumerate the same nine constants the record declares, so
+  // they hold whatever the record says. This varies the one input the record
+  // is about and asks the engine: a reason that does not read coverage must
+  // return the same verdict at every coverage, and one that reads it must
+  // not. If the engine's order changed, the record, its tests and the console
+  // would agree and all be wrong.
+  it('agrees with what the engine actually does when coverage moves', () => {
+    const base = {
+      agreement: 0.99,
+      thresholds: SEED_THRESHOLDS,
+      capabilities: FULL_CAPABILITIES,
+    };
+    const cases: readonly { name: string; input: Omit<PolicyInput, 'groundedness'> }[] = [
+      {
+        name: 'customer_visible',
+        input: {
+          ...base, riskTier: 'low',
+          action: { isWrite: true, isCustomerVisible: true, isIrreversible: false },
+        },
+      },
+      {
+        name: 'high_risk',
+        input: {
+          ...base, riskTier: 'high',
+          action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
+        },
+      },
+      {
+        name: 'irreversible',
+        input: {
+          ...base, riskTier: 'low',
+          action: { isWrite: true, isCustomerVisible: false, isIrreversible: true },
+        },
+      },
+      {
+        name: 'no_idempotency',
+        input: {
+          ...base, riskTier: 'low',
+          capabilities: { ...base.capabilities, supportsIdempotencyKey: false },
+          action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
+        },
+      },
+      {
+        name: 'auto',
+        input: {
+          ...base, riskTier: 'low',
+          action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
+        },
+      },
+    ];
+
+    for (const { name, input } of cases) {
+      const verdicts = [0, 0.5, 0.75, 1].map(
+        (groundedness) => evaluatePolicyDetailed({ ...input, groundedness }).reason,
+      );
+      const first = verdicts[0]!;
+      const invariant = verdicts.every((reason) => reason === first);
+      // The engine is the authority. Whether the verdict moved with coverage
+      // is the fact; the record has to match it.
+      expect(readCoverageGate(first), `${name}: engine said ${first}`).toBe(!invariant);
+    }
+  });
+
+  // Coverage is read last, so no reason can reach it without reaching
+  // agreement first. A table that broke this would describe an order the
+  // engine does not run in.
+  it('never reads coverage on a run that did not reach agreement', () => {
+    for (const reason of POLICY_REASONS) {
+      if (readCoverageGate(reason)) expect(reachedAgreementGate(reason), reason).toBe(true);
+    }
   });
 });

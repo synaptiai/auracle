@@ -19,7 +19,9 @@ import type {
 
 export function toRow(item: {
   runId: string; ticketId: string; state: string; promptVer: string;
-  reason: string | null; costMicros: number; stepsUsed: number;
+  reason: string | null; gateReason: string | null; intentId: string | null;
+  coverage: number | null; createdAt: Date | null;
+  costMicros: number; stepsUsed: number;
 }): RunRow {
   return {
     runId: item.runId,
@@ -29,6 +31,12 @@ export function toRow(item: {
     // Trimmed here, at the one boundary every surface reads through, so no
     // surface can render the untrimmed value by forgetting to ask.
     reason: escalationHead(item.reason),
+    // Untrimmed, because it is not free text. The gate writes one of a
+    // closed set of rule names, and a head of it would be a truncated rule.
+    gateReason: item.gateReason,
+    intentId: item.intentId,
+    gateCoverage: item.coverage,
+    createdAt: item.createdAt,
     stepsUsed: item.stepsUsed,
   };
 }
@@ -47,8 +55,22 @@ export function toRow(item: {
  */
 const GATES_NOT_READ = { agreement: null, coverage: null } as const;
 
-export function toDetail(item: Parameters<typeof toRow>[0] & { draftExternalId: string | null }): RunDetail {
-  return { ...toRow(item), ...GATES_NOT_READ, draftExternalId: item.draftExternalId };
+export function toDetail(
+  item: Parameters<typeof toRow>[0] & {
+    draftExternalId: string | null; payloadRecorded: boolean;
+    actionClass: string | null; delivery: string | null;
+    payload: Readonly<Record<string, unknown>> | null;
+  },
+): RunDetail {
+  return {
+    ...toRow(item),
+    ...GATES_NOT_READ,
+    draftExternalId: item.draftExternalId,
+    payloadRecorded: item.payloadRecorded,
+    actionClass: item.actionClass,
+    delivery: item.delivery,
+    payload: item.payload,
+  };
 }
 
 /**

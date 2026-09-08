@@ -37,23 +37,36 @@ stay listed rather than being hidden by the window.`;
 
 const KNOWN_STATES = new Set(['escalated', 'awaiting_approval', 'delivery_unknown']);
 
-function renderTable(items: readonly EscalationItem[]): string {
+export function renderTable(items: readonly EscalationItem[]): string {
   // PIN is the prompt version. It is here because this is the queue a person
   // works from, and a seeded run reaches it exactly like a produced one:
   // `pnpm run seed-history` writes runs in `escalated` and
   // `awaiting_approval`, which are the two states this report selects. It
   // pins `seed`, and without this column nothing on the screen said so.
-  const header = ['RUN', 'TICKET', 'STATE', 'PIN', 'REASON', 'OUTBOX', 'COSTµ$', 'STEPS', 'DRAFT'];
+  const header = [
+    'RUN', 'TICKET', 'STATE', 'PIN', 'INTENT', 'REASON', 'OUTBOX', 'COSTµ$', 'STEPS', 'DRAFT',
+  ];
   const rows = items.map((item) => [
     item.runId.slice(0, 8),
     item.ticketId,
     item.state,
     item.promptVer,
-    item.reason ?? '-',
+    item.intentId ?? '-',
+    // The escalation reason, or the gate rule when the run has not escalated.
+    //
+    // This report selects `escalated` and `awaiting_approval`, and only the
+    // first of those has an escalation reason — so every waiting run printed
+    // `-` in the column that says why a person is needed, while the gate row
+    // held the answer. The operator console had the same defect and reads
+    // through this same module, which is the point of sharing it.
+    item.reason ?? item.gateReason ?? '-',
     item.outboxStatus ?? '-',
     String(item.costMicros),
     String(item.stepsUsed),
-    item.draftExternalId ?? '-',
+    // What approving it acts on. A gated write with no customer draft parks
+    // its payload in the ledger and is still approvable (DEC-34), and a `-`
+    // here read as a run nothing could be done with.
+    item.draftExternalId ?? (item.payloadRecorded ? 'payload' : '-'),
   ]);
   const widths = header.map((h, i) =>
     Math.max(h.length, ...rows.map((row) => row[i]!.length)),

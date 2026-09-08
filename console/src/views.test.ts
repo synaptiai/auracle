@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { evidenceOf, latencyCaveats, stepSays, toDetail, toRow } from './views.js';
+import { ageSays, whenSays } from './surfaces.js';
 import type { JournalStep, RunJournal } from 'auracle/dist/journal/query.js';
 
 const RUN = '11111111-2222-4333-8444-555555555555';
@@ -81,7 +82,9 @@ describe('what a park step says', () => {
 describe('what a run row carries onto a page', () => {
   const item = {
     runId: RUN, ticketId: 'SYN-4471', state: 'resolved', promptVer: 'p1',
-    reason: null, costMicros: 1234, stepsUsed: 6,
+    reason: null, gateReason: 'customer_visible', intentId: 'refund-request',
+    coverage: 0.94, createdAt: new Date('2026-09-07T09:00:00.000Z'),
+    costMicros: 1234, stepsUsed: 6,
   };
 
   it('keeps a null reason a null, rather than an empty string', () => {
@@ -102,8 +105,69 @@ describe('what a run row carries onto a page', () => {
   });
 
   it('carries the parked draft id onto a detail, and a null when none parked', () => {
-    expect(toDetail({ ...item, draftExternalId: 'hd-99' }).draftExternalId).toBe('hd-99');
-    expect(toDetail({ ...item, draftExternalId: null }).draftExternalId).toBeNull();
+    const detail = {
+      ...item, payloadRecorded: false, actionClass: 'customer_reply',
+      delivery: 'at_least_once', payload: null,
+    };
+    expect(toDetail({ ...detail, draftExternalId: 'hd-99' }).draftExternalId).toBe('hd-99');
+    expect(toDetail({ ...detail, draftExternalId: null }).draftExternalId).toBeNull();
+  });
+
+  // The gate rule is not free text. It is one of a closed set the policy
+  // engine writes, so trimming it as an escalation reason is trimmed would
+  // hand a person a truncated rule name.
+  it('carries the gate rule whole, beside the escalation reason', () => {
+    const row = toRow({ ...item, reason: null, gateReason: 'no_idempotency' });
+    expect(row.gateReason).toBe('no_idempotency');
+    expect(row.reason).toBeNull();
+  });
+
+  // Null, never zero, and never today. A run the queue could not date is a
+  // run whose age nobody knows, and a surface printing "0m" for it would
+  // report the freshest possible item.
+  it('carries the run time, and a null when the ledger recorded none', () => {
+    expect(toRow(item).createdAt).toEqual(new Date('2026-09-07T09:00:00.000Z'));
+    expect(toRow({ ...item, createdAt: null }).createdAt).toBeNull();
+  });
+
+  it('carries the coverage the gate read, and a null when it never gated', () => {
+    expect(toRow(item).gateCoverage).toBe(0.94);
+    expect(toRow({ ...item, coverage: null }).gateCoverage).toBeNull();
+  });
+
+  // DEC-34. A ledger-only park is approvable, and the detail has to say so.
+  it('carries whether a park journalled an action payload (DEC-34)', () => {
+    const base = {
+      ...item, draftExternalId: null, actionClass: 'compensate',
+      delivery: 'at_most_once', payload: null,
+    };
+    expect(toDetail({ ...base, payloadRecorded: true }).payloadRecorded).toBe(true);
+    expect(toDetail({ ...base, payloadRecorded: false }).payloadRecorded).toBe(false);
+  });
+
+  // The name the approval warning says out loud. Approving a ledger-only
+  // park performs an action rather than sending a reply, and an operator is
+  // owed the name of the thing they are about to do — a null here degrades
+  // that sentence to "performs the action".
+  // DEC-40: the approver reads what they are approving, and a ledger-only
+  // park has no drafted reply — the payload is the whole of the act.
+  it('carries the payload the approval will perform', () => {
+    const base = {
+      ...item, draftExternalId: null, payloadRecorded: true,
+      actionClass: 'compensate', delivery: 'at_most_once',
+    };
+    expect(toDetail({ ...base, payload: { amountMicros: 500 } }).payload)
+      .toEqual({ amountMicros: 500 });
+    expect(toDetail({ ...base, payload: null }).payload).toBeNull();
+  });
+
+  it('carries what the park will perform, and a null when the row named none', () => {
+    const base = {
+      ...item, draftExternalId: null, payloadRecorded: true,
+      delivery: 'at_most_once', payload: { amountMicros: 500 },
+    };
+    expect(toDetail({ ...base, actionClass: 'apply_credit' }).actionClass).toBe('apply_credit');
+    expect(toDetail({ ...base, actionClass: null }).actionClass).toBeNull();
   });
 });
 
@@ -211,5 +275,54 @@ describe('numbering the claims of a reply that opens with a courtesy sentence', 
         docId: 'SYN-DOC-01', supported: false,
       },
     ]);
+  });
+});
+
+// How long something has waited, which is the quantity a person triages on.
+// `now` is a parameter so this is a function of its inputs; a renderer
+// reading the wall clock could not be asserted at all.
+describe('the age a queue row states', () => {
+  const now = new Date('2026-09-08T12:00:00.000Z');
+  const ago = (ms: number): Date => new Date(now.getTime() - ms);
+
+  const cases: readonly (readonly [string, Date, string])[] = [
+    ['under a minute', ago(30_000), 'just now'],
+    ['minutes', ago(9 * 60_000), '9m'],
+    ['the last minute before an hour', ago(59 * 60_000), '59m'],
+    ['exactly an hour', ago(3_600_000), '1h'],
+    ['the last hour before a day', ago(23 * 3_600_000), '23h'],
+    ['exactly a day', ago(86_400_000), '1d'],
+    ['days', ago(9 * 86_400_000), '9d'],
+  ];
+
+  for (const [name, at, says] of cases) {
+    it(`says ${says} for ${name}`, () => {
+      expect(ageSays(at, now)).toBe(says);
+    });
+  }
+
+  // Null is an unknown age, not a fresh one. `just now` on the run least is
+  // known about is the most flattering answer available.
+  it('says an unrecorded time is unrecorded, never now', () => {
+    expect(ageSays(null, now)).toBe('age unrecorded');
+  });
+
+  // Two machines' clocks, or a backdated history. Either way nothing has
+  // waited a negative time, and a minus sign in a queue reads as a defect.
+  it('refuses to report a negative age', () => {
+    expect(ageSays(new Date(now.getTime() + 60_000), now)).toBe('not yet open');
+  });
+});
+
+// Always UTC and always said so. The ledger stores UTC and the bands page
+// judges a UTC day, so a console rendering local time would put two surfaces
+// on different days for the same run.
+describe('the timestamp a run list states', () => {
+  it('states the instant in UTC, and marks it as UTC', () => {
+    expect(whenSays(new Date('2026-09-07T09:05:00.000Z'))).toBe('2026-09-07 09:05Z');
+  });
+
+  it('says a time it does not have is not recorded', () => {
+    expect(whenSays(null)).toBe('not recorded');
   });
 });

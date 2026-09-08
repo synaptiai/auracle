@@ -11,6 +11,8 @@ import { createHash } from 'node:crypto';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { escapeHtml } from './render.js';
+
 import { allowedHosts } from './hosts.js';
 import { createConsole } from './server.js';
 import type { ConsoleDeps } from './server.js';
@@ -81,13 +83,32 @@ const EVIDENCE = {
   ],
 };
 
+/**
+ * The queue-row fields every run now carries, so a case states only what it
+ * is about.
+ *
+ * A real date rather than null: the surfaces order by time and print an age,
+ * and a fixture that never carried one would leave that unrendered in every
+ * case here. A case about time overrides it.
+ */
+const ROW = {
+  gateReason: 'customer_visible',
+  intentId: 'refund-request',
+  gateCoverage: 0.94,
+  createdAt: new Date('2026-09-07T09:00:00.000Z'),
+  payloadRecorded: false,
+  actionClass: 'customer_reply',
+  delivery: 'at_least_once',
+  payload: null,
+} as const;
+
 function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
   return {
     listRuns: async () => [
-      { runId: RUN, ticketId: 'SYN-1', state: 'resolved', promptVer: 'p1', reason: null, stepsUsed: 4 },
+      { runId: RUN, ticketId: 'SYN-1', state: 'resolved', promptVer: 'p1', ...ROW, reason: null, stepsUsed: 4 },
     ],
     readRun: async () => ({
-      runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1',
+      runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
       reason: 'policy_escalated', stepsUsed: 4,
       agreement: 0.89, coverage: 0.94, draftExternalId: 'D-1',
       agreementThreshold: 0.6, agreementDetail: '8 of 9 samples',
@@ -104,7 +125,7 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
       request: REQUEST,
     }),
     listApprovals: async () => [{
-      runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1',
+      runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
       reason: 'customer_visible', stepsUsed: 4,
       agreement: 0.89, coverage: 0.94, draftExternalId: 'D-1',
     }],
@@ -393,17 +414,17 @@ describe('the console routes', () => {
     expect(html).toContain('awaiting_approval');
   });
 
-  it('offers no approve form for a run with no parked draft', async () => {
+  it('offers no approve form for a run that parked nothing at all', async () => {
     const base = await startGuarded(deps({
       listApprovals: async () => [{
-        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1',
+        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
         reason: null, stepsUsed: 4,
-        agreement: 0.89, coverage: 0.94, draftExternalId: null,
+        agreement: 0.89, coverage: 0.94, draftExternalId: null, payloadRecorded: false,
       }],
     }));
     const html = await (await fetch(base + '/approvals')).text();
     expect(html).not.toContain('<form');
-    expect(html).toContain('No draft is parked');
+    expect(html).toContain('neither a helpdesk draft nor an action payload');
   });
 });
 
@@ -776,17 +797,146 @@ describe('the reply an approver reads before they send it', () => {
     expect(html).toContain('a person may have changed it since');
   });
 
-  it('offers no approve button for a run with no parked draft', async () => {
+  // Three cases, and this surface drew two. `approveRun` relays a ledger-only
+  // park through its journalled payload (DEC-34), so such a run has always
+  // been approvable — the console offered no button and a third of the queue
+  // was a dead end on the page built to clear it.
+  it('offers no approve button for a run that parked neither a draft nor a payload', async () => {
     const base = await startGuarded(deps({
       listApprovals: async () => [{
-        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1',
+        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
         reason: 'irreversible', stepsUsed: 4,
-        agreement: 0.89, coverage: 0.94, draftExternalId: null,
+        agreement: 0.89, coverage: 0.94, draftExternalId: null, payloadRecorded: false,
       }],
     }));
     const html = await (await fetch(base + '/approvals')).text();
-    expect(html).toContain('No draft is parked');
-    expect(html).not.toContain('>Approve<');
+    expect(html).toContain('neither a helpdesk draft nor an action payload');
+    expect(html).not.toContain('<button');
+  });
+
+  // `compensate` is the class the policy engine judges irreversible, and a
+  // seeded queue holds it. An earlier case used a class this system has no
+  // name for, so the branch that matters was never exercised.
+  it('approves a ledger-parked action, and names what it will perform (DEC-34)', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => [{
+        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+        reason: null, stepsUsed: 4, gateReason: 'high_risk',
+        agreement: 0.89, coverage: 0.94,
+        draftExternalId: null, payloadRecorded: true, actionClass: 'route_ticket',
+      }],
+    }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('Approve and perform');
+    expect(html).toContain('route_ticket');
+    expect(html).toContain('No reply goes to a customer.');
+    // Routing a ticket is not permanent, so this must not claim it is.
+    expect(html).not.toContain('cannot be undone');
+  });
+
+  // The class DEC-34 exists for. An irreversible write parks in the ledger
+  // like any other internal action, so it reaches the branch that used to
+  // say only "no reply goes to a customer" — the one act on this console
+  // that cannot be taken back, under the weaker of the two warnings.
+  // Read from the action, not from which rule fired first.
+  //
+  // The engine tests idempotency, read-back, visibility, irreversibility and
+  // risk in that order, so a compensation on an adapter with no idempotency
+  // key stops at `no_idempotency` — and it is still the one action here that
+  // cannot be taken back. A warning keyed on the gate rule would go silent on
+  // exactly that run.
+  const permanentRules = ['irreversible', 'no_idempotency', 'high_risk', 'no_read_back'];
+  for (const rule of permanentRules) {
+    it(`warns that a compensation cannot be undone, whichever rule stopped it: ${rule}`, async () => {
+      const base = await startGuarded(deps({
+        listApprovals: async () => [{
+          runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+          reason: null, stepsUsed: 4, gateReason: rule,
+          agreement: 0.89, coverage: 0.94,
+          draftExternalId: null, payloadRecorded: true,
+          actionClass: 'compensate', delivery: 'at_most_once',
+        }],
+      }));
+      const html = await (await fetch(base + '/approvals')).text();
+      expect(html, rule).toContain('compensate');
+      expect(html, rule).toContain('cannot be undone');
+      // DEC-30: at_most_once never retries, so an unconfirmed send escalates.
+      expect(html, rule).toContain('escalates rather than repeating');
+    });
+  }
+
+  // DEC-40 permits this console to approve because the approver reads what
+  // they are approving. A ledger-only park has no drafted reply, so the
+  // payload is the whole of the act — and the page named the action and
+  // showed nothing of its content.
+  it('shows the payload the approval will perform (DEC-34, DEC-40)', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => [{
+        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+        reason: null, stepsUsed: 4, gateReason: 'irreversible',
+        agreement: 0.89, coverage: 0.94,
+        draftExternalId: null, payloadRecorded: true,
+        actionClass: 'compensate', delivery: 'at_most_once',
+        payload: { amountMicros: 4200, ticket: 'SYN-1', reason: 'duplicate charge' },
+      }],
+    }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('What approving this performs');
+    // The amount an operator is about to move.
+    expect(html).toContain('4200');
+    expect(html).toContain('amountMicros');
+    expect(html).toContain('duplicate charge');
+  });
+
+  // A park with a payload the reader refused, or none at all. Drawing an
+  // empty block would vouch for an action with nothing behind it.
+  it('says so when a parked action recorded no readable payload', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => [{
+        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+        reason: null, stepsUsed: 4, gateReason: 'irreversible',
+        agreement: 0.89, coverage: 0.94,
+        draftExternalId: null, payloadRecorded: true,
+        actionClass: 'compensate', delivery: 'at_most_once', payload: null,
+      }],
+    }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('recorded no payload for it');
+  });
+
+  // A draft-backed park's act is the reply above it, so there is no payload
+  // block to draw.
+  it('draws no payload block for a run that parked a reply', async () => {
+    const html = await (await fetch((await startGuarded(deps())) + '/approvals')).text();
+    expect(html).not.toContain('What approving this performs');
+  });
+
+  // And the sentence is about the delivery rule, not about the class. A
+  // reversible action delivered at least once gets neither claim.
+  it('claims neither permanence nor at-most-once for a routing action', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => [{
+        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+        reason: null, stepsUsed: 4, gateReason: 'irreversible',
+        agreement: 0.89, coverage: 0.94,
+        draftExternalId: null, payloadRecorded: true,
+        actionClass: 'route_ticket', delivery: 'at_least_once',
+      }],
+    }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).not.toContain('cannot be undone');
+    expect(html).not.toContain('escalates rather than repeating');
+  });
+
+  // The warning is about the act, so the two acts do not share one. A reply
+  // reaches a person who cannot unread it.
+  it('warns that a sent reply cannot be recalled, on the draft path alone', async () => {
+    const html = await (await fetch(
+      (await startGuarded(deps())) + '/approvals',
+    )).text();
+    expect(html).toContain('Approve and send');
+    expect(html).toContain('cannot be recalled');
+    expect(html).not.toContain('No reply goes to a customer.');
   });
 
   // The queue is uncapped by design, so a journal read per row would be one
@@ -884,7 +1034,7 @@ describe('the message a reply answers', () => {
     const read: string[] = [];
     const queue = Array.from({ length: 6 }, (_, i) => ({
       runId: `0000000${i}-2222-4333-8444-555555555555`,
-      ticketId: `SYN-${i}`, state: 'awaiting_approval', promptVer: 'p1',
+      ticketId: `SYN-${i}`, state: 'awaiting_approval', promptVer: 'p1', ...ROW,
       reason: 'customer_visible', stepsUsed: 4,
       agreement: 0.89, coverage: 0.94, draftExternalId: 'D-1',
     }));
@@ -925,7 +1075,7 @@ describe('the message a reply answers', () => {
 
 describe('the evidence states that are not a list of claims', () => {
   const bare = {
-    runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1',
+    runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
     reason: 'customer_visible', stepsUsed: 4,
     agreement: 0.89, coverage: 0.94, draftExternalId: 'D-1',
   };
@@ -1622,12 +1772,12 @@ describe('the approval queue', () => {
   const RUN_B = '8a2d4c6e-1f3b-4a90-9c7e-2d5b8f0a1c34';
   const waiting = [
     {
-      runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1',
+      runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
       reason: 'customer_visible', stepsUsed: 4,
       agreement: 0.89, coverage: 0.94, draftExternalId: 'D-1',
     },
     {
-      runId: RUN_B, ticketId: 'SYN-2', state: 'awaiting_approval', promptVer: 'p1',
+      runId: RUN_B, ticketId: 'SYN-2', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
       reason: 'customer_visible', stepsUsed: 4,
       agreement: 0.71, coverage: 0.83, draftExternalId: 'D-2',
     },
@@ -1687,5 +1837,425 @@ describe('the approval queue', () => {
     // of the queue rather than an empty pane.
     expect(html).toContain('SYN-1');
     expect(html).toContain('D-1');
+  });
+});
+
+// Issue #63. The queue is a list a person triages, and it carried an opaque
+// ticket id and a reason that could never hold a value.
+describe('what a queue row tells the person working it', () => {
+  function waiting(...over: readonly Partial<Record<string, unknown>>[]) {
+    return over.map((row, i) => ({
+      runId: `0000000${i}-1111-4111-8111-111111111111`,
+      ticketId: `SYN-${i}`, state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+      reason: null, stepsUsed: 4, agreement: 0.89, coverage: 0.94,
+      draftExternalId: 'D-1',
+      ...row,
+    }));
+  }
+
+  // The defect. `reason` reads the escalate row and a waiting run has not
+  // escalated, so every row read "no reason journalled" while the gate row
+  // held the answer.
+  it('names the policy rule that made the run a person\'s, not the escalation reason', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => waiting({ reason: null, gateReason: 'high_risk' }),
+    }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('high_risk');
+    expect(html).not.toContain('no reason journalled');
+  });
+
+  it('says what the ticket is about and how well the reply is covered', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => waiting({
+        intentId: 'billing-dispute', gateCoverage: 0.4, gateReason: 'groundedness_review',
+      }),
+    }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('billing-dispute');
+    expect(html).toContain('coverage 0.40');
+    expect(html).not.toContain('not read');
+  });
+
+  // DEC-05 and section 4.8. The gate row records `groundedness` whether or
+  // not the engine compared it, and a customer reply is gated by DEC-12
+  // before either threshold. Printing the number plain beside that rule told
+  // a person a run had failed groundedness when it was never judged on it —
+  // and on a seeded queue it said so about six runs in ten.
+  it('marks a coverage the policy engine never read', async () => {
+    for (const rule of [
+      'customer_visible', 'high_risk', 'irreversible', 'no_idempotency', 'agreement',
+    ]) {
+      const base = await startGuarded(deps({
+        listApprovals: async () => waiting({ gateCoverage: 0.4, gateReason: rule }),
+      }));
+      const html = await (await fetch(base + '/approvals')).text();
+      expect(html, rule).toContain('coverage 0.40 (not read)');
+    }
+  });
+
+  it('marks nothing when a threshold is what decided', async () => {
+    for (const rule of ['groundedness_review', 'groundedness_block', 'auto']) {
+      const base = await startGuarded(deps({
+        listApprovals: async () => waiting({ gateCoverage: 0.4, gateReason: rule }),
+      }));
+      const html = await (await fetch(base + '/approvals')).text();
+      expect(html, rule).not.toContain('not read');
+    }
+  });
+
+  // One rule, one check. The coverage marker vetted this field against the
+  // engine's vocabulary and the label beside it printed whatever the column
+  // held — so a gate row carrying free text would put an unbounded foreign
+  // string in a queue row, in a layout built for one word.
+  //
+  // Two rows, not one. With a single row `gateFilters` returns nothing at all,
+  // so a one-row case asserts the chip is clean without ever rendering a chip
+  // — it passes for the wrong reason.
+  it('names a rule outside the engine\'s vocabulary as one, at every place it is drawn', async () => {
+    const foreign = 'a'.repeat(400);
+    const rows = [
+      ...waiting({ gateReason: foreign, gateCoverage: 0.4 }),
+      ...waiting({ gateReason: 'high_risk', gateCoverage: 0.9 }),
+    ].map((row, i) => ({ ...row, runId: `0000000${i}-1111-4111-8111-111111111111` }));
+
+    const base = await startGuarded(deps({
+      listApprovals: async () => rows,
+      listRuns: async () => rows,
+    }));
+
+    // Drawn, not linked. A chip's href has to carry the raw value or it
+    // cannot filter on it; what must never carry it is the text a person
+    // reads, which is the character right after a tag closes.
+    const shown = (html: string): boolean => html.includes(`>${foreign}`);
+
+    // The queue: the row, and the filter chip the one-row case never drew.
+    const queue = await (await fetch(base + '/approvals')).text();
+    expect(shown(queue)).toBe(false);
+    expect(queue).toContain('a rule this console does not know');
+    expect(queue).toContain('(not read)');
+
+    // The narrowed header, which names the active rule.
+    const narrowed = await (await fetch(
+      base + '/approvals?rule=' + encodeURIComponent(foreign),
+    )).text();
+    expect(shown(narrowed)).toBe(false);
+
+    // And the runs table, which merges the two reason vocabularies.
+    const runs = await (await fetch(base + '/')).text();
+    expect(shown(runs)).toBe(false);
+  });
+
+  // The header says the oldest is on this list, and nothing on it said how
+  // old anything was.
+  it('says how long each run has waited', async () => {
+    const hoursAgo = new Date(Date.now() - 5 * 3_600_000);
+    const base = await startGuarded(deps({
+      listApprovals: async () => waiting({ createdAt: hoursAgo }),
+    }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('5h');
+  });
+
+  // A run the ledger could not date has an unknown age. Printing "just now"
+  // would put the freshest label on the run least is known about.
+  it('says an age it does not have is unrecorded, rather than now', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => waiting({ createdAt: null }),
+    }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('age unrecorded');
+    expect(html).not.toContain('just now');
+  });
+});
+
+describe('narrowing the queue to one gate rule', () => {
+  function mixed() {
+    const rows = [
+      ['customer_visible', 'a'], ['customer_visible', 'b'],
+      ['high_risk', 'c'], [null, 'd'],
+    ] as const;
+    return rows.map(([gateReason, id], i) => ({
+      runId: `0000000${i}-1111-4111-8111-11111111111${i}`,
+      ticketId: `SYN-${id}`, state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+      reason: null, gateReason, stepsUsed: 4,
+      agreement: 0.89, coverage: 0.94, draftExternalId: 'D-1',
+    }));
+  }
+
+  it('offers a chip per rule, with how many it holds', async () => {
+    const base = await startGuarded(deps({ listApprovals: async () => mixed() }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('rule=customer_visible');
+    expect(html).toContain('rule=high_risk');
+    // A run whose rule the ledger never recorded is still a run a person has
+    // to work, so it is reachable rather than hidden.
+    expect(html).toContain('rule=unruled');
+  });
+
+  it('shows only the runs carrying the chosen rule', async () => {
+    const base = await startGuarded(deps({ listApprovals: async () => mixed() }));
+    const html = await (await fetch(base + '/approvals?rule=high_risk')).text();
+    expect(html).toContain('SYN-c');
+    expect(html).not.toContain('SYN-a');
+    expect(html).toContain('Waiting · 1');
+  });
+
+  // The badge counts the queue, not the view. A badge that fell because a
+  // filter was on would report a queue that had emptied.
+  it('counts everything waiting in the header, whatever the filter shows', async () => {
+    const base = await startGuarded(deps({ listApprovals: async () => mixed() }));
+    const html = await (await fetch(base + '/approvals?rule=high_risk')).text();
+    expect(html).toContain('4 waiting');
+  });
+
+  // A rule nothing carries is not an error. It narrowed to nothing, which is
+  // what was asked for, and the page says so rather than showing the queue.
+  it('says nothing carries a rule nothing carries', async () => {
+    const base = await startGuarded(deps({ listApprovals: async () => mixed() }));
+    const html = await (await fetch(base + '/approvals?rule=no_idempotency')).text();
+    expect(html).toContain('Nothing waiting carries that rule');
+    expect(html).not.toContain('SYN-a');
+  });
+
+  // The stronger property, and the one that can fail. An earlier case
+  // asserted the raw string was absent — which it is, because a rule nothing
+  // carries never reaches an interpolation at all. That case passed with
+  // every escape removed.
+  //
+  // What holds is that a rule from the query string is never echoed: not
+  // raw, not escaped, not encoded. The page names only the rules the waiting
+  // runs carry.
+  it('never echoes a rule the query string invented', async () => {
+    const base = await startGuarded(deps({ listApprovals: async () => mixed() }));
+    for (const hostile of ['<script>alert(1)</script>', '"onmouseover="x', 'zzz-marker']) {
+      const html = await (await fetch(
+        base + '/approvals?rule=' + encodeURIComponent(hostile),
+      )).text();
+      expect(html, hostile).not.toContain(hostile);
+      expect(html, hostile).not.toContain(escapeHtml(hostile));
+      expect(html, hostile).not.toContain(encodeURIComponent(hostile));
+      expect(html, hostile).toContain('Nothing waiting carries that rule');
+    }
+  });
+});
+
+describe('the time a run list is ordered by', () => {
+  it('states when each run opened, and how long ago', async () => {
+    const base = await startGuarded(deps({
+      listRuns: async () => [{
+        runId: RUN, ticketId: 'SYN-1', state: 'resolved', promptVer: 'p1', ...ROW,
+        reason: null, stepsUsed: 4,
+        createdAt: new Date('2026-09-07T09:00:00.000Z'),
+      }],
+    }));
+    const html = await (await fetch(base + '/')).text();
+    expect(html).toContain('2026-09-07 09:00Z');
+    expect(html).toContain('Opened');
+  });
+});
+
+// The runs list renders the same two reason fields the queue does, and the
+// only case on that page asserted the timestamp. So the defect this whole
+// change exists to remove could come back on the second surface unobserved.
+describe('what the runs list tells an operator', () => {
+  async function runsPage(over: Record<string, unknown>): Promise<string> {
+    const base = await startGuarded(deps({
+      listRuns: async () => [{
+        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+        reason: null, stepsUsed: 5, ...over,
+      }],
+    }));
+    return (await fetch(base + '/')).text();
+  }
+
+  it('falls back to the gate rule when the run has not escalated', async () => {
+    const html = await runsPage({ reason: null, gateReason: 'high_risk' });
+    expect(html).toContain('high_risk');
+  });
+
+  // Both, because they answer different questions. An escalated run has a
+  // reason and that is the one to show.
+  it('shows the escalation reason when there is one', async () => {
+    const html = await runsPage({ reason: 'composer_abstained', gateReason: 'high_risk' });
+    expect(html).toContain('composer_abstained');
+  });
+
+  it('names what each run was about', async () => {
+    const html = await runsPage({ intentId: 'billing-dispute' });
+    expect(html).toContain('billing-dispute');
+  });
+
+  // The pin tells an operator pointed at a demo ledger that they are not
+  // working real customer traffic.
+  it('keeps the prompt pin, which is what marks a seeded run', async () => {
+    const html = await runsPage({ promptVer: 'seed' });
+    expect(html).toContain('seed');
+  });
+});
+
+// DEC-40 inverted: the person reads a reply they are not sending. The route
+// picks the run to read evidence for, and `renderApprovals` independently
+// picks the run to draw — and the two must be the same run whatever the
+// query string asks for.
+describe('the run an approver reads, and the run the button posts', () => {
+  const A = '0000000a-1111-4111-8111-111111111111';
+  const B = '0000000b-1111-4111-8111-111111111111';
+
+  function two() {
+    return [
+      { runId: A, ticketId: 'SYN-a', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+        reason: null, gateReason: 'high_risk', stepsUsed: 4,
+        agreement: 0.89, coverage: 0.94, draftExternalId: 'D-a' },
+      { runId: B, ticketId: 'SYN-b', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+        reason: null, gateReason: 'customer_visible', stepsUsed: 4,
+        agreement: 0.89, coverage: 0.94, draftExternalId: 'D-b' },
+    ];
+  }
+
+  it('reads and posts the same run when the filter excludes the one asked for', async () => {
+    const readFor: string[] = [];
+    const base = await startGuarded(deps({
+      listApprovals: async () => two(),
+      readApprovalEvidence: async (runId: string) => {
+        readFor.push(runId);
+        return {
+          request: REQUEST,
+          // The partition nulled so the draft body itself renders, which is
+          // the text an approver reads.
+          evidence: {
+            ...EVIDENCE, sentences: null, claims: null,
+            draftBody: `the reply of ${runId}`,
+          },
+          gates: {
+            agreement: 0.89, coverage: 0.94, agreementThreshold: 0.6,
+            agreementDetail: '8 of 9 samples', coverageBlock: 0.7, coverageReview: 0.8,
+          },
+        } as never;
+      },
+    }));
+    // B carries customer_visible, so the high_risk filter excludes it.
+    const html = await (await fetch(base + `/approvals?run=${B}&rule=high_risk`)).text();
+
+    // Whichever run it fell back to, the evidence read and the form posted
+    // name that same run. A page that read B and posted A would put a reply
+    // in front of a person and send a different one.
+    expect(readFor).toHaveLength(1);
+    const posted = /name="runId" value="([^"]+)"/.exec(html)?.[1];
+    expect(posted).toBe(readFor[0]);
+    expect(html).toContain(`the reply of ${readFor[0]}`);
+  });
+
+  it('keeps the filter on every row it draws, so opening one does not clear it', async () => {
+    const base = await startGuarded(deps({ listApprovals: async () => two() }));
+    const html = await (await fetch(base + '/approvals?rule=high_risk')).text();
+    expect(html).toContain(`href="/approvals?run=${A}&amp;rule=high_risk"`);
+  });
+
+  // An operator working one rule lost the filter on every approval and had
+  // to reapply it. The filter travels on the form's action rather than as a
+  // field, because this form's one field is the run id and that is what stops
+  // a posted body being recorded as an approved reply.
+  it('keeps the filter across an approval', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => two(),
+      approve: async () => 'approved',
+    }));
+    const html = await (await fetch(base + '/approvals?rule=high_risk')).text();
+    expect(html).toContain('action="/approve?rule=high_risk"');
+
+    const posted = await fetch(base + '/approve?rule=high_risk', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: `runId=${A}`,
+      redirect: 'manual',
+    });
+    expect(posted.status).toBe(303);
+    expect(posted.headers.get('location')).toBe('/approvals?outcome=approved&rule=high_risk');
+  });
+
+  it('redirects without a filter when none was on', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => two(),
+      approve: async () => 'approved',
+    }));
+    const posted = await fetch(base + '/approve', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: `runId=${A}`,
+      redirect: 'manual',
+    });
+    expect(posted.headers.get('location')).toBe('/approvals?outcome=approved');
+  });
+
+  // The rail badge is the queue, not the view. A badge that fell because a
+  // filter was on would report a queue that had emptied.
+  it('keeps the rail badge counting the whole queue under a filter', async () => {
+    const base = await startGuarded(deps({ listApprovals: async () => two() }));
+    const html = await (await fetch(base + '/approvals?rule=high_risk')).text();
+    expect(html).toContain('<span class="badge">2</span>');
+  });
+
+  // A filter that can only narrow to everything is not a filter.
+  it('offers no filter bar when every waiting run carries one rule', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => two().map((run) => ({ ...run, gateReason: 'high_risk' })),
+    }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).not.toContain('class="seg"');
+  });
+
+  it('says which rule narrowed the list, in the words the chip uses', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => [
+        ...two(),
+        { runId: RUN, ticketId: 'SYN-c', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+          reason: null, gateReason: null, stepsUsed: 4,
+          agreement: 0.89, coverage: 0.94, draftExternalId: 'D-c' },
+      ],
+    }));
+    const html = await (await fetch(base + '/approvals?rule=unruled')).text();
+    expect(html).toContain('Waiting · 1 · no gate rule');
+  });
+});
+
+// The gate panel, on the surface that decides an approval.
+describe('what the gate panel says when a threshold decided nothing', () => {
+  function oneWaiting(gateReason: string) {
+    return [{
+      runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+      reason: null, gateReason, stepsUsed: 4,
+      agreement: 0.89, coverage: 0.94, draftExternalId: 'D-1',
+    }];
+  }
+
+    // The panel draws each value against its thresholds, which reads as a
+  // comparison that happened. The engine short-circuits, so on most of this
+  // queue no comparison did — and the panel sat two inches under a row that
+  // said the coverage was not read, contradicting it.
+  const shortCircuits = ['customer_visible', 'high_risk', 'irreversible', 'no_idempotency'];
+  for (const rule of shortCircuits) {
+    it(`says the thresholds decided nothing on a ${rule} run`, async () => {
+      const base = await startGuarded(deps({
+        listApprovals: async () => oneWaiting(rule),
+      }));
+      const html = await (await fetch(base + '/approvals')).text();
+      expect(html, rule).toContain('before it read');
+      expect(html, rule).toContain(rule);
+    });
+  }
+
+  it('says nothing of the kind when a threshold is what decided', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => oneWaiting('groundedness_review'),
+    }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).not.toContain('before it read');
   });
 });

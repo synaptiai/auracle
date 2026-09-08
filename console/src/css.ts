@@ -207,6 +207,13 @@ tbody tr:hover { background:var(--panel); }
 }
 .prose + .discl { margin-top: 12px; }
 
+/* A queue row's top line: the ticket, and how long it has waited. */
+.itop { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.age {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10.5px; color: var(--dim); white-space: nowrap;
+}
+
 /* One claim of a draft. The mark is the point: an unsupported claim is the
  * sentence an approver came to find. */
 .claim { border-radius: 2px; padding: 0 1px; }

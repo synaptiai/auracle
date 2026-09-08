@@ -22,6 +22,7 @@ import { isRunId } from './approve.js';
 import { escapeHtml } from './render.js';
 import { CONSOLE_SCRIPT } from './script.js';
 import {
+  narrowToRule,
   page,
   renderApprovals,
   renderBands,
@@ -549,9 +550,16 @@ async function route(
     // still come here to work the queue.
     const wanted = url.searchParams.get('run');
     const selected = wanted !== null && isRunId(wanted) ? wanted : null;
+    // Which gate rule the queue is narrowed to. Compared against what is
+    // actually waiting rather than validated against a list: a value nothing
+    // carries narrows to an empty queue, which is what it asked for and says
+    // so, and it never reaches a statement in any case.
+    const rule = url.searchParams.get('rule');
+    const narrowed = narrowToRule(waiting, rule);
     // The evidence for the one run drawn, and no others. An approver reads
     // the reply before the button that sends it (DEC-40).
-    const drawn = waiting.find((run) => run.runId === selected)?.runId ?? waiting[0]?.runId ?? null;
+    const drawn = narrowed.find((run) => run.runId === selected)?.runId
+      ?? narrowed[0]?.runId ?? null;
     const read = drawn === null ? null : await deps.readApprovalEvidence(drawn);
     send(res, 200, page(
       'Approval queue',
@@ -562,7 +570,10 @@ async function route(
         read?.evidence ?? null,
         read?.gates ?? null,
         read?.request ?? null,
+        rule,
       ),
+      // Everything waiting, never the narrowed view. A rail badge that fell
+      // because a filter was on would report a queue that had emptied.
       shell('/approvals', waiting.length),
     ));
     return;
@@ -663,9 +674,19 @@ async function route(
       from: req.socket.remoteAddress ?? null,
     }));
     // See other, so a refresh cannot post the approval twice.
+    //
+    // The filter comes back with it. An operator working one gate rule lost
+    // the filter on every approval and had to reapply it, which on a queue of
+    // several hundred is the work the filter exists to save.
+    // Off the URL, never off the form. The comment above says every field but
+    // the run id is ignored, and that stance is what stops a body posted here
+    // from being recorded as an approved reply — so the filter travels on the
+    // action's query string instead of becoming a second field.
+    const keptRule = url.searchParams.get('rule');
     res.writeHead(303, {
       ...SAFETY_HEADERS,
-      location: `/approvals?outcome=${encodeURIComponent(outcome)}`,
+      location: `/approvals?outcome=${encodeURIComponent(outcome)}`
+        + (keptRule === null || keptRule === '' ? '' : `&rule=${encodeURIComponent(keptRule)}`),
     });
     res.end();
     return;

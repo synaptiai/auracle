@@ -353,7 +353,14 @@ describe('what the reader now returns about a draft and its claims', () => {
 
   // The fault message names two customer addresses in the one adapter that
   // builds it, so its presence is reported and its text is not.
-  it('still withholds the fault message and the action payload', async () => {
+  //
+  // The action payload is the other half, and it goes the other way. It is
+  // the operator's own action rather than a customer's message, and DEC-40
+  // lets a console approve a parked action because the approver reads what
+  // they are approving — a ledger-only park has no drafted reply, so the
+  // payload is the whole of the act. Withholding it put an Approve button
+  // over an action whose target appeared nowhere on the page.
+  it('withholds the fault message and returns the action payload', async () => {
     const runId = await journal([
       {
         stepId: 'park',
@@ -368,8 +375,26 @@ describe('what the reader now returns about a draft and its claims', () => {
     const read = await readRunJournal(pool, runId);
     expect(read?.steps[0]?.park?.failureRecorded).toBe(true);
     expect(read?.steps[0]?.park?.payloadRecorded).toBe(true);
+    expect(read?.steps[0]?.park?.payload).toEqual({ queue: 'billing' });
+    // The address the fault carries is still not on any surface.
     expect(JSON.stringify(read)).not.toContain('customer.example');
-    expect(JSON.stringify(read)).not.toContain('billing');
+  });
+
+  // `approveRun` accepts a plain object and refuses everything else, so a
+  // surface offering to perform any other shape would offer an action the
+  // approval path throws on.
+  it('returns no payload for a shape the approval path would refuse', async () => {
+    for (const payload of ['text', 7, ['a'], null]) {
+      const runId = await journal([
+        {
+          stepId: 'park',
+          status: 'done',
+          result: { actionClass: 'compensate', parkKey: 'k', payload },
+        },
+      ]);
+      const park = (await readRunJournal(pool, runId))?.steps[0]?.park;
+      expect(park?.payload, JSON.stringify(payload)).toBeNull();
+    }
   });
 
   it('returns each claim with the document it cites (DEC-07)', async () => {
@@ -890,13 +915,19 @@ describe('the four park shapes', () => {
       draftRecorded: true,
       draftBody: 'the composed rationale a person reads',
       payloadRecorded: true,
+      payload: { amount: 500 },
       failureRecorded: false,
     });
-    // The rationale is returned, because it is written for a person to read
-    // when they approve this write (DEC-34). The payload is not: it names an
-    // account, and no surface reads it.
+    // Both are returned, and both are read by the approval surface (DEC-34,
+    // DEC-40). The rationale is written for a person to read when they
+    // approve this write; the payload is what approving it performs, and a
+    // console that showed the first and not the second put an Approve button
+    // over an amount that appeared nowhere on the page.
+    //
+    // This does name an account in a real deployment. `docs/operations.md`
+    // says so, beside the note that this console authenticates nobody.
     expect(step?.park?.draftBody).toBe('the composed rationale a person reads');
-    expect(JSON.stringify(step)).not.toContain('500');
+    expect(step?.park?.payload).toEqual({ amount: 500 });
   });
 
   it('reads the crash marker, which names a draft nobody can name yet', async () => {

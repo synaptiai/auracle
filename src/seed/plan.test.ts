@@ -19,12 +19,16 @@ import {
   type PolicyReason,
 } from '../policy/policy.js';
 import { partitionOf } from '../coordinator/coordinator.js';
+import { approvalEditDistance } from '../approval/edit_distance.js';
+import { approvedReplyFor } from './write.js';
+import { DEFAULT_DAYS, DEFAULT_PARTITIONS, DEFAULT_SEED } from './run.js';
 import { CLASSIFIER_K } from '../classifier/classifier.js';
 import { loadTaxonomy } from '../fixtures/load.js';
 import {
   SEED_DOCUMENTS,
   SEED_INTENTS,
   COURTESY_CLOSINGS,
+  inboundMessageFor,
   COURTESY_OPENINGS,
   UNSUPPORTED_CLAIMS,
   dayBefore,
@@ -1183,5 +1187,221 @@ describe('the history this change was not allowed to move', () => {
     expect(plan).toHaveLength(2397);
     expect(createHash('sha256').update(plan.map(line).join('\n')).digest('hex'))
       .toBe('af82ca6822be986d22b694c51e24edb90a70c4aaef314bc4c208fa2201198fda');
+  });
+});
+
+// Issue #63. A seeded ticket is the first thing anybody reading this console
+// sees, and it read "I need help with a api usage question on ticket T-...".
+describe('the message a seeded ticket carries', () => {
+  const plan = planHistory(OPTIONS);
+
+  // Every intent needs one, and the lookup raises rather than falling back:
+  // an intent added to SEED_INTENTS with no message would otherwise seed a
+  // queue row a person cannot read.
+  it('carries a message for every intent the taxonomy names', () => {
+    for (const intent of SEED_INTENTS) {
+      expect(() => inboundMessageFor(intent.id, 0), intent.id).not.toThrow();
+      expect(inboundMessageFor(intent.id, 0).length, intent.id).toBeGreaterThan(20);
+    }
+  });
+
+  it('raises for an intent nothing wrote a message for', () => {
+    expect(() => inboundMessageFor('an-intent-nobody-wrote', 0)).toThrow(/no inbound message/);
+  });
+
+  // The classifier's job is to work the intent out. A question that stated it
+  // wrote the answer into the paper.
+  it('never names the intent it is about', () => {
+    for (const intent of SEED_INTENTS) {
+      for (const seed of [0, 1]) {
+        const message = inboundMessageFor(intent.id, seed).toLowerCase();
+        expect(message, intent.id).not.toContain(intent.id);
+        expect(message, intent.id).not.toContain(intent.id.replace(/-/g, ' '));
+      }
+    }
+  });
+
+  // A customer writing in does not know the ticket id, and every ticket
+  // reading the same sentence is not a support queue.
+  it('names no ticket, and reads differently across the history', () => {
+    const messages = new Set<string>();
+    for (const run of plan) {
+      messages.add(run.classification.intentId);
+      expect(run.ticketId).toMatch(/^T-[0-9a-f]{8}$/);
+    }
+    const written = new Set(
+      SEED_INTENTS.flatMap((i) => [inboundMessageFor(i.id, 0), inboundMessageFor(i.id, 1)]),
+    );
+    for (const message of written) expect(message).not.toContain('T-');
+    // Two per intent, and both reachable.
+    expect(written.size).toBe(SEED_INTENTS.length * 2);
+  });
+});
+
+// The run row and the run's own step journal are two descriptions of one run,
+// and they disagreed on every seeded run: "steps 0" beside "5 entries".
+describe('how many steps a seeded run counted', () => {
+  const plan = planHistory(OPTIONS);
+
+  it('counts the steps the run journals, and never the escalation', () => {
+    for (const run of plan) {
+      // classify, retrieve and compose always; gate when the policy engine
+      // ran; park when the decision parked one. `escalate` is journalled and
+      // not counted, because it is how a run ends rather than work it did.
+      const expected = 3
+        + (run.gate !== null && run.reason !== null ? 1 : 0)
+        + (run.park !== null ? 1 : 0);
+      expect(run.stepsUsed, run.runId).toBe(expected);
+    }
+  });
+
+  it('counts three for an abstain, which stops before the gate', () => {
+    const abstained = plan.filter((run) => run.abstained);
+    expect(abstained.length).toBeGreaterThan(0);
+    for (const run of abstained) expect(run.stepsUsed, run.runId).toBe(3);
+  });
+
+  // The number the column defaulted to, which is what made the two
+  // descriptions disagree.
+  it('never reports a run that did no work at all', () => {
+    for (const run of plan) expect(run.stepsUsed, run.runId).toBeGreaterThan(0);
+  });
+});
+
+// The reply a person sent, at a chosen distance from the draft. The metric
+// counts token edits over the longer token list, so an addition of `m` tokens
+// to a draft of `n` is `m / (n + m)` — which is why the edit is an addition:
+// it is the one an approver makes and the one whose distance can be aimed.
+describe('the approved reply a seeded approval records', () => {
+  const draft = Array.from({ length: 40 }, (_, i) => `word${i}`).join(' ') + '.';
+  const runId = '3f2a1b0c-0000-4000-8000-000000000000';
+
+  // Across the whole range the planner draws, not the band an append
+  // happens to reach. `logNormalUnit` is clamped at 1, and `bands.yaml`
+  // publishes this metric with `high_is_bad` — so a writer that could only
+  // ever record 0.59 truncated the right tail the planner exists to produce,
+  // and no seeded run could represent a rewritten draft.
+  it('lands within a token of the distance it was asked for, across the range', () => {
+    for (const target of [0.01, 0.039, 0.05, 0.1, 0.2, 0.35, 0.5, 0.6, 0.8, 0.955, 1]) {
+      const approved = approvedReplyFor(draft, target, runId);
+      const measured = approvalEditDistance(draft, approved);
+      // A token is the metric's own resolution on a 45-token draft, so this
+      // is as close as any text can be to a target.
+      expect(Math.abs(measured - target), String(target)).toBeLessThan(0.05);
+    }
+  });
+
+  // A short draft is where the pool's floor shows. The seeded replies run
+  // from two claims upward, so a twenty-token draft is an ordinary one — and
+  // with a three-token floor a target of 0.039 recorded 0.130, more than
+  // three times what was asked.
+  it('lands close on a short draft, where the pool floor decides', () => {
+    const short = Array.from({ length: 20 }, (_, i) => `word${i}`).join(' ') + '.';
+    for (const target of [0.02, 0.039, 0.05, 0.12]) {
+      const measured = approvalEditDistance(short, approvedReplyFor(short, target, runId));
+      expect(Math.abs(measured - target), String(target)).toBeLessThan(0.05);
+    }
+  });
+
+  it('reaches the top of the range a planner can draw', () => {
+    const measured = approvalEditDistance(draft, approvedReplyFor(draft, 1, runId));
+    expect(measured).toBeGreaterThan(0.9);
+  });
+
+  // A light edit is an addition: the operator kept what the system wrote and
+  // said one more thing.
+  it('keeps the drafted reply and adds to it, for a light edit', () => {
+    const approved = approvedReplyFor(draft, 0.2, runId);
+    expect(approved.startsWith(draft)).toBe(true);
+    expect(approved.length).toBeGreaterThan(draft.length);
+  });
+
+  // A heavy edit is a rewrite, and it has to be: adding tokens can never
+  // pass one half by much, however many are added.
+  it('rewrites the tail for a heavy edit, rather than appending to it', () => {
+    const approved = approvedReplyFor(draft, 0.8, runId);
+    expect(approved.startsWith(draft)).toBe(false);
+    // The opening survives, which is what a person rewriting a reply keeps.
+    expect(approved.startsWith('word0 word1')).toBe(true);
+  });
+});
+
+// The invariant that keeps a drawn number out of a published control band.
+//
+// `approvedReplyFor` measures the distance from the text it wrote, and it can
+// only do that when the run parked a body. Every run carrying a distance
+// parks one today, and the writer's fallback for a run that does not would
+// store the drawn value instead — so this fails the day a planner change
+// makes that fallback reachable, rather than the day somebody notices the
+// band reporting a difference nobody made.
+describe('a seeded approval always has a draft to measure against', () => {
+  it('gives every run that carries an edit distance a parked body', () => {
+    const plan = planHistory(OPTIONS);
+    let checked = 0;
+    for (const run of plan) {
+      if (run.editDistance === null) continue;
+      expect(run.park, run.runId).not.toBeNull();
+      expect(run.park!.body.length, run.runId).toBeGreaterThan(0);
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+});
+
+// The distance the ledger will record, over the history that ships.
+//
+// The database test walks one small day, so it never meets the rewrite branch
+// and its tolerance was calibrated to the append branch alone. This walks the
+// default 45-day history in memory — no database, so it is cheap — and it is
+// where the bound that matters is held.
+describe('the edit distance the shipped history records', () => {
+  const SHIPPED = {
+    days: DEFAULT_DAYS, endDay: '2026-06-30', partitions: DEFAULT_PARTITIONS,
+    seed: DEFAULT_SEED, provider: 'stub' as const,
+  };
+
+  function measured(): { target: number; got: number; parked: string; approved: string }[] {
+    return planHistory(SHIPPED)
+      .filter((run) => run.editDistance !== null)
+      .map((run) => {
+        const parked = run.park!.body;
+        const approved = approvedReplyFor(parked, run.editDistance!, run.runId);
+        return {
+          target: run.editDistance!, got: approvalEditDistance(parked, approved),
+          parked, approved,
+        };
+      });
+  }
+
+  it('records what the planner drew, to the resolution the metric has', () => {
+    const rows = measured();
+    expect(rows.length).toBeGreaterThan(500);
+    const worst = Math.max(...rows.map((row) => Math.abs(row.got - row.target)));
+    // Half a token of the shortest seeded draft. An append-only writer was
+    // out by 0.455 here, and a constant split at one half by 0.089.
+    expect(worst).toBeLessThan(0.05);
+  });
+
+  // Every seeded distance belongs to a park that has a draft to measure
+  // against. `pnpm run bands` averages this column with no such predicate.
+  it('draws a distance only where a reply was drafted', () => {
+    for (const run of planHistory(SHIPPED)) {
+      if (run.editDistance === null) continue;
+      expect(run.park?.draftExternalId, run.runId).toBeDefined();
+    }
+  });
+
+  // Both shapes reach the ledger, and the database test's day carries only
+  // the first — so this is where the rewrite branch is held to its contract.
+  it('appends for a light edit and rewrites the tail for a heavy one', () => {
+    const rows = measured();
+    const light = rows.filter((row) => row.target <= 0.2);
+    const heavy = rows.filter((row) => row.target > 0.6);
+    expect(light.length).toBeGreaterThan(0);
+    expect(heavy.length).toBeGreaterThan(0);
+    for (const row of light) expect(row.approved.startsWith(row.parked)).toBe(true);
+    // A rewrite keeps the opening and replaces the rest, so the parked body
+    // is no longer a prefix of it.
+    for (const row of heavy) expect(row.approved.startsWith(row.parked)).toBe(false);
   });
 });

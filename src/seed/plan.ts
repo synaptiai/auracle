@@ -191,6 +191,182 @@ export const SEED_INTENTS: readonly SeedIntent[] = [
 ];
 
 /**
+ * What a customer wrote, for each intent (DEC-18).
+ *
+ * Two messages per intent, so a console shows a queue of people rather than
+ * one sentence with a word swapped. Every one is invented and about nobody:
+ * no name, no address, no telephone number and no account identifier.
+ *
+ * These replaced one template that read "I need help with a <intent id> on
+ * ticket <id>". It said the intent id out loud, so a classification the
+ * system was supposed to make was written into the question; the article
+ * never agreed with the noun ("a api usage question", "a onboarding help");
+ * and every ticket in the queue read the same. None of that is what a
+ * support queue looks like, and the console is judged on looking like one.
+ */
+const INBOUND_MESSAGES: Readonly<Record<string, readonly [string, string]>> = {
+  'refund-request': [
+    'I was charged twice for this month and I would like the second charge back. Can you sort that out?',
+    'We cancelled before the renewal but the payment still went through. Please refund it.',
+  ],
+  'billing-dispute': [
+    'The invoice this month is higher than the plan we agreed and I cannot see why. What changed?',
+    'There is a line on our last bill that nobody here recognises. Can you explain the charge?',
+  ],
+  'cancel-subscription': [
+    'We want to close the account at the end of this billing period. What do I need to do?',
+    'How do I cancel? I do not want to be billed again next month.',
+  ],
+  'data-deletion-request': [
+    'Please delete all of our data from your systems. How long does that take to complete?',
+    'We need everything removed, including the backups. Can you confirm when that is done?',
+  ],
+  'chargeback-notice': [
+    'Our bank has raised a dispute on the last payment. What happens to the account meanwhile?',
+    'We have asked the card issuer to reverse this charge. Will you suspend the workspace?',
+  ],
+  'payment-failure': [
+    'The card on file keeps getting declined and I do not know why. The card itself works elsewhere.',
+    'We got an email saying the payment failed. How many more times will you try before something breaks?',
+  ],
+  'plan-change-question': [
+    'If we move up a plan halfway through the month, do we pay the difference straight away?',
+    'We want to add seats now and downgrade later. How does the billing work across that?',
+  ],
+  'invoice-copy-request': [
+    'Our finance team needs copies of the last three invoices. Where do I find them?',
+    'Can you send the invoices to somebody else in the company as well as me?',
+  ],
+  'account-recovery': [
+    'Our only administrator has left and nobody else can get in. How do we recover the workspace?',
+    'The account is locked and I cannot reach anyone with admin rights. What are the options?',
+  ],
+  'login-trouble': [
+    'I keep getting bounced back to the sign in page over and over. Nothing I try gets me in.',
+    'Sign in loops forever in one browser and works in another. What is going on?',
+  ],
+  'sync-error-report': [
+    'Our sync has been failing since yesterday with an error about credentials. Nothing changed our end.',
+    'The connector keeps erroring out and the jobs never finish. Can you tell what is failing?',
+  ],
+  'export-broken': [
+    'The export I ran came back with no rows in it, and there is definitely data there.',
+    'Exports have started downloading empty files this week. They worked fine before.',
+  ],
+  'integration-failure': [
+    'The integration stopped posting anything overnight and there is no error we can see.',
+    'We rotated a credential and now half the jobs are failing. Did that break the link?',
+  ],
+  'feature-request': [
+    'Is there any way to schedule this to run weekly? If not, is it something you plan to add?',
+    'We would use a bulk edit constantly if you had one. Is that on the roadmap anywhere?',
+  ],
+  'how-to-question': [
+    'How do I set up a new workspace for a second team? I cannot find where to start.',
+    'What is the right way to invite people who only need to read things?',
+  ],
+  'pricing-question': [
+    'How does the pricing work if we add people partway through the month?',
+    'Is there a difference in price between paying monthly and paying for the year?',
+  ],
+  'documentation-gap': [
+    'The page about this setting does not say what happens when it is turned off. Can you clarify?',
+    'I followed the guide and the steps do not match what I see on screen. Is it out of date?',
+  ],
+  'feedback-positive': [
+    'Just wanted to say the new layout is much easier to work with. Thanks for sorting it.',
+    'Your team fixed our issue quickly last week and it made a real difference. Much appreciated.',
+  ],
+  'bug-minor-report': [
+    'A small thing: the counter at the top does not refresh until I reload the page.',
+    'The date on this screen shows a day behind for me. Not urgent, but worth flagging.',
+  ],
+  'onboarding-help': [
+    'We are setting up for the first time and are not sure what to do first. Any guidance?',
+    'What do we need in place before we invite the rest of the team in?',
+  ],
+  'notification-settings-help': [
+    'I am getting far too many emails from this. How do I turn most of them off?',
+    'Can each person choose their own alerts, or is it set for the whole workspace?',
+  ],
+  'mobile-app-question': [
+    'Does the phone app work when I have no signal? I am often somewhere without one.',
+    'The app on my phone shows older information than the website does. Is that expected?',
+  ],
+  'api-usage-question': [
+    'We are hitting a limit on the API and I want to understand what the ceiling actually is.',
+    'Is the rate limit per token or across the whole workspace? We have several tokens.',
+  ],
+  'status-inquiry': [
+    'Things are slow for us this morning. Is there anything going on at your end?',
+    'Where do I look to see whether an outage is already known about?',
+  ],
+  other: [
+    'Something is not working the way we expect and I am not sure who to ask. Can you point me somewhere?',
+    'I have a question that does not fit your categories. Happy to explain if someone can take a look.',
+  ],
+};
+
+/**
+ * What a customer writes back while the first reply waits (DEC-35, DEC-37).
+ *
+ * A support conversation is rarely one message. Every seeded one was, so the
+ * console's conversation surface — built to draw a thread — had a thread of
+ * one to draw, and the reply-absence states it distinguishes were unreachable
+ * from a seeded ledger.
+ *
+ * This is the second turn nobody has answered yet: the customer wrote again
+ * while the drafted reply sat in the approval queue. It carries no run,
+ * because a run answering it would move the run to that conversation's
+ * partition (DEC-36) and with it the whole seeded queue simulation, which
+ * `docs/v1-architecture.md` cites as evidence.
+ *
+ * Invented throughout, and about nobody (DEC-18).
+ */
+export const FOLLOW_UP_MESSAGES: readonly string[] = [
+  'Any update on this? It is starting to hold up the rest of the team.',
+  'Sorry to chase, but is anyone looking at this yet?',
+  'One more thing I forgot to mention: it only happens on the shared workspace.',
+  'We found a workaround for now, but I would still like to understand the cause.',
+  'Ignore my last message, it has started working again. Still curious what happened.',
+];
+
+/**
+ * Whether a run's conversation carries a second turn, and what it says.
+ *
+ * Decided from the run id, which the planner already drew. A draw inserted
+ * into the planner would move every figure the seeded history publishes,
+ * because they all come out of one shared sequence.
+ *
+ * Only a run still waiting for a person gets one. A conversation the system
+ * already answered and closed is not one a customer is chasing.
+ */
+export function followUpFor(runId: string, state: string): string | null {
+  if (state !== 'awaiting_approval') return null;
+  const roll = Number.parseInt(runId.slice(9, 13), 16);
+  if (roll % 100 >= 30) return null;
+  return FOLLOW_UP_MESSAGES[roll % FOLLOW_UP_MESSAGES.length]!;
+}
+
+/**
+ * The message a seeded ticket carries.
+ *
+ * Chosen from the intent's own pair, so the queue reads as a queue and the
+ * message is about the thing the run classified. It never names the intent
+ * and never names the ticket: a customer writing in knows neither.
+ */
+export function inboundMessageFor(intentId: string, seed: number): string {
+  const pair = INBOUND_MESSAGES[intentId];
+  if (pair === undefined) {
+    throw new Error(
+      `no inbound message for intent '${intentId}'; every intent in SEED_INTENTS needs one, `
+        + 'because a seeded ticket with no message is a queue row a person cannot read',
+    );
+  }
+  return pair[seed % 2 === 0 ? 0 : 1];
+}
+
+/**
  * The documents a retriever would return for each intent.
  *
  * Retrieval was uniform over the whole corpus, so a refund question came back
@@ -540,6 +716,15 @@ export interface PlannedRun {
   sentences: readonly PlannedSentence[];
   /** How many cited claims the composer produced. Zero for an abstain. */
   claimCount: number;
+  /**
+   * How many steps the run counted, as the coordinator counts them.
+   *
+   * The coordinator increments once per journal step it finishes, and it
+   * finishes `escalate` without counting it: an escalation is how a run ends
+   * rather than work it did. `seed.db.test.ts` holds this equal to the
+   * journal rows the run actually wrote, so the two cannot drift.
+   */
+  stepsUsed: number;
   /** The gate step's inputs and verdict, or null for a run that never gated. */
   gate: PlannedGate | null;
   /** The park step's record, or null for a run the policy engine did not gate. */
@@ -1067,6 +1252,19 @@ export interface RunDetail {
   /** The reply in draft order, courtesy sentences included (DEC-43). */
   sentences: PlannedSentence[];
   gate: PlannedGate | null;
+  /**
+   * How many steps the run counted, as the coordinator counts them.
+   *
+   * The coordinator increments once per journal step it finishes, and it
+   * finishes `escalate` without counting it: an escalation is how a run ends
+   * rather than work it did. So this is the journal rows this run writes,
+   * less that one.
+   *
+   * Seeded as zero until now, while the run detail drew "5 entries" from the
+   * journal beside "steps 0" from the run row — two numbers about one run,
+   * on one screen, disagreeing.
+   */
+  stepsUsed: number;
   park: PlannedPark | null;
   actionClass: string;
   delivery: 'at_least_once' | 'at_most_once';
@@ -1180,6 +1378,9 @@ function planDetail(
       sentences: [],
       gate: null,
       park: null,
+      // classify, retrieve, compose. An abstain escalates before the gate
+      // step starts, and the escalate row is not a counted step.
+      stepsUsed: 3,
       actionClass,
       delivery,
       actionPayload,
@@ -1237,6 +1438,10 @@ function planDetail(
 
   return {
     classification, docIds, claimCount, claims, sentences, gate, park,
+    // classify, retrieve and compose always; gate whenever the policy engine
+    // ran; park whenever the decision parked one. Counted from the same
+    // conditions `writeJournal` writes those rows under.
+    stepsUsed: 3 + 1 + (park === null ? 0 : 1),
     actionClass, delivery, actionPayload,
   };
 }
@@ -1418,7 +1623,23 @@ export function planHistory(options: PlanOptions): PlannedRun[] {
     // nothing above it, and `plan.test.ts` pins that against the planner as
     // it stood before this detail existed.
     for (const run of dayRuns) {
-      planned.push({ ...run, ...planDetail(rng, run.abstained ? null : run.reason, run.ticketId) });
+      const detail = planDetail(rng, run.abstained ? null : run.reason, run.ticketId);
+      planned.push({
+        ...run,
+        ...detail,
+        // A distance only where a person edited a reply (section 4.10).
+        //
+        // `approveRun` measures the draft against the text that was sent, and
+        // it captures neither for a park with no helpdesk draft — a
+        // ledger-only park has no customer-visible text (DEC-34), so
+        // production leaves this column null.
+        //
+        // The seeder wrote the drawn number there anyway, and `pnpm run
+        // bands` reads the column with no draft-backed predicate: 223 of 812
+        // distances on the default history were a number with no text behind
+        // it, which is 27 per cent of a published control band's population.
+        editDistance: detail.park?.draftExternalId === undefined ? null : run.editDistance,
+      });
     }
   }
   return planned;
