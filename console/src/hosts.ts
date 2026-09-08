@@ -73,3 +73,32 @@ export function allowedHosts(host: string, port: number): string[] {
   }
   return [...names];
 }
+
+/**
+ * The header a trusted proxy sets to name the approver, or undefined (DEC-42).
+ *
+ * One variable, and it says what it means. An earlier version read the header
+ * whenever `CONSOLE_ALLOWED_HOSTS` was set, on the reasoning that naming a
+ * host says a proxy is in front. It does not: the comment above lists two
+ * reasons an operator names hosts with no proxy anywhere — an IPv6 bind that
+ * sends `[::1]:8787`, and a default port the browser omits. An operator who
+ * named hosts for either of those and also named a header got a console where
+ * anyone reaching the port names themselves as the approver.
+ *
+ * So the operator states the trust outright. `CONSOLE_IDENTITY_HEADER` means
+ * "a proxy I trust sets this header, and strips any copy a client sent". A
+ * console cannot check that from inside, and a variable that is only ever set
+ * deliberately is the closest thing to a statement of it.
+ *
+ * The rest of the rule lives where it can be enforced: `approverFrom` in
+ * `server.ts` refuses a value that arrived more than once, because a proxy
+ * that appends rather than replaces is the failure this cannot otherwise see.
+ *
+ * Here rather than in the server, and beside `allowedHosts` because both are
+ * read from the environment at startup. `main.ts` runs `main()` on import, so
+ * a decision left there is a decision nothing can test.
+ */
+export function identityHeader(): string | undefined {
+  const header = (process.env['CONSOLE_IDENTITY_HEADER'] ?? '').trim();
+  return header === '' ? undefined : header.toLowerCase();
+}

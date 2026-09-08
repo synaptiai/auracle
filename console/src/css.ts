@@ -184,4 +184,98 @@ tbody tr:hover { background:var(--panel); }
 .pl .track i { display:block; height:100%; border-radius:3px; }
 .pv { font-family:'IBM Plex Mono',ui-monospace,monospace; font-size:11px; text-align:right; }
 .hol { display:flex; align-items:center; gap:7px; justify-content:flex-end; flex-wrap:wrap; }
+
+/* --- the reading register ------------------------------------------------
+ *
+ * A third face, and one rule decides which is which. Monospace is what the
+ * ledger recorded: ids, states, numbers. The sans is the console's own
+ * chrome. The serif is words a person wrote or will read - a customer's
+ * message, a drafted reply, a document's text.
+ *
+ * A reader can tell them apart without a label, which is why there is no
+ * label. System faces only: the CSP grants no font-src, so a web font would
+ * be requested and blocked, and the page would silently fall back anyway.
+ */
+.prose {
+  font-family: Charter, 'Bitstream Charter', 'Sitka Text', Cambria, Georgia, serif;
+  font-size: 15px;
+  line-height: 1.62;
+  /* Under 80 characters. Longer lines lose the reader between one line and
+   * the next, and a responder reads dozens of these a day. */
+  max-width: 68ch;
+  color: var(--ink);
+}
+.prose + .discl { margin-top: 12px; }
+
+/* One claim of a draft. The mark is the point: an unsupported claim is the
+ * sentence an approver came to find. */
+.claim { border-radius: 2px; padding: 0 1px; }
+.claim.unsupported {
+  background: color-mix(in oklab, var(--hot) 18%, transparent);
+  box-shadow: inset 0 -2px 0 var(--hot);
+}
+.claim.unread { box-shadow: inset 0 -2px 0 var(--rule2); }
+/* Lit from its source, and the reverse. Applied by the one script this
+ * console ships, and absent when it does not run. */
+.claim.lit, .src.lit { background: color-mix(in oklab, var(--accent) 22%, transparent); }
+
+/* The citation marker. Small, superscript, and a link even without script. */
+.cite {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  vertical-align: super;
+  margin-left: 2px;
+  padding: 0 2px;
+  border-radius: 2px;
+  background: var(--panel2);
+  color: var(--accent);
+  text-decoration: none;
+}
+.cite:hover { color: var(--ink); background: var(--rule2); }
+
+.src {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 7px 0; border-bottom: 1px solid var(--rule);
+  scroll-margin-top: 12px;
+}
+.src:last-child { border-bottom: 0; }
+
+/* --- the conversation ---------------------------------------------------- */
+.turn {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 4px 20px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.turn:last-child { border-bottom: 0; }
+.turnmeta {
+  display: flex; flex-direction: column; gap: 4px;
+  align-items: flex-start;
+}
+.said { grid-column: 2; padding-bottom: 10px; }
+.who {
+  font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--dim); font-weight: 500; margin-bottom: 5px;
+}
+/* An absence is a sentence, never a blank. Six of them exist and each one
+ * sends a reader somewhere different. */
+.absent {
+  margin: 0; font-size: 12.5px; color: var(--mut); font-style: italic;
+}
+
+@media (max-width: 720px) {
+  .turn { grid-template-columns: minmax(0, 1fr); }
+  .said { grid-column: 1; }
+}
+
+/* The rail in two groups. The label is what separates them; a rule would
+ * read as a divider between five peers rather than two kinds of work. */
+.navgroup { display: flex; flex-direction: column; }
+.navgroup + .navgroup { margin-top: 14px; }
+.navgroup > .lbl { padding: 0 14px 5px; }
+
+/* Spans the run detail's two columns. Prose in a 326px track is prose at
+ * forty characters, and the reading measure is the point of the register. */
+.full { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 16px; }
 `;

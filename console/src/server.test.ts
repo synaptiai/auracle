@@ -7,6 +7,8 @@
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { request } from 'node:http';
+import { createHash } from 'node:crypto';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { allowedHosts } from './hosts.js';
@@ -14,6 +16,45 @@ import { createConsole } from './server.js';
 import type { ConsoleDeps } from './server.js';
 
 const RUN = '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34';
+
+const CONVERSATION = '99999999-8888-4777-8666-555555555555';
+
+/**
+ * One drafted reply, its claims and their sources.
+ *
+ * Three claims on purpose: one the judge supported, one it refused, and one
+ * with no verdict. Those are three different facts and the surface has to
+ * draw them apart — a claim nobody judged is not a claim the judge refused.
+ */
+const EVIDENCE = {
+  draftBody: 'We refunded the duplicate charge. Your bank decides when it lands.',
+  claims: [
+    {
+      index: 0, text: 'We refunded the duplicate charge.',
+      docId: 'SYN-DOC-01', supported: true,
+    },
+    {
+      index: 1, text: 'Your bank decides when it lands.',
+      docId: 'SYN-DOC-01', supported: false,
+    },
+    {
+      index: 2, text: 'Your subscription is unchanged.',
+      docId: 'SYN-DOC-99', supported: null,
+    },
+  ],
+  documentsMalformed: false,
+  documents: [
+    {
+      position: 1, docId: 'SYN-DOC-01', title: 'Refund policy', kind: 'document',
+      owner: 'support', bodyUnchanged: true, titleAtRun: 'Refund policy',
+    },
+    // An id the journal holds that no document row answers for today.
+    {
+      position: 2, docId: 'SYN-DOC-99', title: null, kind: null, owner: null,
+      bodyUnchanged: null, titleAtRun: 'Cancellation policy',
+    },
+  ],
+};
 
 function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
   return {
@@ -33,17 +74,48 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
         // In flight or crashed, and the ledger cannot tell the two apart.
         { stepId: 'park', status: 'started', says: null, awaitingOutcome: true, malformed: false },
       ],
-      documents: [
-        { position: 1, docId: 'SYN-DOC-01', title: 'Refund policy', kind: 'document', owner: 'support' },
-        // An id the journal holds that no document row answers for today.
-        { position: 2, docId: 'SYN-DOC-99', title: null, kind: null, owner: null },
-      ],
+      conversationId: CONVERSATION,
+      evidence: EVIDENCE,
     }),
     listApprovals: async () => [{
       runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1',
       reason: 'customer_visible', stepsUsed: 4,
       agreement: 0.89, coverage: 0.94, draftExternalId: 'D-1',
     }],
+    readApprovalEvidence: async () => ({
+      evidence: EVIDENCE,
+      gates: {
+        agreement: 0.89, coverage: 0.94, agreementThreshold: 0.6,
+        agreementDetail: '8 of 9 samples', coverageBlock: 0.7, coverageReview: 0.8,
+      },
+    }),
+    readConversation: async () => ({
+      conversationId: CONVERSATION,
+      primaryTicketId: 'SYN-1',
+      state: 'open',
+      participantNamed: true,
+      turns: [
+        {
+          turnNumber: 1, ticketId: 'SYN-1',
+          bodyText: 'There are two charges for the same month.',
+          messageAbsence: null,
+          replyText: 'We refunded the duplicate charge.',
+          replyAbsence: null,
+          runId: RUN, runState: 'resolved', runAttempts: 1,
+        },
+        {
+          turnNumber: 2, ticketId: 'SYN-1',
+          bodyText: null, messageAbsence: 'not_retained',
+          replyText: null, replyAbsence: 'awaiting_approval',
+          runId: null, runState: null, runAttempts: 0,
+        },
+      ],
+    }),
+    readDocument: async () => ({
+      docId: 'SYN-DOC-01', kind: 'document', title: 'Refund policy',
+      body: 'A charge is refundable inside fourteen days.',
+      owner: 'support', reviewBy: '2030-01-01', fresh: true,
+    }),
     readBands: async () => [
       {
         day: '2026-09-04', metric: 'abstain_rate',
@@ -123,7 +195,11 @@ function hostsFor(named: string, port: number): string[] {
   }
 }
 
-async function startGuarded(d: ConsoleDeps, namedProxy?: string): Promise<string> {
+async function startGuarded(
+  d: ConsoleDeps,
+  namedProxy?: string,
+  identityHeader?: string,
+): Promise<string> {
   const probe = createConsole(d, '.root{}', {
     allowedHosts: [], states: [...STATES], ledger: LEDGER,
   });
@@ -135,7 +211,12 @@ async function startGuarded(d: ConsoleDeps, namedProxy?: string): Promise<string
     // builds the same set `main.ts` would rather than restating it.
     allowedHosts: namedProxy === undefined
       ? [`127.0.0.1:${port}`, `localhost:${port}`]
-      : hostsFor(namedProxy, port),
+      // Named, plus the loopback the test client actually connects over. The
+      // exclusivity of the allowlist is `hosts.test.ts`'s subject; here the
+      // point is that a proxy was named at all, which is what gates the
+      // identity header.
+      : [...hostsFor(namedProxy, port), `127.0.0.1:${port}`],
+    ...(identityHeader === undefined ? {} : { identityHeader }),
     states: [...STATES],
     ledger: LEDGER,
   });
@@ -216,7 +297,7 @@ describe('the console routes', () => {
       redirect: 'manual',
     });
     expect(res.status).toBe(303);
-    expect(approve).toHaveBeenCalledWith(RUN);
+    expect(approve).toHaveBeenCalledWith(RUN, undefined);
   });
 
   // The reply the customer receives is the draft the helpdesk holds: the
@@ -234,11 +315,17 @@ describe('the console routes', () => {
         'content-type': 'application/x-www-form-urlencoded',
         'sec-fetch-site': 'same-origin',
       },
-      body: new URLSearchParams({ runId: RUN, finalBody: 'never sent' }).toString(),
+      body: new URLSearchParams({
+        runId: RUN, finalBody: 'never sent', approvedBy: 'not-from-a-form',
+      }).toString(),
       redirect: 'manual',
     });
-    expect(approve).toHaveBeenCalledWith(RUN);
-    expect(approve.mock.calls[0]).toHaveLength(1);
+    // Two arguments and no more: the run id, and the approver a trusted proxy
+    // named. Neither comes from the form. A body posted here would be
+    // recorded as the approved reply while the relay sent the parked draft,
+    // and an approver taken from a form is a name anyone can type.
+    expect(approve).toHaveBeenCalledWith(RUN, undefined);
+    expect(approve.mock.calls[0]).toHaveLength(2);
   });
 
   // And the page offers no way to type one.
@@ -388,7 +475,7 @@ describe('the console against a page it did not serve', () => {
       redirect: 'manual',
     });
     expect(res.status).toBe(303);
-    expect(approve).toHaveBeenCalledWith(RUN);
+    expect(approve).toHaveBeenCalledWith(RUN, undefined);
   });
 
   // Framing is the way a foreign page reaches the write without forging any
@@ -584,6 +671,450 @@ describe('what a fault and a refusal tell the operator', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('the reply an approver reads before they send it', () => {
+  // DEC-40 permits this console to approve a parked draft. It drew the button
+  // above a reply the approver could not read, which is the defect this whole
+  // surface exists to fix.
+  it('shows the drafted reply on the approval queue', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('The reply, as the system drafted it');
+    expect(html).toContain('We refunded the duplicate charge.');
+  });
+
+  it('shows the same reply on the run detail, from the same builder', async () => {
+    const base = await startGuarded(deps());
+    const detail = await (await fetch(`${base}/run/${RUN}`)).text();
+    const queue = await (await fetch(base + '/approvals')).text();
+    for (const claim of [
+      'We refunded the duplicate charge.',
+      'Your bank decides when it lands.',
+      'Your subscription is unchanged.',
+    ]) {
+      expect(detail, 'run detail').toContain(claim);
+      expect(queue, 'approval queue').toContain(claim);
+    }
+  });
+
+  // Three states, and each is a different fact. A claim nobody judged is not
+  // a claim the judge refused, and drawing it as one would put a warning on a
+  // run the ledger never questioned.
+  it('marks a refused claim, and does not mark an unjudged one as refused', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html.match(/class="claim unsupported"/g) ?? []).toHaveLength(1);
+    expect(html.match(/class="claim unread"/g) ?? []).toHaveLength(1);
+    // The supported one carries no mark at all.
+    expect(html.match(/class="claim"/g) ?? []).toHaveLength(1);
+  });
+
+  // Deliberately not a fraction. The gate row's coverage is what the policy
+  // engine read, and a second number computed from these marks would be a
+  // recount that can disagree with it.
+  it('counts the claims to look at rather than recomputing coverage', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('1 of 3 claims cite a document that does not support them');
+    // 0.333 is what a recount of these marks would produce.
+    expect(html).not.toContain('0.333');
+    expect(html).not.toContain('0.667');
+  });
+
+  it('links each claim to the document it cites', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('href="#src-SYN-DOC-01"');
+    expect(html).toContain('id="src-SYN-DOC-01"');
+    expect(html).toContain('The documents these claims cite');
+    // And each source opens.
+    expect(html).toContain('href="/document/SYN-DOC-01"');
+  });
+
+  it('says a cited document is gone rather than printing its id as a title', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('no such document today');
+  });
+
+  // The relay sends the helpdesk copy, which a person may have edited since
+  // (DEC-11). "as the system drafted it" is the honest heading, and the
+  // warning beside the button says which copy goes out.
+  it('does not claim the drafted reply is what will be sent', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).not.toContain('The reply as it will be sent');
+    expect(html).toContain('a person may have changed it since');
+  });
+
+  it('offers no approve button for a run with no parked draft', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => [{
+        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1',
+        reason: 'irreversible', stepsUsed: 4,
+        agreement: 0.89, coverage: 0.94, draftExternalId: null,
+      }],
+    }));
+    const html = await (await fetch(base + '/approvals')).text();
+    expect(html).toContain('No draft is parked');
+    expect(html).not.toContain('>Approve<');
+  });
+
+  // The queue is uncapped by design, so a journal read per row would be one
+  // statement for every run of a list that has been 476 long.
+  it('reads the journal for the drawn selection alone', async () => {
+    const read: string[] = [];
+    const base = await startGuarded(deps({
+      readApprovalEvidence: async (runId: string) => {
+        read.push(runId);
+        return {
+          evidence: EVIDENCE,
+          gates: {
+            agreement: 0.89, coverage: 0.94, agreementThreshold: 0.6,
+            agreementDetail: '8 of 9 samples', coverageBlock: 0.7, coverageReview: 0.8,
+          },
+        };
+      },
+    }));
+    await fetch(base + '/approvals');
+    expect(read).toHaveLength(1);
+  });
+});
+
+describe('the evidence states that are not a list of claims', () => {
+  const bare = {
+    runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1',
+    reason: 'customer_visible', stepsUsed: 4,
+    agreement: 0.89, coverage: 0.94, draftExternalId: 'D-1',
+  };
+
+  async function queueWith(evidence: unknown): Promise<string> {
+    const base = await startGuarded(deps({
+      listApprovals: async () => [bare],
+      readApprovalEvidence: async () => ({
+        evidence,
+        gates: {
+          agreement: 0.89, coverage: 0.94, agreementThreshold: 0.6,
+          agreementDetail: '8 of 9 samples', coverageBlock: 0.7, coverageReview: 0.8,
+        },
+      }) as never,
+    }));
+    return (await fetch(base + '/approvals')).text();
+  }
+
+  // An unmeasured count is never a zero. With no retrieval journalled the
+  // denominator was invented from an absence, and every cited document was
+  // labelled gone — a positive claim about an index nothing was compared to.
+  it('does not invent a retrieved count from a retrieval it does not have', async () => {
+    const html = await queueWith({
+      draftBody: 'a reply', documentsMalformed: false, documents: null,
+      claims: [{ index: 0, text: 'a claim', docId: 'SYN-DOC-01', supported: true }],
+    });
+    expect(html).toContain('no retrieval journalled');
+    expect(html).not.toContain('of 0 retrieved');
+    expect(html).not.toContain('no such document today');
+  });
+
+  it('separates a retrieval it could not read from one that never happened', async () => {
+    const html = await queueWith({
+      draftBody: 'a reply', documentsMalformed: true, documents: null,
+      claims: [{ index: 0, text: 'a claim', docId: 'SYN-DOC-01', supported: true }],
+    });
+    expect(html).toContain('could not be read');
+  });
+
+  // Two different facts, and the more alarming one used to render as the
+  // other: a reply citing a document the retriever never returned.
+  it('separates a document that left the index from one never retrieved', async () => {
+    const html = await queueWith({
+      draftBody: 'a reply', documentsMalformed: false,
+      documents: [{
+        position: 1, docId: 'SYN-DOC-01', title: null, kind: null, owner: null,
+        bodyUnchanged: null, titleAtRun: null,
+      }],
+      claims: [
+        { index: 0, text: 'cites a gone document', docId: 'SYN-DOC-01', supported: true },
+        { index: 1, text: 'cites one never retrieved', docId: 'SYN-DOC-77', supported: true },
+      ],
+    });
+    expect(html).toContain('no such document today');
+    expect(html).toContain('not among the documents this run retrieved');
+    // The counts are two facts, so the fraction that could invert is gone.
+    expect(html).toContain('2 cited · 1 retrieved');
+  });
+
+  // A recorded list with nothing in it. Drawing an empty prose block and then
+  // saying every claim was accepted would vouch for a reply making no claims.
+  it('names a claim list holding no claims, rather than vouching for it', async () => {
+    const html = await queueWith({
+      draftBody: 'a reply', documentsMalformed: false, documents: [], claims: [],
+    });
+    expect(html).toContain('claim list with no claims in it');
+    expect(html).not.toContain('every claim of 0');
+  });
+
+  // Both counts, independently. A ladder reported the unread claims only when
+  // nothing was refused, so a reply with one of each said nothing at all
+  // about the claim nobody judged.
+  it('reports a refused claim and an unjudged one in the same sentence', async () => {
+    const html = await queueWith({
+      draftBody: 'a reply', documentsMalformed: false, documents: [],
+      claims: [
+        { index: 0, text: 'accepted', docId: 'SYN-DOC-01', supported: true },
+        { index: 1, text: 'refused', docId: 'SYN-DOC-01', supported: false },
+        { index: 2, text: 'unjudged', docId: 'SYN-DOC-01', supported: null },
+      ],
+    });
+    expect(html).toContain('1 of 3 claims cite a document that does not support them');
+    expect(html).toContain('1 of 3 carry no recorded verdict');
+  });
+});
+
+describe('the conversation a responder reads', () => {
+  it('draws each turn, and what the customer wrote', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(`${base}/conversation/${CONVERSATION}`)).text();
+    expect(html).toContain('There are two charges for the same month.');
+    expect(html).toContain('the customer wrote');
+    expect(html).toContain('the system replied');
+  });
+
+  // Six absences exist and each sends a responder somewhere different, so a
+  // surface that rendered two alike would be worse than one that rendered
+  // nothing.
+  it('names an absence rather than drawing a blank turn', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(`${base}/conversation/${CONVERSATION}`)).text();
+    expect(html).toContain('the text of this message was not kept');
+    expect(html).toContain('a reply is drafted and waiting for a person');
+  });
+
+  it('says a participant is named without naming them', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(`${base}/conversation/${CONVERSATION}`)).text();
+    expect(html).toContain('participant named');
+    // Not an escaping claim: `ThreadView` carries no address at all, so no
+    // input to this surface could produce one. The guard belongs where the
+    // address is actually dropped, which is `readConversation`'s own mapping
+    // in `main.ts`, and `conversation.db.test.ts` holds it there.
+  });
+
+  it('answers 404 for a conversation the ledger does not hold, and for a bad id', async () => {
+    const base = await startGuarded(deps({ readConversation: async () => null }));
+    expect((await fetch(`${base}/conversation/${CONVERSATION}`)).status).toBe(404);
+    // Shape checked before the ledger is asked: the column is uuid.
+    const asked: string[] = [];
+    const guarded = await startGuarded(deps({
+      readConversation: async (id: string) => { asked.push(id); return null; },
+    }));
+    expect((await fetch(`${guarded}/conversation/not-a-uuid`)).status).toBe(404);
+    expect(asked).toEqual([]);
+  });
+});
+
+describe('the document behind a citation', () => {
+  it('shows what the document says today', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + '/document/SYN-DOC-01')).text();
+    expect(html).toContain('A charge is refundable inside fourteen days.');
+    expect(html).toContain('rewritten in place on reindex');
+  });
+
+  // DEC-23. A claim resting on a document past its review date is a claim
+  // resting on text nobody has checked.
+  it('says whether the document is still inside its review window', async () => {
+    const fresh = await startGuarded(deps());
+    expect(await (await fetch(fresh + '/document/SYN-DOC-01')).text())
+      .toContain('in review until 2030-01-01');
+    const stale = await startGuarded(deps({
+      readDocument: async () => ({
+        docId: 'SYN-OLD', kind: 'document', title: 'Old policy', body: 'text',
+        owner: 'support', reviewBy: '2020-01-01', fresh: false,
+      }),
+    }));
+    expect(await (await fetch(stale + '/document/SYN-OLD')).text())
+      .toContain('review date passed 2020-01-01');
+  });
+
+  it('answers 404 for a document the index no longer holds', async () => {
+    const base = await startGuarded(deps({ readDocument: async () => null }));
+    expect((await fetch(base + '/document/SYN-GONE')).status).toBe(404);
+  });
+
+  it('refuses an unbounded id rather than asking the ledger about it', async () => {
+    const asked: string[] = [];
+    const base = await startGuarded(deps({
+      readDocument: async (id: string) => { asked.push(id); return null; },
+    }));
+    expect((await fetch(`${base}/document/${'x'.repeat(300)}`)).status).toBe(404);
+    expect(asked).toEqual([]);
+  });
+});
+
+describe('the one script this console ships', () => {
+  // A hash permits this exact text and nothing else. `unsafe-inline` would
+  // permit any inline script, including one injected into a page.
+  it('is pinned by a hash of its own text, not by unsafe-inline', async () => {
+    const base = await startGuarded(deps());
+    const res = await fetch(base + '/approvals');
+    const policy = res.headers.get('content-security-policy') ?? '';
+    const declared = /script-src '([^']*)'/.exec(policy)?.[1] ?? '';
+    // Scoped to scripts. `style-src` keeps `unsafe-inline`, because the
+    // surfaces carry inline style attributes for colour-by-verdict, and a
+    // stylesheet cannot execute.
+    expect(declared).not.toContain('unsafe-inline');
+    expect(declared).not.toContain('unsafe-eval');
+    expect(declared).toMatch(/^sha256-/);
+
+    const html = await res.text();
+    const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? '';
+    expect(script.length).toBeGreaterThan(0);
+    const digest = `sha256-${createHash('sha256').update(script, 'utf8').digest('base64')}`;
+    // The browser computes this over the element's contents. If the two ever
+    // disagree the script silently stops running, and the page keeps working
+    // while its highlighting quietly does not.
+    expect(digest).toBe(declared);
+  });
+
+  it('ships exactly one, on every surface', async () => {
+    const base = await startGuarded(deps());
+    for (const path of ['/', `/run/${RUN}`, '/approvals', '/bands', '/latency']) {
+      const html = await (await fetch(base + path)).text();
+      expect(html.split('<script>'), path).toHaveLength(2);
+    }
+  });
+});
+
+describe('who the ledger records as the approver', () => {
+  async function approveWith(
+    options: { identityHeader?: string; hosts?: string },
+    headers: Record<string, string>,
+  ): Promise<(string | undefined)[]> {
+    const calls: (string | undefined)[] = [];
+    const base = await startGuarded(
+      deps({
+        approve: async (runId: string, approvedBy: string | undefined) => {
+          calls.push(approvedBy);
+          return 'approved';
+        },
+      }),
+      options.hosts,
+      options.identityHeader,
+    );
+    await fetch(base + '/approve', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        ...headers,
+      },
+      body: `runId=${RUN}`,
+      redirect: 'manual',
+    });
+    return calls;
+  }
+
+  // DEC-42. Both conditions are necessary. The operator names the header,
+  // because a console cannot guess which of its request headers a proxy
+  // controls. And the operator names the hosts, because that is what says a
+  // proxy is in front at all.
+  it('takes the header a trusted proxy set, once the operator names it', async () => {
+    expect(await approveWith(
+      { identityHeader: 'x-forwarded-user' },
+      { 'x-forwarded-user': 'ops-oncall' },
+    )).toEqual(['ops-oncall']);
+  });
+
+  it('sends nothing when the operator named no header', async () => {
+    expect(await approveWith({}, { 'x-forwarded-user': 'ops-oncall' })).toEqual([undefined]);
+  });
+
+  // The loopback case is `hosts.test.ts`'s subject, because the rule lives
+  // in `identityHeader()`: this server reads whatever header its caller named,
+  // and the caller is what decides whether a proxy is in front.
+
+  // Node joins a repeated header with a comma; only `set-cookie` arrives as
+  // an array. So two headers reached the ledger as one name, and a check for
+  // an array was dead code. A proxy that appends rather than replaces makes
+  // exactly this, which is the forgeable trail DEC-42 refuses.
+  it('names nobody when the header arrived more than once', async () => {
+    const calls: (string | undefined)[] = [];
+    const base = await startGuarded(
+      deps({
+        approve: async (runId: string, approvedBy: string | undefined) => {
+          calls.push(approvedBy);
+          return 'approved';
+        },
+      }),
+      undefined,
+      'x-forwarded-user',
+    );
+    const port = Number(new URL(base).port);
+    // Through `node:http`, because `fetch` will not send one header twice.
+    await new Promise<void>((resolve, reject) => {
+      const req = request(
+        {
+          host: '127.0.0.1', port, path: '/approve', method: 'POST',
+          headers: {
+            host: `127.0.0.1:${port}`,
+            'sec-fetch-site': 'same-origin',
+            'content-type': 'application/x-www-form-urlencoded',
+            'x-forwarded-user': ['ops-oncall', 'mallory'],
+          },
+        },
+        (res) => { res.resume(); res.on('end', resolve); },
+      );
+      req.on('error', reject);
+      req.end(`runId=${RUN}`);
+    });
+    expect(calls).toEqual([undefined]);
+  });
+
+  it('names nobody when one value carries a comma, which it cannot read apart', async () => {
+    expect(await approveWith(
+      { identityHeader: 'x-forwarded-user' },
+      { 'x-forwarded-user': 'ops-oncall, mallory' },
+    )).toEqual([undefined]);
+  });
+
+  it('sends nothing when the named header is absent or empty', async () => {
+    expect(await approveWith(
+      { identityHeader: 'x-forwarded-user' },
+      {},
+    )).toEqual([undefined]);
+    expect(await approveWith(
+      { identityHeader: 'x-forwarded-user' },
+      { 'x-forwarded-user': '' },
+    )).toEqual([undefined]);
+  });
+
+  // The header, never the form. A name anyone can type into a page is not an
+  // audit trail, and the route reads only `runId` from the body.
+  it('never takes the approver from the form', async () => {
+    const calls: (string | undefined)[] = [];
+    const base = await startGuarded(
+      deps({
+        approve: async (runId: string, approvedBy: string | undefined) => {
+          calls.push(approvedBy);
+          return 'approved';
+        },
+      }),
+      'console.internal.example',
+      'x-forwarded-user',
+    );
+    await fetch(base + '/approve', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        host: 'console.internal.example',
+      },
+      body: new URLSearchParams({ runId: RUN, approvedBy: 'typed-by-anyone' }).toString(),
+      redirect: 'manual',
+    });
+    expect(calls).toEqual([undefined]);
   });
 });
 
@@ -803,7 +1334,18 @@ describe('the approval queue', () => {
     const res = await fetch(`${base}/approvals?run=${encodeURIComponent('<script>')}`);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).not.toContain('<script>');
+    // The page ships exactly one script, and it is the pinned one. So this
+    // asks that the query string did not add a second, rather than that the
+    // page has none — which stopped being true when the console gained its
+    // claim-to-source highlighting.
+    expect(html.split('<script>')).toHaveLength(2);
+    // The value never reaches the page: `selected` is null unless it has the
+    // shape of a run id, and it is only ever compared. So the escaping claim
+    // this case used to make was a claim about a value nothing rendered — and
+    // its assertion named a substring the input did not contain either way.
+    // What is worth holding is that the comparison happened and drew the head
+    // of the queue rather than an empty pane.
+    expect(html).toContain('SYN-1');
     expect(html).toContain('D-1');
   });
 });

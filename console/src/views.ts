@@ -13,7 +13,7 @@ import type { JournalStep, RunJournal } from 'auracle/dist/journal/query.js';
 import { escalationHead } from './render.js';
 import type { PartitionLatency } from 'auracle/dist/latency/query.js';
 
-import type { RunDetail, RunRow } from './surfaces.js';
+import type { ClaimView, DocumentView, EvidenceView, RunDetail, RunRow } from './surfaces.js';
 
 export function toRow(item: {
   runId: string; ticketId: string; state: string; promptVer: string;
@@ -142,4 +142,76 @@ export function latencyCaveats(p: PartitionLatency): string[] {
     [p.service.neverRan, 'never ran'],
   ];
   return pairs.filter(([count]) => count > 0).map(([count, says]) => `${count} ${says}`);
+}
+
+/**
+ * The draft, its claims and the documents behind them.
+ *
+ * Assembled here so one builder decides it. The approval pane and the run
+ * detail both draw this, and two assemblies of the same evidence would
+ * eventually disagree about a run.
+ *
+ * The verdicts arrive keyed by position into the claim list, because the
+ * claims joined are the draft and storing their text twice would put the
+ * whole reply in the ledger a second time. This is where position becomes
+ * meaning again, and a verdict naming a claim that does not exist is dropped
+ * rather than attached to the wrong one.
+ */
+export function evidenceOf(journal: RunJournal): EvidenceView {
+  const park = journal.steps.find((step) => step.park !== null)?.park ?? null;
+  const compose = journal.steps.find((step) => step.compose !== null)?.compose ?? null;
+  const verdicts = journal.coverage?.claimVerdicts ?? null;
+
+  const claims: ClaimView[] | null =
+    compose?.claims == null
+      ? null
+      : compose.claims.map((claim, index) => ({
+        index,
+        text: claim.text,
+        docId: claim.docId,
+        // Null, never false. A claim nobody judged and a claim the judge
+        // refused are different facts, and only the second is a warning.
+        //
+        // Ambiguity is an absence, not a first-wins. `verdictsOf` permits a
+        // list holding one index twice, and taking the first would render a
+        // refused claim as accepted on the strength of the entry that
+        // happened to come first.
+        supported: verdictFor(verdicts, index),
+      }));
+
+  const documents: DocumentView[] | null =
+    journal.documents === null
+      ? null
+      : journal.documents.map((doc) => ({
+        position: doc.position,
+        docId: doc.docId,
+        title: doc.resolved ? doc.title : null,
+        kind: doc.kind,
+        owner: doc.owner,
+        bodyUnchanged: doc.bodyUnchanged,
+        titleAtRun: doc.titleAtRun,
+      }));
+
+  return {
+    draftBody: park?.draftBody ?? null,
+    claims,
+    documents,
+    documentsMalformed: journal.documentsMalformed,
+  };
+}
+
+/**
+ * The judge's verdict for one claim, or null when the journal does not say.
+ *
+ * Two entries naming one claim is not a verdict. The reader permits such a
+ * list, and picking either would be this console deciding which one the judge
+ * meant — on the question an approver came to the page to read.
+ */
+function verdictFor(
+  verdicts: readonly { readonly claimIndex: number; readonly supported: boolean }[] | null,
+  index: number,
+): boolean | null {
+  if (verdicts === null) return null;
+  const found = verdicts.filter((verdict) => verdict.claimIndex === index);
+  return found.length === 1 ? found[0]!.supported : null;
 }

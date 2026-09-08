@@ -10,26 +10,32 @@
 // `approveFromConsole`, which hands off to `approveRun`. This module issues no
 // statement itself, and `select-only.test.ts` holds that.
 //
-// It also ships no JavaScript. The state filter is a set of links and the
+// It ships one script, and no more. The state filter is a set of links and the
 // theme toggle is a cookie set on a redirect, because a console that can send
 // a customer reply is a poor place to widen the attack surface for the sake of
 // two controls that work without one.
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 
 import { isRunId } from './approve.js';
 import { escapeHtml } from './render.js';
+import { CONSOLE_SCRIPT } from './script.js';
 import {
   page,
   renderApprovals,
   renderBands,
   renderLatency,
+  renderConversation,
+  renderDocument,
   renderRunDetail,
   renderOutcome,
   renderRuns,
 } from './surfaces.js';
-import type { BandRow, LatencyRow, RunDetail, RunRow, RunView, Shell, Theme } from './surfaces.js';
+import type {
+  BandRow, DocumentPage, EvidenceView, GateReading, LatencyRow, RunDetail, RunRow, RunView, Shell,
+  ThreadView, Theme,
+} from './surfaces.js';
 
 /**
  * Everything the console reads or writes, injected.
@@ -52,7 +58,25 @@ export interface ConsoleDeps {
   readonly listApprovals: () => Promise<RunDetail[]>;
   readonly readBands: () => Promise<BandRow[]>;
   readonly readLatency: () => Promise<LatencyRow[]>;
-  readonly approve: (runId: string) => Promise<string>;
+  readonly readConversation: (conversationId: string) => Promise<ThreadView | null>;
+  readonly readDocument: (docId: string) => Promise<DocumentPage | null>;
+  /**
+   * The evidence for one waiting run, read for the drawn selection alone.
+   *
+   * The approval queue is uncapped by design, so reading a journal per row
+   * would be one statement for every run of a list that has been 476 long.
+   */
+  readonly readApprovalEvidence: (
+    runId: string,
+  ) => Promise<{ readonly evidence: EvidenceView; readonly gates: GateReading } | null>;
+  /**
+   * The approval, with the approver a trusted proxy named (DEC-42).
+   *
+   * A claim rather than an authentication, and the caller decides whether one
+   * was supplied: `approveRun` bounds what it keeps and records
+   * `unattributed` for anything else.
+   */
+  readonly approve: (runId: string, approvedBy: string | undefined) => Promise<string>;
 }
 
 const CSS_PATH = '/console.css';
@@ -133,14 +157,32 @@ function sameOrigin(req: IncomingMessage, allowedHosts: ReadonlySet<string>): bo
  * `style-src 'self' 'unsafe-inline'` and `script-src 'none'`. The surfaces
  * carry inline `style` attributes, which the design's colour-by-verdict needs
  * and which no directive can distinguish from an injected one — so the
- * stylesheet keeps its inline allowance and scripts get none at all. This
- * console ships no JavaScript, so `'none'` costs nothing and turns any future
- * injected `<script>` into a refusal rather than a reply that leaves.
+ * stylesheet keeps its inline allowance and scripts get a hash instead.
+ *
+ * A hash rather than `'unsafe-inline'`, which would permit every inline
+ * script including an injected one. This permits the one script this console
+ * ships and refuses the rest, and it stops permitting that one the moment its
+ * text changes without the hash changing with it.
  */
+/**
+ * The CSP source expression for the one inline script.
+ *
+ * Computed from the script rather than written down, because a hash written
+ * down is a hash that drifts. The digest is over the script's exact text, as
+ * the browser computes it over the element's contents.
+ */
+const SCRIPT_HASH = `sha256-${createHash('sha256').update(CONSOLE_SCRIPT, 'utf8').digest('base64')}`;
+
 const SAFETY_HEADERS = {
   'content-security-policy':
     "frame-ancestors 'none'; default-src 'none'; style-src 'self' 'unsafe-inline'; "
-    + "img-src 'self'; form-action 'self'; base-uri 'none'; script-src 'none'",
+    // The one script this console ships, pinned by the hash of its exact
+    // text. Not `unsafe-inline`: that would permit any inline script,
+    // including one injected into a page. A hash permits this text and
+    // nothing else, and it stops permitting it the moment a character
+    // changes — so an edit that forgets to rebuild fails loudly rather than
+    // shipping unpinned.
+    + `img-src 'self'; form-action 'self'; base-uri 'none'; script-src '${SCRIPT_HASH}'`,
   'x-frame-options': 'DENY',
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
@@ -239,11 +281,59 @@ function safeReturn(back: string | null, surfaces: readonly string[]): string {
   if (back === null) return '/';
   if (surfaces.includes(back)) return back;
   // The run detail is the one path that is not a fixed string.
-  if (back.startsWith('/run/')) {
-    const id = decodeRunPath(back.slice('/run/'.length));
-    if (id !== null && isRunId(id)) return `/run/${encodeURIComponent(id)}`;
+  // Three paths are not fixed strings. Each is rebuilt from a value this
+  // console has checked, so the redirect target is never the caller's text.
+  for (const prefix of ['/run/', '/conversation/'] as const) {
+    if (back.startsWith(prefix)) {
+      const id = decodeRunPath(back.slice(prefix.length));
+      if (id !== null && isRunId(id)) return `${prefix}${encodeURIComponent(id)}`;
+    }
+  }
+  if (back.startsWith('/document/')) {
+    const docId = decodeRunPath(back.slice('/document/'.length));
+    // A document id has no shape this console can check, so it is bounded and
+    // re-encoded rather than trusted.
+    if (docId !== null && docId.length > 0 && docId.length <= 200) {
+      return `/document/${encodeURIComponent(docId)}`;
+    }
   }
   return '/';
+}
+
+/**
+ * The approver a trusted proxy named, or undefined (DEC-42).
+ *
+ * Two conditions, and both are necessary. The operator must have named the
+ * header, because a console cannot guess which of its request headers a proxy
+ * controls. And the operator must have named the hosts this console answers
+ * to, because that is what says a proxy is in front of it at all: on the
+ * loopback default there is none, so anyone reaching the port sets the header
+ * themselves and the audit trail becomes forgeable.
+ *
+ * Undefined rather than a fallback string. `approveRun` decides what an
+ * unnamed approver records, and two places deciding that would eventually
+ * disagree.
+ */
+function approverFrom(req: IncomingMessage, options: ConsoleOptions): string | undefined {
+  const header = options.identityHeader;
+  if (header === undefined) return undefined;
+  const claimed = req.headers[header.toLowerCase()];
+  if (claimed === undefined) return undefined;
+  // A repeated header is two claims, and this console cannot say which one
+  // the proxy meant — so it names nobody rather than guessing.
+  //
+  // Node does not hand those over as an array. Only `set-cookie` arrives that
+  // way; every other repeated header is joined with a comma into one string,
+  // so a check for an array was dead code and two headers reached the ledger
+  // as `ops-oncall, mallory`. A proxy that sets this header once and does not
+  // strip an inbound copy produces exactly that, which is the forgeable audit
+  // trail DEC-42 refuses.
+  //
+  // A comma cannot appear in a principal this console will keep, because it
+  // cannot tell one name containing a comma from two names joined by one.
+  if (Array.isArray(claimed)) return undefined;
+  if (claimed === '' || claimed.includes(',')) return undefined;
+  return claimed;
 }
 
 /** A percent-escape that does not decode is a path nobody has, not a fault. */
@@ -256,6 +346,14 @@ function decodeRunPath(raw: string): string | null {
 }
 
 export interface ConsoleOptions {
+  /**
+   * The header a trusted proxy sets to name the approver (DEC-42).
+   *
+   * Undefined unless the operator named both this and the hosts to answer to.
+   * Naming the hosts is what says a proxy is in front; without it the console
+   * is on a bind where anyone reaching the port sets the header themselves.
+   */
+  readonly identityHeader?: string;
   /**
    * The `Host` values this console answers to. Every other one is refused,
    * which is what closes DNS rebinding.
@@ -446,11 +544,63 @@ async function route(
     // still come here to work the queue.
     const wanted = url.searchParams.get('run');
     const selected = wanted !== null && isRunId(wanted) ? wanted : null;
+    // The evidence for the one run drawn, and no others. An approver reads
+    // the reply before the button that sends it (DEC-40).
+    const drawn = waiting.find((run) => run.runId === selected)?.runId ?? waiting[0]?.runId ?? null;
+    const read = drawn === null ? null : await deps.readApprovalEvidence(drawn);
     send(res, 200, page(
       'Approval queue',
-      renderApprovals(waiting, outcome === null ? '' : renderOutcome(outcome), selected),
+      renderApprovals(
+        waiting,
+        outcome === null ? '' : renderOutcome(outcome),
+        selected,
+        read?.evidence ?? null,
+        read?.gates ?? null,
+      ),
       shell('/approvals', waiting.length),
     ));
+    return;
+  }
+
+  if (req.method === 'GET' && path.startsWith('/conversation/')) {
+    const id = decodeRunPath(path.slice('/conversation/'.length));
+    // Shape first, as the run route does: the column is uuid, and a driver
+    // exception is not an answer a surface can render.
+    if (id === null || !isRunId(id)) {
+      send(res, 404, page('Conversation', nothingFound(), shell('/')));
+      return;
+    }
+    const thread = await deps.readConversation(id);
+    if (thread === null) {
+      send(res, 404, page('Conversation', nothingFound(), shell('/')));
+      return;
+    }
+    send(res, 200, page(
+      'Conversation',
+      renderConversation(thread),
+      shell(`/conversation/${id}`),
+    ));
+    return;
+  }
+
+  if (req.method === 'GET' && path.startsWith('/document/')) {
+    const docId = decodeRunPath(path.slice('/document/'.length));
+    // No shape check: a document id is whatever the adopter's corpus uses,
+    // and the query parameterises it. The length bound is this route's own,
+    // because a path is not a place to accept an unbounded string.
+    if (docId === null || docId.length === 0 || docId.length > 200) {
+      send(res, 404, page('Evidence base', nothingFound(), shell('/')));
+      return;
+    }
+    const doc = await deps.readDocument(docId);
+    if (doc === null) {
+      // A run journals the ids it retrieved, and a document can leave the
+      // index afterwards. So this is the document being gone, not the run
+      // having been wrong, and the page says which.
+      send(res, 404, page('Evidence base', nothingFound(), shell('/')));
+      return;
+    }
+    send(res, 200, page('Evidence base', renderDocument(doc), shell(`/document/${docId}`)));
     return;
   }
 
@@ -485,7 +635,13 @@ async function route(
     // The run id is the whole request. Any other field is ignored, because
     // the relay sends the parked draft verbatim and a body posted here would
     // be recorded as the approved reply without ever reaching the customer.
-    const outcome = await deps.approve(runId);
+    // DEC-42: who approved, when a trusted proxy named them.
+    //
+    // Read only where the operator named the proxy this console sits behind.
+    // Anyone reaching the port can set a header, so on any other bind this
+    // sends nothing and the approval records `unattributed` — a forgeable
+    // audit trail is worse than none.
+    const outcome = await deps.approve(runId, approverFrom(req, options));
     // The one write this console makes, and until now the only request it did
     // not record. The ledger journals that a run was approved; it does not
     // journal which client asked, and this console authenticates nobody, so
@@ -496,6 +652,7 @@ async function route(
       event: 'console_approved',
       runId,
       outcome,
+      approvedBy: approverFrom(req, options) ?? null,
       host: req.headers.host ?? null,
       from: req.socket.remoteAddress ?? null,
     }));

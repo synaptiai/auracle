@@ -28,15 +28,17 @@ import { humanValue } from 'auracle/dist/bands/run.js';
 import { probeLedger, requireDbUrl } from 'auracle/dist/db/config.js';
 import { LEDGER_STATES, listEscalations, listRuns, readRun } from 'auracle/dist/escalations/query.js';
 import { readRunJournal } from 'auracle/dist/journal/query.js';
+import { conversationOfRun, readConversation } from 'auracle/dist/conversation/query.js';
+import { readDocument } from 'auracle/dist/documents/query.js';
 import { CLASSIFIER_K } from 'auracle/dist/classifier/classifier.js';
 import { readLatency } from 'auracle/dist/latency/query.js';
 import { humanMs } from 'auracle/dist/latency/run.js';
 
 import { approveFromConsole } from './approve.js';
 import { CONSOLE_CSS } from './css.js';
-import { allowedHosts } from './hosts.js';
+import { allowedHosts, identityHeader } from './hosts.js';
 import { ledgerName } from './ledger-name.js';
-import { latencyCaveats, stepSays, toDetail, toRow } from './views.js';
+import { evidenceOf, latencyCaveats, stepSays, toDetail, toRow } from './views.js';
 import { createConsole, RUNS_PAGE } from './server.js';
 import type { BandRow, LatencyRow, Percentile, RunDetail, RunRow, RunView } from './surfaces.js';
 
@@ -54,7 +56,9 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
       ...base,
       steps: [], agreementThreshold: null, agreementDetail: null,
       coverageBlock: null, coverageReview: null, intentId: null,
-      decision: null, policyReason: null, documents: null,
+      decision: null, policyReason: null,
+      evidence: { draftBody: null, claims: null, documents: null, documentsMalformed: false },
+      conversationId: await conversationOfRun(pool, runId),
     };
   }
   const agreement = journal.agreement;
@@ -78,13 +82,8 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
       awaitingOutcome: step.awaitingOutcome,
       malformed: step.resultMalformed,
     })),
-    documents: journal.documents === null ? null : journal.documents.map((doc) => ({
-      position: doc.position,
-      docId: doc.docId,
-      title: doc.resolved ? doc.title : null,
-      kind: doc.kind,
-      owner: doc.owner,
-    })),
+    evidence: evidenceOf(journal),
+    conversationId: await conversationOfRun(pool, runId),
   };
 }
 
@@ -139,6 +138,10 @@ async function main(): Promise<void> {
   const port = requirePort(process.env['CONSOLE_PORT']);
   const host = process.env['CONSOLE_HOST'] ?? '127.0.0.1';
   const hosts = allowedHosts(host, port);
+  // The header a trusted proxy sets to name the approver (DEC-42). Naming it
+  // is the operator stating that a proxy they trust sets it and strips any
+  // copy a client sent — `hosts.ts` says why that cannot be inferred.
+  const identity = identityHeader();
   const connectionString = requireDbUrl('the operator console');
 
   const pool = new Pool({ connectionString, max: 4 });
@@ -341,12 +344,66 @@ async function main(): Promise<void> {
       }));
     },
 
-    approve: async (runId): Promise<string> => {
-      const outcome = await approveFromConsole({ pool, approveRun }, { runId });
+    readConversation: async (conversationId) => {
+      const thread = await readConversation(pool, conversationId);
+      if (thread === null) return null;
+      return {
+        conversationId: thread.conversationId,
+        primaryTicketId: thread.primaryTicketId,
+        state: thread.state,
+        participantNamed: thread.participantNamed,
+        turns: thread.turns.map((turn) => ({
+          turnNumber: turn.turnNumber,
+          ticketId: turn.ticketId,
+          bodyText: turn.bodyText,
+          messageAbsence: turn.messageAbsence,
+          replyText: turn.replyText,
+          replyAbsence: turn.replyAbsence,
+          runId: turn.runId,
+          runState: turn.runState,
+          runAttempts: turn.runAttempts,
+        })),
+      };
+    },
+
+    readDocument: async (docId) => readDocument(pool, docId),
+
+    readApprovalEvidence: async (runId) => {
+      const journal = await readRunJournal(pool, runId);
+      if (journal === null) return null;
+      const agreement = journal.agreement;
+      return {
+        evidence: evidenceOf(journal),
+        // DEC-05: two readings, side by side and never combined. The queue
+        // drew a dash for both because it read no journal; it reads this one,
+        // so the dash was saying "not read by the console" about a value the
+        // console had.
+        gates: {
+          agreement: agreement?.agreement ?? null,
+          coverage: journal.coverage?.groundedness ?? null,
+          agreementThreshold: agreement?.threshold ?? null,
+          agreementDetail: agreement === null
+            ? null
+            : `${Math.round(agreement.agreement * CLASSIFIER_K)} of ${CLASSIFIER_K} samples`,
+          coverageBlock: journal.coverage?.blockThreshold ?? null,
+          coverageReview: journal.coverage?.reviewThreshold ?? null,
+        },
+      };
+    },
+
+    approve: async (runId, approvedBy): Promise<string> => {
+      const outcome = await approveFromConsole(
+        { pool, approveRun },
+        approvedBy === undefined ? { runId } : { runId, approvedBy },
+      );
       return outcome.outcome;
     },
   }, CONSOLE_CSS, {
     allowedHosts: hosts,
+    // DEC-42: read only where the operator named the proxy this console sits
+    // behind. `allowedHosts` names it, and naming nothing means loopback —
+    // where anyone reaching the port sets the header themselves.
+    ...(identity === undefined ? {} : { identityHeader: identity }),
     // The whole closed set. The filter offers every state the ledger can
     // hold, so a state with no runs today still has a link that says so —
     // an operator checking for escalations needs the empty answer too.

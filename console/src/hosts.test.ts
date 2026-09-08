@@ -5,12 +5,14 @@
 // boundary rather than a convenience.
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { allowedHosts } from './hosts.js';
+import { allowedHosts, identityHeader } from './hosts.js';
 
 const VAR = 'CONSOLE_ALLOWED_HOSTS';
+const HEADER = 'CONSOLE_IDENTITY_HEADER';
 
 afterEach(() => {
   delete process.env[VAR];
+  delete process.env[HEADER];
 });
 
 describe('allowedHosts', () => {
@@ -71,5 +73,35 @@ describe('allowedHosts', () => {
     const names = allowedHosts('127.0.0.1', 8787);
     expect(names).toContain('localhost:8787');
     expect(names).not.toContain('');
+  });
+});
+
+describe('the header a trusted proxy names the approver in (DEC-42)', () => {
+  it('is read when the operator names it', () => {
+    process.env[HEADER] = 'X-Forwarded-User';
+    // Lowercased, because that is how node keys a request header.
+    expect(identityHeader()).toBe('x-forwarded-user');
+  });
+
+  it('is undefined when the operator names none', () => {
+    expect(identityHeader()).toBeUndefined();
+    process.env[HEADER] = '   ';
+    expect(identityHeader()).toBeUndefined();
+  });
+
+  // It used to be gated on `CONSOLE_ALLOWED_HOSTS`, on the reasoning that
+  // naming a host says a proxy is in front. It does not: the derived-name
+  // comment above lists two reasons an operator names hosts with no proxy
+  // anywhere. An operator who named hosts for one of those and also named a
+  // header got a console where anyone reaching the port named themselves.
+  //
+  // So the variable is not a proxy detector, and this holds that the two are
+  // now independent — the trust is stated rather than inferred.
+  it('does not depend on the hosts, which do not imply a proxy', () => {
+    process.env[HEADER] = 'X-Forwarded-User';
+    process.env[VAR] = 'localhost:8787,[::1]:8787';
+    expect(identityHeader()).toBe('x-forwarded-user');
+    delete process.env[VAR];
+    expect(identityHeader()).toBe('x-forwarded-user');
   });
 });

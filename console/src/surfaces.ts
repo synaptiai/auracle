@@ -15,6 +15,7 @@
 // holds, and the two are not the same document. Every omission of that kind
 // is named in `docs/operations.md`.
 import { escapeHtml, renderGates, renderMetricValue } from './render.js';
+import { CONSOLE_SCRIPT } from './script.js';
 import type { MetricValue } from './render.js';
 
 export interface RunRow {
@@ -50,17 +51,42 @@ export interface Shell {
   readonly ledger: string;
 }
 
-const SURFACES: readonly { readonly href: string; readonly title: string }[] = [
-  { href: '/', title: 'Runs' },
-  { href: '/approvals', title: 'Approval queue' },
-  { href: '/bands', title: 'Control bands' },
-  { href: '/latency', title: 'Partition latency' },
+/**
+ * The rail, in two groups.
+ *
+ * Two audiences with different units of work. A responder works a
+ * conversation and a queue; an administrator audits a run and reads a band.
+ * Five peers made every operator scan all five, and put the queue — the one
+ * surface with a deadline on it — beside a latency report.
+ *
+ * `Conversations` has no listing of its own. A conversation is reached from
+ * the run that answered it, because the ledger has no ordering over
+ * conversations that means anything to a responder: `opened_at` is when a
+ * problem started, not when it last needed attention.
+ */
+const GROUPS: readonly {
+  readonly title: string;
+  readonly surfaces: readonly { readonly href: string; readonly title: string }[];
+}[] = [
+  {
+    title: 'Work',
+    surfaces: [{ href: '/approvals', title: 'Approval queue' }],
+  },
+  {
+    title: 'Instrument',
+    surfaces: [
+      { href: '/', title: 'Runs' },
+      { href: '/bands', title: 'Control bands' },
+      { href: '/latency', title: 'Partition latency' },
+    ],
+  },
 ];
+
 
 /**
  * The theme the next click asks for, and the label that names it.
  *
- * The console ships no JavaScript, so the toggle is a link that sets a cookie
+ * The toggle is a link that sets a cookie
  * and returns. That is why `page` needs the path: the link has to come back
  * to the surface the operator was reading.
  */
@@ -73,13 +99,16 @@ function themeLink(shell: Shell): string {
 
 /** The rail every surface renders beside. */
 function rail(shell: Shell): string {
-  const links = SURFACES.map((surface) => {
-    const on = surface.href === shell.path ? ' class="on"' : '';
-    // The badge counts only what this page actually counted.
-    const badge = surface.href === '/approvals' && shell.approvals !== null
-      ? `<span class="badge">${escapeHtml(String(shell.approvals))}</span>`
-      : '';
-    return `<a href="${surface.href}"${on}>${escapeHtml(surface.title)}${badge}</a>`;
+  const groups = GROUPS.map((group) => {
+    const links = group.surfaces.map((surface) => {
+      const on = surface.href === shell.path ? ' class="on"' : '';
+      // The badge counts only what this page actually counted.
+      const badge = surface.href === '/approvals' && shell.approvals !== null
+        ? `<span class="badge">${escapeHtml(String(shell.approvals))}</span>`
+        : '';
+      return `<a href="${surface.href}"${on}>${escapeHtml(surface.title)}${badge}</a>`;
+    }).join('');
+    return `<div class="navgroup"><div class="lbl">${escapeHtml(group.title)}</div>${links}</div>`;
   }).join('');
   return [
     '<div class="rail">',
@@ -87,7 +116,7 @@ function rail(shell: Shell): string {
     '<div class="m" style="font-size:15px; font-weight:600; letter-spacing:-.01em">auracle</div>',
     '<div class="lbl" style="margin-top:3px">operator console</div>',
     '</div>',
-    `<div class="nav">${links}</div>`,
+    `<div class="nav">${groups}</div>`,
     '<div class="railfoot">',
     '<div class="lbl">Bound to</div>',
     `<span class="chip"><span class="dot" style="color:var(--ok)"></span>${escapeHtml(shell.ledger)}</span>`,
@@ -109,7 +138,12 @@ export function page(title: string, body: string, shell: Shell): string {
     rail(shell),
     '<div class="main">',
     body,
-    '</div></div></div></body></html>',
+    '</div></div></div>',
+    // Last, so every element it binds to exists. Inline and pinned by a CSP
+    // hash: a script the page did not ship cannot run, and this one stops
+    // running the moment its text changes without the hash changing with it.
+    `<script>${CONSOLE_SCRIPT}</script>`,
+    '</body></html>',
   ].join('');
 }
 
@@ -150,7 +184,7 @@ function nothing(says: string): string {
   return `<div class="wrap"><p class="mut">${escapeHtml(says)}</p></div>`;
 }
 
-/** The state filter, as links. The console ships no JavaScript. */
+/** The state filter, as links. Every control here works without a script. */
 export interface StateFilter {
   /** Every state the ledger can hold, in the order the rail shows them. */
   readonly states: readonly string[];
@@ -251,6 +285,66 @@ export interface DocumentView {
   readonly title: string | null;
   readonly kind: string | null;
   readonly owner: string | null;
+  /**
+   * Whether the document still says what the run read.
+   *
+   * Three answers. Null means the question cannot be asked: the run recorded
+   * no digest, or the id no longer resolves. A surface that drew null as
+   * unchanged would vouch for a document nothing compared.
+   */
+  readonly bodyUnchanged: boolean | null;
+  /** The title the run recorded, which is not today's. Null when none. */
+  readonly titleAtRun: string | null;
+}
+
+/** One claim of the drafted reply, and what the judge said about it. */
+export interface ClaimView {
+  readonly index: number;
+  readonly text: string;
+  readonly docId: string;
+  /**
+   * The judge's verdict, or null when no verdict was recorded for it.
+   *
+   * Null is not "unsupported". A claim nobody judged and a claim the judge
+   * refused are different facts, and the second is the one an operator has to
+   * read before approving.
+   */
+  readonly supported: boolean | null;
+}
+
+/** The two gates as the journal recorded them, for one run. */
+export interface GateReading {
+  readonly agreement: number | null;
+  readonly coverage: number | null;
+  readonly agreementThreshold: number | null;
+  readonly agreementDetail: string | null;
+  readonly coverageBlock: number | null;
+  readonly coverageReview: number | null;
+}
+
+/** The drafted reply, its claims and the documents behind them. */
+export interface EvidenceView {
+  /**
+   * The reply the system drafted, or null when the run parked none.
+   *
+   * Not the text the relay will send: that is the helpdesk copy, which a
+   * person may have edited since (DEC-11). Every surface drawing this says
+   * which one it is drawing.
+   */
+  readonly draftBody: string | null;
+  /** Null when the compose row recorded no claim list. */
+  readonly claims: readonly ClaimView[] | null;
+  /** Null when the run journalled no retrieve step. */
+  readonly documents: readonly DocumentView[] | null;
+  /**
+   * A retrieval that completed and recorded a list nothing could read.
+   *
+   * Its own field, because `documents` has no value that carries it: null is
+   * a run that never retrieved and the empty list is a retrieval that found
+   * nothing. A surface that folded this into either would say the run did
+   * something it did not.
+   */
+  readonly documentsMalformed: boolean;
 }
 
 /** Everything the run detail surface draws beyond the run row itself. */
@@ -263,8 +357,10 @@ export interface RunView extends RunDetail {
   readonly intentId: string | null;
   readonly decision: string | null;
   readonly policyReason: string | null;
-  /** Null when the run journalled no retrieve step. */
-  readonly documents: readonly DocumentView[] | null;
+  /** The draft, its claims and their sources. */
+  readonly evidence: EvidenceView;
+  /** The conversation this run answered, when it answered one. */
+  readonly conversationId: string | null;
 }
 
 /** The colour each journal status carries in the timeline. */
@@ -348,6 +444,184 @@ function evidence(documents: readonly DocumentView[] | null): string {
   ].join('');
 }
 
+/**
+ * The drafted reply, with every claim tied to the document behind it.
+ *
+ * One builder, drawn by the run detail and by the approval pane. Two
+ * assemblies of the same evidence would eventually disagree about a run, and
+ * the one an approver reads is the one that has to be right.
+ *
+ * The claims are the draft. `composed.draft` is those texts joined, so this
+ * renders them in order rather than rendering the draft beside them — which
+ * would show the same sentences twice and leave a reader guessing which copy
+ * carried the citation.
+ *
+ * Three states per claim, not two. A claim the judge refused is the warning
+ * an approver came for. A claim nobody judged is not a refusal, and drawing
+ * it as one would put a warning on a run the ledger never questioned.
+ */
+function evidenceBlock(view: EvidenceView, draftId: string | null): string {
+  if (view.draftBody === null && view.claims === null) {
+    return nothing('This run composed no reply.');
+  }
+  // Null and empty are different answers, here as everywhere else on this
+  // console. A run journalled no readable retrieval is not a run whose
+  // retrieval found nothing, and building a Map from `?? []` made the first
+  // one report as the second — then labelled every cited document gone.
+  const retrieved = view.documents;
+  const sources = new Map((retrieved ?? []).map((doc) => [doc.docId, doc]));
+  const claims = view.claims;
+  const unsupported = (claims ?? []).filter((claim) => claim.supported === false).length;
+  const unread = (claims ?? []).filter((claim) => claim.supported === null).length;
+
+  return [
+    '<div class="card"><header>',
+    '<span class="lbl">The reply, as the system drafted it</span>',
+    // Named precisely. The relay sends the helpdesk copy, which a person may
+    // have edited since (DEC-11), so this is not "as it will be sent".
+    draftId === null
+      ? chip('parked in the ledger, no helpdesk draft')
+      : chip(`helpdesk draft ${draftId}`),
+    '</header><div class="body">',
+    claims === null
+      ? view.draftBody === null
+        ? nothing('No draft was recorded for this run.')
+        // A draft with no claim list is a run journalled before the claims
+        // were written. The reply is shown whole, and the citations are not
+        // available for it — which is a different thing from having none.
+        : `<div class="prose">${escapeHtml(view.draftBody)}</div>`
+          + '<p class="discl">This run recorded no claim list, so no sentence here'
+          + ' carries its source. The reply is shown as it was drafted.</p>'
+      // A recorded list with nothing in it. Rare and real, and it is not a
+      // clean bill of health: drawing an empty prose block and then saying
+      // every claim was accepted would have this console vouch for a reply
+      // that makes no claims.
+      : claims.length === 0
+        ? nothing('This run recorded a claim list with no claims in it.')
+        : claimList(claims, sources),
+    claims === null || claims.length === 0
+      ? ''
+      : claimSummary(claims.length, unsupported, unread),
+    '</div></div>',
+    claims === null || claims.length === 0
+      ? ''
+      : sourceList(claims, sources, retrieved, view.documentsMalformed),
+  ].join('');
+}
+
+/** The claims in draft order, each marked with what the judge said. */
+function claimList(
+  claims: readonly ClaimView[],
+  sources: ReadonlyMap<string, DocumentView>,
+): string {
+  return `<div class="prose">${claims.map((claim) => {
+    const mark = claim.supported === false
+      ? ' unsupported'
+      : claim.supported === null ? ' unread' : '';
+    const source = sources.get(claim.docId);
+    const title = source?.title ?? claim.docId;
+    return [
+      `<span class="claim${mark}" id="claim-${escapeHtml(String(claim.index))}"`,
+      ` data-source="${escapeHtml(claim.docId)}">`,
+      escapeHtml(claim.text),
+      `<a class="cite" href="#src-${escapeHtml(claim.docId)}"`,
+      ` title="${escapeHtml(title)}">${escapeHtml(String(claim.index + 1))}</a>`,
+      '</span>',
+    ].join('');
+  }).join(' ')}</div>`;
+}
+
+/**
+ * What the marks add up to, in words rather than a second coverage number.
+ *
+ * Deliberately not a fraction. The gate row's coverage is what the policy
+ * engine read, and a second number computed from these marks would be a
+ * recount that can disagree with it. This counts the claims a person has to
+ * look at, which is a different question.
+ *
+ * Both counts, independently. A ladder reported the unread claims only when
+ * nothing was refused, so a reply with one of each said nothing about the
+ * claim nobody judged — the two-state collapse this block exists to refuse.
+ */
+function claimSummary(total: number, unsupported: number, unread: number): string {
+  const parts: string[] = [];
+  if (unsupported > 0) {
+    parts.push(`${unsupported} of ${total} claims cite a document that does not support them`);
+  }
+  if (unread > 0) {
+    parts.push(`${unread} of ${total} carry no recorded verdict`);
+  }
+  const says = parts.length === 0
+    ? `every claim of ${total} carries a document the judge accepted`
+    : parts.join('; ');
+  return `<p class="discl">${escapeHtml(says)}</p>`;
+}
+
+/**
+ * The documents the claims cite, and whether they still say it.
+ *
+ * `retrieved` is nullable and the Map is not, because three things can be
+ * true of a cited id and they are not the same fact:
+ *
+ *   - the run journalled no readable retrieval, so nothing here can be
+ *     checked at all;
+ *   - the id was retrieved and no longer resolves, so the document left the
+ *     index after the run read it;
+ *   - the id was never retrieved, so the reply cites something the retriever
+ *     did not return — which is the more alarming of the two and used to
+ *     render as the other.
+ */
+function sourceList(
+  claims: readonly ClaimView[],
+  sources: ReadonlyMap<string, DocumentView>,
+  retrieved: readonly DocumentView[] | null,
+  malformed: boolean,
+): string {
+  const cited = [...new Set(claims.map((claim) => claim.docId))];
+  return [
+    '<div class="card"><header>',
+    '<span class="lbl">The documents these claims cite</span>',
+    // Two counts, never a fraction. A cited id that was not retrieved makes
+    // the numerator exceed the denominator, so `3 of 2 retrieved` was a
+    // reachable sentence — and with no retrieval journalled the denominator
+    // was a zero nobody measured.
+    chip(retrieved === null
+      ? malformed
+        ? `${cited.length} cited · the retrieval could not be read`
+        : `${cited.length} cited · no retrieval journalled`
+      : `${cited.length} cited · ${retrieved.length} retrieved`),
+    '</header><div class="body">',
+    ...cited.map((docId) => {
+      const doc = sources.get(docId);
+      const moved = doc?.bodyUnchanged === false;
+      return [
+        `<div class="src" id="src-${escapeHtml(docId)}" data-source="${escapeHtml(docId)}">`,
+        `<a class="m" href="/document/${encodeURIComponent(docId)}">${escapeHtml(docId)}</a>`,
+        ' ',
+        doc === undefined
+          ? retrieved === null
+            ? malformed
+              ? '<span class="mut">this run recorded a retrieval nothing could read</span>'
+              : '<span class="mut">this run journalled no retrieval, so nothing here is checked</span>'
+            : '<span class="mut" style="color:var(--hot)">not among the documents this run retrieved</span>'
+          : doc.title === null
+            ? '<span class="mut">no such document today</span>'
+            : `<span>${escapeHtml(doc.title)}</span>`,
+        moved
+          // The claim rested on text that is no longer there. Said plainly,
+          // because a reader checking a citation against today's document
+          // would otherwise conclude the claim was wrong.
+          ? ' <span class="chip" style="color:var(--warn)">changed since this run read it</span>'
+          : doc !== undefined && doc.bodyUnchanged === null
+            ? ' <span class="chip" style="color:var(--dim)">not compared</span>'
+            : '',
+        '</div>',
+      ].join('');
+    }),
+    '</div></div>',
+  ].join('');
+}
+
 /** Surface 2: one run, with its two gates shown apart. */
 export function renderRunDetail(run: RunView): string {
   return [
@@ -401,9 +675,20 @@ export function renderRunDetail(run: RunView): string {
     '<span class="lbl">Retrieved evidence</span>',
     '<span class="chip">the order the ledger recorded</span>',
     '</header><div class="body">',
-    evidence(run.documents),
+    evidence(run.evidence.documents),
     '</div></div>',
-    '</div></div></div>',
+    // Spanning both columns rather than placed after them. Prose inside a
+    // 326px grid track is prose at forty characters, and the measure is what
+    // makes a reply readable — but counting closing tags to escape the grid
+    // is arithmetic that breaks silently. The span is declared instead.
+    '<div class="full">',
+    evidenceBlock(run.evidence, run.draftExternalId),
+    run.conversationId === null
+      ? ''
+      : `<p class="discl">This run answered a turn of <a href="/conversation/${
+        encodeURIComponent(run.conversationId)}">its conversation</a>.</p>`,
+    '</div>',
+    '</div></div>',
   ].join('');
 }
 
@@ -421,10 +706,33 @@ export function renderRunDetail(run: RunView): string {
  * JavaScript. An absent or unknown selection falls back to the head of the
  * queue, which is the run an operator works next.
  */
+/** A waiting run, with the journal read for the one the operator opened. */
+export interface ApprovalView extends RunDetail {
+  /**
+   * The gate values, read for the drawn selection.
+   *
+   * This surface drew a dash for both, because reading a journal for every
+   * waiting run would be one statement per row of an uncapped list. It reads
+   * one journal now — for the run it draws — so the dash was saying "not read
+   * by the console" about a value the console had.
+   */
+  readonly gates: GateReading | null;
+  /**
+   * The draft and its claims, or null when this run's journal was not read.
+   *
+   * Read for the drawn selection alone. The queue is uncapped by design, and
+   * reading a journal for every waiting run would be one statement per row of
+   * a list that has been 476 rows long.
+   */
+  readonly evidence: EvidenceView | null;
+}
+
 export function renderApprovals(
   runs: readonly RunDetail[],
   outcome: string,
   selected: string | null,
+  evidence: EvidenceView | null = null,
+  gates: GateReading | null = null,
 ): string {
   const header = head(
     'Approval queue',
@@ -435,6 +743,7 @@ export function renderApprovals(
     return header + outcome + nothing('Nothing is waiting for a person.');
   }
   const shown = runs.find((run) => run.runId === selected) ?? runs[0]!;
+  const drawn: ApprovalView = { ...shown, evidence, gates };
   return [
     header,
     outcome,
@@ -450,12 +759,19 @@ export function renderApprovals(
       '</a>',
     ].join('')),
     '</div>',
-    `<div class="pane">${approvalCard(shown)}</div>`,
+    `<div class="pane">${approvalCard(drawn)}</div>`,
     '</div>',
   ].join('');
 }
 
-function approvalCard(run: RunDetail): string {
+/**
+ * One waiting run, and everything a person needs to decide about it.
+ *
+ * The evidence is the point. This surface used to draw an Approve button
+ * above a reply the approver could not read, which is DEC-40 permitting a
+ * console to approve while the console withheld the thing being approved.
+ */
+function approvalCard(run: ApprovalView): string {
   return [
     '<div class="card"><header>',
     `<span class="m" style="font-size:12.5px">${escapeHtml(run.ticketId)}</span>`,
@@ -469,7 +785,20 @@ function approvalCard(run: RunDetail): string {
     `<dt>reason</dt><dd>${escapeHtml(run.reason ?? '—')}</dd>`,
     `<dt>draft</dt><dd>${escapeHtml(run.draftExternalId ?? '—')}</dd>`,
     '</dl>',
-    renderGates({ agreement: run.agreement, coverage: run.coverage }),
+    renderGates(run.gates === null
+      ? { agreement: run.agreement, coverage: run.coverage }
+      : {
+        agreement: run.gates.agreement,
+        coverage: run.gates.coverage,
+        agreementThreshold: run.gates.agreementThreshold,
+        agreementDetail: run.gates.agreementDetail,
+        coverageBlock: run.gates.coverageBlock,
+        coverageReview: run.gates.coverageReview,
+      }),
+    // The reply, before the button that sends it.
+    run.evidence === null
+      ? nothing('The journal for this run has not been read.')
+      : evidenceBlock(run.evidence, run.draftExternalId),
     run.draftExternalId === null
       ? '<p class="discl">No draft is parked, so this cannot be approved here.</p>'
       : [
@@ -477,14 +806,160 @@ function approvalCard(run: RunDetail): string {
           // (DEC-11, DEC-40); the relay sends that draft verbatim, so a body
           // typed here would be recorded and never sent.
           '<div class="warnbar"><span class="dot" style="color:var(--accent); margin-top:5px"></span>',
-          '<div>Edit the draft in the helpdesk. This sends it as it stands, and a sent reply',
-          ' cannot be recalled.</div></div>',
+          '<div>The reply above is what the system drafted. The helpdesk holds the copy the',
+          ' relay sends, so edit it there — a person may have changed it since. This sends that',
+          ' copy as it stands, and a sent reply cannot be recalled.</div></div>',
           '<form method="post" action="/approve">',
           `<input type="hidden" name="runId" value="${escapeHtml(run.runId)}">`,
           '<button class="btn primary" type="submit">Approve</button>',
           '</form>',
         ].join(''),
     '</div></div>',
+  ].join('');
+}
+
+/** One turn of a conversation, as the reader returned it. */
+export interface TurnView {
+  readonly turnNumber: number;
+  readonly ticketId: string;
+  readonly bodyText: string | null;
+  readonly messageAbsence: string | null;
+  readonly replyText: string | null;
+  readonly replyAbsence: string | null;
+  readonly runId: string | null;
+  readonly runState: string | null;
+  readonly runAttempts: number;
+}
+
+/** One customer problem, and every turn of it. */
+export interface ThreadView {
+  readonly conversationId: string;
+  readonly primaryTicketId: string;
+  readonly state: string;
+  readonly participantNamed: boolean;
+  readonly turns: readonly TurnView[];
+}
+
+/**
+ * What each absence means, in the words a responder needs.
+ *
+ * Six codes and six sentences. They are what the reader distinguishes, and a
+ * surface that rendered two of them alike would send an operator to the wrong
+ * place — which is the whole reason the reader distinguishes them.
+ */
+const REPLY_ABSENCE: Readonly<Record<string, string>> = {
+  handled_automatically: 'answered by an internal write; no reply was sent to the customer',
+  approved_without_reply: 'a person approved an action here; no reply text was recorded',
+  awaiting_approval: 'a reply is drafted and waiting for a person',
+  in_flight: 'this run has not finished',
+  no_reply_sent: 'the run stopped without sending a reply',
+  not_retained: 'no run joins this turn, so nothing here can say what happened',
+};
+
+const MESSAGE_ABSENCE: Readonly<Record<string, string>> = {
+  not_retained: 'the text of this message was not kept',
+  empty_message: 'the customer sent no text',
+};
+
+/** A named absence, or the id itself when the reader learns a seventh. */
+function absenceSays(table: Readonly<Record<string, string>>, code: string): string {
+  return Object.hasOwn(table, code) ? table[code]! : code;
+}
+
+/** Surface 6: one conversation, read the way a responder reads it. */
+export function renderConversation(thread: ThreadView): string {
+  return [
+    head('Conversation', 'One customer problem, and every turn of it.', [
+      chip(thread.state, thread.state === 'open' ? 'accent' : 'dim'),
+      chip(`${thread.turns.length} ${thread.turns.length === 1 ? 'turn' : 'turns'}`),
+      // Whether it is bound to somebody, never who. An approver already sees
+      // the message that address sent.
+      chip(thread.participantNamed ? 'participant named' : 'no participant named'),
+    ]),
+    '<div class="wrap">',
+    '<div class="hd"><div>',
+    `<div class="m" style="font-size:17px; font-weight:600">${escapeHtml(thread.primaryTicketId)}</div>`,
+    `<div class="hds">conversation ${escapeHtml(thread.conversationId)}</div>`,
+    '</div></div>',
+    thread.turns.length === 0
+      ? nothing('This conversation holds no turn.')
+      : thread.turns.map((turn) => turnBlock(turn)).join(''),
+    '</div>',
+  ].join('');
+}
+
+/** One turn: what the customer wrote, and what the system did about it. */
+function turnBlock(turn: TurnView): string {
+  return [
+    '<div class="turn">',
+    '<div class="turnmeta">',
+    `<span class="lbl">turn ${escapeHtml(String(turn.turnNumber))}</span>`,
+    `<span class="m" style="font-size:10.5px; color:var(--dim)">${escapeHtml(turn.ticketId)}</span>`,
+    turn.runId === null
+      ? '<span class="m" style="font-size:10.5px; color:var(--dim)">no run</span>'
+      : `<a class="m" style="font-size:10.5px" href="/run/${encodeURIComponent(turn.runId)}">${
+        escapeHtml(turn.runState ?? 'run')}</a>`,
+    // More than one run worked this turn, which means the consumer retried.
+    // Counted rather than drawn as extra turns: a turn that took three runs
+    // to abandon is one message the customer sent.
+    turn.runAttempts > 1
+      ? `<span class="m" style="font-size:10.5px; color:var(--warn)">${
+        escapeHtml(String(turn.runAttempts))} attempts</span>`
+      : '',
+    '</div>',
+    '<div class="said">',
+    '<div class="who">the customer wrote</div>',
+    turn.bodyText === null || turn.bodyText === ''
+      ? `<p class="absent">${escapeHtml(absenceSays(MESSAGE_ABSENCE, turn.messageAbsence ?? 'not_retained'))}</p>`
+      : `<div class="prose">${escapeHtml(turn.bodyText)}</div>`,
+    '</div>',
+    '<div class="said">',
+    '<div class="who">the system replied</div>',
+    turn.replyText === null
+      ? `<p class="absent">${escapeHtml(absenceSays(REPLY_ABSENCE, turn.replyAbsence ?? 'not_retained'))}</p>`
+      : `<div class="prose">${escapeHtml(turn.replyText)}</div>`,
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
+/** One document of the index, as it stands now. */
+export interface DocumentPage {
+  readonly docId: string;
+  readonly kind: string;
+  readonly title: string;
+  readonly body: string;
+  readonly owner: string;
+  readonly reviewBy: string;
+  readonly fresh: boolean;
+}
+
+/** Surface 7: a cited document, so a person can check the citation. */
+export function renderDocument(doc: DocumentPage): string {
+  return [
+    head('Evidence base', 'One document of the index, as it stands now.', [
+      chip(doc.kind),
+      chip(doc.owner),
+      // DEC-23. A document past its review date leaves the automatic path,
+      // and a claim resting on one is a claim resting on unreviewed text.
+      doc.fresh
+        ? chip(`in review until ${doc.reviewBy}`, 'ok')
+        : chip(`review date passed ${doc.reviewBy}`, 'warn'),
+    ]),
+    '<div class="wrap">',
+    '<div class="hd"><div>',
+    `<div style="font-size:17px; font-weight:600">${escapeHtml(doc.title)}</div>`,
+    `<div class="hds m">${escapeHtml(doc.docId)}</div>`,
+    '</div></div>',
+    '<div class="card"><header>',
+    '<span class="lbl">What this document says today</span>',
+    // Today's, not the run's. `document` rows are rewritten in place on
+    // reindex, and a run detail says whether the text moved since it read it.
+    chip('rewritten in place on reindex'),
+    '</header><div class="body">',
+    `<div class="prose">${escapeHtml(doc.body)}</div>`,
+    '</div></div>',
+    '</div>',
   ].join('');
 }
 

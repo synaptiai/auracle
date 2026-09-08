@@ -125,7 +125,11 @@ describe('the console against a live database', () => {
       ]) {
         // Case-insensitive: lowercase `select` is the same statement, and a
         // case-sensitive sweep would have passed it.
-        if (new RegExp(`\\b${keyword}\\b`, 'i').test(source)) {
+        // Not after a dot. `createHash(...).update(...)` is a method call and
+        // not a statement, and a scan that could not tell them apart would
+        // force this package to avoid a standard library rather than avoid
+        // writing to a ledger.
+        if (new RegExp(`(?<![.\\w])${keyword}\\b`, 'i').test(source)) {
           offenders.push(`${relative(PACKAGE_ROOT, file)} names ${keyword}`);
         }
       }

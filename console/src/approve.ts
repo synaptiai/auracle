@@ -63,6 +63,14 @@ export interface ApproveDeps {
  */
 export interface ApproveRequest {
   readonly runId: string;
+  /**
+   * DEC-42: the approver a trusted proxy named, when one did.
+   *
+   * Passed through rather than defaulted. `approveRun` bounds what it keeps
+   * and records `unattributed` for anything else, and two places deciding
+   * that would eventually disagree about which one an operator is reading.
+   */
+  readonly approvedBy?: string;
 }
 
 export async function approveFromConsole(
@@ -73,9 +81,10 @@ export async function approveFromConsole(
   if (!RUN_ID.test(runId)) {
     throw new Error(`'${request.runId}' is not a run id`);
   }
-  // No options: this is the CLI's manual path, the one `pnpm run approve`
-  // takes without `--read-back`. The distance stays null, which is the
-  // truthful reading when nobody captured what the person sent.
-  const options: ApproveOptions = {};
+  // No final body and no read-back: this is the CLI's manual path, the one
+  // `pnpm run approve` takes without `--read-back`. The distance stays null,
+  // which is the truthful reading when nobody captured what the person sent.
+  const options: ApproveOptions =
+    request.approvedBy === undefined ? {} : { approvedBy: request.approvedBy };
   return deps.approveRun(deps.pool, runId, options);
 }

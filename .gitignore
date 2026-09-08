@@ -57,3 +57,4 @@ __pycache__/
 
 # Worktrees a subagent creates for parallel work. Harness state, never source.
 /.claude/worktrees/
+.gstack/
