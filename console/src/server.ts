@@ -38,6 +38,7 @@ import type {
   RunView, Shell,
   ThreadView, Theme,
 } from './surfaces.js';
+import { describeFault } from 'auracle/dist/cli/entry.js';
 
 /**
  * Everything the console reads or writes, injected.
@@ -401,7 +402,7 @@ export function createConsole(
       return;
     }
     void route(deps, css, options, theme, req, res).catch((error: unknown) => {
-      const reason = faultText(error);
+      const reason = describeFault(error);
       // A tag rather than the text. An earlier version put the message on the
       // page, arguing that anyone who can read a fault can already approve a
       // reply. That answers whether an operator may see it and not whether a
@@ -423,18 +424,6 @@ export function createConsole(
       );
     });
   });
-}
-
-/**
- * A fault as one line, with what caused it.
- *
- * `src/bands/run.ts` unwraps `cause` for the same reason: a wrapped driver
- * failure otherwise loses the only sentence that says what actually broke.
- */
-function faultText(error: unknown): string {
-  const head = error instanceof Error ? error.message : String(error);
-  const cause = error instanceof Error ? error.cause : undefined;
-  return cause === undefined ? head : `${head}: ${faultText(cause)}`;
 }
 
 /** The shell for a surface, given what this request knows. */

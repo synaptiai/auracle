@@ -21,13 +21,14 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
+import { loadDotEnv } from '../config/env.js';
 import { CORPUS_SOURCE, corpusHistoryItems, loadCorpusFile } from '../corpus/corpus.js';
 import { resolveCorpusOutput, startedAsCommand } from '../corpus/output-path.js';
 import { goldCaseText, loadGoldSet } from '../fixtures/load.js';
-import { OpenRouterProvider } from '../models/openrouter.js';
+import { openRouterFromEnv } from '../models/from-env.js';
 import { INTENT_CAP, induceTaxonomy } from './taxonomy-induction.js';
 import type { HistoryItem } from './taxonomy-induction.js';
+import { runEntry } from '../cli/entry.js';
 
 const PROMPT_VER = 'induce-v1';
 const DEFAULT_CHAT_MODEL = 'openai/gpt-4o-mini';
@@ -35,12 +36,6 @@ const DEFAULT_EMBED_MODEL = 'openai/text-embedding-3-small';
 
 async function main(): Promise<void> {
   loadDotEnv();
-  const apiKey = process.env['OPENROUTER_API_KEY'];
-  if (!apiKey) {
-    console.error('OPENROUTER_API_KEY is not set.');
-    process.exitCode = 1;
-    return;
-  }
   // DEC-02: raw ticket history with no tags. Intent labels are ignored here
   // on purpose; only subject and body feed the job.
   const corpusPath = process.env['CORPUS_PATH'];
@@ -80,13 +75,7 @@ async function main(): Promise<void> {
     console.log('history source: synthetic fixture gold set');
   }
 
-  const provider = new OpenRouterProvider({
-    apiKey,
-    ...(process.env['OPENROUTER_BASE_URL']
-      ? { baseUrl: process.env['OPENROUTER_BASE_URL'] }
-      : {}),
-    ...dataGuaranteeOption(),
-  });
+  const provider = openRouterFromEnv();
 
   const chatModelVer = process.env['CHAT_MODEL_VER'] ?? DEFAULT_CHAT_MODEL;
   const embedModelVer = process.env['EMBED_MODEL_VER'] ?? DEFAULT_EMBED_MODEL;
@@ -118,8 +107,5 @@ async function main(): Promise<void> {
 // import, so nothing could test the guards inside it — which is how a guard
 // cloned here to close a class inherited the original's absence of tests.
 if (startedAsCommand(import.meta.url, process.argv[1])) {
-  main().catch((err: unknown) => {
-    console.error(err instanceof Error ? err.message : err);
-    process.exitCode = 1;
-  });
+  void runEntry(main);
 }

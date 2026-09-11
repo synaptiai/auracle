@@ -13,6 +13,9 @@ import { fileURLToPath } from 'node:url';
 import { loadDotEnv } from '../config/env.js';
 import { Pool } from 'pg';
 import type { PoolClient } from 'pg';
+import { runEntry } from '../cli/entry.js';
+import { errorMessage } from '../errors.js';
+import { startedAsCommand } from '../corpus/output-path.js';
 const defaultDbDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../db',
@@ -108,7 +111,7 @@ export async function migrate(
     } catch (err) {
       await client.query('ROLLBACK');
       throw new Error(
-        `${file.filename} failed and rolled back: ${err instanceof Error ? err.message : String(err)}`,
+        `${file.filename} failed and rolled back: ${errorMessage(err)}`,
       );
     }
     await client.query('COMMIT');
@@ -148,9 +151,12 @@ async function main(): Promise<void> {
 }
 
 // CLI entry only when run directly; tests import migrate() instead.
-if (process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url)) {
-  main().catch((err: unknown) => {
-    console.error(err instanceof Error ? err.message : err);
-    process.exitCode = 1;
-  });
+//
+// The shared helper, not a copy of its comparison. The raw equality this
+// replaced was the pre-fix rule: Node resolves `import.meta.url` through
+// symlinks while `process.argv[1]` is the path as typed, so run through a
+// symlinked directory the two disagreed and `pnpm run db:migrate` applied
+// nothing and exited 0 — a migration reporting success while never running.
+if (startedAsCommand(import.meta.url, process.argv[1])) {
+  void runEntry(main);
 }

@@ -20,6 +20,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { ConversationLinkage } from '../adapters/types.js';
 import { ARRIVAL_CHANNEL } from './arrival-signal.js';
 import { partitionOf } from './coordinator.js';
+import { errorMessage } from '../errors.js';
 
 export interface IntakeTicket {
   ticketId: string;
@@ -333,7 +334,7 @@ export async function enqueueTicket(
           JSON.stringify({
             event: 'rollback_failed',
             at: new Date().toISOString(),
-            error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            error: errorMessage(rollbackError),
           }),
         );
       });

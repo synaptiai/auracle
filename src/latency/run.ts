@@ -15,7 +15,7 @@
 
 import { Pool } from 'pg';
 
-import { requireDbUrl } from '../db/config.js';
+import { closeLedger, requireDbUrl } from '../db/config.js';
 import { loadDotEnv } from '../config/env.js';
 import { startedAsCommand } from '../corpus/output-path.js';
 import {
@@ -28,6 +28,7 @@ import {
 import type { LatencyArtifact } from './artifact.js';
 import { readLatency } from './query.js';
 import type { LatencyWindow } from './query.js';
+import { runEntry } from '../cli/entry.js';
 
 export interface LatencyJobOptions {
   pool: Pool;
@@ -201,17 +202,7 @@ async function main(): Promise<void> {
       );
     }
   } finally {
-    // A teardown that rejects must not replace the fault that caused it. The
-    // connection is likeliest to be broken exactly when the query already
-    // failed, and the operator needs the query's error, not the pool's. It is
-    // still reported, because a swallowed rejection on the path where nothing
-    // else went wrong is a fault nobody ever hears about.
-    await pool.end().catch((error: unknown) => {
-      console.error(
-        `latency: the connection pool did not close cleanly: `
-          + `${error instanceof Error ? error.message : String(error)}`,
-      );
-    });
+    await closeLedger(pool, 'latency');
   }
 }
 
@@ -219,14 +210,5 @@ async function main(): Promise<void> {
 // extracted so the rule could be tested once; cloning it here put the rule
 // back in two places, which is the thing the extraction removed.
 if (startedAsCommand(import.meta.url, process.argv[1])) {
-  main().catch((error: unknown) => {
-    // The whole error only when it carries a cause. `src/artifacts/versioned.ts`
-    // attaches one to every filesystem fault it wraps, and printing the message
-    // alone dropped the errno an operator needs to tell a missing directory
-    // from a revoked permission. Without a cause the message is the whole
-    // answer, and a configuration refusal reads better than six stack frames.
-    const hasCause = error instanceof Error && error.cause !== undefined;
-    console.error(hasCause || !(error instanceof Error) ? error : error.message);
-    process.exitCode = 1;
-  });
+  void runEntry(main);
 }

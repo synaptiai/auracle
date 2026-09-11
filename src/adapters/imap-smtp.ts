@@ -45,6 +45,7 @@ import type {
   NormalizedEvent,
 } from './types.js';
 import { AdapterCapabilityError } from './types.js';
+import { errorMessage } from '../errors.js';
 
 export const IMAP_SMTP_CAPABILITIES: Readonly<AdapterCapabilities> = Object.freeze({
   supportsIdempotencyKey: false,
@@ -406,7 +407,7 @@ async function ensureMailbox(client: ImapFlow, path: string): Promise<void> {
     // ALREADYEXISTS is the ordinary case and is not a fault. Anything else
     // (a bad mailbox name, a revoked create permission) would otherwise
     // surface later as a misleading append error.
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     if (!/alreadyexists|already exists/i.test(message)) {
       console.error(JSON.stringify({ event: 'mailbox_create_failed', path, error: message }));
     }

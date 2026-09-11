@@ -26,6 +26,7 @@ import type { DraftReadBack } from '../adapters/types.js';
 import { loadDotEnv } from '../config/env.js';
 import { requireDbUrl } from '../db/config.js';
 import { approveRun } from './approve.js';
+import { runEntry } from '../cli/entry.js';
 
 const READ_BACK_ADAPTERS: Readonly<Record<string, () => DraftReadBack>> = {
   helpdesk: () => new HelpdeskAdapter(),
@@ -88,7 +89,4 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exitCode = 1;
-});
+void runEntry(main);

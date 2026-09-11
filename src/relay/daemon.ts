@@ -20,6 +20,7 @@ import type { Pool } from 'pg';
 import type { EgressAdapter } from '../adapters/types.js';
 import type { RelayResult } from './relay.js';
 import { pendingRows, relayOne } from './relay.js';
+import { errorMessage } from '../errors.js';
 
 /** One structured log line, emitted as a single JSON object. */
 export type RelayLogEntry =
@@ -54,10 +55,6 @@ export interface RelayDaemon {
    * when no further relay work will start; the caller closes the pool.
    */
   stop(): Promise<void>;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export function startRelayDaemon(options: RelayDaemonOptions): RelayDaemon {

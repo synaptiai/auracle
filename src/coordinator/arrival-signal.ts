@@ -34,6 +34,8 @@
 // one schedules another attempt.
 import { Client } from 'pg';
 
+import { errorMessage } from '../errors.js';
+
 /**
  * The channel name, written once so the emitter and the listener cannot
  * drift apart. `src/coordinator/intake.ts` emits on it; this module listens.
@@ -81,18 +83,6 @@ export interface ArrivalSignal {
   start(wake: (partition: number) => void): Promise<void>;
   /** Stops listening and releases the connection. */
   stop(): Promise<void>;
-}
-
-export function reason(error: unknown): string {
-  // A refused connection arrives as an AggregateError, and it hides the cause
-  // twice over: its own `message` is empty and `String()` gives the bare
-  // class name. Reading `.errors` is the only way to reach `ECONNREFUSED`,
-  // which is the single most likely failure here.
-  if (error instanceof AggregateError && error.errors.length > 0) {
-    return error.errors.map((inner: unknown) => reason(inner)).join('; ');
-  }
-  if (error instanceof Error && error.message.length > 0) return error.message;
-  return String(error);
 }
 
 /**
@@ -155,7 +145,7 @@ export function pgArrivalSignal(connectionString: string): ArrivalSignal {
         JSON.stringify({
           event: 'arrival_signal_lost',
           at: new Date().toISOString(),
-          error: reason(error),
+          error: errorMessage(error),
         }),
       );
       void reconnect(wake);
@@ -186,7 +176,7 @@ export function pgArrivalSignal(connectionString: string): ArrivalSignal {
           JSON.stringify({
             event: 'arrival_wake_failed',
             at: new Date().toISOString(),
-            error: reason(error),
+            error: errorMessage(error),
           }),
         );
       }
@@ -256,7 +246,7 @@ export function pgArrivalSignal(connectionString: string): ArrivalSignal {
             JSON.stringify({
               event: 'arrival_signal_lost',
               at: new Date().toISOString(),
-              error: reason(error),
+              error: errorMessage(error),
             }),
           );
         }
@@ -287,7 +277,7 @@ export function pgArrivalSignal(connectionString: string): ArrivalSignal {
           JSON.stringify({
             event: 'arrival_signal_lost',
             at: new Date().toISOString(),
-            error: reason(error),
+            error: errorMessage(error),
           }),
         );
         reconnect(wake);

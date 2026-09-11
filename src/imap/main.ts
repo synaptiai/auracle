@@ -18,41 +18,24 @@
  */
 import { Pool } from 'pg';
 
-import { loadDotEnv } from '../config/env.js';
+import { loadDotEnv, positiveIntEnv, requiredEnv } from '../config/env.js';
 import { requireDbUrl } from '../db/config.js';
 import { intakeEnqueuer } from '../intake/adapter.js';
 import { startImapDaemon } from './daemon.js';
 import { ImapMailboxFetcher, imapFlowFactory } from './fetcher.js';
-
-function requiredEnv(name: string): string {
-  const value = process.env[name];
-  if (value === undefined || value === '') {
-    throw new Error(`${name} is required`);
-  }
-  return value;
-}
-
-function positiveIntFromEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') return fallback;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer, got '${raw}'`);
-  }
-  return value;
-}
+import { runEntry } from '../cli/entry.js';
 
 async function main(): Promise<void> {
   loadDotEnv();
   const config = {
     host: requiredEnv('IMAP_HOST'),
-    port: positiveIntFromEnv('IMAP_PORT', 993),
+    port: positiveIntEnv('IMAP_PORT', 993),
     user: requiredEnv('IMAP_USER'),
     pass: requiredEnv('IMAP_PASS'),
     secure: process.env['IMAP_SECURE'] !== 'false',
   };
-  const intervalMs = positiveIntFromEnv('IMAP_INTERVAL_MS', 60_000);
-  const partitionCount = positiveIntFromEnv('PARTITION_COUNT', 8);
+  const intervalMs = positiveIntEnv('IMAP_INTERVAL_MS', 60_000);
+  const partitionCount = positiveIntEnv('PARTITION_COUNT', 8);
 
   const pool = new Pool({ connectionString: requireDbUrl('the IMAP ingress'), max: 1 });
   const fetcher = new ImapMailboxFetcher(config, imapFlowFactory(config));
@@ -79,7 +62,4 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exitCode = 1;
-});
+void runEntry(main);

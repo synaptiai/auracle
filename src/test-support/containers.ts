@@ -43,6 +43,7 @@ import type { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool } from 'pg';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import { errorMessage } from '../errors.js';
 
 /** GreenMail's host, and the mapped SMTP and IMAP ports. */
 export interface MailAddress {
@@ -103,7 +104,7 @@ async function assertReachable(url: string): Promise<void> {
   try {
     await pool.query('SELECT 1');
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = errorMessage(error);
     throw new Error(
       `DATABASE_URL is set but unreachable, so every database suite would skip `
         + `and the run would still exit 0. Unset DATABASE_URL to use a throwaway `
@@ -151,7 +152,7 @@ async function awaitMailReady(
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  const reason = lastError instanceof Error ? lastError.message : String(lastError);
+  const reason = errorMessage(lastError);
   throw new Error(
     `GreenMail started but never answered IMAP on ${host}:${imapPort}. `
       + `The mail suites would fail on a server that is not ready. Cause: ${reason}`,
@@ -203,7 +204,7 @@ async function assertMailReachable(address: MailAddress): Promise<void> {
     // disproved the assumption, so the budget does not rest on it.
     await awaitMailReady(address.host, address.imapPort, 120_000);
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = errorMessage(error);
     throw new Error(
       `MAIL_HOST is set but the server never answered IMAP, so the mail suites `
         + `would fail on a server that is not ready. Unset MAIL_HOST to use a `
@@ -312,7 +313,7 @@ export async function stopContainers(): Promise<void> {
   }
   if (faults.length > 0) {
     const reasons = faults
-      .map((fault) => (fault instanceof Error ? fault.message : String(fault)))
+      .map((fault) => (errorMessage(fault)))
       .join('; ');
     throw new Error(`a test container did not stop cleanly: ${reasons}`);
   }

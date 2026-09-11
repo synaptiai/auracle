@@ -15,6 +15,7 @@ import type { CoverageSample } from './fit.js';
 import { createHash } from 'node:crypto';
 
 import type { ResumeCost, ResumeStore } from './resume.js';
+import { errorMessage } from '../errors.js';
 
 /**
  * Attempts a draft gets when the transport, not the answer, fails.
@@ -322,5 +323,5 @@ export function describeSpend(costMicros?: number, costUnknown?: boolean): strin
 
 /** The message of a thrown value, whatever it is. */
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return errorMessage(error);
 }

@@ -34,6 +34,14 @@ exists. A variable set in the shell always wins over the same variable in
 `.env`. `OPENROUTER_API_KEY` normally lives in `.env`. Never commit that
 file.
 
+Set `OPENROUTER_BASE_URL` to send model calls somewhere else. Every job that
+calls a model reads it, so a gateway or a proxy applies to all of them.
+
+A variable set to an empty string is a fault, not an absence. `PARTITION_COUNT=`
+refuses the start rather than taking the default. Unset the variable to get
+the default. DEC-27 gives each partition one owner, so two daemons reading the
+same variable differently would break that ownership.
+
 Three commands read no `.env` file: `pnpm run escalations`, `pnpm run triage`
 and `pnpm run export-corpus`.
 

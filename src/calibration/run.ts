@@ -21,7 +21,7 @@
 
 import { classifyTicket } from '../classifier/classifier.js';
 import type { ClassifierTaxonomy } from '../classifier/classifier.js';
-import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
+import { loadDotEnv } from '../config/env.js';
 import {
   FIT_COUNT,
   GOLD_SOURCES,
@@ -38,7 +38,7 @@ import {
 import type { GoldFile, GoldTicket, HalfIdentity } from '../fixtures/load.js';
 import { selectHalf } from '../fixtures/half-from-env.js';
 import type { ModelProvider } from '../models/provider.js';
-import { OpenRouterProvider } from '../models/openrouter.js';
+import { openRouterFromEnv } from '../models/from-env.js';
 import { assertCalibrationDirUsable, nextVersion, validateCalibrationArtifact, writeCalibrationArtifact, defaultCalibrationDir } from './artifact.js';
 import type { CalibrationArtifact, CalibrationScope } from './artifact.js';
 import { fitAgreementThreshold } from './calibrate.js';
@@ -46,6 +46,7 @@ import { fitPerIntent } from './per-intent.js';
 import type { IntentSample } from './per-intent.js';
 import { STUB_LABELLER_PIN, scoreLabeller } from '../labeller/labeller.js';
 import { startedAsCommand } from '../corpus/output-path.js';
+import { runEntry } from '../cli/entry.js';
 
 export interface CalibrationRunOptions {
   provider: ModelProvider;
@@ -372,12 +373,6 @@ function normalize(text: string): string {
 // cross-checks. Keep both files under corpus/, which is gitignored (DEC-18).
 async function main(): Promise<void> {
   loadDotEnv();
-  const apiKey = process.env['OPENROUTER_API_KEY'];
-  if (!apiKey) {
-    console.error('OPENROUTER_API_KEY is not set.');
-    process.exitCode = 1;
-    return;
-  }
   const modelVer = process.env['CALIBRATION_MODEL_VER'];
   if (!modelVer) {
     console.error('CALIBRATION_MODEL_VER is not set.');
@@ -401,7 +396,7 @@ async function main(): Promise<void> {
   }
 
   const { artifact } = await runCalibrationJob({
-    provider: new OpenRouterProvider({ apiKey, ...dataGuaranteeOption() }),
+    provider: openRouterFromEnv(),
     modelVer,
     ...(selected.half === undefined ? {} : { fitHalf: selected.half }),
     ...(selected.counterpart === undefined ? {} : { reportIdentity: selected.counterpart }),
@@ -420,8 +415,5 @@ const invokedDirectly =
   startedAsCommand(import.meta.url, process.argv[1]);
 
 if (invokedDirectly) {
-  main().catch((err: unknown) => {
-    console.error(err instanceof Error ? err.message : err);
-    process.exitCode = 1;
-  });
+  void runEntry(main);
 }

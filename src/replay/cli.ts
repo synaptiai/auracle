@@ -13,6 +13,7 @@ import { loadGoldSet, loadTaxonomy } from '../fixtures/load.js';
 import { loadDotEnv } from '../config/env.js';
 import { ReplayStubProvider } from './fake-model.js';
 import { runReplay } from './replay.js';
+import { runEntry } from '../cli/entry.js';
 
 const PINS = { promptVer: 'classify-p1', modelVer: 'replay-stub' };
 
@@ -34,7 +35,4 @@ async function main(): Promise<void> {
   console.log(JSON.stringify(report, null, 2));
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exitCode = 1;
-});
+void runEntry(main);

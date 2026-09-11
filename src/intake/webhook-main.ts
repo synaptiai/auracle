@@ -21,22 +21,14 @@ import { Pool } from 'pg';
 
 import { requireDbUrl } from '../db/config.js';
 import { createWebhookServer } from '../ingress/webhook-server.js';
-import { loadDotEnv } from '../config/env.js';
+import { loadDotEnv, positiveIntEnv } from '../config/env.js';
 import { intakeEnqueuer } from './adapter.js';
-
-function intFromEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  const value = raw === undefined || raw === '' ? fallback : Number(raw);
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer, got '${raw ?? ''}'`);
-  }
-  return value;
-}
+import { runEntry } from '../cli/entry.js';
 
 async function main(): Promise<void> {
   loadDotEnv();
-  const port = intFromEnv('WEBHOOK_PORT', 8080);
-  const partitionCount = intFromEnv('PARTITION_COUNT', 8);
+  const port = positiveIntEnv('WEBHOOK_PORT', 8080);
+  const partitionCount = positiveIntEnv('PARTITION_COUNT', 8);
 
   const pool = new Pool({ connectionString: requireDbUrl('the webhook ingress'), max: 1 });
   const server = createWebhookServer({
@@ -76,7 +68,4 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exitCode = 1;
-});
+void runEntry(main);

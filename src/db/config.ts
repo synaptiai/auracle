@@ -1,5 +1,7 @@
 import { Pool } from 'pg';
 
+import { errorMessage } from '../errors.js';
+
 // Mirrors the credentials in docker-compose.yml. Compose cannot export
 // environment variables to the host shell, so this fallback is the default.
 //
@@ -58,7 +60,7 @@ export async function probeLedger(pool: Pool, processName: string): Promise<void
   } catch (error) {
     throw new Error(
       `${processName} cannot reach the ledger named by DATABASE_URL: `
-        + (error instanceof Error ? error.message : String(error)),
+        + (errorMessage(error)),
     );
   }
 }
@@ -74,10 +76,33 @@ export async function tryConnect(): Promise<Pool | null> {
     console.error(
       JSON.stringify({
         event: 'db_connect_failed',
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       }),
     );
     await pool.end();
     return null;
   }
+}
+
+/**
+ * Closes a job's pool, reporting a teardown that fails without replacing the
+ * fault that caused it.
+ *
+ * Three jobs carried a copy of this block and only one of them set the exit
+ * code. Logging a failed close and exiting 0 told a supervisor the run had
+ * succeeded, and the two handlers in the same file then disagreed about the
+ * same class of fault. This is the copy that was right.
+ *
+ * The rejection is swallowed deliberately. It runs in a `finally`, where a
+ * throw would replace whatever sent us there — and the connection is
+ * likeliest to be broken exactly when the query already failed, so the
+ * operator needs the query's error and not the pool's. It is still reported,
+ * because a swallowed rejection on the path where nothing else went wrong is
+ * a fault nobody ever hears about.
+ */
+export async function closeLedger(pool: Pool, jobName: string): Promise<void> {
+  await pool.end().catch((error: unknown) => {
+    console.error(`${jobName}: the connection pool did not close cleanly: ${errorMessage(error)}`);
+    process.exitCode = 1;
+  });
 }

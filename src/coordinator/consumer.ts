@@ -46,7 +46,7 @@ import type {
   CoordinateInput,
   CoordinatorDeps,
 } from './coordinator.js';
-import { reason } from './arrival-signal.js';
+import { errorMessage } from '../errors.js';
 import type { ArrivalSignal } from './arrival-signal.js';
 import { ackTicket, pollPartition } from './intake.js';
 
@@ -297,13 +297,6 @@ async function abandonMessage(
   } finally {
     client.release();
   }
-}
-
-function errorMessage(error: unknown): string {
-  // Shared with the arrival signal, so one reading of an AggregateError
-  // serves both. Naming an event while withholding its cause is worse than
-  // either alone, and a refused connection hides its cause twice over.
-  return reason(error);
 }
 
 /**

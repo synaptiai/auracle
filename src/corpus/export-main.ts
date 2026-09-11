@@ -32,6 +32,8 @@ import { ImapPoller } from '../ingress/imap-poller.js';
 import type { NormalizedEvent } from '../adapters/types.js';
 import { buildCorpusTickets, idDigest, validateCorpusFile } from './corpus.js';
 import { resolveCorpusOutput, startedAsCommand } from './output-path.js';
+import { runEntry } from '../cli/entry.js';
+import { errorMessage } from '../errors.js';
 
 const execAsync = promisify(exec);
 const MAX_FETCH_BUFFER_BYTES = 512 * 1024 * 1024;
@@ -55,7 +57,7 @@ export function failureLines(
   failures: readonly { sourceId: string; error: unknown }[],
 ): string[] {
   return failures.map((failure, index) => {
-    const reason = failure.error instanceof Error ? failure.error.message : String(failure.error);
+    const reason = errorMessage(failure.error);
     return `  failure ${index + 1} (id digest ${idDigest(failure.sourceId)}): ${reason}`;
   });
 }
@@ -124,7 +126,7 @@ async function main(): Promise<void> {
     // result, and ImapPoller routes to onError only from its interval loop.
     // Kept honest rather than empty, in case this ever calls loop().
     onError: (err) => {
-      console.error(`poll error: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`poll error: ${errorMessage(err)}`);
     },
   });
   const result = await poller.pollOnce();
@@ -262,8 +264,5 @@ export async function fetchMessages(command: string): Promise<FetchedMessage[]> 
 // import, so nothing could test the guards inside it — which is how a guard
 // cloned here to close a class inherited the original's absence of tests.
 if (startedAsCommand(import.meta.url, process.argv[1])) {
-  main().catch((err: unknown) => {
-    console.error(err instanceof Error ? err.message : err);
-    process.exitCode = 1;
-  });
+  void runEntry(main);
 }

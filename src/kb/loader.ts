@@ -22,6 +22,7 @@ import type { Pool } from 'pg';
 import type { ModelProvider } from '../models/provider.js';
 import { indexDocument } from '../retriever/retriever.js';
 import type { DocKind, IndexedDoc } from '../retriever/types.js';
+import { errorMessage } from '../errors.js';
 
 export const DEFAULT_EMBED_MODEL = 'openai/text-embedding-3-small';
 
@@ -247,7 +248,7 @@ export async function documentEmbeddingColumnDim(pool: Pool): Promise<number> {
   } catch (err) {
     throw new Error(
       `cannot read document.embedding dimension (run pnpm run db:migrate first): ` +
-        `${err instanceof Error ? err.message : String(err)}`,
+        `${errorMessage(err)}`,
     );
   }
   const row = rows[0];
@@ -322,7 +323,7 @@ export async function loadKbDirectory(
       });
     } catch (err) {
       report.failed += 1;
-      report.failures.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+      report.failures.push(`${name}: ${errorMessage(err)}`);
     }
   }
 

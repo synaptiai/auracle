@@ -14,11 +14,13 @@
  */
 import { Pool } from 'pg';
 
-import { requireDbUrl } from '../db/config.js';
+import { closeLedger, requireDbUrl } from '../db/config.js';
 import { startedAsCommand } from '../corpus/output-path.js';
 import { MIXED_PROVIDER } from '../bands/evaluate.js';
 import { planHistory } from './plan.js';
 import { writeHistory } from './write.js';
+import { runEntry } from '../cli/entry.js';
+import { errorMessage } from '../errors.js';
 
 /** 'Arca', the same constant `scripts/generate-fixtures.mjs` uses. */
 export const DEFAULT_SEED = 0x41726361;
@@ -94,7 +96,7 @@ async function main(): Promise<void> {
   try {
     args = parseArgs(process.argv.slice(2), lastCompleteDay(new Date()));
   } catch (error) {
-    console.error(`seed-history: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`seed-history: ${errorMessage(error)}`);
     process.exitCode = 1;
     return;
   }
@@ -122,15 +124,10 @@ async function main(): Promise<void> {
       process.exitCode = 1;
     }
   } finally {
-    await pool.end().catch((error: unknown) => {
-      console.error(
-        `seed-history: the connection pool did not close cleanly: `
-          + `${error instanceof Error ? error.message : String(error)}`,
-      );
-    });
+    await closeLedger(pool, 'seed-history');
   }
 }
 
 if (startedAsCommand(import.meta.url, process.argv[1])) {
-  void main();
+  void runEntry(main);
 }

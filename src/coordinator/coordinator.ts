@@ -39,6 +39,7 @@ import type { AdapterCapabilities, GateThresholds, RiskTier } from '../policy/po
 import { COMPENSATION_ACTION_CLASS } from '../adapters/types.js';
 import { hybridSearch } from '../retriever/retriever.js';
 import type { RetrievedDoc } from '../retriever/types.js';
+import { errorMessage } from '../errors.js';
 
 /** Active states of the coordinator, in walk order (section 4.3). */
 export const RUN_STATES = [
@@ -889,7 +890,7 @@ export async function coordinateTicket(
         actionClass: input.actionClass,
         delivery: input.delivery,
         parkKey,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       });
       // A permanent refusal must not go round the retry loop. The queue's
       // attempt ceiling is sized for a transient fault, so a refused recipient

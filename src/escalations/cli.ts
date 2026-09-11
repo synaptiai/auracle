@@ -19,6 +19,7 @@ import { Pool } from 'pg';
 
 import { requireDbUrl } from '../db/config.js';
 import { listEscalations, parseSince, type EscalationItem } from './query.js';
+import { runEntry } from '../cli/entry.js';
 
 function optionValue(argv: readonly string[], name: string): string | undefined {
   const i = argv.indexOf(name);
@@ -118,7 +119,4 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exitCode = 1;
-});
+void runEntry(main);

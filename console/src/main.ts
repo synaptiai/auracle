@@ -43,6 +43,8 @@ import { createConsole, RUNS_PAGE } from './server.js';
 import type {
   BandRow, LatencyRow, Percentile, RequestView, RunDetail, RunRow, RunView,
 } from './surfaces.js';
+import { runEntry } from 'auracle/dist/cli/entry.js';
+import { errorMessage } from 'auracle/dist/errors.js';
 
 /**
  * The conversation to link at the foot of a run detail, or null.
@@ -205,7 +207,7 @@ async function main(): Promise<void> {
     } catch (error) {
       console.error(JSON.stringify({
         event: 'console_pool_end_failed',
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       }));
     }
   };
@@ -531,20 +533,7 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch((error: unknown) => {
-  // With the cause, the way `src/bands/run.ts` does it. A wrapped pg failure
-  // otherwise loses the sentence that says what actually broke, on the one
-  // path where the operator has nothing else to read.
-  const said = (fault: unknown): string => {
-    const head = fault instanceof Error ? fault.message : String(fault);
-    const cause = fault instanceof Error ? fault.cause : undefined;
-    return cause === undefined ? head : `${head}: ${said(cause)}`;
-  };
-  console.error(said(error));
-  process.exitCode = 1;
-  // A pool with an idle client keeps the event loop alive, so a throw
-  // between the probe and `listen` would hang at exit code 1 rather than
-  // ending. The guarded span used to stop at the probe while its own comment
-  // claimed it reached `listen`; closing here covers the whole of it.
-  void closePool?.();
-});
+// The pool goes with the fault. A pool holding an idle client keeps the event
+// loop alive, so a throw between the ledger probe and `listen` would hang at
+// exit code 1 rather than ending.
+void runEntry(main, { onFault: () => closePool?.() });

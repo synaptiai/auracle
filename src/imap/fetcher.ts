@@ -20,6 +20,7 @@
 import { ImapFlow } from 'imapflow';
 
 import type { ImapInboundMessage } from '../ingress/imap-poller.js';
+import { errorMessage } from '../errors.js';
 
 /**
  * The subset of the imapflow client this module uses. Kept structural so
@@ -58,10 +59,6 @@ export interface ImapMailboxConfig {
 
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function decodeSource(source: string | Uint8Array): string {
   return typeof source === 'string' ? source : Buffer.from(source).toString('utf8');

@@ -23,6 +23,7 @@ import { createServer } from 'node:http';
 import type { IngressEvent } from '../adapters/types.js';
 import { WebhookAdapter } from '../adapters/webhook.js';
 import type { IntakeHandler } from './types.js';
+import { errorMessage } from '../errors.js';
 
 /** Largest request body the driver reads before answering 413. */
 export const MAX_BODY_BYTES = 1_048_576;
@@ -102,7 +103,7 @@ export function createWebhookServer(deps: WebhookServerDeps): Server {
       log({
         event: 'delivery_failed',
         at: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       });
       // The 4xx paths below already ended the response. Writing again throws
       // ERR_STREAM_WRITE_AFTER_END and turns a handled 500 into an unhandled
@@ -168,7 +169,7 @@ async function handleDelivery(
       event: 'normalize_failed',
       at: new Date().toISOString(),
       sourceId: event.sourceId,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error),
     });
     respondJson(res, 500, { error: 'internal error' });
     return;

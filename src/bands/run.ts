@@ -18,7 +18,7 @@
 
 import { Pool } from 'pg';
 
-import { requireDbUrl } from '../db/config.js';
+import { closeLedger, requireDbUrl } from '../db/config.js';
 import { loadDotEnv } from '../config/env.js';
 import { startedAsCommand } from '../corpus/output-path.js';
 import {
@@ -33,6 +33,7 @@ import { evaluateMetric } from './evaluate.js';
 import type { DailySample } from './evaluate.js';
 import { LOOKBACK_DAYS, METRICS, WINDOW_DAYS } from './metrics.js';
 import { readDays } from './query.js';
+import { runEntry } from '../cli/entry.js';
 
 export interface BandsJobOptions {
   pool: Pool;
@@ -299,25 +300,11 @@ async function main(): Promise<void> {
       );
     }
   } finally {
-    // A teardown that rejects must not replace the fault that caused it.
-    await pool.end().catch((error: unknown) => {
-      console.error(
-        `bands: the connection pool did not close cleanly: `
-          + `${error instanceof Error ? error.message : String(error)}`,
-      );
-      // Reported as a failure, like the idle-client handler above. Logging it
-      // and exiting 0 told a supervisor the run succeeded, and the two
-      // handlers disagreed about the same class of fault.
-      process.exitCode = 1;
-    });
+    await closeLedger(pool, 'bands');
   }
 }
 
 // The shared helper, not a copy of its comparison.
 if (startedAsCommand(import.meta.url, process.argv[1])) {
-  main().catch((error: unknown) => {
-    const hasCause = error instanceof Error && error.cause !== undefined;
-    console.error(hasCause || !(error instanceof Error) ? error : error.message);
-    process.exitCode = 1;
-  });
+  void runEntry(main);
 }

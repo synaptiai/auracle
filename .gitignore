@@ -62,3 +62,9 @@ __pycache__/
 # Worktrees a subagent creates for parallel work. Harness state, never source.
 /.claude/worktrees/
 .gstack/
+
+# A vendored design handoff, 604K of JavaScript nobody in this repository
+# wrote. PR #82 removed it from the branch and left it on disk, which left
+# every `git status` reporting it and every workflow preflight blocked on it.
+# docs/internal/ itself is tracked, so the rule names the one directory.
+docs/internal/design_handoff_reviewer_console/

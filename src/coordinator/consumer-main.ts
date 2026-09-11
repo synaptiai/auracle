@@ -62,12 +62,18 @@ import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.
 import type { EgressAdapter } from '../adapters/types.js';
 import { pinFaults, resolveThresholds } from '../calibration/resolve.js';
 import { actionProfileFromEnv } from '../config/action-profile.js';
-import { loadDotEnv, dataGuaranteeOption, DEFAULT_CHAT_MODEL_VER } from '../config/env.js';
-import { requireDbUrl } from '../db/config.js';
-import { OpenRouterProvider } from '../models/openrouter.js';
+import {
+  loadDotEnv,
+  positiveIntEnv,
+  DEFAULT_CHAT_MODEL_VER,
+} from '../config/env.js';
+import { closeLedger, requireDbUrl } from '../db/config.js';
+import { openRouterFromEnv } from '../models/from-env.js';
 import { pgArrivalSignal } from './arrival-signal.js';
 import { claimPartition, startConsumer } from './consumer.js';
 import type { CoordinatorDeps } from './coordinator.js';
+import { runEntry } from '../cli/entry.js';
+import { errorMessage } from '../errors.js';
 
 const EGRESS_ADAPTERS: Readonly<Record<string, () => EgressAdapter>> = {
   helpdesk: () => new HelpdeskAdapter(),
@@ -87,7 +93,8 @@ function selectEgressAdapter(name: string): EgressAdapter {
   return create();
 }
 
-function parsePartitions(raw: string | undefined): number[] {
+/** Exported for its cases, like `requirePromptVer` below. */
+export function parsePartitions(raw: string | undefined): number[] {
   const parts = (raw ?? '')
     .split(',')
     .map((value) => value.trim())
@@ -95,22 +102,51 @@ function parsePartitions(raw: string | undefined): number[] {
   if (parts.length === 0) {
     throw new Error('CONSUMER_PARTITIONS is required, e.g. CONSUMER_PARTITIONS=0,1');
   }
-  const parsed = parts.map((value) => Number(value));
+  // Digits matched before they are parsed, for the reason `positiveIntEnv`
+  // does it: `Number` is far wider than the set of things anyone means to
+  // write here. `Number('0x10')` is 16, `Number('1e1')` is 10 and
+  // `Number('8.0')` is 8, so `CONSUMER_PARTITIONS=0x10` claimed partition
+  // sixteen without a word. DEC-27 gives each partition one owner, and two
+  // hosts spelling the same number differently is how one gets two.
+  for (const value of parts) {
+    if (!/^\d+$/.test(value)) {
+      throw new Error(
+        `CONSUMER_PARTITIONS entries must be non-negative integers, got '${value}'`,
+      );
+    }
+  }
+  const parsed = parts.map((value) => Number.parseInt(value, 10));
   for (const value of parsed) {
-    if (!Number.isInteger(value) || value < 0) {
-      throw new Error(`CONSUMER_PARTITIONS entries must be non-negative integers, got '${raw}'`);
+    if (!Number.isSafeInteger(value)) {
+      throw new Error(
+        `CONSUMER_PARTITIONS entries must be non-negative integers, got '${value}'`,
+      );
     }
   }
   return parsed;
 }
 
-function intFromEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  const value = raw === undefined ? fallback : Number(raw);
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer, got '${raw ?? ''}'`);
-  }
-  return value;
+/**
+ * Refuses a partition this deployment can never receive work on.
+ *
+ * The queue partitions on `hash(conversation_id) % PARTITION_COUNT`
+ * (DEC-36), so a partition at or above the count takes no ticket ever. A
+ * consumer claiming one starts cleanly, reports health and processes
+ * nothing — the silent kind of wrong this issue exists to remove. It is
+ * checked here rather than in `parsePartitions`, because only the caller
+ * holds both values.
+ */
+export function refuseUnreachablePartitions(
+  partitions: number[],
+  partitionCount: number,
+): void {
+  const unreachable = partitions.filter((partition) => partition >= partitionCount);
+  if (unreachable.length === 0) return;
+  throw new Error(
+    `CONSUMER_PARTITIONS names ${unreachable.join(', ')}, which PARTITION_COUNT=`
+      + `${partitionCount} never routes to. Valid partitions are 0 to ${partitionCount - 1} `
+      + `(DEC-36 partitions on hash(conversation_id) % PARTITION_COUNT).`,
+  );
 }
 
 /**
@@ -138,11 +174,19 @@ export function requirePromptVer(): string {
 
 async function main(): Promise<void> {
   loadDotEnv();
-  const apiKey = process.env['OPENROUTER_API_KEY'];
-  if (!apiKey) throw new Error('OPENROUTER_API_KEY is not set.');
+  // First, as it was before this issue moved the preflight into
+  // `openRouterFromEnv`. Building the provider is what refuses a missing
+  // OPENROUTER_API_KEY, and it belongs ahead of everything: nothing here
+  // acquires a handle, but when two things are misconfigured the operator
+  // should read the same first error they always did.
+  const provider = openRouterFromEnv();
   const partitions = parsePartitions(process.env['CONSUMER_PARTITIONS']);
-  const intervalMs = intFromEnv('CONSUMER_INTERVAL_MS', 5000);
-  const ticketDeadlineMs = intFromEnv('TICKET_DEADLINE_MS', 60_000);
+  // One read, used by both the ownership check and the hash below. Read
+  // twice, the two could disagree.
+  const partitionCount = positiveIntEnv('PARTITION_COUNT', 8);
+  refuseUnreachablePartitions(partitions, partitionCount);
+  const intervalMs = positiveIntEnv('CONSUMER_INTERVAL_MS', 5000);
+  const ticketDeadlineMs = positiveIntEnv('TICKET_DEADLINE_MS', 60_000);
   const profile = actionProfileFromEnv();
   const egress = selectEgressAdapter(process.env['EGRESS_ADAPTER'] ?? 'helpdesk');
 
@@ -177,7 +221,7 @@ async function main(): Promise<void> {
 
   const deps: CoordinatorDeps = {
     pool,
-    provider: new OpenRouterProvider({ apiKey, ...dataGuaranteeOption() }),
+    provider,
     taxonomy,
     capabilities: egress.capabilities,
     egress,
@@ -204,10 +248,9 @@ async function main(): Promise<void> {
         return new Date(Date.now() + ticketDeadlineMs);
       },
     },
-    // Validated like its siblings. A bare Number() turns a typo into NaN,
-    // and `hash(...) % NaN` keys every ticket to a partition no consumer
-    // owns — a silent total stall rather than a startup failure.
-    partitionCount: intFromEnv('PARTITION_COUNT', 8),
+    // Read once at the top, beside the check that every claimed partition
+    // is one this count can route to.
+    partitionCount,
   };
 
   console.log(
@@ -256,7 +299,7 @@ async function main(): Promise<void> {
             JSON.stringify({
               event: 'shutdown_failed',
               at: new Date().toISOString(),
-              error: error instanceof Error ? error.message : String(error),
+              error: errorMessage(error),
             }),
           );
           process.exitCode = 1;
@@ -265,7 +308,13 @@ async function main(): Promise<void> {
           // In `finally`, not `then`: a rejecting stop() would otherwise skip
           // the pool and leave it holding the event loop while the exit code
           // said the process had failed cleanly.
-          await pool.end().catch(() => undefined);
+          //
+          // `closeLedger`, like the other three jobs. It swallowed the
+          // rejection outright before, which is the defect this issue fixed
+          // in bands, latency and seed-history: a pool that would not close
+          // reported nothing and exited 0. It never rejects, so the `finally`
+          // contract above still holds.
+          await closeLedger(pool, 'consumer');
           resolve();
         });
     };
@@ -274,7 +323,4 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exitCode = 1;
-});
+void runEntry(main);

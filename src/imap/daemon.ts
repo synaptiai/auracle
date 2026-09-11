@@ -23,6 +23,7 @@ import { ImapPoller } from '../ingress/imap-poller.js';
 import type { IntakeHandler } from '../ingress/types.js';
 
 import type { ImapMailboxFetcher } from './fetcher.js';
+import { errorMessage } from '../errors.js';
 
 /** One structured log line, emitted as a single JSON object. */
 export type ImapDaemonLogEntry =
@@ -56,10 +57,6 @@ export interface ImapDaemon {
    * no further IMAP work will start; the caller closes connections.
    */
   stop(): Promise<void>;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** Drives exactly one fetch -> poll -> markSeen pass. Exported for tests. */

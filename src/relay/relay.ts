@@ -32,6 +32,7 @@ import type {
   DeliveryState,
   EgressAdapter,
 } from '../adapters/types.js';
+import { errorMessage } from '../errors.js';
 
 /** The delivery rule an action class declares for one record (DEC-29). */
 export type DeliveryRule = 'at_least_once' | 'at_most_once';
@@ -96,7 +97,7 @@ export function resolveSendFailure(
 
 /** The message of a thrown value, whatever its class. */
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return errorMessage(error);
 }
 
 /** One relayed record and what became of it. */

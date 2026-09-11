@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { ARRIVAL_CHANNEL, pgArrivalSignal, reason } from './arrival-signal.js';
+import { ARRIVAL_CHANNEL, pgArrivalSignal } from './arrival-signal.js';
 import { enqueueTicket } from './intake.js';
 import { dbUrl } from '../db/config.js';
 import { truncateLedger } from '../test-support/schema.js';
@@ -215,31 +215,3 @@ describe('the arrival signal', () => {
   });
 });
 
-// The reason a failure gives, which is the only thing an operator has when
-// the signal degrades to the poll.
-//
-// A refused connection is the likeliest failure here and it hides its cause
-// twice: `AggregateError` carries an empty `message`, and `String()` gives
-// the bare class name. A helper that read only those two logged the event and
-// withheld `ECONNREFUSED`, which is the whole content of the report.
-describe('the reason a failure reports', () => {
-  it('reaches the cause inside an AggregateError', () => {
-    const refused = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:1'), {
-      code: 'ECONNREFUSED',
-    });
-    const aggregate = new AggregateError([refused]);
-    expect(aggregate.message).toBe('');
-    expect(String(aggregate)).not.toContain('ECONNREFUSED');
-    expect(reason(aggregate)).toContain('ECONNREFUSED');
-  });
-
-  it('joins every cause when there is more than one', () => {
-    const both = new AggregateError([new Error('ipv6 refused'), new Error('ipv4 refused')]);
-    expect(reason(both)).toBe('ipv6 refused; ipv4 refused');
-  });
-
-  it('still reads a plain error and an unknown value', () => {
-    expect(reason(new Error('plain'))).toBe('plain');
-    expect(reason('a string')).toBe('a string');
-  });
-});

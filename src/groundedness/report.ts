@@ -28,8 +28,8 @@ import { selectHalf } from '../fixtures/half-from-env.js';
 import type { GoldFile, HalfIdentity } from '../fixtures/load.js';
 import { openResume } from './resume.js';
 import { makeThresholds, SEED_THRESHOLDS } from '../policy/policy.js';
-import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
-import { OpenRouterProvider } from '../models/openrouter.js';
+import { loadDotEnv } from '../config/env.js';
+import { openRouterFromEnv } from '../models/from-env.js';
 import type { ModelProvider } from '../models/provider.js';
 import { defaultGroundednessDir, loadGroundednessArtifact } from './artifact.js';
 import {
@@ -38,6 +38,7 @@ import {
   describeFaultShapes, describeSpend, scoreHalf, scoringDigest,
 } from './scoring.js';
 import { startedAsCommand } from '../corpus/output-path.js';
+import { runEntry } from '../cli/entry.js';
 
 /** How many drafts the judge may fail to score before the report means nothing. */
 const MAX_FAULTED_SHARE = 0.05;
@@ -263,12 +264,6 @@ function assertReportHalf(half: GoldFile, fitIdentity: HalfIdentity | undefined)
 // comes from the highest groundedness artifact unless the caller names one.
 async function main(): Promise<void> {
   loadDotEnv();
-  const apiKey = process.env['OPENROUTER_API_KEY'];
-  if (!apiKey) {
-    console.error('OPENROUTER_API_KEY is not set.');
-    process.exitCode = 1;
-    return;
-  }
   const modelVer = process.env['GROUNDEDNESS_MODEL_VER'];
   if (!modelVer) {
     console.error('GROUNDEDNESS_MODEL_VER is not set.');
@@ -309,7 +304,7 @@ async function main(): Promise<void> {
     );
   }
   const result = await runCoverageReportJob({
-    provider: new OpenRouterProvider({ apiKey, ...dataGuaranteeOption() }),
+    provider: openRouterFromEnv(),
     modelVer,
     thresholds: { block: artifact.block, review: artifact.review },
     ...(selected.half === undefined ? {} : { reportHalf: selected.half }),
@@ -339,8 +334,5 @@ async function main(): Promise<void> {
 const invokedDirectly =
   startedAsCommand(import.meta.url, process.argv[1]);
 if (invokedDirectly) {
-  main().catch((error: unknown) => {
-    console.error(error);
-    process.exitCode = 1;
-  });
+  void runEntry(main);
 }

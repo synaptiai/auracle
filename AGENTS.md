@@ -113,10 +113,15 @@ An explicit `DATABASE_URL` disables the container and targets that database inst
 The setup probes that database first. An unreachable one fails the run.
 Without the probe every database suite skips itself and the run still exits 0.
 
-The `db` and `mail` projects run one file at a time. The suites truncate tables
-between cases, so two files at once corrupt each other. Vitest treats
-`fileParallelism` as a root option, so each project sets `poolOptions.forks.singleFork`.
-Issue #68 gives each file its own database and removes that line.
+The `db` project runs its files in parallel. Each file gets a database of its
+own, cloned from a migrated template by `src/test-support/db-url.setup.ts`.
+The suites truncate tables between cases, so two files sharing one database
+would corrupt each other. The run's teardown asserts that none did.
+
+The `mail` project still runs one file at a time. Both its suites drive the
+one GreenMail server and own mailboxes on it. Vitest treats
+`fileParallelism` as a root option, so that project sets
+`poolOptions.forks.singleFork`.
 Set `AURACLE_TEST_DB_REUSE=1` to keep one warm database between local runs.
 Set `AURACLE_TEST_MAIL_REUSE=1` to keep the mail server warm the same way.
 

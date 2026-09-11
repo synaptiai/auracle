@@ -43,10 +43,11 @@ import {
 import { selectHalf } from '../fixtures/half-from-env.js';
 import type { GoldFile, GoldSource, GoldTicket, HalfIdentity } from '../fixtures/load.js';
 import type { ModelProvider } from '../models/provider.js';
-import { OpenRouterProvider } from '../models/openrouter.js';
-import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
+import { openRouterFromEnv } from '../models/from-env.js';
+import { loadDotEnv } from '../config/env.js';
 import { fileURLToPath } from 'node:url';
 import { startedAsCommand } from '../corpus/output-path.js';
+import { runEntry } from '../cli/entry.js';
 
 /**
  * The precision the review threshold must hold, and why.
@@ -398,12 +399,6 @@ function assertFitHalf(half: GoldFile, reportIdentity: HalfIdentity | undefined)
 // rather than replacing it with a number that measured nothing.
 async function main(): Promise<void> {
   loadDotEnv();
-  const apiKey = process.env['OPENROUTER_API_KEY'];
-  if (!apiKey) {
-    console.error('OPENROUTER_API_KEY is not set.');
-    process.exitCode = 1;
-    return;
-  }
   const modelVer = process.env['GROUNDEDNESS_MODEL_VER'];
   if (!modelVer) {
     console.error('GROUNDEDNESS_MODEL_VER is not set.');
@@ -426,7 +421,7 @@ async function main(): Promise<void> {
   }
 
   const { artifact } = await runGroundednessJob({
-    provider: new OpenRouterProvider({ apiKey, ...dataGuaranteeOption() }),
+    provider: openRouterFromEnv(),
     modelVer,
     ...(selected.half === undefined ? {} : { fitHalf: selected.half }),
     ...(selected.counterpart === undefined ? {} : { reportIdentity: selected.counterpart }),
@@ -451,8 +446,5 @@ const invokedDirectly =
   startedAsCommand(import.meta.url, process.argv[1]);
 
 if (invokedDirectly) {
-  main().catch((err: unknown) => {
-    console.error(err instanceof Error ? err.message : err);
-    process.exitCode = 1;
-  });
+  void runEntry(main);
 }

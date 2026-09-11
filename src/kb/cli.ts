@@ -17,10 +17,11 @@
 
 import { Pool } from 'pg';
 
-import { loadDotEnv, dataGuaranteeOption } from '../config/env.js';
+import { loadDotEnv } from '../config/env.js';
 import { requireDbUrl } from '../db/config.js';
-import { OpenRouterProvider } from '../models/openrouter.js';
+import { openRouterFromEnv } from '../models/from-env.js';
 import { DEFAULT_EMBED_MODEL, loadKbDirectory } from './loader.js';
+import { runEntry } from '../cli/entry.js';
 
 /** OpenRouter list prices, USD per million tokens (DEC-25). */
 const USD_PER_MTOK: Readonly<Record<string, number>> = {
@@ -33,12 +34,6 @@ async function main(): Promise<void> {
   const dir = process.argv[2];
   if (!dir) {
     console.error('usage: pnpm run load-docs -- <dir-of-markdown>');
-    process.exitCode = 1;
-    return;
-  }
-  const apiKey = process.env['OPENROUTER_API_KEY'];
-  if (!apiKey) {
-    console.error('OPENROUTER_API_KEY is not set.');
     process.exitCode = 1;
     return;
   }
@@ -58,14 +53,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const provider = new OpenRouterProvider({
-    apiKey,
-    ...(process.env['OPENROUTER_BASE_URL']
-      ? { baseUrl: process.env['OPENROUTER_BASE_URL'] }
-      : {}),
-    embeddingsUsdPerMTok: usdPerMTok,
-    ...dataGuaranteeOption(),
-  });
+  // The price is the one thing the environment cannot settle on its own:
+  // it comes from EMBEDDINGS_USD_PER_MTOK or the table above, and DEC-25
+  // accounting needs whichever answered.
+  const provider = openRouterFromEnv({ embeddingsUsdPerMTok: usdPerMTok });
 
   const pool = new Pool({ connectionString: requireDbUrl('the knowledge-base CLI'), max: 1 });
   try {
@@ -86,7 +77,4 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exitCode = 1;
-});
+void runEntry(main);

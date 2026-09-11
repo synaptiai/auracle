@@ -20,9 +20,10 @@ import { FreeScoutEgressAdapter, freeScoutConfigFromEnv } from '../adapters/free
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.js';
 import type { EgressAdapter } from '../adapters/types.js';
-import { loadDotEnv } from '../config/env.js';
+import { loadDotEnv, positiveIntEnv } from '../config/env.js';
 import { requireDbUrl } from '../db/config.js';
 import { startRelayDaemon } from './daemon.js';
+import { runEntry } from '../cli/entry.js';
 
 const EGRESS_ADAPTERS: Readonly<Record<string, () => EgressAdapter>> = {
   helpdesk: () => new HelpdeskAdapter(),
@@ -40,18 +41,10 @@ function selectAdapter(name: string): EgressAdapter {
   return create();
 }
 
-function intervalFromEnv(raw: string | undefined): number {
-  const value = Number(raw ?? '5000');
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`RELAY_INTERVAL_MS must be a positive integer, got '${raw ?? ''}'`);
-  }
-  return value;
-}
-
 async function main(): Promise<void> {
   loadDotEnv();
   const adapter = selectAdapter(process.env['RELAY_ADAPTER'] ?? 'helpdesk');
-  const intervalMs = intervalFromEnv(process.env['RELAY_INTERVAL_MS']);
+  const intervalMs = positiveIntEnv('RELAY_INTERVAL_MS', 5000);
   const pool = new Pool({ connectionString: requireDbUrl('the relay'), max: 1 });
 
   const daemon = startRelayDaemon({ pool, adapter, intervalMs });
@@ -73,7 +66,4 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exitCode = 1;
-});
+void runEntry(main);

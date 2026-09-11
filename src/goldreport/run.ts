@@ -46,6 +46,7 @@ import {
 import type { GoldReportArtifact } from './artifact.js';
 import { aggregateReport } from './score.js';
 import { startedAsCommand } from '../corpus/output-path.js';
+import { runEntry } from '../cli/entry.js';
 
 /**
  * The report needs the risk tier per intent; the classifier's own taxonomy
@@ -425,8 +426,5 @@ const invokedDirectly =
   startedAsCommand(import.meta.url, process.argv[1]);
 
 if (invokedDirectly) {
-  main().catch((err: unknown) => {
-    console.error(err instanceof Error ? err.message : err);
-    process.exitCode = 1;
-  });
+  void runEntry(main);
 }
