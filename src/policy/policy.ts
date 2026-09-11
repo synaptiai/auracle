@@ -17,25 +17,12 @@
  * guarantees, so both are read here.
  */
 
-/** Cost of an error for an intent. A person sets it; the system does not learn it (DEC-13). */
-export type RiskTier = 'low' | 'medium' | 'high';
-
-/**
- * Capability declaration from section 4.1. Autonomy adapts to these (DEC-06).
- *
- * `supportsIdempotencyKey` and `supportsReadBack` are the two the engine
- * reads. Each is a separate guarantee about a write's outcome, and an
- * automatic write needs both: one makes a retry safe, the other makes the
- * result knowable. The remaining three describe what an adapter can carry,
- * not what it guarantees about a delivery, so no rule reads them.
- */
-export interface AdapterCapabilities {
-  supportsIdempotencyKey: boolean;
-  supportsReadBack: boolean;
-  supportsDraftState: boolean;
-  supportsStructuredFields: boolean;
-  supportsThreading: boolean;
-}
+// The contract this engine reads lives in src/domain/capabilities.ts and is
+// defined once (DEC-06). It was defined here as well, and again in
+// src/adapters/types.ts, so a flag added to either side compiled without the
+// other ever seeing it. Re-exported so every existing importer keeps working.
+export type { AdapterCapabilities, RiskTier } from '../domain/capabilities.js';
+import type { AdapterCapabilities, RiskTier } from '../domain/capabilities.js';
 
 /** Observable properties of the action class under evaluation. */
 export interface ActionClass {

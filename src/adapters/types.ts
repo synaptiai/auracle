@@ -34,18 +34,11 @@ export const COMPENSATION_ACTION_CLASS = 'compensate';
  * declared here, not discovered by an operator.
  */
 
-/**
- * Exact shape from section 4.1. Each flag is a guarantee the target system
- * gives, so an adapter must declare it honestly: a false flag is never a
- * soft claim.
- */
-export interface AdapterCapabilities {
-  supportsIdempotencyKey: boolean; // controls automatic writes
-  supportsReadBack: boolean; // lets the relay reconcile
-  supportsDraftState: boolean; // necessary for DEC-11
-  supportsStructuredFields: boolean; // necessary for bug records
-  supportsThreading: boolean;
-}
+// The shape from section 4.1, defined once in src/domain/capabilities.ts
+// (DEC-06). Re-exported here so an adapter still imports the contract from
+// the port it implements.
+export type { AdapterCapabilities } from '../domain/capabilities.js';
+import type { AdapterCapabilities } from '../domain/capabilities.js';
 
 /** One file attached to an inbound message. */
 export interface Attachment {
@@ -290,6 +283,66 @@ export class AdapterCapabilityError extends Error {
     super(message);
     this.name = 'AdapterCapabilityError';
   }
+}
+
+/**
+ * Rejects an empty or whitespace-only field, and returns it trimmed.
+ *
+ * Each adapter used to carry its own copy, and the three had drifted into
+ * disagreeing. `helpdesk.ts` took `(value, field)`, threw a `TypeError`, did
+ * not trim and returned the value; `freescout.ts` took `(field, value)`, threw
+ * an `Error`, trimmed and returned nothing; `imap-smtp.ts` took a third
+ * signature again. Both parameters were `string`, so a line copied from one
+ * adapter into another compiled, and the field name is never empty, so the
+ * swapped call always passed. An empty `idemKey` could reach the outbox that
+ * way, and DEC-24 is the guarantee that key carries.
+ *
+ * Two positions, two guards, and what each one actually catches:
+ *
+ * `field` accepts a string *literal type*. `Literal<T>` resolves to `never`
+ * when `T` widens to `string`, so passing a `string`-typed variable there
+ * fails to build — which is the swap, because a value is always a variable.
+ * A `const`-declared name or a literal union still compiles there; the guard
+ * is aimed at the swap, not at forbidding every indirection.
+ *
+ * `value` stays `string | null | undefined` rather than `unknown`. Widening it
+ * would have surrendered the position's own guard: `requireNonEmpty('reply.body',
+ * reply)` — the whole object — and `requireNonEmpty('x', 42)` both compiled
+ * under `unknown`, and neither did before this was one function. The null and
+ * undefined arms are what `imap-smtp.ts` needed from its own copy.
+ *
+ * A branded type was tried for `field` first and does not work: an optional
+ * brand still accepts a plain string, so the swap compiled. Measured, not
+ * assumed.
+ *
+ * The trimmed return is the function's contract, and every call site today
+ * discards it. Read that as validation, not as normalization: after this
+ * throws or does not, the caller keeps using its own value. Nothing downstream
+ * depends on the trim, and the places where a padded value would matter
+ * normalize on their own — `deriveIdemKey` in `src/ledger/keys.ts` hashes the
+ * action data, and `sanitizeTicketId` in `src/adapters/mime.ts` strips
+ * whitespace from a Message-ID. A caller that wants the canonical form has to
+ * take the return value.
+ *
+ * Whitespace counts as empty. One adapter accepted a single space and two
+ * rejected it, which is the kind of disagreement a shared validator exists to
+ * end.
+ */
+type Literal<T extends string> = string extends T ? never : T;
+
+export function requireNonEmpty<F extends string>(
+  field: Literal<F>,
+  value: string | null | undefined,
+): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    // A `TypeError`, not an `AdapterCapabilityError`. The latter means the
+    // adapter was asked to do what its declared capabilities forbid (DEC-06),
+    // and `helpdesk.ts` and `imap-smtp.ts` both raise it for exactly that.
+    // An empty field is an invalid argument, which is a different fault, and
+    // blurring the two would cost a distinction the callers rely on.
+    throw new TypeError(`${field} must not be empty`);
+  }
+  return value.trim();
 }
 
 /**

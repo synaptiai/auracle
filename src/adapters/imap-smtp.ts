@@ -33,7 +33,7 @@ import { randomUUID } from 'node:crypto';
 import { ImapFlow } from 'imapflow';
 import { createTransport } from 'nodemailer';
 import { normalizeMime } from './mime.js';
-import { PermanentEgressError } from './types.js';
+import { PermanentEgressError, requireNonEmpty } from './types.js';
 import type {
   AdapterCapabilities,
   DeliveryState,
@@ -217,11 +217,6 @@ export function imapSmtpConfigFromEnv(
   };
 }
 
-function requireNonEmpty(field: string, value: string | null | undefined): void {
-  if (value === undefined || value === null || value.trim() === '') {
-    throw new Error(`${field} must not be empty`);
-  }
-}
 
 /** One header line with CR/LF stripped so a value cannot smuggle headers. */
 function headerLine(name: string, rawValue: string): string {

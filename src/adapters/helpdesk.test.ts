@@ -175,8 +175,11 @@ describe('HelpdeskAdapter.readDraft and editDraft', () => {
     const adapter = newAdapter();
     const { draftExternalId } = await adapter.createDraft(reply());
 
+    // One validator means one message. This adapter used to phrase its own
+    // ("helpdesk field 'body' must be a non-empty string"); issue #69 replaced
+    // the three private copies with `requireNonEmpty` in types.ts.
     await expect(adapter.editDraft(draftExternalId, '')).rejects.toThrow(
-      "helpdesk field 'body' must be a non-empty string",
+      'body must not be empty',
     );
   });
 

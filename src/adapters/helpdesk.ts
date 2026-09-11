@@ -28,7 +28,7 @@ import type {
   ReplyProvenance,
   Ticket,
 } from './types.js';
-import { AdapterCapabilityError } from './types.js';
+import { AdapterCapabilityError, requireNonEmpty } from './types.js';
 import { COMPENSATION_ACTION_CLASS } from './types.js';
 import { HELPDESK_FIXTURE_TICKETS } from './fixtures/helpdesk.js';
 
@@ -83,11 +83,11 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
 
   /** Park one gated reply as a draft in the helpdesk (DEC-11). */
   async createDraft(reply: DraftReply): Promise<{ readonly draftExternalId: string }> {
-    requireNonEmpty(reply.ticketExternalId, 'reply.ticketExternalId');
-    requireNonEmpty(reply.body, 'reply.body');
+    requireNonEmpty('reply.ticketExternalId', reply.ticketExternalId);
+    requireNonEmpty('reply.body', reply.body);
     // The adapter refuses to hold a reply with no disclosure (DEC-12, DEC-14).
-    requireNonEmpty(reply.disclosure, 'reply.disclosure');
-    requireNonEmpty(reply.idemKey, 'reply.idemKey');
+    requireNonEmpty('reply.disclosure', reply.disclosure);
+    requireNonEmpty('reply.idemKey', reply.idemKey);
     if (!this.tickets.has(reply.ticketExternalId)) {
       throw new Error(`helpdesk has no ticket '${reply.ticketExternalId}'`);
     }
@@ -119,8 +119,8 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
    * a second send attempt throws instead of duplicating the message.
    */
   async sendDraft(draftExternalId: string, idemKey: string): Promise<{ readonly externalId: string }> {
-    requireNonEmpty(draftExternalId, 'draftExternalId');
-    requireNonEmpty(idemKey, 'idemKey');
+    requireNonEmpty('draftExternalId', draftExternalId);
+    requireNonEmpty('idemKey', idemKey);
 
     const known = this.deliveries.get(idemKey);
     if (known) {
@@ -167,8 +167,8 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
     payload: Record<string, unknown>,
     idemKey: string,
   ): Promise<{ readonly externalId: string }> {
-    requireNonEmpty(actionClass, 'actionClass');
-    requireNonEmpty(idemKey, 'idemKey');
+    requireNonEmpty('actionClass', actionClass);
+    requireNonEmpty('idemKey', idemKey);
 
     const known = this.deliveries.get(idemKey);
     if (known) {
@@ -234,7 +234,7 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
    * is a result, not an error; the relay decides what happens next.
    */
   async readBack(ref: { readonly idemKey: string }): Promise<DeliveryState> {
-    requireNonEmpty(ref.idemKey, 'ref.idemKey');
+    requireNonEmpty('ref.idemKey', ref.idemKey);
     const delivery = this.deliveries.get(ref.idemKey);
     return delivery ? { state: 'delivered', externalId: delivery.externalId } : { state: 'not_found' };
   }
@@ -250,7 +250,7 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
    * approval then refuses instead of recording a fabricated distance.
    */
   async readDraft(draftExternalId: string): Promise<{ readonly body: string } | null> {
-    requireNonEmpty(draftExternalId, 'draftExternalId');
+    requireNonEmpty('draftExternalId', draftExternalId);
     const draft = this.drafts.get(draftExternalId);
     return draft === undefined ? null : { body: draft.body };
   }
@@ -263,8 +263,8 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
    * never reach the customer.
    */
   async editDraft(draftExternalId: string, body: string): Promise<void> {
-    requireNonEmpty(draftExternalId, 'draftExternalId');
-    requireNonEmpty(body, 'body');
+    requireNonEmpty('draftExternalId', draftExternalId);
+    requireNonEmpty('body', body);
     const draft = this.drafts.get(draftExternalId);
     if (!draft) {
       throw new Error(`helpdesk has no draft '${draftExternalId}'`);
@@ -286,9 +286,3 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
   }
 }
 
-function requireNonEmpty(value: string, field: string): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new TypeError(`helpdesk field '${field}' must be a non-empty string`);
-  }
-  return value;
-}

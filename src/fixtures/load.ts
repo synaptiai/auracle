@@ -22,8 +22,12 @@ export const FIT_COUNT = 4100;
 export const REPORT_COUNT = 4100;
 export const INTENT_CAP = 25;
 
-const RISK_TIERS = ['low', 'medium', 'high'] as const;
-export type RiskTier = (typeof RISK_TIERS)[number];
+// The tiers and the type come from src/domain/capabilities.ts, which the
+// policy engine reads too. This module derived a second copy of the type,
+// so every caller that wanted the word `RiskTier` imported fixture file I/O
+// to get it.
+export type { RiskTier } from '../domain/capabilities.js';
+import { RISK_TIERS, type RiskTier } from '../domain/capabilities.js';
 
 /**
  * Where a gold half's cases came from (DEC-18).

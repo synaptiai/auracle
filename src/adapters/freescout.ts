@@ -79,7 +79,7 @@
  *
  * Check both against a real instance before trusting either.
  */
-import { AdapterCapabilityError, PermanentEgressError } from './types.js';
+import { AdapterCapabilityError, PermanentEgressError, requireNonEmpty } from './types.js';
 import type {
   AdapterCapabilities,
   DeliveryState,
@@ -527,8 +527,3 @@ function normalizeAddress(value: string | null | undefined): string | null {
   return trimmed.length === 0 ? null : trimmed;
 }
 
-function requireNonEmpty(field: string, value: string): void {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`${field} must not be empty`);
-  }
-}
