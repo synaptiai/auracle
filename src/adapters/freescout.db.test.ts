@@ -37,7 +37,7 @@ import { CUSTOMER_REPLY_ACTION_CLASS } from './types.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
-// src/test-support/global-setup.ts guarantees a reachable database before the
+// src/test-support/db-global-setup.ts guarantees a reachable database before the
 // workers fork. A failure here is a fault, and a suite that skipped itself
 // instead would report success while proving nothing.
 await pool.query('SELECT 1');

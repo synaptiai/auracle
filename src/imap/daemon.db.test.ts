@@ -22,7 +22,7 @@ import { ImapPoller } from '../ingress/imap-poller.js';
 const PARTITION_COUNT = 8;
 
 const pool = new Pool({ connectionString: dbUrl(), max: 5 });
-// src/test-support/global-setup.ts guarantees a reachable database before
+// src/test-support/db-global-setup.ts guarantees a reachable database before
 // the workers fork: it starts a container, or probes an explicit
 // DATABASE_URL and fails the run. A failure here is therefore a fault, and
 // a suite that skipped itself instead would report success while proving

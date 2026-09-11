@@ -28,7 +28,7 @@ import { indexDocument } from '../retriever/retriever.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
-// src/test-support/global-setup.ts guarantees a reachable database before
+// src/test-support/db-global-setup.ts guarantees a reachable database before
 // the workers fork: it starts a container, or probes an explicit
 // DATABASE_URL and fails the run. A failure here is therefore a fault, and
 // a suite that skipped itself instead would report success while proving

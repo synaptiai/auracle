@@ -1,5 +1,9 @@
 node_modules/
 dist/
+# pnpm writes its content-addressed store here when the store directory is
+# not writable, which happens when the suite runs in a container over a bind
+# mount. It is 120MB of regenerable cache and must never be committed.
+.pnpm-store/
 .DS_Store
 /corpus/
 

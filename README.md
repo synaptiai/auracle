@@ -76,7 +76,7 @@ pnpm test
 ```
 
 `pnpm test` provisions its own Postgres for each run.
-A Testcontainers helper starts one throwaway pgvector Postgres per run (src/test-support/global-setup.ts) and removes it at the end.
+A Testcontainers helper starts one throwaway pgvector Postgres per run (src/test-support/containers.ts) and removes it at the end.
 Tests need no `docker compose up` and no `DATABASE_URL`.
 If you export `DATABASE_URL`, the tests target that database and skip the container.
 The setup probes that database before the run starts. An unreachable one fails the run.

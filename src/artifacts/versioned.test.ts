@@ -71,8 +71,49 @@ describe('scanArtifactNames', () => {
   });
 });
 
+/**
+ * Whether a mode bit can actually deny this process.
+ *
+ * `chmod 0o500` does not deny root, so the two cases below would assert a
+ * rejection that cannot happen and pass for the wrong reason. Cloud agents
+ * and CI containers commonly run as root. Skipping is honest; passing is not.
+ *
+ * Taken as a parameter so both branches are testable off a non-root machine:
+ * the skip itself is the thing that has to be right, and a constant computed
+ * at module load can only ever be observed on one side.
+ */
+export function deniesPermission(getuid: (() => number) | undefined): boolean {
+  return getuid === undefined || getuid() !== 0;
+}
+
+const DENIES_PERMISSION = deniesPermission(process.getuid?.bind(process));
+
+describe('the root skip for the permission cases', () => {
+  it('does not deny root, so those cases must skip', () => {
+    expect(deniesPermission(() => 0)).toBe(false);
+  });
+
+  it('denies an ordinary user, so those cases must run', () => {
+    expect(deniesPermission(() => 501)).toBe(true);
+  });
+
+  it('treats a platform without getuid as able to deny', () => {
+    // Windows has no getuid; the assertion is meaningful there.
+    expect(deniesPermission(undefined)).toBe(true);
+  });
+
+  it('decides the skip from this process, not from a literal', () => {
+    // The three cases above pass literals, so they all still pass if the
+    // constant is rewritten as `deniesPermission(() => 0)` — and both
+    // permission cases would then skip silently and permanently, for CI as
+    // well. That is the wrong version this suite exists to catch, so the
+    // constant itself is asserted against the live process.
+    expect(DENIES_PERMISSION).toBe(process.getuid === undefined || process.getuid() !== 0);
+  });
+});
+
 describe('prepareArtifactDir', () => {
-  it('faults on a directory it cannot create, before the caller spends', async () => {
+  it.runIf(DENIES_PERMISSION)('faults on a directory it cannot create, before the caller spends', async () => {
     // Listing alone passed a readable but unwritable directory, so the run
     // died at the write instead — the cost the pre-check exists to avoid.
     const base = await mkdtemp(path.join(tmpdir(), 'auracle-ro-'));
@@ -89,7 +130,7 @@ describe('prepareArtifactDir', () => {
     }
   });
 
-  it('faults on an existing directory it cannot write to', async () => {
+  it.runIf(DENIES_PERMISSION)('faults on an existing directory it cannot write to', async () => {
     // The case the fix first missed. `mkdir` with `recursive` resolves
     // without inspecting the mode when the path already exists, so creating
     // the directory proved nothing about writing to it.

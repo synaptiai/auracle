@@ -1,25 +1,34 @@
 import { defineConfig } from 'vitest/config';
 
+import {
+  MAIL_SUITES,
+  NO_DATABASE_URL,
+  SHARED_EXCLUDE,
+} from './src/test-support/projects.js';
+
+// Three projects, split by what a suite needs to run.
+//
+// `unit` needs nothing. No global setup, no setup files, no Docker socket: a
+// contributor or a cloud agent without a Docker daemon runs `pnpm run
+// test:unit` and gets every pure case, in parallel, in seconds. This is the
+// reason for the split. One `globalSetup` used to cover every file, so the
+// 1,300-odd pure cases could not run at all without a container.
+//
+// `db` needs Postgres. `mail` needs Postgres and a GreenMail server. They are
+// separate projects so `pnpm run test:db` does not wait on a JVM that only the
+// two end-to-end mail suites use. Both global setups call the same memoised
+// helpers in src/test-support/containers.ts and share one Postgres container.
+//
+// Note the scope: on a combined `pnpm test`, vitest completes every project's
+// global setup before it runs any file, so the mail server's start is on the
+// critical path there whichever project owns it. The saving is real for
+// `test:unit` and `test:db`, which is where the inner loop lives.
+//
+// The patterns come from src/test-support/projects.ts so the config and
+// src/test-support/purity.test.ts cannot disagree about which project owns a
+// file.
 export default defineConfig({
   test: {
-    // Each run gets its own throwaway pgvector Postgres, started once here
-    // before workers fork (see src/test-support/global-setup.ts); its URI is
-    // injected as DATABASE_URL per test file by src/test-support/db-url.setup.ts.
-    // Only this checkout's suites. The Agent tool creates a worktree under
-    // .claude/worktrees/ for a subagent working in parallel, and that holds a
-    // second full checkout. Without this the runner collected both trees: the
-    // file and case counts roughly doubled, and the two copies of the
-    // end-to-end mail suite raced for the one GreenMail server the global
-    // setup starts, so one of them failed on a mailbox the other had emptied.
-    // `console/` is its own package with its own runner. Collected here it
-    // would move the core suite's file and case counts, which issue #27
-    // requires to stay where they are.
-    exclude: ['**/node_modules/**', '**/dist/**', '.claude/worktrees/**', 'console/**'],
-    globalSetup: ['./src/test-support/global-setup.ts'],
-    setupFiles: ['./src/test-support/db-url.setup.ts'],
-    // Suites still truncate tables between cases within a run; running test
-    // files in parallel corrupts their results.
-    fileParallelism: false,
     // The end-to-end hooks apply DDL and truncate against containers that
     // may have just started; the 10s default is too tight on a loaded host.
     hookTimeout: 60_000,
@@ -28,5 +37,58 @@ export default defineConfig({
     // concurrently failed on a loaded host at 5s while taking 7s of real
     // work. That looked like flakiness and was this line.
     testTimeout: 30_000,
+    projects: [
+      {
+        test: {
+          name: 'unit',
+          include: ['src/**/*.test.ts'],
+          exclude: [...SHARED_EXCLUDE, 'src/**/*.db.test.ts'],
+          // The suffix rule is static, and a static rule cannot see a suite
+          // that connects through a helper. Such a suite would otherwise find
+          // DATABASE_URL unset, take the compose default from src/db/config.ts
+          // and pass green against the developer's own ledger — or against the
+          // service Postgres that tests.yml exports to the whole run. This
+          // points it at a port that refuses, so it fails where it stands.
+          env: { DATABASE_URL: NO_DATABASE_URL },
+          hookTimeout: 60_000,
+          testTimeout: 30_000,
+        },
+      },
+      {
+        test: {
+          name: 'db',
+          include: ['src/**/*.db.test.ts'],
+          exclude: [...SHARED_EXCLUDE, ...MAIL_SUITES],
+          globalSetup: ['./src/test-support/db-global-setup.ts'],
+          setupFiles: ['./src/test-support/db-url.setup.ts'],
+          // The suites truncate tables between cases, so two files running
+          // at once corrupt each other's results. `fileParallelism` is a
+          // root-only option in vitest 3 (it is listed in NonProjectOptions),
+          // so the project-scoped equivalent is a single fork: one worker
+          // process runs this project's files one after another. `isolate`
+          // stays on, so each file still gets a fresh module registry; it is
+          // stated rather than left to the default because the serial
+          // guarantee these suites depend on is the whole point of the line.
+          // Issue #68 gives each file its own database and removes both.
+          poolOptions: { forks: { singleFork: true, isolate: true } },
+          hookTimeout: 60_000,
+          testTimeout: 30_000,
+        },
+      },
+      {
+        test: {
+          name: 'mail',
+          include: MAIL_SUITES,
+          exclude: SHARED_EXCLUDE,
+          globalSetup: ['./src/test-support/mail-global-setup.ts'],
+          setupFiles: ['./src/test-support/db-url.setup.ts'],
+          // Both suites drive the one GreenMail server and own mailboxes on
+          // it; running them at once races for the same mail.
+          poolOptions: { forks: { singleFork: true, isolate: true } },
+          hookTimeout: 60_000,
+          testTimeout: 30_000,
+        },
+      },
+    ],
   },
 });

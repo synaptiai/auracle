@@ -37,14 +37,14 @@ import { indexDocument } from '../retriever/retriever.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
-// src/test-support/global-setup.ts guarantees a reachable database before
+// src/test-support/mail-global-setup.ts guarantees a reachable database before
 // the workers fork: it starts a container, or probes an explicit
 // DATABASE_URL and fails the run. A failure here is therefore a fault, and
 // a suite that skipped itself instead would report success while proving
 // nothing.
 await pool.query('SELECT 1');
 
-// The GreenMail server is shared: src/test-support/global-setup.ts starts one
+// The GreenMail server is shared: src/test-support/mail-global-setup.ts starts one
 // per run, waits until it answers IMAP, and provides its mapped address. This
 // suite used to start its own and guard itself with describe.skipIf, so a
 // container that failed to start produced a green run.

@@ -9,6 +9,7 @@ Each command is a single target. Each exits non-zero on failure.
 
 - Build: `pnpm run build`. Healthy output: the compiler finishes with no errors and exit code 0.
 - Test: `pnpm test`. Healthy output: every test passes, for example `Tests: 42 passed, 42 total`, exit code 0.
+  `pnpm run test:unit` runs the pure cases alone and needs no Docker. It is not a substitute for `pnpm test`.
 - Lint: `pnpm run lint`. Healthy output: no findings printed and exit code 0.
 
 The console is a second package, and these three targets do not reach it.
@@ -59,8 +60,35 @@ pnpm exec vitest run src/policy/policy.test.ts
 pnpm exec vitest run src/policy/policy.test.ts -t 'blocks the reply'
 ```
 
-Two suffixes exist. A `*.test.ts` file is pure and needs no database.
+Three projects exist. `pnpm test` runs all three. Each also runs alone:
+
+```sh
+pnpm run test:unit   # pure cases, no Docker
+pnpm run test:db     # Postgres
+pnpm run test:mail   # Postgres and a mail server
+```
+
+Two suffixes decide the project. A `*.test.ts` file is pure and needs no database.
 A `*.db.test.ts` file needs Postgres. The run supplies it.
+
+`src/test-support/purity.test.ts` enforces the suffix in both directions.
+It parses each file with the TypeScript compiler.
+It fails the run when a `*.test.ts` file imports `pg`, imports a module that
+opens a connection, or calls `inject('dbUrl')`.
+It also fails when a `*.db.test.ts` file needs none of those.
+That file makes Docker mandatory for no reason.
+A type-only import of `pg` stays legal, because the compiler erases it.
+
+The rules read one level deep, and they do not follow the import graph.
+Importing `pg` opens no socket, and 37 of the 68 pure suites already reach it
+through `src/db/config.ts`. A transitive rule would condemn them all.
+So the `unit` project also sets `DATABASE_URL` to a port that refuses.
+A pure suite that connects through a helper then fails where it stands.
+Without it that suite passes green against your own compose ledger.
+
+`test:unit` starts no container and opens no socket. It needs no Docker daemon.
+It runs the files in parallel and finishes in seconds.
+Use it as the inner loop, and on any machine without Docker.
 
 No database suite skips itself. An unreachable database fails the run.
 No mail suite skips itself either. A GreenMail server that never answers fails the run.
@@ -68,18 +96,29 @@ No mail suite skips itself either. A GreenMail server that never answers fails t
 A `SELECT 1` failure at import time means Docker, not the ledger.
 Check the container count first. A loaded daemon drops connections.
 
-`src/test-support/global-setup.ts` starts one throwaway pgvector container per run.
-It also starts one GreenMail server and waits until it answers IMAP.
-It runs before the workers fork, so parallel runs never share a database.
-Each mail suite owns its own mailboxes, because one server now serves them all.
+`src/test-support/db-global-setup.ts` starts one throwaway pgvector container per run.
+`src/test-support/mail-global-setup.ts` starts the GreenMail server as well.
+Both setups share one Postgres, because `src/test-support/containers.ts` starts it once.
+They run before the workers fork, so parallel runs never share a database.
+Each mail suite owns its own mailboxes, because one server serves them both.
+
+`pnpm run test:db` never waits for the JVM to answer IMAP. `pnpm test` still does.
+Vitest completes every project's setup before it runs any file.
+So the split pays on the inner loop, not on the combined run.
 
 An explicit `DATABASE_URL` disables the container and targets that database instead.
 The setup probes that database first. An unreachable one fails the run.
 Without the probe every database suite skips itself and the run still exits 0.
 
-`fileParallelism` is false because the suites truncate tables between cases.
+The `db` and `mail` projects run one file at a time. The suites truncate tables
+between cases, so two files at once corrupt each other. Vitest treats
+`fileParallelism` as a root option, so each project sets `poolOptions.forks.singleFork`.
+Issue #68 gives each file its own database and removes that line.
 Set `AURACLE_TEST_DB_REUSE=1` to keep one warm database between local runs.
 Set `AURACLE_TEST_MAIL_REUSE=1` to keep the mail server warm the same way.
+
+Two cases in `src/artifacts/versioned.test.ts` skip under root. They deny access with
+a mode bit, and a mode bit never denies root. A skip is honest. A pass is not.
 
 ## Architecture
 
