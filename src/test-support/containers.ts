@@ -12,6 +12,11 @@
 // file, so the mail server is on the critical path there whichever project
 // owns it.
 //
+// Precedence for the mail server: MAIL_HOST, with MAIL_SMTP_PORT and
+// MAIL_IMAP_PORT, wins the same way DATABASE_URL does. CI runs GreenMail as a
+// service container and sets them, so the JVM starts alongside checkout and
+// this file opens no Docker socket there at all.
+//
 // Precedence for Postgres: an explicit DATABASE_URL in the environment wins.
 // The run then targets that database directly and no container starts.
 // Otherwise an ephemeral container is created and its URI is handed to the
@@ -104,8 +109,12 @@ async function assertReachable(url: string): Promise<void> {
  * immediately spent its delivery budget on a server that was not ready. This
  * moves that wait to setup, once, instead of into every suite's first assert.
  */
-async function awaitMailReady(host: string, imapPort: number): Promise<void> {
-  const deadline = Date.now() + 120_000;
+async function awaitMailReady(
+  host: string,
+  imapPort: number,
+  budgetMs = 120_000,
+): Promise<void> {
+  const deadline = Date.now() + budgetMs;
   let lastError: unknown;
   while (Date.now() < deadline) {
     const client = new ImapFlow({
@@ -165,7 +174,61 @@ async function startPostgres(): Promise<string> {
   return container.getConnectionUri();
 }
 
+/**
+ * Fails the run when an externally supplied mail server does not answer.
+ *
+ * Same reasoning as the database probe. A mail suite that found a dead server
+ * and skipped itself would let the run exit 0 while proving nothing, and the
+ * two end-to-end suites no longer guard themselves for exactly that reason.
+ */
+async function assertMailReachable(address: MailAddress): Promise<void> {
+  try {
+    // A generous budget even though CI gates on the port being open. The
+    // gate proves a socket accepts, and this proves IMAP answers a login,
+    // which is later. An earlier version allowed twenty seconds on the
+    // assumption that the runner had already waited for readiness; CI
+    // disproved the assumption, so the budget does not rest on it.
+    await awaitMailReady(address.host, address.imapPort, 120_000);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `MAIL_HOST is set but the server never answered IMAP, so the mail suites `
+        + `would fail on a server that is not ready. Unset MAIL_HOST to use a `
+        + `throwaway container, or start the server. Cause: ${reason}`,
+    );
+  }
+}
+
+/**
+ * The mail server named by the environment, or undefined.
+ *
+ * Precedence matches the database: an explicit address wins and no container
+ * starts. CI runs GreenMail as a service container and sets these, so the JVM
+ * starts in parallel with checkout rather than inside the test step, and the
+ * runner's Docker socket is not used at all.
+ */
+function mailFromEnv(): MailAddress | undefined {
+  const host = process.env['MAIL_HOST'];
+  if (host === undefined || host.length === 0) return undefined;
+  const smtpPort = Number(process.env['MAIL_SMTP_PORT'] ?? MAIL_SMTP_PORT);
+  const imapPort = Number(process.env['MAIL_IMAP_PORT'] ?? MAIL_IMAP_PORT);
+  if (!Number.isInteger(smtpPort) || !Number.isInteger(imapPort)) {
+    throw new Error(
+      `MAIL_SMTP_PORT and MAIL_IMAP_PORT must be integers when MAIL_HOST is set. `
+        + `Got ${String(process.env['MAIL_SMTP_PORT'])} and `
+        + `${String(process.env['MAIL_IMAP_PORT'])}.`,
+    );
+  }
+  return { host, smtpPort, imapPort };
+}
+
 async function startMail(): Promise<MailAddress> {
+  const configured = mailFromEnv();
+  if (configured !== undefined) {
+    await assertMailReachable(configured);
+    return configured;
+  }
+
   let builder = new GenericContainer(MAIL_IMAGE)
     .withEnvironment({
       GREENMAIL_OPTS:

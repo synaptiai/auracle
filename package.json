@@ -21,7 +21,7 @@
     "test:mail": "vitest run --project mail",
     "lint": "eslint .",
     "verify": "pnpm run build && pnpm run check && pnpm run lint && pnpm test && pnpm run verify:console && pnpm run check:docs && pnpm run check:ste && pnpm run check:guards && pnpm run check:fixtures",
-    "verify:fast": "pnpm run check && pnpm run lint && pnpm run test:unit && pnpm run check:docs && pnpm run check:ste && pnpm run check:guards",
+    "verify:fast": "pnpm run check && pnpm run lint && pnpm run test:unit && pnpm run check:docs && pnpm run check:ste && pnpm run check:guards && pnpm run check:fixtures",
     "verify:console": "pnpm --filter @auracle/console build && pnpm --filter @auracle/console check && pnpm --filter @auracle/console test",
     "check:docs": "python3 scripts/check-docs.py && python3 scripts/test_check_docs.py",
     "check:ste": "python3 scripts/ste-check.py && python3 scripts/test_ste_check.py",
@@ -45,7 +45,8 @@
     "load-docs": "pnpm run build && node dist/kb/cli.js",
     "fit-groundedness": "pnpm run build && node dist/groundedness/run.js",
     "report-groundedness": "pnpm run build && node dist/groundedness/report.js",
-    "seed-history": "pnpm run build && node dist/seed/run.js"
+    "seed-history": "pnpm run build && node dist/seed/run.js",
+    "verify:db": "pnpm run test:db && pnpm run test:mail"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^12.1.0",

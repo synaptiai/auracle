@@ -17,9 +17,12 @@ check and test, `check:docs`, `check:ste`, `check:guards` and
 `check:fixtures`. Healthy output ends with the fixtures line and exit code 0.
 
 `pnpm run verify:fast` is the inner loop. It needs no Docker and takes about
-half a minute. It runs the unit project alone, and it also omits `build`,
-the console targets and the fixtures diff. So it proves nothing about a
-database suite, the console, or the corpus. It is not the contract.
+half a minute. It runs the unit project alone, and it also omits `build` and
+the console targets. So it proves nothing about a database suite or the
+console. It is not the contract.
+
+`pnpm run verify:db` is the other half: the database and mail suites alone.
+CI runs the two as parallel jobs, with a third for the console.
 
 The individual targets still exist and are worth running alone while you work:
 `pnpm run build`, `pnpm test`, `pnpm run lint`, `pnpm run test:unit`,

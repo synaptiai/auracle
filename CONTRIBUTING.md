@@ -21,8 +21,10 @@ It runs the build and the types. It runs the lint and every test project.
 It runs the console's three targets. It runs the documentation checks,
 the style check and the guard self-tests. It ends with the fixtures diff.
 
-The Tests workflow runs this same target. So a green run here and a green
-run there mean the same thing.
+The Tests workflow covers the same ground in three parallel jobs.
+`fast` needs no service. `db` runs against Postgres and a mail server.
+`console` builds the core first. Each job names one of the targets below.
+So a green run here and a green run there mean the same thing.
 
 One gap to know about. `verify` runs the evals' structural layer only.
 The behaviour layer spends model calls and stays opt-in behind
@@ -31,7 +33,8 @@ The behaviour layer spends model calls and stays opt-in behind
 | Command | Task |
 |---------|------|
 | `pnpm run verify` | The contract. Everything below, in one command. |
-| `pnpm run verify:fast` | No Docker. Omits the database and mail projects, `build`, the console and the fixtures diff. |
+| `pnpm run verify:fast` | No Docker. Omits the database and mail projects, `build` and the console. |
+| `pnpm run verify:db` | The database and mail suites alone. Needs both services. |
 | `pnpm run verify:console` | The console package's three targets. |
 
 A job that calls a model reads `MODEL_VER`, and the default is
@@ -47,7 +50,7 @@ A pull request without this evidence waits for a person to ask for it.
 
 `pnpm run verify:fast` needs no Docker and answers in about half a minute.
 Use it as the inner loop. It is not the contract. It runs no database suite,
-and it also skips the build, the console and the fixtures diff.
+and it also skips the build and the console.
 
 `pnpm run check` runs the compiler alone and is faster still.
 To run one file or one case, see the "Running one test" section of `AGENTS.md`.

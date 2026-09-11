@@ -3,6 +3,11 @@ name: Guardrails
 on:
   pull_request:
 
+# A superseded push cancels the run it replaced.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validators:
     runs-on: ubuntu-latest

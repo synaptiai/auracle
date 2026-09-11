@@ -1,28 +1,74 @@
-# CI for the command contract in CONTRIBUTING.md: `pnpm run verify` must exit 0
-# on every pull request.
+# CI for the command contract in CONTRIBUTING.md.
 #
-# The steps below name targets from package.json and nothing else. A
-# contributor runs the same target locally and sees the same result, so the
-# workflow and the documents cannot drift into disagreeing about what a green
-# pull request means.
+# Three jobs, split by what each needs. Wall time is the slowest job, not the
+# sum: `fast` starts no service and answers in well under a minute, `db` waits
+# on Postgres and GreenMail, `console` needs neither. Before the split one
+# sequential job ran everything, and every step waited on the 3-minute test
+# step for no reason.
+#
+# Each job names a target from package.json and nothing else, so a contributor
+# runs the same command and sees the same result. `pnpm run verify` is still
+# the whole contract and still the one command CONTRIBUTING.md asks for; these
+# three cover the same ground between them.
 #
 # The database is the same pgvector Postgres the compose stack runs
 # (docker-compose.yml): user, password and db name auracle. Each suite applies
 # the real schema through src/test-support/schema.ts, which walks every file
 # under db/ in version order, so no migration step is needed here.
 #
-# DATABASE_URL is set below, so the db project's global setup probes it before
-# the workers fork and fails this job when the service is unreachable. Without
-# that probe every database suite would skip itself and the job would still
-# pass. The unit project overrides it with a refusing address of its own, so a
-# pure suite cannot reach this service (see src/test-support/projects.ts).
+# DATABASE_URL and MAIL_HOST are set on the db job, so the global setups probe
+# them before the workers fork and fail the job when either service is
+# unreachable. Without those probes the suites would skip themselves and the
+# job would still pass. Both services are declared below rather than started
+# through testcontainers inside the test step, so they boot alongside checkout
+# and the runner's Docker socket is never used.
+#
+# The unit project overrides DATABASE_URL with a refusing address of its own,
+# so a pure suite cannot reach a real database even here
+# (see src/test-support/projects.ts).
 name: Tests
 
 on:
   pull_request:
+    # A change to prose starts no database. The style and documentation checks
+    # that do govern these paths live in the Guardrails workflow, which has no
+    # such filter.
+    paths-ignore:
+      - "docs/**"
+      - "intent/**"
+      - "**/*.md"
+
+# A superseded push cancels the run it replaced. Two runs on one branch 37
+# seconds apart both ran to completion before this.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  verify:
+  # Types, lint, the pure suite, the documentation and style checks, the guard
+  # self-tests and the fixtures diff. No service, no Docker socket.
+  fast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+      # engines requires Node >= 22.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify (no database)
+        run: pnpm run verify:fast
+
+  # The database and mail suites, against service containers.
+  db:
     runs-on: ubuntu-latest
 
     services:
@@ -40,30 +86,65 @@ jobs:
           --health-timeout 3s
           --health-retries 10
 
+      # GreenMail used to start through testcontainers inside the test step,
+      # so the JVM's boot sat on the critical path and the job needed a Docker
+      # socket. As a service it starts alongside checkout and install.
+      #
+      # The health check names bash explicitly. The image holds no curl, no nc
+      # and no wget, so `/dev/tcp` is the only way to test its own IMAP port —
+      # and that is a bash feature, while `--health-cmd "sh -c ..."` runs
+      # dash. The first version of this file used `sh`, the check could never
+      # pass, and the job failed on `unhealthy` while the server was serving
+      # correctly. Verified both ways against a running container: the open
+      # port exits 0 and a closed one exits 1.
+      mail:
+        image: greenmail/standalone:2.1.12
+        env:
+          GREENMAIL_OPTS: -Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled
+        ports:
+          - "3025:3025"
+          - "3143:3143"
+        options: >-
+          --health-cmd "bash -c 'echo > /dev/tcp/127.0.0.1/3143'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 24
+
     steps:
       - uses: actions/checkout@v4
-
-      # engines requires Node >= 22.
       - uses: pnpm/action-setup@v4
         with:
           version: 11.20.0
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      # Build, types, lint, every test project, the console's three targets,
-      # the documentation checks, the style check, the guard self-tests and
-      # the fixtures diff. The same command CONTRIBUTING.md asks for.
-      - name: Verify
-        run: pnpm run verify
+      - name: Database and mail suites
+        run: pnpm run verify:db
         env:
           DATABASE_URL: postgres://auracle:auracle@localhost:5433/auracle
+          MAIL_HOST: 127.0.0.1
+          MAIL_SMTP_PORT: "3025"
+          MAIL_IMAP_PORT: "3143"
+
+  # The console is its own package. It needs the core built first, because it
+  # imports the core's compiled output.
+  console:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build the core
+        run: pnpm run build
+      - name: Console build, types and tests
+        run: pnpm run verify:console
