@@ -15,7 +15,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { fencedInsert } from '../ledger/insert.js';
 import type { FencedRunInput } from '../ledger/insert.js';
 import { readDays } from './query.js';
@@ -132,14 +132,13 @@ const TO = new Date('2026-04-01T00:00:00.000Z');
 
 describe('the control-band daily sample', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn');
+    await truncateLedger(pool);
   });
 
   afterAll(async () => {
     // The last case's rows would otherwise survive against an explicit
     // DATABASE_URL, which is the mode AGENTS.md documents.
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn');
+    await truncateLedger(pool);
     await pool.end();
     await readOnlyPool.end();
   });

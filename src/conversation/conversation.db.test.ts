@@ -7,10 +7,10 @@
 import { randomUUID } from 'node:crypto';
 
 import { Pool } from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { conversationOfRun, readConversation, turnAnsweredBy } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 4 });
@@ -19,12 +19,9 @@ afterAll(async () => {
   await pool.end();
 });
 
-beforeAll(async () => {
-  await applyLedgerSchema(pool);
-});
 
 beforeEach(async () => {
-  await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
+  await truncateLedger(pool);
 });
 
 async function conversation(address: string | null = 'someone@customer.example'): Promise<string> {

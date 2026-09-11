@@ -14,7 +14,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { ARRIVAL_CHANNEL, pgArrivalSignal, reason } from './arrival-signal.js';
 import { enqueueTicket } from './intake.js';
 import { dbUrl } from '../db/config.js';
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 4 });
 
@@ -75,8 +75,7 @@ async function collect(
 
 describe('the arrival signal', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn');
+    await truncateLedger(pool);
   });
 
   it('names the channel once, so the emitter and the listener cannot drift', () => {

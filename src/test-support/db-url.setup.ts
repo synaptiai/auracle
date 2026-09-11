@@ -1,10 +1,34 @@
-// Runs per test file, before its imports execute: resolves the URI provided
-// by the db or mail global setup and publishes it as DATABASE_URL so suites pick it up
-// through src/db/config.ts with no suite changes.
+// Runs per test file, before its imports execute: clones the migrated
+// template into a database of this file's own and publishes it as
+// DATABASE_URL, so suites pick it up through src/db/config.ts with no suite
+// changes.
 //
-// The key is typed by the ProvidedContext declaration in containers.ts,
-// so a rename on either side is a compile error rather than an undefined at
-// run time.
+// One database per file is what lets the db project run its files in
+// parallel. The suites truncate tables between cases, so two files sharing a
+// database corrupt each other's results, and the project ran one file at a
+// time for that reason alone. The clone is a file-system copy of an already
+// migrated database, so it costs far less than replaying the migrations.
+//
+// The key is typed by the ProvidedContext declaration in containers.ts, so a
+// rename on either side is a compile error rather than an undefined at run
+// time. `dbUrl` is the server's admin URI; a suite never uses it directly.
+import { randomUUID } from 'node:crypto';
 import { inject } from 'vitest';
 
-process.env['DATABASE_URL'] = inject('dbUrl');
+// Pulls in the ProvidedContext augmentation, so `inject('dbUrl')` is typed
+// rather than `never`.
+import type {} from './containers.js';
+import { recordDatabase } from './isolation-registry.js';
+import { cloneTemplate, databaseOf } from './template-db.js';
+
+// A name unique to this file, and short: Postgres truncates an identifier at
+// 63 bytes, and a truncated name would collide with another worker's.
+const label = randomUUID().replace(/-/g, '').slice(0, 16);
+const runId = inject('dbRunId');
+
+const url = await cloneTemplate(inject('dbUrl'), runId, label);
+process.env['DATABASE_URL'] = url;
+
+// The run's teardown reads these back and fails when one database served two
+// files. No single file can see that about itself.
+recordDatabase(runId, databaseOf(url));

@@ -12,10 +12,10 @@ import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import { Pool } from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { readRunJournal } from '../journal/query.js';
 import { readConversation } from './query.js';
 
@@ -44,12 +44,9 @@ afterAll(async () => {
   await pool.end();
 });
 
-beforeAll(async () => {
-  await applyLedgerSchema(pool);
-});
 
 beforeEach(async () => {
-  await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
+  await truncateLedger(pool);
 });
 
 const OLD = "now() - interval '400 days'";

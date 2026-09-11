@@ -2,7 +2,7 @@
 // Postgres: hybrid retrieval over tsvector and pgvector, RRF fusion,
 // freshness (DEC-23), index contents (DEC-22) and the reranker gate (DEC-21).
 
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -69,12 +69,11 @@ function doc(docId: string, title: string, body: string, extra?: Partial<Indexed
 
 describe('section 4.6 retriever', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE document');
+    await truncateLedger(pool);
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE document');
+    await truncateLedger(pool);
   });
 
   it('ranks a document that leads both channels first, ahead of single-channel leaders', async () => {

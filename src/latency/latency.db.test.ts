@@ -14,7 +14,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { fencedInsert } from '../ledger/insert.js';
 import type { FencedRunInput } from '../ledger/insert.js';
 import { readLatency } from './query.js';
@@ -76,15 +76,14 @@ async function seedRun(opts: {
 
 describe('the latency report (V2 open item 7)', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn');
+    await truncateLedger(pool);
   });
   // A truncate before each case leaves the last case's rows behind. That is
   // harmless against the throwaway container and not harmless at all against
   // an explicit DATABASE_URL, which AGENTS.md documents as a supported mode:
   // the rows survived the run and the next `pnpm run latency` reported them.
   afterAll(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn');
+    await truncateLedger(pool);
     await pool.end();
   });
 

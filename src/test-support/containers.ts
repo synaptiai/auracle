@@ -55,7 +55,20 @@ export interface MailAddress {
 // Without it both sides degrade to `never` and the handoff is unchecked.
 declare module 'vitest' {
   interface ProvidedContext {
+    /**
+     * The server's admin URI, not a database a suite should use.
+     *
+     * db-url.setup.ts clones the migrated template into a fresh database per
+     * test file and publishes that as DATABASE_URL. A suite connecting to
+     * this one directly would share a database with every other file, which
+     * is what issue #68 removed.
+     */
     dbUrl: string;
+    /**
+     * Identifies this `vitest run`. Every database it creates carries it, so
+     * teardown drops what this run made and never another run's.
+     */
+    dbRunId: string;
     mail: MailAddress;
   }
 }

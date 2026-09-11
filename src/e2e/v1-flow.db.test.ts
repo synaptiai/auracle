@@ -18,7 +18,7 @@
 // adapter-side effects. Synthetic data only (DEC-18).
 import { randomUUID } from 'node:crypto';
 
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -308,13 +308,12 @@ class EpochBumpingProvider implements ModelProvider {
 
 describe('V1 flow end to end', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, document');
+    await truncateLedger(pool);
     await indexFixtureDoc();
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, document');
+    await truncateLedger(pool);
   });
 
   it('(a) automatic path: classify -> gate auto -> outbox -> relay applies the write once', async () => {

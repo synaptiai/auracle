@@ -6,7 +6,7 @@
 // sample depends on: unchanged, edited, fully rewritten.
 import { randomUUID } from 'node:crypto';
 
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -50,12 +50,11 @@ async function recordedDistance(runId: string): Promise<number | null> {
 
 describe('section 4.10 approval-edit distance recording', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
+    await truncateLedger(pool);
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
+    await truncateLedger(pool);
   });
 
   it('records exactly 0 when the person sent the draft unchanged', async () => {

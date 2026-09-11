@@ -7,7 +7,7 @@
 // Synthetic data only (DEC-18).
 import { randomUUID } from 'node:crypto';
 
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -207,10 +207,7 @@ async function approvedReplyOn(
 
 describe('approval completion path (DEC-12 end to end)', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query(
-      'TRUNCATE run, ticket_epoch, step_journal, outbox, document, conversation, turn',
-    );
+    await truncateLedger(pool);
     await indexDocument(
       pool,
       {
@@ -226,9 +223,7 @@ describe('approval completion path (DEC-12 end to end)', () => {
   });
 
   afterEach(async () => {
-    await pool.query(
-      'TRUNCATE run, ticket_epoch, step_journal, outbox, document, conversation, turn',
-    );
+    await truncateLedger(pool);
   });
 
   it('runs gated -> parked draft -> approve -> relay send end to end', async () => {

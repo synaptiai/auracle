@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -9,6 +8,7 @@ import {
   type FencedOutboxInput,
   type FencedRunInput,
 } from './insert.js';
+import { truncateLedger } from '../test-support/schema.js';
 
 const pool = new Pool({ connectionString: dbUrl() });
 
@@ -19,11 +19,6 @@ const pool = new Pool({ connectionString: dbUrl() });
 // nothing.
 await pool.query('SELECT 1');
 
-// Schema source of truth: db/001_ledger.sql from the DDL card.
-async function applySchema(): Promise<void> {
-  await pool.query(readFileSync('db/001_ledger.sql', 'utf8'));
-  await pool.query(readFileSync('db/005_run_timing.sql', 'utf8'));
-}
 
 function makeRun(epoch: bigint, state = 'queued'): FencedRunInput {
   return {
@@ -50,14 +45,11 @@ function makeOutbox(run: FencedRunInput, idemKey: string): FencedOutboxInput {
 
 describe('fencedInsert', () => {
   beforeEach(async () => {
-    await applySchema();
-    await pool.query(
-      'TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn',
-    );
+    await truncateLedger(pool);
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
+    await truncateLedger(pool);
   });
 
   it('commits the run state change and the outbox insert together', async () => {

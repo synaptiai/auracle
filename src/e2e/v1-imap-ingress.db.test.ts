@@ -14,7 +14,6 @@
 // Skipped when Docker or the ledger is unavailable. Synthetic data only
 // (DEC-18): example.test addresses throughout.
 
-import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { createTransport } from 'nodemailer';
 import { afterAll, beforeEach, describe, expect, it, inject } from 'vitest';
@@ -116,7 +115,6 @@ async function waitFor(condition: () => Promise<boolean>, what: string): Promise
 
 describe('imap ingress daemon end to end', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
     await pool.query('DELETE FROM intake');
   });
 

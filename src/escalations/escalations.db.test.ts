@@ -6,7 +6,7 @@
 // the filters (--since parsing, --state) as unit cases.
 import { randomUUID } from 'node:crypto';
 
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -52,12 +52,11 @@ async function journalStep(runId: string, stepId: string, result: object): Promi
 
 describe('escalations CLI queries', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn');
+    await truncateLedger(pool);
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn');
+    await truncateLedger(pool);
   });
 
   it('surfaces a coordinator escalation with its limit reason', async () => {
@@ -240,7 +239,7 @@ describe('escalations CLI queries', () => {
   // leads to a stack trace.
   it('says a payload that is not an object is no payload', async () => {
     for (const payload of [null, 'text', 7, ['a']]) {
-      await pool.query('TRUNCATE run, step_journal, outbox CASCADE');
+      await truncateLedger(pool);
       const run = await seedRun('awaiting_approval');
       await journalStep(run.runId, 'park', {
         actionClass: 'compensate', delivery: 'at_most_once', body: 'a note', payload,

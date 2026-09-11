@@ -10,7 +10,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import {
   LedgerClockError,
   fencedInsert,
@@ -28,9 +28,7 @@ await pool.query('SELECT 1');
 // describe's afterAll left the second describe with a closed pool, and every
 // case in it failed on the schema apply rather than on anything it asserted.
 afterAll(async () => {
-  await pool.query(
-    'TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn',
-  );
+  await truncateLedger(pool);
   await pool.end();
 });
 
@@ -89,10 +87,7 @@ async function runCount(): Promise<number> {
 
 describe('fencedInsert with an explicit clock', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query(
-      'TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn',
-    );
+    await truncateLedger(pool);
   });
 
   it('stores the supplied created_at', async () => {
@@ -255,10 +250,7 @@ describe('fencedInsert with an explicit clock', () => {
 
 describe('fencedTransition with an explicit clock', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query(
-      'TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn',
-    );
+    await truncateLedger(pool);
   });
 
   async function seeded(): Promise<FencedRunInput> {

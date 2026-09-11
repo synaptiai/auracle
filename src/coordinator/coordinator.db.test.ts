@@ -9,7 +9,7 @@
 import { randomUUID } from 'node:crypto';
 import { SEED_THRESHOLDS, makeThresholds } from '../policy/policy.js';
 
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -196,13 +196,12 @@ async function journalRows(runId: string): Promise<{ step_id: string; status: st
 
 describe('section 4.3 run coordinator', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, document');
+    await truncateLedger(pool);
     await indexFixtureDoc();
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, document');
+    await truncateLedger(pool);
   });
 
   it('drives an automatic run to resolved with journal, cost and a fenced outbox record', async () => {

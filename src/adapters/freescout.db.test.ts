@@ -25,7 +25,7 @@ import { FakeProvider } from '../models/fake.js';
 import type { FakeStep } from '../models/fake.js';
 import { relayPending } from '../relay/relay.js';
 import { indexDocument } from '../retriever/retriever.js';
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import {
   FREESCOUT_TEST_API_KEY,
   FREESCOUT_TEST_USER_ID,
@@ -139,10 +139,7 @@ describe('the gated path through a FreeScout instance (DEC-11, DEC-12)', () => {
       userId: FREESCOUT_TEST_USER_ID,
       timeoutMs: 5_000,
     });
-    await applyLedgerSchema(pool);
-    await pool.query(
-      'TRUNCATE run, ticket_epoch, step_journal, outbox, document, conversation, turn',
-    );
+    await truncateLedger(pool);
     await indexDocument(
       pool,
       {
@@ -159,9 +156,7 @@ describe('the gated path through a FreeScout instance (DEC-11, DEC-12)', () => {
 
   afterEach(async () => {
     await instance.stop();
-    await pool.query(
-      'TRUNCATE run, ticket_epoch, step_journal, outbox, document, conversation, turn',
-    );
+    await truncateLedger(pool);
   });
 
   it('parks the gated reply as a draft in the instance, and waits for a person', async () => {

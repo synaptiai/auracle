@@ -6,7 +6,6 @@
 // written). Synthetic data only (DEC-18).
 import { randomUUID } from 'node:crypto';
 
-import { applyLedgerSchema } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -32,7 +31,6 @@ await pool.query('SELECT 1');
 
 describe('imap daemon intake', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
     await pool.query('DELETE FROM intake');
   });
 

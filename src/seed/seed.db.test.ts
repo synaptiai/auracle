@@ -9,10 +9,10 @@
 import { createHash } from 'node:crypto';
 
 import { Pool } from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { readDays } from '../bands/query.js';
 import { approvalEditDistance } from '../approval/edit_distance.js';
 import { approvedReplyFor } from './write.js';
@@ -36,9 +36,7 @@ async function truncate(): Promise<void> {
   // `document` too: the seeder writes the small corpus a `retrieve` row's
   // ids point at, and a case that counted rows would otherwise count another
   // suite's index as well.
-  await pool.query(
-    'TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn, document',
-  );
+  await truncateLedger(pool);
 }
 
 /** Every column of the ledger a second run must reproduce exactly. */
@@ -67,9 +65,6 @@ describe('the document corpus the seeder writes', () => {
   // the whole migration set before each test, and each replay is DDL against
   // a database the run shares — which is where `applyLedgerSchema` deadlocks
   // when the machine is short of memory. This block adds none of that.
-  beforeAll(async () => {
-    await applyLedgerSchema(pool);
-  });
 
   beforeEach(async () => {
     await truncate();
@@ -106,9 +101,6 @@ describe('the document corpus the seeder writes', () => {
 });
 
 describe('the seeded history', () => {
-  beforeAll(async () => {
-    await applyLedgerSchema(pool);
-  });
 
   beforeEach(async () => {
     await truncate();
@@ -200,9 +192,6 @@ describe('the seeded history', () => {
 });
 
 describe('the readers over the seeded history', () => {
-  beforeAll(async () => {
-    await applyLedgerSchema(pool);
-  });
 
   beforeEach(async () => {
     await truncate();
@@ -289,9 +278,6 @@ describe('the readers over the seeded history', () => {
 describe('what the ledger holds about a claim and an approver', () => {
   let plan: PlannedRun[];
 
-  beforeAll(async () => {
-    await applyLedgerSchema(pool);
-  });
 
   beforeEach(async () => {
     await truncate();
@@ -428,9 +414,6 @@ describe('what the ledger holds about a claim and an approver', () => {
 describe('the journal a seeded run leaves', () => {
   let plan: PlannedRun[];
 
-  beforeAll(async () => {
-    await applyLedgerSchema(pool);
-  });
 
   beforeEach(async () => {
     await truncate();

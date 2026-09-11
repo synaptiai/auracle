@@ -7,11 +7,15 @@
 // loop and is checked separately; a model that agreed with itself would
 // prove nothing about the code.
 //
-// The poll interval used below is deliberately long. At the 5000 ms default
-// the difference between waking on arrival and waiting for a tick is a few
-// seconds, and a suite that slept that long per case would be the slowest in
-// the repository. A 4000 ms interval keeps the two regimes an order of
-// magnitude apart while each case finishes in about a second.
+// The default poll interval below is short, so most cases finish in
+// milliseconds. Issue #68 cut it from 4000 ms, because the whole suite was
+// paying for a regime only some of its cases need.
+//
+// Three cases do need a slow poll, and each names its own interval rather
+// than imposing one on the file. They assert that the tick is what picked a
+// message up, or that no tick fired inside an observation window, and both
+// properties are meaningless when the interval is close to the sleep beside
+// it: the measurement then reads the clock rather than the consumer.
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
@@ -25,7 +29,7 @@ import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { dbUrl } from '../db/config.js';
 import { FakeProvider } from '../models/fake.js';
 import type { AdapterCapabilities } from '../policy/policy.js';
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 6 });
 
@@ -33,7 +37,10 @@ await pool.query('SELECT 1');
 
 const PARTITION_COUNT = 8;
 const PARTITIONS = [0, 1, 2, 3, 4, 5, 6, 7];
-const POLL_MS = 4000;
+// A few hundred milliseconds. This was 4000, and cases waited up to twice
+// that: the suite proves the consumer wakes on a signal rather than on the
+// poll, so the poll only has to be slower than the signal, not slow.
+const POLL_MS = 300;
 
 /**
  * The interval used by the two cases that prove a signal picked a message up.
@@ -202,8 +209,7 @@ async function enqueueOne(): Promise<void> {
 
 describe('the consumer loop', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn');
+    await truncateLedger(pool);
   });
 
   // The measurement this issue exists to move. A message arriving just after
@@ -247,17 +253,25 @@ describe('the consumer loop', () => {
   // The same case with no signal supplied. This is the loop that ships
   // today, and it is the falsification of the case above: if the assertion
   // above passed without the signal doing any work, this one would fail.
+  // This case owns a slow interval, because its property is that the wait is
+  // the interval. The suite's default is a few hundred milliseconds (issue
+  // #68), and at that speed a message is picked up so quickly that "it waited
+  // for a tick" and "it was picked up at once" are indistinguishable.
   it('waits for the poll tick when no signal is supplied', async () => {
-    const consumer = startConsumer(deps(), options());
+    const slowPoll = 2_000;
+    const consumer = startConsumer(deps(), options({ intervalMs: slowPoll }));
     try {
       await new Promise((resolve) => setTimeout(resolve, 300));
       await enqueueOne();
-      expect(await awaitRun(POLL_MS * 2)).toBe(true);
+      expect(await awaitRun(slowPoll * 2)).toBe(true);
     } finally {
       await consumer.stop();
     }
     const waited = await storedWaitMs();
-    expect(waited).toBeGreaterThan(1000);
+    // Enqueued 300ms into a 2s interval, so the message waits most of what is
+    // left. Half the interval is the floor that separates a wait from a
+    // pickup without one.
+    expect(waited).toBeGreaterThan(slowPoll / 2);
   });
 
   // A lost signal must cost latency and nothing else. The ceiling is the
@@ -268,18 +282,26 @@ describe('the consumer loop', () => {
       start: async (): Promise<void> => undefined,
       stop: async (): Promise<void> => undefined,
     };
-    const consumer = startConsumer(deps(), options({ signal: silent }));
+    // This case owns a slow interval, for the same reason as the poll-tick
+    // case above: its property is that the ceiling is what picked the message
+    // up. At the suite's default the settle below would equal the interval,
+    // the enqueue would land on a tick boundary, and the measured wait would
+    // be the few milliseconds to the next scan — a number that says nothing
+    // about the ceiling. Measured at 8 to 15ms before this was fixed.
+    const slowPoll = 2_000;
+    const settleMs = 200;
+    const consumer = startConsumer(deps(), options({ signal: silent, intervalMs: slowPoll }));
     try {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await new Promise((resolve) => setTimeout(resolve, settleMs));
       await enqueueOne();
-      expect(await awaitRun(POLL_MS * 2)).toBe(true);
+      expect(await awaitRun(slowPoll * 2)).toBe(true);
     } finally {
       await consumer.stop();
     }
     // Above half a poll period, so the ceiling is what picked it up rather
     // than some other wake. `created_at - enqueued_at` is never exactly
     // zero, so a `toBeGreaterThan(0)` here asserted nothing at all.
-    expect(await storedWaitMs()).toBeGreaterThan(POLL_MS / 2);
+    expect(await storedWaitMs()).toBeGreaterThan(slowPoll / 2);
   });
 
   // A signal landing while a scan runs must not be dropped. Dropping it
@@ -456,7 +478,13 @@ describe('the consumer loop', () => {
         },
       }) as Pool,
     };
-    const consumer = startConsumer(counting, options({ partitions: [0], signal: manual }));
+    // A poll must not fire inside the observation window, or the count below
+    // measures the clock rather than the filter. So this case names an
+    // interval far longer than the window it watches.
+    const consumer = startConsumer(
+      counting,
+      options({ partitions: [0], signal: manual, intervalMs: 30_000 }),
+    );
     try {
       await new Promise((resolve) => setTimeout(resolve, 300));
       const before = scans;

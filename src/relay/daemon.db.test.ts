@@ -4,7 +4,7 @@
 // skipped when it is down; the scan-failure case needs no database at all.
 import { randomUUID } from 'node:crypto';
 
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -143,14 +143,13 @@ describe('relay daemon loop', () => {
   let daemon: RelayDaemon | null = null;
 
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
+    await truncateLedger(pool);
   });
 
   afterEach(async () => {
     await daemon?.stop();
     daemon = null;
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
+    await truncateLedger(pool);
   });
 
   it('a poisoned record escalates alone and the scan still relays the next one', async () => {

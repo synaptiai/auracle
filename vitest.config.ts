@@ -61,16 +61,10 @@ export default defineConfig({
           exclude: [...SHARED_EXCLUDE, ...MAIL_SUITES],
           globalSetup: ['./src/test-support/db-global-setup.ts'],
           setupFiles: ['./src/test-support/db-url.setup.ts'],
-          // The suites truncate tables between cases, so two files running
-          // at once corrupt each other's results. `fileParallelism` is a
-          // root-only option in vitest 3 (it is listed in NonProjectOptions),
-          // so the project-scoped equivalent is a single fork: one worker
-          // process runs this project's files one after another. `isolate`
-          // stays on, so each file still gets a fresh module registry; it is
-          // stated rather than left to the default because the serial
-          // guarantee these suites depend on is the whole point of the line.
-          // Issue #68 gives each file its own database and removes both.
-          poolOptions: { forks: { singleFork: true, isolate: true } },
+          // Files run in parallel. They truncate tables between cases, which
+          // is why this project ran one file at a time until issue #68 —
+          // src/test-support/db-url.setup.ts now clones the migrated template
+          // into a database of each file's own, so no two files share one.
           hookTimeout: 60_000,
           testTimeout: 30_000,
         },

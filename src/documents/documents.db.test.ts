@@ -6,10 +6,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { Pool } from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { indexDocument } from '../retriever/retriever.js';
 import { readRunJournal } from '../journal/query.js';
 import { readDocument } from './query.js';
@@ -21,12 +21,9 @@ afterAll(async () => {
   await pool.end();
 });
 
-beforeAll(async () => {
-  await applyLedgerSchema(pool);
-});
 
 beforeEach(async () => {
-  await pool.query('TRUNCATE document, step_journal');
+  await truncateLedger(pool);
 });
 
 async function index(

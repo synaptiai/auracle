@@ -54,6 +54,7 @@ SHIPPED_GLOBS = (
     "docs/*.md",
     "intent/*.md",
     "fixtures/README.md",
+    "db/README.md",
 )
 
 # realpath, not abspath: through a symlink, abspath lands outside the

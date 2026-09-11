@@ -5,7 +5,7 @@
 // the full path: derive key -> transactional fenced write -> ledger state.
 import { randomUUID } from 'node:crypto';
 
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -80,12 +80,11 @@ async function seedEpoch(ticketId: string, epoch: bigint): Promise<void> {
 
 describe('section 3.4 concurrency rules', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
+    await truncateLedger(pool);
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
+    await truncateLedger(pool);
   });
 
   it('collides concurrent inserts of one semantic action; the loser lands superseded, never queued', async () => {

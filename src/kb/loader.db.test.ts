@@ -4,7 +4,7 @@
 // Also covers loud per-file failures and both dimension-mismatch guards.
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Pool } from 'pg';
@@ -136,15 +136,14 @@ describe('kb loader against postgres', () => {
   let corpusDir: string;
 
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE document');
+    await truncateLedger(pool);
     corpusDir = await mkdtemp(path.join(tmpdir(), 'kb-corpus-'));
     await writeCorpus(corpusDir);
   });
 
   afterEach(async () => {
     await rm(corpusDir, { recursive: true, force: true });
-    await pool.query('TRUNCATE document');
+    await truncateLedger(pool);
   });
 
   afterAll(async () => {

@@ -14,7 +14,7 @@
 // Skipped when Docker or the ledger is unavailable. Synthetic data only
 // (DEC-18): example.test addresses throughout.
 
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { ImapFlow } from 'imapflow';
 import { createTransport } from 'nodemailer';
@@ -204,10 +204,7 @@ async function waitFor(condition: () => Promise<boolean>, what: string): Promise
 
 describe('email duplex flow end to end', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query(
-      'TRUNCATE run, ticket_epoch, step_journal, outbox, document',
-    );
+    await truncateLedger(pool);
     await indexDocument(
       pool,
       {

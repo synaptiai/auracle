@@ -11,7 +11,7 @@
 // real. Synthetic data only (DEC-18).
 
 import { randomUUID } from 'node:crypto';
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -228,8 +228,7 @@ async function runRowsFor(ticketId: string): Promise<RunRow[]> {
 
 describe('section 4.3 partition consumer', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, document, intake, conversation, turn');
+    await truncateLedger(pool);
     await indexDocument(
       pool,
       {
@@ -245,7 +244,7 @@ describe('section 4.3 partition consumer', () => {
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, document, intake, conversation, turn');
+    await truncateLedger(pool);
   });
 
   it('routes each ticket to its owning consumer; two consumers never produce two runs for one ticket', async () => {

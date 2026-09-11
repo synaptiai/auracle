@@ -3,7 +3,7 @@
 // the intake table under the DEC-36 partition of its conversation. Real
 // Postgres, synthetic data only (DEC-18).
 
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { applyLedgerSchema, truncateLedger } from '../test-support/schema.js';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { Pool } from 'pg';
@@ -59,8 +59,7 @@ afterAll(async () => {
 
 describe('webhook → intake path', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query('TRUNCATE intake, conversation, turn');
+    await truncateLedger(pool);
   });
 
   it('lands a POSTed delivery in intake under its DEC-27 partition', async () => {
@@ -124,10 +123,24 @@ describe('webhook → intake path', () => {
 
   it('answers 500 and leaves the queue untouched when the insert fails', async () => {
     const url = await start();
-    // Remove the table so enqueueTicket's INSERT fails outright.
+    // Remove the table so enqueueTicket's INSERT fails outright, then put it
+    // back. A `beforeEach` used to re-apply the whole schema, so the drop
+    // repaired itself and nobody had to think about it; issue #68 replaced
+    // that hook with a truncate, because each file now receives an already
+    // migrated database. This case is the one place that changes the schema
+    // rather than the rows, so it is the one place that must restore it.
+    //
+    // Leaving it dropped is invisible in the default order, where this case
+    // runs last. Under `--sequence.shuffle` it broke two later cases, and
+    // `truncateLedger` reports nothing about it: the helper reads the table
+    // list from `information_schema`, so a missing table is simply absent
+    // rather than an error.
     await pool.query('DROP TABLE intake');
-
-    const response = await post(url, WEBHOOK_FULL_PAYLOAD);
-    expect(response.status).toBe(500);
+    try {
+      const response = await post(url, WEBHOOK_FULL_PAYLOAD);
+      expect(response.status).toBe(500);
+    } finally {
+      await applyLedgerSchema(pool);
+    }
   });
 });

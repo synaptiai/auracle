@@ -13,7 +13,6 @@
 //
 // Synthetic data only (DEC-18).
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -24,6 +23,7 @@ import {
   type FencedOutboxInput,
   type FencedRunInput,
 } from './insert.js';
+import { truncateLedger } from '../test-support/schema.js';
 
 const pool = new Pool({ connectionString: dbUrl() });
 
@@ -34,10 +34,6 @@ const pool = new Pool({ connectionString: dbUrl() });
 // nothing.
 await pool.query('SELECT 1');
 
-async function applySchema(): Promise<void> {
-  await pool.query(readFileSync('db/001_ledger.sql', 'utf8'));
-  await pool.query(readFileSync('db/005_run_timing.sql', 'utf8'));
-}
 
 function makeRun(epoch: bigint, state = 'received'): FencedRunInput {
   return {
@@ -78,12 +74,11 @@ async function timingRow(runId: string): Promise<TimingRow> {
 
 describe('run timing columns (V2 open item 7)', () => {
   beforeEach(async () => {
-    await applySchema();
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
+    await truncateLedger(pool);
   });
 
   afterEach(async () => {
-    await pool.query('TRUNCATE run, ticket_epoch, step_journal, outbox, conversation, turn');
+    await truncateLedger(pool);
   });
 
   it('copies the arrival time, records pickup, and stamps only terminal finishes', async () => {

@@ -16,7 +16,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { readRunJournal } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 4 });
@@ -122,8 +122,7 @@ async function fullRun(intentId = 'password_reset'): Promise<string> {
 }
 
 beforeEach(async () => {
-  await applyLedgerSchema(pool);
-  await pool.query('TRUNCATE step_journal, document CASCADE');
+  await truncateLedger(pool);
 });
 
 afterAll(async () => {

@@ -16,7 +16,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
-import { applyLedgerSchema } from '../test-support/schema.js';
+import { truncateLedger } from '../test-support/schema.js';
 import { readDays } from '../bands/query.js';
 import { readLatency } from '../latency/query.js';
 import {
@@ -114,16 +114,11 @@ const DAY_TWO = '2026-06-02';
 
 describe('a history seeded through the fenced path', () => {
   beforeEach(async () => {
-    await applyLedgerSchema(pool);
-    await pool.query(
-      'TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn',
-    );
+    await truncateLedger(pool);
   });
 
   afterAll(async () => {
-    await pool.query(
-      'TRUNCATE run, ticket_epoch, step_journal, outbox, intake, conversation, turn',
-    );
+    await truncateLedger(pool);
     await pool.end();
   });
 
