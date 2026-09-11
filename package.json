@@ -26,7 +26,7 @@
     "check:docs": "python3 scripts/check-docs.py && python3 scripts/test_check_docs.py",
     "check:ste": "python3 scripts/ste-check.py && python3 scripts/test_ste_check.py",
     "check:guards": "python3 .claude/hooks/test_fixtures_pii_guard.py && python3 .claude/hooks/test_live_db_approval.py && python3 .claude/hooks/test_commit_dec_citation.py && python3 evals/run.py",
-    "check:fixtures": "node scripts/generate-fixtures.mjs && git add -N fixtures/ && git diff --exit-code fixtures/",
+    "check:fixtures": "node scripts/generate-fixtures.mjs && git add -N fixtures/ && git diff --exit-code -- fixtures/ ':!fixtures/README.md'",
     "db:migrate": "pnpm run build && node dist/ledger/migrate.js",
     "latency": "pnpm run build && node dist/latency/run.js",
     "bands": "pnpm run build && node dist/bands/run.js",

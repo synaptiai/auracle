@@ -6,6 +6,7 @@ Two modes:
   FILE...      Check files directly. Used in CI and by hand.
 """
 import json
+import posixpath
 import re
 import sys
 
@@ -43,16 +44,66 @@ def scan(text):
     return hits
 
 
+def covered(path):
+    """True where the synthetic rule is absolute.
+
+    DEC-18 is about the corpus this repository ships. A fixture or an eval
+    case is data an adopter inherits, so a reachable address there is a
+    defect whatever its provenance. Prose is different: a runbook may need to
+    show what a real-looking address looks like, and blocking that made a
+    docs-only pull request fail on its own example.
+
+    REVIEW.md extends the rule to fixtures, evals and examples. Matching only
+    '/fixtures/' left the fixture modules under src/ and the eval cases
+    outside the guard, which is most of the surface it names.
+    """
+    # `..` is resolved before the decision, so `fixtures/../src/x.ts` is not
+    # read as corpus. The comparison is lower-cased because macOS and Windows
+    # resolve `FIXTURES/taxonomy.json` to the real corpus file, and a guard
+    # that missed that spelling would be silent on a real write.
+    norm = posixpath.normpath("/" + path.replace("\\", "/").lstrip("/")).lower()
+    return (
+        "/fixtures/" in norm
+        or "/evals/cases/" in norm
+        or re.search(r"/fixtures?[.-][^/]*$", norm) is not None
+        or norm.endswith("/fixtures.ts")
+    )
+
+
 def file_mode(paths):
+    """Blocks inside the corpus, warns outside it.
+
+    The guard used to fail a pull request for any hit in any changed text
+    file. A document or a test that mentioned a plausible identifier failed
+    the whole run, so the rule fired where it was not the rule. Outside the
+    corpus a hit is still printed -- a reader should see it -- but it does
+    not gate the change.
+    """
     failed = False
+    warned = False
     for path in paths:
         hits = scan(open(path, errors="replace").read())
-        if hits:
+        if not hits:
+            continue
+        if covered(path):
             failed = True
             print(
                 f"BLOCKED: {path} fails the synthetic-fixture rule "
                 f"(DEC-18, DEC-19). Found " + "; ".join(hits)
             )
+        else:
+            warned = True
+            print(
+                f"warning: {path} names something that looks like real data. "
+                f"Outside fixtures/ and evals/cases/ this does not block. "
+                f"Found " + "; ".join(hits)
+            )
+    if warned and not failed:
+        print(
+            "\nThe synthetic rule is absolute inside fixtures/ and "
+            "evals/cases/ only. fixtures/README.md names the reserved "
+            "domains that are synthetic by construction."
+        )
     sys.exit(2 if failed else 0)
 
 
@@ -71,17 +122,7 @@ def hook_mode():
     else:
         sys.exit(0)
 
-    # REVIEW.md extends the rule to fixtures, evals and examples. Matching
-    # only '/fixtures/' left the fixture modules under src/ and the eval
-    # cases outside the guard, which is most of the surface it names.
-    norm = "/" + path.lstrip("/")
-    covered = (
-        "/fixtures/" in norm
-        or "/evals/cases/" in norm
-        or re.search(r"/fixtures?[.-][^/]*$", norm) is not None
-        or norm.endswith("/fixtures.ts")
-    )
-    if not covered:
+    if not covered(path):
         sys.exit(0)
 
     hits = scan(content)

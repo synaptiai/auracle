@@ -189,9 +189,13 @@ three things while you work:
 - Live database commands without approval. Destructive commands against a real
   database need a person first.
 
-The test-edit-lock and live-database rules have no CI surface.
-Their context exists only inside a session.
-Do not assume CI catches them.
+The live-database rule has no CI surface. Its context exists only inside a
+session. Do not assume CI catches it.
+
+No hook enforces the test-edit rule. One did, and it blocked any test-file
+edit on a `fix/` branch, which section 7 requires for a defect. A bug fix
+could not carry its regression test. The rule is now a review duty, and
+`REVIEW.md` records that.
 
 ## 7. Branch, commit and open the pull request
 

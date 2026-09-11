@@ -6,6 +6,36 @@ Invented values are what let this repository stay public.
 No real customer data enters this repository.
 See DEC-18.
 
+## Accepted addresses
+
+An address here must be unable to reach a person.
+RFC 2606 and RFC 6761 reserve names for exactly that.
+`.claude/hooks/fixtures_pii_guard.py` accepts these and rejects the rest:
+
+| Domain | Reserved by |
+|---|---|
+| `example.com`, `example.net`, `example.org` | RFC 2606 |
+| any `.example` name | RFC 2606 |
+| any `.test` name | RFC 2606 |
+| any `.invalid` name | RFC 2606 |
+| any `.localhost` name | RFC 6761 |
+
+A subdomain of a reserved name is reserved too, so a local part at
+`mail.acme.example` passes. Any other domain is rejected here, whether or
+not it is invented.
+
+This file names domains and never a whole address. `fixtures.test.ts` holds
+a stricter rule than the guard does: no email-shaped string may appear
+anywhere under `fixtures/`, this README included. So an example address
+written here would fail the suite, which is why none is.
+A guard cannot tell an invented company from a real one.
+So the rule is about reachability, not about intent.
+
+The rule is absolute in this directory and in `evals/cases/`.
+Elsewhere the guard warns and does not block a pull request.
+It has no clause for a person's name, and it never reads an image.
+A reader owns both of those.
+
 ## Contents
 
 - `taxonomy.json`. The curated taxonomy of 25 intents. Each intent carries a

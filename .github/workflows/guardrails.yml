@@ -60,8 +60,9 @@ jobs:
       - name: Documentation checker cases
         run: python3 scripts/test_check_docs.py
 
-      # The test-edit-lock and live-database rules still block inside a
-      # session only. The step above tests the live-database logic; it does
-      # not enforce the rule on a pull request. REVIEW.md records this.
+      # The live-database rule still blocks inside a session only. The step
+      # above tests its logic; it does not enforce the rule on a pull
+      # request. No hook enforces the test-edit rule any more: it blocked the
+      # regression test a bug fix exists to add, so REVIEW.md holds it now.
       # The commit-msg hook covers the citation rule locally. See
       # hooks/commit-msg for install instructions.

@@ -44,10 +44,6 @@ pnpm run build
 pnpm run db:migrate
 ```
 
-The live-database guard blocks a bare `pnpm run db:migrate`, because the
-command names no target. Name the target on the same line inside a session:
-`DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle pnpm run db:migrate`.
-
 Compose publishes Postgres on host port 5433. Port 5432 belongs to another local stack.
 `pnpm run db:migrate` applies the SQL files under `db/` in order.
 
@@ -191,6 +187,8 @@ It decides structure and reference. It does not decide whether a diagram is true
   policy engine returns that verdict before it reads either threshold.
 - Customer replies always need approval and a non-empty `disclosure` field (DEC-12, DEC-14).
 - The repository ships synthetic fixtures only. Never write real emails, phone numbers, names or account identifiers (DEC-18).
+  A hook and CI enforce this inside `fixtures/` and `evals/cases/`. Elsewhere they warn, and a reader owns the rule.
+  Neither reads an image, and neither has a clause for a person's name. `REVIEW.md` records both gaps.
 - Shipped markdown follows Simplified Technical English. Maximum 20 words per sentence, 6 sentences per paragraph, active voice, present tense.
 
 ## Change workflow
@@ -204,11 +202,18 @@ It decides structure and reference. It does not decide whether a diagram is true
    `scripts/generate-fixtures.mjs` regenerates the corpus. Committed fixtures match its output byte for byte.
 
 `CONTRIBUTING.md` holds the full procedure. `scripts/ste-check.py` is the style checker.
-Session hooks in `.claude/settings.json` block fixture PII, test edits during a bug fix and live database commands.
-The last two rules are not enforced on a pull request, and neither is the
+Session hooks in `.claude/settings.json` block fixture PII and live database commands.
+The live-database rule is not enforced on a pull request, and neither is the
 intent-file rule. CI checks style rules 1 and 2 with `scripts/ste-check.py`,
 and rules 3 to 5 need a reader. CI also diffs the corpus against the
 generator.
+
+No hook blocks a test edit during a bug fix. One did, and it blocked the
+regression test a bug fix exists to add. `REVIEW.md` holds the rule now.
+
+The PII guard is absolute inside `fixtures/` and `evals/cases/`. Elsewhere it
+warns and does not block. A runbook may need to show what real data looks
+like, and that is not the corpus.
 
 `REVIEW.md` holds the full table. Do not expect CI to catch them.
 `evals/` holds prompt-level regressions for these guardrails. `python3 evals/run.py` runs the structural layer with no model.

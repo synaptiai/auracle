@@ -94,7 +94,7 @@ DEC that motivated each attack.
 |---|---|---|---|
 | Synthetic fixtures | PII validator hook | yes | yes |
 | DEC citation on register changes | commit hook | yes | yes |
-| No test edits during a bug fix | test-edit-lock hook | no | no |
+| No test edits during a bug fix | none, by decision | no | n/a |
 | Live database approval | live-db validator hook | no | yes |
 | Simplified Technical English | none | rules 1 and 2 | yes |
 | An intent file for each change | none | no | no |
@@ -103,6 +103,18 @@ DEC that motivated each attack.
 Two columns exist because they differ. A job that runs a guard's own cases
 proves the guard works. It does not apply the rule to the pull request.
 
-Three rules are not enforced on a pull request. Two of them depend on context
-that exists only inside a session. One has no checker at all. State this
-when it matters. Do not pretend coverage exists.
+Two rules are not enforced on a pull request. One depends on context that
+exists only inside a session. One has no checker at all. State this when it
+matters. Do not pretend coverage exists.
+
+The test-edit rule has no checker by decision (issue #74).
+A session hook used to block any test-file edit on a `fix/` branch.
+CONTRIBUTING.md requires that prefix for a defect.
+So a bug fix could not carry its own regression test. The rule survives as a review
+duty: the bugs pass below owns it. A fix adds a failing-first test and never
+relaxes an existing assertion.
+
+The PII guard has no clause for a person's name. It never reads an image.
+It matches an email address, a phone number and a customer identifier.
+So the DEC-18 checkbox promises more than the guard decides.
+The compliance pass owns the rest.

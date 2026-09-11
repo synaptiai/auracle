@@ -91,10 +91,6 @@ pnpm run build
 pnpm run db:migrate
 ```
 
-The live-database guard blocks a bare `pnpm run db:migrate`, because the
-command names no target. Name the target on the same line inside a session:
-`DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle pnpm run db:migrate`.
-
 Compose starts Postgres 16 with pgvector on host port 5433.
 `pnpm run db:migrate` applies every pending migration under `db/` to that database and records each version in `schema_version`.
 Use this database for the daemons and the CLI tools below.

@@ -652,6 +652,22 @@ REGISTER_OK = """## 7. Open items for V2
 | 7. Seven | `aaa.md` | proposed |
 """
 
+# Two cases below deny access with a mode bit, and a mode bit never denies
+# root. Cloud agents and CI containers commonly run as root, where those cases
+# would assert a failure that cannot happen and pass for the wrong reason.
+# They skip there instead. A skip is honest; a pass is not.
+NEEDS_DENIAL = "needs-permission-denial"
+
+# check_crash_guard, plus the three check_cli cases in main().
+EXTRA_CASES = 4
+
+
+def denies_permission() -> bool:
+    """Whether a mode bit can actually deny this process."""
+    getuid = getattr(os, "getuid", None)
+    return getuid is None or getuid() != 0
+
+
 CASES = [
     ("three tagged fences with declared nodes pass", case_diagrams_pass),
     ("an edge to an undeclared node fails", case_undeclared_node),
@@ -685,7 +701,7 @@ CASES = [
     ("a link that resolves nowhere fails", case_dead_link),
     ("anchors and external links are ignored",
      case_anchor_and_external_links_ignored),
-    ("an unreadable directory is a finding", case_unreadable_directory),
+    ("an unreadable directory is a finding", case_unreadable_directory, NEEDS_DENIAL),
     ("a link shown in a fence and used in prose is checked",
      case_link_shown_in_a_fence_and_used_in_prose),
     ("a run that read nothing is a finding", case_no_markdown_at_all),
@@ -700,7 +716,7 @@ CASES = [
     ("a missing mail edge fails", case_configured_path_edge_missing),
     ("a disclaimer below the next section does not count",
      case_disclaimer_below_the_next_section),
-    ("a map that cannot be read is a finding", case_map_that_cannot_be_read),
+    ("a map that cannot be read is a finding", case_map_that_cannot_be_read, NEEDS_DENIAL),
     ("a missing flow diagram fails the mail rule",
      case_configured_path_without_a_flow_diagram),
     ("a map with no entity diagram fails", case_map_with_no_entity_diagram),
@@ -799,7 +815,14 @@ def check_cli(name, args, want, wanted_text):
 
 def main() -> int:
     failures = 0
-    for name, build in CASES:
+    skipped = 0
+    for entry in CASES:
+        name, build = entry[0], entry[1]
+        needs = entry[2] if len(entry) > 2 else None
+        if needs == NEEDS_DENIAL and not denies_permission():
+            skipped += 1
+            print(f"skip {name}: running as root, where a mode bit denies nothing")
+            continue
         with tempfile.TemporaryDirectory() as root:
             check, want, wanted_text = build(root)
             got = run(root, check)
@@ -832,11 +855,18 @@ def main() -> int:
                               ["--root", root, "--only", "links,links,links"], 0,
                               "docs clean: 1 check(s)")
 
-    total = len(CASES)
+    # The crash guard and the three command-line cases run too, so counting
+    # CASES alone undercounted every line below by four.
+    total = len(CASES) + EXTRA_CASES
     if failures:
         print(f"\n{failures} of {total} case(s) failed")
         return 1
-    print(f"check-docs: {total} case(s) pass")
+    # State the skip count. A run that reports only what passed reads the same
+    # whether two cases were skipped or never existed.
+    if skipped:
+        print(f"check-docs: {total - skipped} case(s) pass, {skipped} skipped")
+    else:
+        print(f"check-docs: {total} case(s) pass")
     return 0
 
 

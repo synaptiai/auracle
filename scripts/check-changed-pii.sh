@@ -5,9 +5,13 @@
 # the pull request's base commit, which exists only in CI. The rest are named
 # targets in package.json.
 #
-# Every changed text file, not an include list. Real customer data added to
-# docs/, a test file or src/test-support/ used to be caught by neither this
-# job nor the in-session hook.
+# Every changed text file, not an include list.
+#
+# The guard blocks inside fixtures/ and evals/cases/ and warns elsewhere. So
+# this step fails a pull request for the corpus and prints a warning for a
+# document or a test. That is deliberate: DEC-18 is about the corpus an
+# adopter inherits, and a runbook may need to show what real data looks like.
+# REVIEW.md records what the guard does not decide at all.
 #
 # Paths are carried NUL-delimited from `git diff` to the guard. The inline
 # bash this replaced word-split an unquoted `$files`, so a changed file whose
