@@ -5,24 +5,28 @@
 This repository uses pnpm, pinned by `packageManager` in `package.json`.
 An `npm install` produces a tree that no workflow validates.
 
-Each command is a single target. Each exits non-zero on failure.
+`pnpm run verify` is the contract. It exits non-zero on failure.
+It reaches the console package too, so nothing is left unverified.
 
-- Build: `pnpm run build`. Healthy output: the compiler finishes with no errors and exit code 0.
-- Test: `pnpm test`. Healthy output: every test passes, for example `Tests: 42 passed, 42 total`, exit code 0.
-  `pnpm run test:unit` runs the pure cases alone and needs no Docker. It is not a substitute for `pnpm test`.
-- Lint: `pnpm run lint`. Healthy output: no findings printed and exit code 0.
+```sh
+pnpm run verify
+```
 
-The console is a second package, and these three targets do not reach it.
-Run its own three as well, or you verify none of `console/`:
+It runs, in order: `build`, `check`, `lint`, `test`, the console's build,
+check and test, `check:docs`, `check:ste`, `check:guards` and
+`check:fixtures`. Healthy output ends with the fixtures line and exit code 0.
 
-- `pnpm --filter @auracle/console build`
-- `pnpm --filter @auracle/console check`
-- `pnpm --filter @auracle/console test`
+`pnpm run verify:fast` is the inner loop. It needs no Docker and takes about
+half a minute. It runs the unit project alone, and it also omits `build`,
+the console targets and the fixtures diff. So it proves nothing about a
+database suite, the console, or the corpus. It is not the contract.
 
-`pnpm run lint` is the exception. It reaches `console/` already.
+The individual targets still exist and are worth running alone while you work:
+`pnpm run build`, `pnpm test`, `pnpm run lint`, `pnpm run test:unit`,
+`pnpm run verify:console`.
 
-`pnpm run check` runs the compiler with `--noEmit`. Use it as the fast inner loop.
-It is not a substitute for the three targets above.
+`pnpm run check` runs the compiler with `--noEmit`. It is the fastest signal of all.
+Neither it nor `pnpm run verify:fast` is a substitute for `pnpm run verify`.
 
 `check` uses `tsconfig.check.json`, which covers the test files too.
 The build config excludes them, because they must not reach `dist/`.
@@ -224,4 +228,6 @@ generator.
 
 ## Verifying your work
 
-A task is not complete until the build, the tests and the lint all run. Paste the output of each one. Report what you ran and what you saw.
+A task is not complete until `pnpm run verify` exits 0. Paste its output and the
+exit code. Report the skip count from the test run, not only the pass count.
+Report what you ran and what you saw.

@@ -7,21 +7,20 @@ headings below. A pull request without them waits for a person to ask.
 
 <!-- One paragraph. Say what a reader gains, not which lines moved. -->
 
-## 1. Build, test and lint
+## 1. Verify
 
 <!--
-Paste the output of each command and state its exit code beside it.
-Report the skip count from the test run, not only pass or fail.
+Run `pnpm run verify` and paste its output, with the exit code.
+It covers the build, the types, the lint, every test project, the console,
+the documentation checks, the style check, the guard self-tests and the
+fixtures diff. Report the skip count from the test run, not only pass or
+fail.
 -->
 
 ```
-$ pnpm run build
-# exit 0
-
-$ pnpm test
-# exit 0
-
-$ pnpm run lint
+$ pnpm run verify
+# Test Files  N passed (N)
+#      Tests  N passed (N)
 # exit 0
 ```
 
@@ -47,11 +46,9 @@ If not, write "unchanged".
 
 ## Checklist
 
-- [ ] The three commands above ran, and their output is pasted with exit codes.
+- [ ] `pnpm run verify` ran, and its output is pasted above with the exit code.
 - [ ] An intent file is committed with this change.
 - [ ] Every behaviour change cites a DEC or declares itself an implementation detail.
 - [ ] No real email, phone number, name or account identifier enters the repository (DEC-18).
 - [ ] No API key, token or database password appears in the pasted output.
-- [ ] Shipped markdown passes `python3 scripts/ste-check.py`.
-- [ ] Documentation claims pass `python3 scripts/check-docs.py`.
 - [ ] The three-pass review in `REVIEW.md` ran: bugs, security, compliance.

@@ -1,21 +1,28 @@
-# CI for the command contract in AGENTS.md: build, test and lint must all
-# pass with exit code 0 on every pull request.
+# CI for the command contract in CONTRIBUTING.md: `pnpm run verify` must exit 0
+# on every pull request.
+#
+# The steps below name targets from package.json and nothing else. A
+# contributor runs the same target locally and sees the same result, so the
+# workflow and the documents cannot drift into disagreeing about what a green
+# pull request means.
 #
 # The database is the same pgvector Postgres the compose stack runs
 # (docker-compose.yml): user, password and db name auracle. Each suite applies
 # the real schema through src/test-support/schema.ts, which walks every file
 # under db/ in version order, so no migration step is needed here.
 #
-# DATABASE_URL is set below, so the global setup probes it before the workers
-# fork and fails this job when the service is unreachable. Without that probe
-# every database suite would skip itself and the job would still pass.
+# DATABASE_URL is set below, so the db project's global setup probes it before
+# the workers fork and fails this job when the service is unreachable. Without
+# that probe every database suite would skip itself and the job would still
+# pass. The unit project overrides it with a refusing address of its own, so a
+# pure suite cannot reach this service (see src/test-support/projects.ts).
 name: Tests
 
 on:
   pull_request:
 
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
 
     services:
@@ -46,40 +53,17 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build
-        run: pnpm run build
-
-      - name: Test
-        run: pnpm test
+      # Build, types, lint, every test project, the console's three targets,
+      # the documentation checks, the style check, the guard self-tests and
+      # the fixtures diff. The same command CONTRIBUTING.md asks for.
+      - name: Verify
+        run: pnpm run verify
         env:
           DATABASE_URL: postgres://auracle:auracle@localhost:5433/auracle
-
-      - name: Lint
-        run: pnpm run lint
-
-      # The console is its own package, so the core targets above do not
-      # reach it: `pnpm test` excludes `console/**` to keep the core counts
-      # where they were, and tsconfig.check.json covers `src/` alone. Without
-      # these three steps the console's build, its types and its cases run
-      # nowhere on a pull request — and `docs/operations.md` cites
-      # select-only.test.ts in print as the proof of the single-write claim.
-      # A proof that never executes is not one.
-      - name: Console build
-        run: pnpm --filter @auracle/console build
-
-      - name: Console types
-        run: pnpm --filter @auracle/console check
-
-      - name: Console test
-        run: pnpm --filter @auracle/console test
-
-      # DEC-18: the committed corpus must match what the generator writes.
-      # Running the generator and eyeballing it is circular. The diff is the
-      # part that can fail.
-      - name: Fixtures match the generator (DEC-18)
-        run: |
-          node scripts/generate-fixtures.mjs
-          git diff --exit-code fixtures/

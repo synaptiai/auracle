@@ -139,6 +139,79 @@ def check_bytes(name, want, payload):
         os.unlink(path)
 
 
+def load_checker():
+    """Imports ste-check.py as a module, despite the hyphen in its name."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("ste_check", CHECKER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def check_default_set() -> int:
+    """The no-argument form must check the shipped set, and must not pass empty.
+
+    `pnpm run check:ste` and the Guardrails workflow both call the checker
+    with no arguments, so the default set is the only definition of what
+    ships. Two ways that can go wrong silently, and both are closed here. A
+    glob that matches nothing would print "STE clean: 0 file(s)" and exit 0,
+    retiring the check without saying so. And a default set that quietly lost
+    README.md or AGENTS.md would still look healthy.
+    """
+    failures = 0
+    module = load_checker()
+
+    proc = subprocess.run([sys.executable, CHECKER], capture_output=True, text=True)
+    if proc.returncode != PASS:
+        failures += 1
+        print(f"FAIL the shipped set passes with no arguments: exit {proc.returncode}")
+        print(f"     {(proc.stdout or proc.stderr).strip()}")
+    else:
+        print("pass the shipped set passes with no arguments")
+
+    # The documents the convention exists for must be in the set. A default
+    # that silently lost one would still look healthy.
+    #
+    # Repository-relative paths, not basenames: fixtures/README.md collapses
+    # onto the root README.md in a basename set, so a basename sentinel could
+    # not see the fixtures glob disappear.
+    root = os.path.dirname(os.path.dirname(os.path.realpath(CHECKER)))
+    paths = {os.path.relpath(p, root) for p in module.shipped_files()}
+    if len(paths) < 10:
+        failures += 1
+        print(f"FAIL the shipped set is not vacuous: only {len(paths)} file(s)")
+    for required in ("README.md", "AGENTS.md", "CONTRIBUTING.md", "REVIEW.md",
+                     "fixtures/README.md", "docs/v1-architecture.md"):
+        if required not in paths:
+            failures += 1
+            print(f"FAIL the shipped set names {required}")
+    # Every glob must contribute, so retiring one directory cannot pass.
+    if module.empty_globs():
+        failures += 1
+        print(f"FAIL these globs match nothing: {module.empty_globs()}")
+    if not failures:
+        print(f"pass the shipped set names the shipped documents ({len(paths)} files)")
+
+    # An expansion that matches nothing must fail rather than report clean.
+    empty = load_checker()
+    # One retired pattern beside two live ones: the case a total-emptiness
+    # check cannot see.
+    empty.SHIPPED_GLOBS = ("README.md", "AGENTS.md", "no-such-directory/*.md")
+    argv = sys.argv
+    try:
+        sys.argv = ["ste-check"]
+        code = empty.main()
+    finally:
+        sys.argv = argv
+    if code == PASS:
+        failures += 1
+        print("FAIL a retired glob must not report clean")
+    else:
+        print("pass a retired glob is a fault, not a pass")
+    return failures
+
+
 def main() -> int:
     label = {PASS: "pass", FAIL: "fail"}
     failures = 0
@@ -163,6 +236,8 @@ def main() -> int:
     # A file this checker cannot decode must be a finding, not a traceback.
     failures += check_bytes("a file that is not UTF-8 is a finding", FAIL,
                             b"\xff\xfe# not utf-8\n")
+
+    failures += check_default_set()
 
     if failures:
         print(f"\n{failures} failure(s)")

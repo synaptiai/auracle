@@ -11,27 +11,45 @@ A statement that does not trace to a DEC is an implementation detail.
 You need Node 22 or later and Docker.
 Follow the "Run it" section of `README.md` for the database setup.
 
-Three commands define the contract. Each must exit 0.
+One command defines the contract. It must exit 0.
+
+```sh
+pnpm run verify
+```
+
+It runs the build and the types. It runs the lint and every test project.
+It runs the console's three targets. It runs the documentation checks,
+the style check and the guard self-tests. It ends with the fixtures diff.
+
+The Tests workflow runs this same target. So a green run here and a green
+run there mean the same thing.
+
+One gap to know about. `verify` runs the evals' structural layer only.
+The behaviour layer spends model calls and stays opt-in behind
+`EVAL_BEHAVIOUR=1`. A green `verify` is not evidence about it.
 
 | Command | Task |
 |---------|------|
-| `pnpm run build` | Compiles TypeScript. No errors may appear. |
-| `pnpm test` | Runs every test. All tests must pass. |
-| `pnpm run lint` | Runs ESLint. No findings may appear. |
+| `pnpm run verify` | The contract. Everything below, in one command. |
+| `pnpm run verify:fast` | No Docker. Omits the database and mail projects, `build`, the console and the fixtures diff. |
+| `pnpm run verify:console` | The console package's three targets. |
 
 A job that calls a model reads `MODEL_VER`, and the default is
 `z-ai/glm-5.3-flash`. That model reasons before it answers, and the provider
 bills the reasoning against the answer budget. So a call that expects a short
 answer still allows room for the reasoning before it.
 
-Run all three before you open a pull request.
-Paste the output of each command into the pull request description.
-State the exit code next to each output.
+Run `pnpm run verify` before you open a pull request.
+Paste its output into the pull request description, with the exit code.
 Report the skip count from the test run, not only the pass count.
 A suite that skips itself proves nothing, and the count is how you see it.
 A pull request without this evidence waits for a person to ask for it.
 
-`pnpm run check` runs the compiler alone and is the fast inner loop.
+`pnpm run verify:fast` needs no Docker and answers in about half a minute.
+Use it as the inner loop. It is not the contract. It runs no database suite,
+and it also skips the build, the console and the fixtures diff.
+
+`pnpm run check` runs the compiler alone and is faster still.
 To run one file or one case, see the "Running one test" section of `AGENTS.md`.
 A `*.test.ts` file needs no database. A `*.db.test.ts` file needs Postgres.
 
@@ -197,7 +215,8 @@ that names what changed.
 
 Include these items in the description:
 
-1. The pasted output of build, test and lint, each with its exit code.
+1. The pasted output of `pnpm run verify`, with its exit code and the skip
+   count from the test run.
 2. A link to or copy of your intent file.
 3. One sentence per behaviour change that names the DEC it obeys, or states
    that it is an implementation detail.
@@ -245,17 +264,25 @@ The rules:
 5. One technical name has one meaning. Reuse the names in the appendix of
    `docs/v1-architecture.md`. Introduce no synonyms for them.
 
-Run the check from the repository root against each changed document:
+Run the check with no arguments. It then reads the whole shipped set:
 
 ```sh
-python3 scripts/ste-check.py README.md AGENTS.md docs/v1-architecture.md
+pnpm run check:ste        # or: python3 scripts/ste-check.py
+```
+
+Name files only to check a subset while you draft:
+
+```sh
+python3 scripts/ste-check.py README.md
 ```
 
 The script decides rules 1 and 2. Rules 3 to 5 need a reader, so a clean exit
 is not coverage of those three.
 
-`.github/workflows/guardrails.yml` runs the same script on every pull request.
-`scripts/test_ste_check.py` holds the checker's own cases.
+The shipped set is `SHIPPED_GLOBS` in `scripts/ste-check.py`, and it is the
+only copy. `.github/workflows/guardrails.yml` runs the script with no file
+list for that reason. `scripts/test_ste_check.py` holds the checker's own
+cases, including one that fails an empty set rather than reporting it clean.
 
 A second checker decides the claims a document makes about the repository:
 

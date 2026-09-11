@@ -28,14 +28,60 @@ length pass as long as a bullet followed it.
 Code fences drop out entirely. Inline code collapses to one word, because a
 path or an identifier is one term to a reader.
 
-Usage: python3 scripts/ste-check.py FILE [FILE ...]
+Usage: python3 scripts/ste-check.py [FILE ...]
+With no FILE, it checks the shipped set named by SHIPPED_GLOBS below.
+That set is the one definition. `pnpm run check:ste` and the Guardrails
+workflow both call this script with no arguments, so neither restates the
+list and the two cannot drift apart.
 Exits 1 when a file breaks a rule, and 0 when every file passes.
 """
+import glob
+import os
 import re
 import sys
 
 MAX_WORDS = 20
 MAX_SENTENCES = 6
+
+# The markdown this repository ships to a reader. Internal notes under
+# docs/internal/ are deliberately absent: a working document should not gate
+# a pull request.
+SHIPPED_GLOBS = (
+    "README.md",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "REVIEW.md",
+    "docs/*.md",
+    "intent/*.md",
+    "fixtures/README.md",
+)
+
+# realpath, not abspath: through a symlink, abspath lands outside the
+# repository and every glob returns nothing.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+
+def shipped_files() -> list[str]:
+    """Expands SHIPPED_GLOBS against the repository, not the caller's cwd."""
+    found: list[str] = []
+    for pattern in SHIPPED_GLOBS:
+        found.extend(sorted(glob.glob(os.path.join(REPO_ROOT, pattern))))
+    return found
+
+
+def empty_globs() -> list[str]:
+    """The patterns that match nothing.
+
+    Checking the total is not enough. A renamed directory retires its own
+    pattern while the others still match, so the run reports a smaller clean
+    number and nobody reads it as a loss. The shell form this replaced passed
+    the unexpanded literal to the checker, which failed loudly on it.
+    """
+    return [
+        pattern
+        for pattern in SHIPPED_GLOBS
+        if not glob.glob(os.path.join(REPO_ROOT, pattern))
+    ]
 
 LIST_ITEM = re.compile(r"^(\d+\.|[-*+])\s")
 HEADING = re.compile(r"^#{1,6}\s+")
@@ -170,18 +216,32 @@ def check_file(path: str) -> list[str]:
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        print("usage: python3 scripts/ste-check.py FILE [FILE ...]", file=sys.stderr)
-        return 2
+    explicit = sys.argv[1:]
+    if explicit:
+        paths = explicit
+    else:
+        # A pattern that matches nothing would otherwise shrink the clean
+        # count in silence, so a renamed directory would retire its part of
+        # the check and the run would still pass. Every pattern must match.
+        missing = empty_globs()
+        if missing:
+            print(
+                "ste-check: these SHIPPED_GLOBS patterns match no file: "
+                + ", ".join(missing)
+                + ". A renamed or deleted path retires the check for it.",
+                file=sys.stderr,
+            )
+            return 2
+        paths = shipped_files()
     findings = []
-    for path in sys.argv[1:]:
+    for path in paths:
         findings.extend(check_file(path))
     for finding in findings:
         print(finding)
     if findings:
         print(f"\n{len(findings)} finding(s)")
         return 1
-    print(f"STE clean: {len(sys.argv) - 1} file(s), rules 1 and 2")
+    print(f"STE clean: {len(paths)} file(s), rules 1 and 2")
     return 0
 
 
