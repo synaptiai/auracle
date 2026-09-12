@@ -14,7 +14,7 @@
 import type { ConversationTurn } from '../coordinator/coordinator.js';
 import { renderPromptBody } from '../coordinator/history.js';
 import { predictIntent } from '../replay/fake-model.js';
-import type { RiskTier } from '../fixtures/load.js';
+import type { RiskTier } from '../domain/gold-types.js';
 
 /** Where a triaged case came from. Replay halves name their split; live traffic says so. */
 export type CaseOrigin = 'fit' | 'report' | 'live';

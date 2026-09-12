@@ -25,7 +25,8 @@ import {
 } from './artifact.js';
 import type { TriageArtifact } from './artifact.js';
 import { goldSetCases, runTriageJob, summariseForStdout } from './run.js';
-import { goldCaseText, loadGoldSet, loadTaxonomy, FIT_COUNT, REPORT_COUNT } from '../fixtures/load.js';
+import { FIT_COUNT, REPORT_COUNT, goldCaseText } from '../domain/gold-types.js';
+import { loadGoldSet, loadTaxonomy } from '../fixtures/load.js';
 
 function tempDirUrl(): URL {
   return pathToFileURL(mkdtempSync(join(tmpdir(), 'auracle-triage-')));

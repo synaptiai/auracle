@@ -18,13 +18,9 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import type { NormalizedEvent } from '../adapters/types.js';
-import {
-  describeReadFault,
-  goldCaseText,
-  isFirstTurn,
-  validateTicketFields,
-} from '../fixtures/load.js';
-import type { GoldTicket } from '../fixtures/load.js';
+import { goldCaseText, isFirstTurn } from '../domain/gold-types.js';
+import { describeReadFault, validateTicketFields } from '../fixtures/validate.js';
+import type { GoldTicket } from '../domain/gold-types.js';
 import type { HistoryItem } from '../jobs/taxonomy-induction.js';
 
 /** Source marker for exported mailbox history. */

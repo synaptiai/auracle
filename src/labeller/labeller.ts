@@ -24,7 +24,7 @@
 // Saying the kind exists is not the same as saying a command fills it, and an
 // earlier version of this comment named a `pnpm run label-corpus` that was
 // never written.
-import type { GoldTicket } from '../fixtures/load.js';
+import type { GoldTicket } from '../domain/gold-types.js';
 
 /** The pin the committed corpus carries. */
 export const STUB_LABELLER_PIN = 'stub-labeller-v1';

@@ -27,8 +27,9 @@ import { runCalibrationJob } from './run.js';
 import { FakeProvider } from '../models/fake.js';
 import type { FakeStep } from '../models/fake.js';
 import type { ClassifierTaxonomy } from '../classifier/classifier.js';
-import { FIT_COUNT, halfDigest, identityOf } from '../fixtures/load.js';
-import type { GoldFile, GoldTicket } from '../fixtures/load.js';
+import { FIT_COUNT } from '../domain/gold-types.js';
+import { halfDigest, identityOf } from '../fixtures/digest.js';
+import type { GoldFile, GoldTicket } from '../domain/gold-types.js';
 
 function repeat(count: number, make: (i: number) => AgreementSample): AgreementSample[] {
   return Array.from({ length: count }, (_, i) => make(i));

@@ -17,7 +17,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { scanArtifactNames } from '../artifacts/versioned.js';
-import { FIT_COUNT } from '../fixtures/load.js';
+import { FIT_COUNT } from '../domain/gold-types.js';
 import {
   loadGroundednessArtifact,
   validateGroundednessArtifact,

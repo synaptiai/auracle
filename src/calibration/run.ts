@@ -23,23 +23,17 @@ import { classifyTicket } from '../classifier/classifier.js';
 import type { ClassifierTaxonomy } from '../classifier/classifier.js';
 import { loadDotEnv } from '../config/env.js';
 import {
-  FIT_COUNT,
-  GOLD_SOURCES,
-  REPORT_COUNT,
-  assertHalvesDisjoint,
-  conversationHistories,
-  goldCaseText,
-  halfDigest,
-  identityOf,
-  isFirstTurn,
-  loadGoldHalf,
-  loadTaxonomy,
-} from '../fixtures/load.js';
-import type { GoldFile, GoldTicket, HalfIdentity } from '../fixtures/load.js';
+  FIT_COUNT, GOLD_SOURCES, REPORT_COUNT, goldCaseText, isFirstTurn,
+} from '../domain/gold-types.js';
+import { assertHalvesDisjoint, halfDigest, identityOf } from '../fixtures/digest.js';
+import { conversationHistories, loadGoldHalf, loadTaxonomy } from '../fixtures/load.js';
+import type { GoldFile, GoldTicket, HalfIdentity } from '../domain/gold-types.js';
 import { selectHalf } from '../fixtures/half-from-env.js';
 import type { ModelProvider } from '../models/provider.js';
 import { openRouterFromEnv } from '../models/from-env.js';
-import { assertCalibrationDirUsable, nextVersion, validateCalibrationArtifact, writeCalibrationArtifact, defaultCalibrationDir } from './artifact.js';
+import {
+  assertCalibrationDirUsable, nextVersion, validateCalibrationArtifact, writeCalibrationArtifact, defaultCalibrationDir,
+} from './artifact.js';
 import type { CalibrationArtifact, CalibrationScope } from './artifact.js';
 import { fitAgreementThreshold } from './calibrate.js';
 import { fitPerIntent } from './per-intent.js';

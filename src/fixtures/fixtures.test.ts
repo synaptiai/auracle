@@ -11,28 +11,14 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  FIT_COUNT,
-  INTENT_CAP,
-  REPORT_COUNT,
-  assertIntentsKnown,
-  conversationHistories,
-  fixturesDir,
-  goldCaseText,
-  isFirstTurn,
-  CLAIM_GRADES,
-  loadDocuments,
-  validateTicketFields,
-  loadGoldSet,
-  loadTaxonomy,
-  assertHalvesDisjoint,
-  claimDigest,
-  halfDigest,
-  identityOf,
-  loadGoldHalf,
-  readHalfIdentity,
-  validateGoldHalf,
+  CLAIM_GRADES, FIT_COUNT, INTENT_CAP, REPORT_COUNT, goldCaseText, isFirstTurn,
+} from '../domain/gold-types.js';
+import { assertHalvesDisjoint, claimDigest, halfDigest, identityOf } from './digest.js';
+import {
+  conversationHistories, fixturesDir, loadDocuments, loadGoldHalf, loadGoldSet, loadTaxonomy, readHalfIdentity,
 } from './load.js';
-import type { GoldFile, GoldTicket } from './load.js';
+import { assertIntentsKnown, validateGoldHalf, validateTicketFields } from './validate.js';
+import type { GoldFile, GoldTicket } from '../domain/gold-types.js';
 
 const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}/;
 
@@ -710,7 +696,13 @@ describe('the gold-half validator rejects a broken corpus', () => {
       split: 'report', source: 'real', count: 2,
       tickets: [shared, realTurn({ ticket_id: 'b@example.test', conversation_id: 'b@example.test' })],
     });
-    expect(() => assertHalvesDisjoint(fit, report)).toThrow(/appears in both halves/);
+    // `ticket`, not the bare phrase. Three loops emit "appears in both
+    // halves", and this fixture shares a ticket id AND a conversation id, so
+    // the loose form stayed green with the ticket loop removed — it was
+    // reading the conversation loop's message and reporting a pass for the
+    // rule it names.
+    expect(() => assertHalvesDisjoint(fit, report))
+      .toThrow(/^fixture validation failed: ticket .+ appears in both halves \(DEC-31\)$/);
   });
 
   it('refuses a case whose provenance disagrees with its half, naming it by digest', () => {

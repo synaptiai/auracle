@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { selectHalf } from './half-from-env.js';
-import type { GoldSplit, GoldTicket } from './load.js';
+import type { GoldSplit, GoldTicket } from '../domain/gold-types.js';
 
 let dirs: string[] = [];
 afterEach(() => {

@@ -18,8 +18,8 @@ import {
   scanArtifactNames,
 } from '../artifacts/versioned.js';
 import type { ArtifactFile } from '../artifacts/versioned.js';
-import { GOLD_SOURCES } from '../fixtures/load.js';
-import type { GoldSource } from '../fixtures/load.js';
+import { GOLD_SOURCES } from '../domain/gold-types.js';
+import type { GoldSource } from '../domain/gold-types.js';
 
 /** Names this artifact kind in every fault message. */
 const LABEL = 'calibration';

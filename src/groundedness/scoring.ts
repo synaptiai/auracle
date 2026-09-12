@@ -5,8 +5,8 @@
 // nothing else, so the pass that produces those samples lives here rather than
 // in both. Two copies of a retry loop is one copy that gets a fix and one that
 // silently does not.
-import { label } from '../fixtures/load.js';
-import type { GoldSource, GoldTicket } from '../fixtures/load.js';
+import { label } from '../fixtures/validate.js';
+import type { GoldSource, GoldTicket } from '../domain/gold-types.js';
 import type { ModelProvider } from '../models/provider.js';
 import { UnreadableAnswerError } from '../models/provider.js';
 import { scoreDraft } from './run.js';

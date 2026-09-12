@@ -11,7 +11,8 @@
 // "human-review"` keeps one meaning, and a model label never enters it.
 import { describe, expect, it } from 'vitest';
 
-import { FIT_COUNT, INTENT_CAP, REPORT_COUNT, loadGoldSet } from './load.js';
+import { FIT_COUNT, INTENT_CAP, REPORT_COUNT } from '../domain/gold-types.js';
+import { loadGoldSet } from './load.js';
 
 /**
  * The trigger, from section 3.3.

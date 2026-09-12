@@ -18,8 +18,8 @@ import {
   readArtifactText,
 } from '../artifacts/versioned.js';
 import type { ArtifactFile } from '../artifacts/versioned.js';
-import { GOLD_SOURCES } from '../fixtures/load.js';
-import type { GoldSource } from '../fixtures/load.js';
+import { GOLD_SOURCES } from '../domain/gold-types.js';
+import type { GoldSource } from '../domain/gold-types.js';
 
 const LABEL = 'groundedness';
 const ARTIFACT_NAME = 'groundedness-thresholds';

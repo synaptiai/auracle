@@ -31,17 +31,12 @@ import {
   writeGroundednessArtifact,
 } from './artifact.js';
 import type { GroundednessArtifact } from './artifact.js';
-import {
-  GOLD_SOURCES,
-  assertHalvesDisjoint,
-  halfDigest,
-  identityOf,
-  label,
-  loadDocuments,
-  loadGoldHalf,
-} from '../fixtures/load.js';
+import { GOLD_SOURCES } from '../domain/gold-types.js';
+import { assertHalvesDisjoint, halfDigest, identityOf } from '../fixtures/digest.js';
+import { loadDocuments, loadGoldHalf } from '../fixtures/load.js';
+import { label } from '../fixtures/validate.js';
 import { selectHalf } from '../fixtures/half-from-env.js';
-import type { GoldFile, GoldSource, GoldTicket, HalfIdentity } from '../fixtures/load.js';
+import type { GoldFile, GoldSource, GoldTicket, HalfIdentity } from '../domain/gold-types.js';
 import type { ModelProvider } from '../models/provider.js';
 import { openRouterFromEnv } from '../models/from-env.js';
 import { loadDotEnv } from '../config/env.js';

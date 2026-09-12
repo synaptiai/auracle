@@ -16,7 +16,7 @@
 import { UnreadableAnswerError } from '../models/provider.js';
 import type { ModelProvider } from '../models/provider.js';
 
-export { INTENT_CAP } from '../fixtures/load.js';
+export { INTENT_CAP } from '../domain/gold-types.js';
 
 /** One ticket of untagged history (DEC-02). */
 export interface HistoryItem {

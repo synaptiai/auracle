@@ -7,9 +7,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { FakeProvider } from '../models/fake.js';
 import type { ModelProvider } from '../models/provider.js';
 import { runGroundednessJob, scoreDraft } from './run.js';
-import { FIT_COUNT, loadGoldHalf } from '../fixtures/load.js';
-import { identityOf } from '../fixtures/load.js';
-import type { GoldFile, GoldTicket } from '../fixtures/load.js';
+import { FIT_COUNT } from '../domain/gold-types.js';
+import { loadGoldHalf } from '../fixtures/load.js';
+import { identityOf } from '../fixtures/digest.js';
+import type { GoldFile, GoldTicket } from '../domain/gold-types.js';
 
 const tempDir = (): URL => pathToFileURL(mkdtempSync(join(tmpdir(), 'auracle-gjob-')));
 

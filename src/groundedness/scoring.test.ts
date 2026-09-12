@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { FakeProvider } from '../models/fake.js';
-import type { GoldTicket } from '../fixtures/load.js';
+import type { GoldTicket } from '../domain/gold-types.js';
 import type { CoverageSample } from './fit.js';
 import type { ResumeCost, ResumeStore } from './resume.js';
 import { describeFaultShapes, describeSpend, scoreHalf, scoringDigest } from './scoring.js';

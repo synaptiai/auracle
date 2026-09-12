@@ -31,9 +31,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DEFAULT_TARGET_PRECISION, runCalibrationJob } from './run.js';
 import { minimumSupport } from './calibrate.js';
 import type { CalibrationArtifact } from './artifact.js';
-import { FIT_COUNT, INTENT_CAP, loadGoldHalf, loadTaxonomy, readHalfIdentity } from '../fixtures/load.js';
-import type { GoldFile } from '../fixtures/load.js';
-import type { Taxonomy } from '../fixtures/load.js';
+import { FIT_COUNT, INTENT_CAP } from '../domain/gold-types.js';
+import { loadGoldHalf, loadTaxonomy, readHalfIdentity } from '../fixtures/load.js';
+import type { GoldFile } from '../domain/gold-types.js';
+import type { Taxonomy } from '../domain/gold-types.js';
 import { ReplayStubProvider } from '../replay/fake-model.js';
 import { normalizeIntentId } from '../policy/policy.js';
 

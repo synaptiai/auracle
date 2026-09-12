@@ -27,7 +27,7 @@ import type { GateThresholds } from '../policy/policy.js';
 import { defaultCalibrationDir, loadCalibrationArtifact } from './artifact.js';
 import type { CalibrationScope } from './artifact.js';
 import { defaultGroundednessDir, loadGroundednessArtifact } from '../groundedness/artifact.js';
-import type { GoldSource } from '../fixtures/load.js';
+import type { GoldSource } from '../domain/gold-types.js';
 
 /** Where a threshold set came from. Recorded by every job that publishes numbers. */
 export type ThresholdProvenance =

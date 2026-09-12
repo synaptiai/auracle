@@ -20,7 +20,7 @@
 // real history never enters this repository (DEC-18).
 
 import { loadGoldHalf, readHalfIdentity } from './load.js';
-import type { GoldFile, GoldSplit, HalfIdentity } from './load.js';
+import type { GoldFile, GoldSplit, HalfIdentity } from '../domain/gold-types.js';
 
 /** The environment variable naming each half. Follows the CORPUS_PATH precedent. */
 const HALF_PATH_VARS: Readonly<Record<GoldSplit, string>> = Object.freeze({

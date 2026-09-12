@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { CLASSIFIER_K } from '../classifier/classifier.js';
 import { FakeProvider } from '../models/fake.js';
-import type { ModelProvider, PinnedVersions, ChatRequest, ChatResult, EmbeddingRequest, EmbeddingResult } from '../models/provider.js';
-import type { GoldFile, GoldTicket } from '../fixtures/load.js';
+import type {
+  ModelProvider, PinnedVersions, ChatRequest, ChatResult, EmbeddingRequest, EmbeddingResult,
+} from '../models/provider.js';
+import type { GoldFile, GoldTicket } from '../domain/gold-types.js';
 import { ReplayStubProvider } from './fake-model.js';
-import { FALLBACK_QUEUE, fitRouteMap, fitRoutes, observedOutcome, runReplay, scoreTicket } from './replay.js';
+import {
+  FALLBACK_QUEUE, fitRouteMap, fitRoutes, observedOutcome, runReplay, scoreTicket,
+} from './replay.js';
 import type { ReplayTaxonomy, RoutedTicket, RouteMap } from './replay.js';
 import { SEED_THRESHOLDS, makeThresholds } from '../policy/policy.js';
 

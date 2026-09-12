@@ -21,7 +21,7 @@ import {
   validateCorpusFile,
 } from './corpus.js';
 import { conversationHistories } from '../fixtures/load.js';
-import type { GoldTicket } from '../fixtures/load.js';
+import type { GoldTicket } from '../domain/gold-types.js';
 
 const REPLY_EMAIL = [
   'From: Dana Doe <dana.doe@example.test>',

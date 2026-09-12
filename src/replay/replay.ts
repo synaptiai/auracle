@@ -24,9 +24,8 @@ import { classifyTicket } from '../classifier/classifier.js';
 import { SEED_THRESHOLDS, evaluatePolicy } from '../policy/policy.js';
 import type { AdapterCapabilities, GateThresholds, RiskTier } from '../policy/policy.js';
 import type { ModelProvider } from '../models/provider.js';
-import { goldCaseText, isFirstTurn } from '../fixtures/load.js';
-import type { GoldFile, GoldTicket } from '../fixtures/load.js';
-
+import { goldCaseText, isFirstTurn } from '../domain/gold-types.js';
+import type { GoldFile, GoldTicket } from '../domain/gold-types.js';
 /**
  * The replay needs the risk tier per intent; the classifier's own taxonomy
  * view drops it. This wider view is structurally satisfied by

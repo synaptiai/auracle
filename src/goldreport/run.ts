@@ -18,22 +18,16 @@
 
 import { classifyTicket } from '../classifier/classifier.js';
 import { loadDotEnv } from '../config/env.js';
-import {
-  GOLD_SOURCES,
-  REPORT_COUNT,
-  assertHalvesDisjoint,
-  goldCaseText,
-  halfDigest,
-  identityOf,
-  isFirstTurn,
-  loadGoldHalf,
-  loadTaxonomy,
-} from '../fixtures/load.js';
+import { GOLD_SOURCES, REPORT_COUNT, goldCaseText, isFirstTurn } from '../domain/gold-types.js';
+import { assertHalvesDisjoint, halfDigest, identityOf } from '../fixtures/digest.js';
+import { loadGoldHalf, loadTaxonomy } from '../fixtures/load.js';
 import { selectHalf } from '../fixtures/half-from-env.js';
-import type { GoldFile, HalfIdentity } from '../fixtures/load.js';
+import type { GoldFile, HalfIdentity } from '../domain/gold-types.js';
 import type { ModelProvider } from '../models/provider.js';
 import { SEED_THRESHOLDS, evaluatePolicy } from '../policy/policy.js';
-import type { AdapterCapabilities, ActionClass, GateThresholds, RiskTier } from '../policy/policy.js';
+import type {
+  AdapterCapabilities, ActionClass, GateThresholds, RiskTier,
+} from '../policy/policy.js';
 import { resolveThresholds } from '../calibration/resolve.js';
 import type { CoverageProvenance, ThresholdProvenance } from '../calibration/resolve.js';
 import {

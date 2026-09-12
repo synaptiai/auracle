@@ -7,7 +7,9 @@
 // be compared.
 import { describe, expect, it } from 'vitest';
 
-import { STUB_LABELLER_PIN, intentsFrom, labelWith, scoreLabeller, stubLabeller } from './labeller.js';
+import {
+  STUB_LABELLER_PIN, intentsFrom, labelWith, scoreLabeller, stubLabeller,
+} from './labeller.js';
 import { loadGoldSet } from '../fixtures/load.js';
 
 describe('the stub labeller', () => {

@@ -21,11 +21,11 @@ import { fileURLToPath } from 'node:url';
 
 import { wilsonInterval } from '../calibration/calibrate.js';
 import type { FitInterval } from '../calibration/calibrate.js';
-import {
-  GOLD_SOURCES, assertHalvesDisjoint, halfDigest, identityOf, loadDocuments, loadGoldHalf,
-} from '../fixtures/load.js';
+import { GOLD_SOURCES } from '../domain/gold-types.js';
+import { assertHalvesDisjoint, halfDigest, identityOf } from '../fixtures/digest.js';
+import { loadDocuments, loadGoldHalf } from '../fixtures/load.js';
 import { selectHalf } from '../fixtures/half-from-env.js';
-import type { GoldFile, HalfIdentity } from '../fixtures/load.js';
+import type { GoldFile, HalfIdentity } from '../domain/gold-types.js';
 import { openResume } from './resume.js';
 import { makeThresholds, SEED_THRESHOLDS } from '../policy/policy.js';
 import { loadDotEnv } from '../config/env.js';

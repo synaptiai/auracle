@@ -12,7 +12,7 @@
 // this run is a demonstration of the mechanism, not a tool.
 
 import { conversationHistories, loadGoldSet, loadTaxonomy } from '../fixtures/load.js';
-import type { GoldFile } from '../fixtures/load.js';
+import type { GoldFile } from '../domain/gold-types.js';
 import { StubTriageJudge } from './select.js';
 import type { CaseOrigin, TriageCase, TriageJudge } from './select.js';
 import {
@@ -23,8 +23,8 @@ import {
   writeTriageArtifact,
 } from './artifact.js';
 import type { TriageArtifact } from './artifact.js';
-import { label } from '../fixtures/load.js';
-import type { GoldSource } from '../fixtures/load.js';
+import { label } from '../fixtures/validate.js';
+import type { GoldSource } from '../domain/gold-types.js';
 import { startedAsCommand } from '../corpus/output-path.js';
 import { runEntry } from '../cli/entry.js';
 

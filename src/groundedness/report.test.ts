@@ -9,8 +9,8 @@ import { describe, expect, it } from 'vitest';
 
 import { FakeProvider } from '../models/fake.js';
 import { DEFAULT_JUDGE_PROMPT_VER, pinMismatch, runCoverageReportJob } from './report.js';
-import { identityOf } from '../fixtures/load.js';
-import type { GoldFile, GoldTicket } from '../fixtures/load.js';
+import { identityOf } from '../fixtures/digest.js';
+import type { GoldFile, GoldTicket } from '../domain/gold-types.js';
 
 function draft(id: string, supported: number, unsupported: number): GoldTicket {
   return {

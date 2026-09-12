@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { wilsonInterval } from '../calibration/calibrate.js';
-import { REPORT_COUNT } from '../fixtures/load.js';
+import { REPORT_COUNT } from '../domain/gold-types.js';
 import {
   aggregateReport,
   scoreTicket,
@@ -33,9 +33,10 @@ import type { GoldReportArtifact } from './artifact.js';
 import { runGoldReportJob } from './run.js';
 import { SEED_THRESHOLDS, makeThresholds } from '../policy/policy.js';
 import { FakeProvider } from '../models/fake.js';
-import { isFirstTurn, loadGoldHalf } from '../fixtures/load.js';
-import { halfDigest, identityOf } from '../fixtures/load.js';
-import type { GoldFile, GoldTicket } from '../fixtures/load.js';
+import { isFirstTurn } from '../domain/gold-types.js';
+import { loadGoldHalf } from '../fixtures/load.js';
+import { halfDigest, identityOf } from '../fixtures/digest.js';
+import type { GoldFile, GoldTicket } from '../domain/gold-types.js';
 
 function tempDirUrl(): URL {
   return pathToFileURL(mkdtempSync(join(tmpdir(), 'auracle-goldrep-')));
