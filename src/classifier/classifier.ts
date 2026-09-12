@@ -13,8 +13,8 @@
 
 import type { ModelProvider } from '../models/provider.js';
 
-import type { ConversationTurn } from '../coordinator/coordinator.js';
-import { renderPromptBody } from '../coordinator/history.js';
+import { renderPromptBody } from '../domain/conversation-turn.js';
+import type { ConversationTurn } from '../domain/conversation-turn.js';
 import { assertSamplingTemperature, UnreadableAnswerError } from '../models/provider.js';
 
 /**

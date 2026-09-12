@@ -10,6 +10,7 @@
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_CHAT_MODEL_VER } from './env.js';
@@ -142,6 +143,63 @@ describe('the scan that blanks a source file before reading it', () => {
   });
 });
 
+/**
+ * The reasons an escalate answer can carry, read from the syntax.
+ *
+ * Two shapes: the object a step returns, `{ kind: 'escalate', reason: … }`
+ * in either property order, and a `stopEscalated(ctx, …)` call. A reason
+ * chosen by a ternary contributes both of its literals.
+ */
+function escalateReasons(files: readonly string[]): string[] {
+  const reasons: string[] = [];
+  const literals = (node: ts.Node): void => {
+    if (ts.isStringLiteral(node) && /^[a-z_]+$/.test(node.text)) reasons.push(node.text);
+    ts.forEachChild(node, literals);
+  };
+  for (const file of files) {
+    const source = ts.createSourceFile(
+      file, readFileSync(file, 'utf8'), ts.ScriptTarget.ESNext, true,
+    );
+    const visit = (node: ts.Node): void => {
+      if (ts.isObjectLiteralExpression(node)) {
+        const property = (key: string): ts.ObjectLiteralElementLike | undefined =>
+          node.properties.find((p) => p.name !== undefined && ts.isIdentifier(p.name)
+            && p.name.text === key);
+        const kind = property('kind');
+        const reason = property('reason');
+        if (
+          kind !== undefined && reason !== undefined
+          && ts.isPropertyAssignment(kind) && ts.isStringLiteral(kind.initializer)
+          && kind.initializer.text === 'escalate'
+          && ts.isPropertyAssignment(reason)
+        ) literals(reason.initializer);
+      }
+      if (
+        ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+        && /^(step)?[sS]topEscalated$/.test(node.expression.text)
+      ) for (const argument of node.arguments) literals(argument);
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
+  return reasons;
+}
+
+/** Every production module of the coordinator, the step modules included. */
+function coordinatorSources(): string[] {
+  const root = join(REPO_ROOT, 'src/coordinator');
+  const found: string[] = [];
+  const walk = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.ts') && !entry.name.includes('.test.')) found.push(full);
+    }
+  };
+  walk(root);
+  return found;
+}
+
 describe('the escalation reasons the runbook explains', () => {
   it('names every reason the coordinator can record', () => {
     // The runbook enumerated the causes in prose and the enumeration went
@@ -151,7 +209,12 @@ describe('the escalation reasons the runbook explains', () => {
     // of a type declaration. A union member written without a leading pipe,
     // or contributed by a helper declared after the slice's end marker, was
     // invisible to the earlier scan and passed silently.
-    const source = readFileSync(join(REPO_ROOT, 'src/coordinator/coordinator.ts'), 'utf8');
+    // The declaration moved to `src/coordinator/types.ts` and the escalate
+    // answers to the step modules under `steps/` (issue #75), so the scan
+    // reads the directory rather than one file. A step added there with a
+    // reason of its own is seen; a scan pinned to `coordinator.ts` would
+    // have silently stopped seeing any of them.
+    const source = readFileSync(join(REPO_ROOT, 'src/coordinator/types.ts'), 'utf8');
     // The declaration, read to its terminating semicolon rather than to the
     // next export. A member written without a leading pipe was invisible to a
     // pipe-anchored scan, and a member contributed after the old end marker
@@ -177,9 +240,19 @@ describe('the escalation reasons the runbook explains', () => {
     // and never declared is caught too.
     // Every literal inside the call's own parentheses, so a reason chosen by
     // a ternary is seen and a nearby string is not.
-    const escalated = [...source.matchAll(/stopEscalated\(([^()]*)\)/g)].flatMap((m) =>
-      [...(m[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((lit) => lit[1] as string),
-    );
+    // Every literal inside an escalate answer, so a reason chosen by a
+    // ternary is seen and a nearby string is not. `stopEscalated` stays in
+    // the scan: the sequencer still calls it, and a caller outside a step
+    // would otherwise be invisible.
+    //
+    // Parsed, not matched. The first version required `kind` to precede
+    // `reason`, so `{ reason: 'x', kind: 'escalate' }` — legal, and the
+    // same object — was invisible and an undeclared reason would ship.
+    // Property order is not a thing a guard may depend on.
+    const escalated = escalateReasons(coordinatorSources());
+    // The scan found the answers. Without this it could pass because the
+    // step modules moved again and the pattern matched nothing.
+    expect(escalated.length, 'no escalate answer was found in src/coordinator/').toBeGreaterThan(6);
     for (const reason of escalated) {
       expect(declared, `${reason} is escalated and not declared`).toContain(reason);
     }

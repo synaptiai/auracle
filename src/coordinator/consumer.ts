@@ -49,6 +49,7 @@ import type {
 import { errorMessage } from '../errors.js';
 import type { ArrivalSignal } from './arrival-signal.js';
 import { ackTicket, pollPartition } from './intake.js';
+import { journalStep } from '../ledger/journal-write.js';
 
 /**
  * The next fencing epoch for a ticket (DEC-28): one above the highest epoch
@@ -271,14 +272,26 @@ async function abandonMessage(
     );
     // The escalations view reads its reason from this step, so the operator
     // sees why the message was abandoned and not merely that it vanished.
-    await client.query(
-      `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
-       VALUES ($1, 'escalate', 'done', $2::jsonb, 'intake', 'intake', 0)`,
-      [
-        run.rows[0]?.run_id,
-        JSON.stringify({ reason: `intake_abandoned after ${attempts} attempts: ${reason}` }),
-      ],
-    );
+    // Bound and checked rather than cast. The insert above is
+    // `INSERT ... RETURNING run_id`, so it always yields a row and this
+    // never throws; a cast would instead tell the shared helper's signature
+    // that a `string | undefined` is a string, and silence the next caller
+    // for whom that is false.
+    const abandonedRunId: unknown = run.rows[0]?.run_id;
+    if (typeof abandonedRunId !== 'string') {
+      throw new Error(`the abandonment insert for ${polled.ticketId} returned no run id`);
+    }
+    await journalStep(client, {
+      runId: abandonedRunId,
+      stepId: 'escalate',
+      status: 'done',
+      result: { reason: `intake_abandoned after ${attempts} attempts: ${reason}` },
+      // Not a model step: 'intake' names what wrote the row, because the
+      // pins are NOT NULL and a run abandoned in the queue ran no model.
+      promptVer: 'intake',
+      modelVer: 'intake',
+      costMicros: 0,
+    });
     await client.query('COMMIT');
     return true;
   } catch (error) {

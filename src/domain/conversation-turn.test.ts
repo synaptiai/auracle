@@ -6,8 +6,8 @@ import {
   HISTORY_MAX_CHARS,
   HISTORY_MAX_TURNS,
   renderHistory,
-} from './history.js';
-import type { ConversationTurn } from './coordinator.js';
+} from './conversation-turn.js';
+import type { ConversationTurn } from './conversation-turn.js';
 
 function turn(turnNumber: number, bodyText: string): ConversationTurn {
   return { turnNumber, author: 'customer', bodyText };

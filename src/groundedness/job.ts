@@ -1,5 +1,11 @@
 // The offline groundedness fitting job (section 4.7, section 4.10, DEC-31).
 //
+// The job, and not the command. `main.ts` beside it reads the environment,
+// prints and sets the exit code; this module exports functions and holds no
+// entry point. Before the split, `scoring.ts` imported `scoreDraft` from a
+// module that ran a CLI guard on import, and that module imported
+// `scoring.ts` back: importing the scorer loaded the command (issue #75).
+//
 // Runs the real gate over every labelled draft in the fit half, then fits the
 // two coverage thresholds on what it measured against what was true.
 //
@@ -15,11 +21,10 @@
 // throws rather than publishing one. That refusal is a legitimate outcome and
 // section 6 keeps its caveat when it happens.
 
-import { checkGroundedness } from './groundedness.js';
 import { fitCoverageThresholds } from './fit.js';
 import type { CoverageSample } from './fit.js';
 import {
-  DEFAULT_RETRY_DELAY_MS, assertDocumentsResolvable, describeFaultShapes, describeSpend,
+  DEFAULT_RETRY_DELAY_MS, assertDocumentsResolvable, describeFaultShapes,
   scoreHalf, scoringDigest,
 } from './scoring.js';
 import { openResume } from './resume.js';
@@ -34,15 +39,8 @@ import type { GroundednessArtifact } from './artifact.js';
 import { GOLD_SOURCES } from '../domain/gold-types.js';
 import { assertHalvesDisjoint, halfDigest, identityOf } from '../fixtures/digest.js';
 import { loadDocuments, loadGoldHalf } from '../fixtures/load.js';
-import { label } from '../fixtures/validate.js';
-import { selectHalf } from '../fixtures/half-from-env.js';
-import type { GoldFile, GoldSource, GoldTicket, HalfIdentity } from '../domain/gold-types.js';
+import type { GoldFile, HalfIdentity } from '../domain/gold-types.js';
 import type { ModelProvider } from '../models/provider.js';
-import { openRouterFromEnv } from '../models/from-env.js';
-import { loadDotEnv } from '../config/env.js';
-import { fileURLToPath } from 'node:url';
-import { startedAsCommand } from '../corpus/output-path.js';
-import { runEntry } from '../cli/entry.js';
 
 /**
  * The precision the review threshold must hold, and why.
@@ -122,95 +120,6 @@ export interface GroundednessRunOptions {
 export interface GroundednessRunResult {
   artifact: GroundednessArtifact;
   samples: CoverageSample[];
-}
-
-/**
- * One draft's measured coverage beside its ground truth, and what it cost.
- *
- * The spend is returned rather than dropped. An earlier version discarded
- * `costMicros` here, so the job that spends the most money in the repository
- * was the one job that could not say what it spent (DEC-25).
- */
-export interface ScoredDraft {
-  readonly sample: CoverageSample;
-  readonly costMicros: number;
-  /**
-   * True when this draft's spend is understated.
-   *
-   * A judge call that raises carries the cost of that call alone. The claims
-   * of the same draft already judged cost money that nothing recorded, and a
-   * transport attempt that never answered may still have been billed. Neither
-   * is knowable from here, so the run says the figure is a floor rather than
-   * reporting a floor as a total.
-   */
-  readonly costUnknown: boolean;
-}
-
-/** One draft's measured coverage beside its ground truth. */
-export async function scoreDraft(
-  ticket: GoldTicket,
-  bodies: ReadonlyMap<string, string>,
-  provider: ModelProvider,
-  pins: { promptVer: string; modelVer: string },
-  /**
-   * The half's provenance, so a fault names a real case by digest (DEC-18).
-   *
-   * Required. A default here would let a call site forget it and leak a real
-   * Message-ID with every test still green, which is worse than no parameter
-   * at all: the type system would stop saying anything.
-   */
-  source: GoldSource,
-): Promise<ScoredDraft> {
-  const claims = ticket.claims ?? [];
-  if (claims.length === 0) {
-    throw new Error(`gold case ${label(ticket.ticket_id, source)} carries no claims, so it has no coverage`);
-  }
-  // The gate reads the retrieved text, which here is the documents the claims
-  // cite. Every claim of one draft is tested against the same set, as the
-  // runtime does.
-  const retrievedTexts = [...new Set(claims.map((c) => c.doc_id))].map((id) => {
-    const body = bodies.get(id);
-    if (body === undefined) {
-      // The document id is the adopter's own on a real half, so it is named
-      // by digest too. Both jobs resolve every cited document before their
-      // first model call, so neither reaches this; it holds for a direct
-      // caller of `scoreDraft`, which the suite is.
-      throw new Error(
-        `gold case ${label(ticket.ticket_id, source)} cites unknown document ${label(id, source)}`,
-      );
-    }
-    return body;
-  });
-
-  const measured = await checkGroundedness(
-    { claims: claims.map((c) => c.text), retrievedTexts },
-    { provider, versions: pins },
-  );
-
-  const unsupported = claims.filter((c) => !c.supported);
-  return {
-    sample: {
-      coverage: measured.groundedness,
-      grounded: unsupported.length === 0,
-      // The hardest grade present decides how the draft is reported: a draft
-      // carrying one easy and one hard negative is not an easy case.
-      grade: unsupported.length === 0
-        ? null
-        : hardestGrade(unsupported.map((c) => c.grade ?? 'absent')),
-    },
-    costMicros: measured.costMicros,
-    costUnknown: false,
-  };
-}
-
-/** Hardest first, so a mixed draft is counted by the claim that matters. */
-const GRADE_ORDER = ['unstated_detail', 'absent', 'off_topic'] as const;
-
-function hardestGrade(grades: readonly string[]): string {
-  for (const grade of GRADE_ORDER) {
-    if (grades.includes(grade)) return grade;
-  }
-  return grades[0] as string;
 }
 
 export async function runGroundednessJob(
@@ -383,63 +292,4 @@ function assertFitHalf(half: GoldFile, reportIdentity: HalfIdentity | undefined)
   if (reportIdentity !== undefined) {
     assertHalvesDisjoint(identityOf(half), reportIdentity);
   }
-}
-
-// CLI entry: `pnpm run fit-groundedness` executes dist/groundedness/run.js.
-// Needs OPENROUTER_API_KEY and GROUNDEDNESS_MODEL_VER. One model call per
-// claim, so a full fit half is roughly a thousand calls.
-//
-// The job may refuse. Classes that do not separate produce a threshold any
-// candidate would satisfy, and a refusal leaves section 6's caveat standing
-// rather than replacing it with a number that measured nothing.
-async function main(): Promise<void> {
-  loadDotEnv();
-  const modelVer = process.env['GROUNDEDNESS_MODEL_VER'];
-  if (!modelVer) {
-    console.error('GROUNDEDNESS_MODEL_VER is not set.');
-    process.exitCode = 1;
-    return;
-  }
-  const rawLimit = process.env['GROUNDEDNESS_LIMIT'];
-  const limit = rawLimit === undefined ? undefined : Number(rawLimit);
-  if (rawLimit !== undefined && !(Number.isInteger(limit) && (limit as number) > 0)) {
-    console.error(`GROUNDEDNESS_LIMIT must be a positive integer, got ${rawLimit}`);
-    process.exitCode = 1;
-    return;
-  }
-
-  const selected = selectHalf('fit');
-  if (selected.half !== undefined) {
-    console.log(
-      `fit half: ${String(selected.path)} (${selected.half.count} cases, source ${selected.half.source})`,
-    );
-  }
-
-  const { artifact } = await runGroundednessJob({
-    provider: openRouterFromEnv(),
-    modelVer,
-    ...(selected.half === undefined ? {} : { fitHalf: selected.half }),
-    ...(selected.counterpart === undefined ? {} : { reportIdentity: selected.counterpart }),
-    resumeFile: process.env['GROUNDEDNESS_RESUME']
-      ?? fileURLToPath(new URL('resume-fit.jsonl', defaultGroundednessDir())),
-    ...(limit === undefined ? {} : { limit }),
-  });
-  console.log(
-    `fitted coverage thresholds v${artifact.version} on ${artifact.fit_drafts} drafts `
-      + `(${artifact.faulted_drafts} dropped unscored): `
-      + `block ${artifact.block} (npv ${artifact.block_npv.toFixed(3)}), `
-      + `review ${artifact.review} (precision ${artifact.review_precision.toFixed(3)}, `
-      + `coverage ${artifact.review_coverage.toFixed(3)})`,
-  );
-  console.log(`  spend: ${describeSpend(artifact.cost_micros, artifact.cost_unknown)}`);
-  for (const grade of artifact.by_grade) {
-    console.log(`  ${grade.grade}: ${grade.drafts} drafts, mean coverage ${grade.mean_coverage.toFixed(3)}`);
-  }
-}
-
-const invokedDirectly =
-  startedAsCommand(import.meta.url, process.argv[1]);
-
-if (invokedDirectly) {
-  void runEntry(main);
 }

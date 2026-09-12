@@ -228,6 +228,10 @@ Core shape: TypeScript, a Postgres ledger (`tsvector` and `pgvector`), a plain s
 
 `src/coordinator/coordinator.ts` holds the state machine. No model controls the flow.
 
+It sequences and nothing else. Each step is a module under
+`src/coordinator/steps/`, and each takes a run context and returns a step
+result. So a step runs in a unit suite with no database behind it.
+
 ```
 received -> classified -> retrieved -> composed -> gated
   -> executing          (automatic path, reversible internal writes)
@@ -235,8 +239,14 @@ received -> classified -> retrieved -> composed -> gated
   -> resolved | escalated | superseded | abandoned
 ```
 
-Each step writes to `step_journal` before it acts. Every write carries a fencing epoch (DEC-28).
+Each step writes to `step_journal` before it acts.
+`src/ledger/journal-write.ts` owns that table. It holds one column list, and
+four modules write through it.
+
+Every run and outbox write carries a fencing epoch (DEC-28).
 `src/ledger/insert.ts` owns that path. Read it before you write to the ledger.
+The journal has no epoch column. A journal row is reachable through its run,
+and the fenced write that created the run is what admits it.
 
 The queue partitions on `hash(conversation_id) % N` (DEC-36). One consumer owns each partition (DEC-27).
 A run with no conversation keys on the ticket id instead.

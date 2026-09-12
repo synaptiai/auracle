@@ -19,8 +19,8 @@
 import { UnreadableAnswerError } from '../models/provider.js';
 import type { ChatMessage, ModelProvider } from '../models/provider.js';
 
-import type { ConversationTurn } from '../coordinator/coordinator.js';
-import { renderHistory } from '../coordinator/history.js';
+import { renderHistory } from '../domain/conversation-turn.js';
+import type { ConversationTurn } from '../domain/conversation-turn.js';
 import type { RetrievedDoc } from '../retriever/types.js';
 
 /** One claim in the draft and the retrieved span that supports it. */

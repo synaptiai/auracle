@@ -9,8 +9,7 @@ import { label } from '../fixtures/validate.js';
 import type { GoldSource, GoldTicket } from '../domain/gold-types.js';
 import type { ModelProvider } from '../models/provider.js';
 import { UnreadableAnswerError } from '../models/provider.js';
-import { scoreDraft } from './run.js';
-import type { ScoredDraft } from './run.js';
+import { checkGroundedness } from './groundedness.js';
 import type { CoverageSample } from './fit.js';
 import { createHash } from 'node:crypto';
 
@@ -324,4 +323,93 @@ export function describeSpend(costMicros?: number, costUnknown?: boolean): strin
 /** The message of a thrown value, whatever it is. */
 function errorText(error: unknown): string {
   return errorMessage(error);
+}
+
+/** Hardest first, so a mixed draft is counted by the claim that matters. */
+const GRADE_ORDER = ['unstated_detail', 'absent', 'off_topic'] as const;
+
+function hardestGrade(grades: readonly string[]): string {
+  for (const grade of GRADE_ORDER) {
+    if (grades.includes(grade)) return grade;
+  }
+  return grades[0] as string;
+}
+
+/**
+ * One draft's measured coverage beside its ground truth, and what it cost.
+ *
+ * The spend is returned rather than dropped. An earlier version discarded
+ * `costMicros` here, so the job that spends the most money in the repository
+ * was the one job that could not say what it spent (DEC-25).
+ */
+export interface ScoredDraft {
+  readonly sample: CoverageSample;
+  readonly costMicros: number;
+  /**
+   * True when this draft's spend is understated.
+   *
+   * A judge call that raises carries the cost of that call alone. The claims
+   * of the same draft already judged cost money that nothing recorded, and a
+   * transport attempt that never answered may still have been billed. Neither
+   * is knowable from here, so the run says the figure is a floor rather than
+   * reporting a floor as a total.
+   */
+  readonly costUnknown: boolean;
+}
+
+/** One draft's measured coverage beside its ground truth. */
+export async function scoreDraft(
+  ticket: GoldTicket,
+  bodies: ReadonlyMap<string, string>,
+  provider: ModelProvider,
+  pins: { promptVer: string; modelVer: string },
+  /**
+   * The half's provenance, so a fault names a real case by digest (DEC-18).
+   *
+   * Required. A default here would let a call site forget it and leak a real
+   * Message-ID with every test still green, which is worse than no parameter
+   * at all: the type system would stop saying anything.
+   */
+  source: GoldSource,
+): Promise<ScoredDraft> {
+  const claims = ticket.claims ?? [];
+  if (claims.length === 0) {
+    throw new Error(`gold case ${label(ticket.ticket_id, source)} carries no claims, so it has no coverage`);
+  }
+  // The gate reads the retrieved text, which here is the documents the claims
+  // cite. Every claim of one draft is tested against the same set, as the
+  // runtime does.
+  const retrievedTexts = [...new Set(claims.map((c) => c.doc_id))].map((id) => {
+    const body = bodies.get(id);
+    if (body === undefined) {
+      // The document id is the adopter's own on a real half, so it is named
+      // by digest too. Both jobs resolve every cited document before their
+      // first model call, so neither reaches this; it holds for a direct
+      // caller of `scoreDraft`, which the suite is.
+      throw new Error(
+        `gold case ${label(ticket.ticket_id, source)} cites unknown document ${label(id, source)}`,
+      );
+    }
+    return body;
+  });
+
+  const measured = await checkGroundedness(
+    { claims: claims.map((c) => c.text), retrievedTexts },
+    { provider, versions: pins },
+  );
+
+  const unsupported = claims.filter((c) => !c.supported);
+  return {
+    sample: {
+      coverage: measured.groundedness,
+      grounded: unsupported.length === 0,
+      // The hardest grade present decides how the draft is reported: a draft
+      // carrying one easy and one hard negative is not an easy case.
+      grade: unsupported.length === 0
+        ? null
+        : hardestGrade(unsupported.map((c) => c.grade ?? 'absent')),
+    },
+    costMicros: measured.costMicros,
+    costUnknown: false,
+  };
 }

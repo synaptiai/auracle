@@ -18,7 +18,7 @@
 // never straddles them.
 import { readFileSync } from 'node:fs';
 
-import type { ConversationTurn } from '../coordinator/coordinator.js';
+import type { ConversationTurn } from '../domain/conversation-turn.js';
 
 import {
   assert, describeReadFault, validateDocuments, validateGoldHalf, validateTaxonomy,

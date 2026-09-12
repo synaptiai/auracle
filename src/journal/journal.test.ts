@@ -5,7 +5,7 @@
 // nothing that could change a ledger, and the threshold recovery applies the
 // policy engine's precedence to a journalled set the database does not
 // constrain.
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -39,10 +39,25 @@ describe('the canonical step order', () => {
   // authority on the set. Read rather than restated: a step added there and
   // missed here would sort last as unrecognised, which is safe, but the
   // console would show the pipeline in the wrong shape for every run.
+  //
+  // One module per step since issue #75, so the scan reads the directory.
+  // The escalate row is written by the sequencer's own helper in
+  // `steps/context.ts`, and that file is in the walk too.
   const written = new Set(
-    [...codeOf('src/coordinator/coordinator.ts').matchAll(/journal(?:Start|Finish)\('([a-z]+)'/g)]
+    readdirSync(join(REPO_ROOT, 'src/coordinator/steps'))
+      .filter((name) => name.endsWith('.ts') && !name.includes('.test.'))
+      .flatMap((name) => [
+        ...codeOf(join('src/coordinator/steps', name))
+          .matchAll(/journal(?:Start|Finish)\(ctx, '([a-z]+)'/g),
+      ])
       .map((match) => match[1]!),
   );
+
+  it('found the writers, so the comparison below means something', () => {
+    // Without this the set could match an empty STEP_ORDER because the scan
+    // broke rather than because the two agree.
+    expect(written.size).toBeGreaterThanOrEqual(7);
+  });
 
   it('holds exactly the step ids the coordinator journals', () => {
     expect([...written].sort()).toEqual([...STEP_ORDER].sort());

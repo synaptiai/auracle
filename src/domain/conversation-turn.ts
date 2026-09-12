@@ -1,4 +1,4 @@
-// Conversation history as the prompts see it (DEC-37).
+// A conversation turn, and how the prompts render one (DEC-37).
 //
 // History is context, never evidence. The groundedness gate reads retrieved
 // documents alone, so nothing here can support a claim.
@@ -7,7 +7,31 @@
 // history is truncated to the most recent turns within a character budget.
 // Both bounds are pinned like a prompt version (DEC-26): changing either
 // changes the prompt, and the pin records that it changed.
-import type { ConversationTurn } from './coordinator.js';
+//
+// The type and its renderers live together, in `domain/`, because the leaf
+// modules that read a turn must not load the orchestrator to learn what one
+// is. The type used to be declared in `src/coordinator/coordinator.ts` and
+// the renderers in `src/coordinator/history.ts`, so the classifier, the
+// composer and the triage judge each imported the coordinator — and the
+// coordinator imports all three. Three import cycles, and loading the
+// classifier pulled in the state machine, the ledger and the egress
+// adapters (issue #75).
+//
+// This module imports nothing. That is the property that closes the cycles,
+// and `src/domain/import-cycles.test.ts` holds it shut, together with the
+// rule that no module in `src/` imports itself back.
+
+/**
+ * One turn of a conversation, as the prompts see it (DEC-37).
+ *
+ * Text only: the gates never read history, so nothing here can stand in for
+ * retrieved evidence.
+ */
+export interface ConversationTurn {
+  turnNumber: number;
+  author: 'customer' | 'agent' | 'system';
+  bodyText: string;
+}
 
 /** Most recent turns kept. Pinned: part of the prompt contract (DEC-26). */
 export const HISTORY_MAX_TURNS = 6;

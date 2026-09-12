@@ -33,6 +33,7 @@ import type {
   EgressAdapter,
 } from '../adapters/types.js';
 import { errorMessage } from '../errors.js';
+import { journalStep } from '../ledger/journal-write.js';
 
 /** The delivery rule an action class declares for one record (DEC-29). */
 export type DeliveryRule = 'at_least_once' | 'at_most_once';
@@ -380,17 +381,23 @@ async function parkEscalated(
     // The escalations view reads its reason from a journaled escalate step.
     // Without this row every relay escalation listed with reason null, which
     // reads the same as any other escalation and names no cause.
-    await client.query(
-      // step_id is exactly 'escalate': that is the id the escalations view
-      // joins on. One per run, so a repeat keeps the first reason.
-      `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
-       VALUES ($1, $2, 'done', $3::jsonb, 'relay', 'relay', 0)
-       ON CONFLICT (run_id, step_id) DO NOTHING`,
-      [
-        row.run_id,
-        'escalate',
-        JSON.stringify({ reason: reason ?? `relay_${status}` }),
-      ],
+    await journalStep(
+      client,
+      {
+        runId: row.run_id,
+        // step_id is exactly 'escalate': that is the id the escalations view
+        // joins on.
+        stepId: 'escalate',
+        status: 'done',
+        result: { reason: reason ?? `relay_${status}` },
+        // Not a model step: 'relay' names what wrote the row.
+        promptVer: 'relay',
+        modelVer: 'relay',
+        costMicros: 0,
+      },
+      // One per run, so a repeat keeps the first reason rather than raising
+      // a duplicate key inside this transaction.
+      { ifAbsent: true },
     );
     await client.query('COMMIT');
   } catch (error) {

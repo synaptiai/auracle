@@ -27,6 +27,7 @@ import { indexDocument } from '../retriever/retriever.js';
 import { UNATTRIBUTED } from '../approval/approve.js';
 import { approvalEditDistance, tokenizeBody } from '../approval/edit_distance.js';
 import { SEED_THRESHOLDS } from '../policy/policy.js';
+import { journalStep } from '../ledger/journal-write.js';
 import {
   SEED_DOCUMENTS, followUpFor, inboundMessageFor, mulberry32, type PlannedRun,
 } from './plan.js';
@@ -209,12 +210,22 @@ function inboundTextFor(run: PlannedRun): string {
  * composed, which is a shape the readers already describe.
  */
 async function writeJournal(client: PoolClient, run: PlannedRun): Promise<void> {
-  const step = async (stepId: string, status: string, result: unknown): Promise<void> => {
-    await client.query(
-      `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
-       VALUES ($1, $2, $3, $4::jsonb, 'seed', 'seed', 0)`,
-      [run.runId, stepId, status, JSON.stringify(result)],
-    );
+  const step = async (
+    stepId: string,
+    status: string,
+    result: object,
+  ): Promise<void> => {
+    await journalStep(client, {
+      runId: run.runId,
+      stepId,
+      status,
+      result,
+      // Not a model step: 'seed' names what wrote the row, so a reader can
+      // tell a backdated history from live traffic.
+      promptVer: 'seed',
+      modelVer: 'seed',
+      costMicros: 0,
+    });
   };
 
   // The steps the run's own outcome implies, never a fixed set. Each result

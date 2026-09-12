@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { FakeProvider } from '../models/fake.js';
 import type { ModelProvider } from '../models/provider.js';
-import { runGroundednessJob, scoreDraft } from './run.js';
+import { runGroundednessJob } from './job.js';
+import { scoreDraft } from './scoring.js';
 import { FIT_COUNT } from '../domain/gold-types.js';
 import { loadGoldHalf } from '../fixtures/load.js';
 import { identityOf } from '../fixtures/digest.js';

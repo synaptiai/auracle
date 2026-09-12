@@ -11,8 +11,8 @@
 // model (DEC-16), offline runs plug in the deterministic stub below so a
 // triage pass on the synthetic corpus is reproducible without a network.
 
-import type { ConversationTurn } from '../coordinator/coordinator.js';
-import { renderPromptBody } from '../coordinator/history.js';
+import { renderPromptBody } from '../domain/conversation-turn.js';
+import type { ConversationTurn } from '../domain/conversation-turn.js';
 import { predictIntent } from '../replay/fake-model.js';
 import type { RiskTier } from '../domain/gold-types.js';
 
