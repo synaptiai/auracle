@@ -38,7 +38,7 @@ import type {
   RunView, Shell,
   ThreadView, Theme,
 } from './surfaces.js';
-import { describeFault } from 'auracle/dist/cli/entry.js';
+import { describeFault } from 'auracle/cli';
 
 /**
  * Everything the console reads or writes, injected.

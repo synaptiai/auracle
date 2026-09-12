@@ -10,11 +10,15 @@
   "packageManager": "pnpm@11.20.0",
   "exports": {
     ".": "./dist/index.js",
-    "./dist/*": "./dist/*"
+    "./ledger-read": "./dist/public/ledger-read.js",
+    "./policy": "./dist/public/policy.js",
+    "./domain": "./dist/public/domain.js",
+    "./format": "./dist/public/format.js",
+    "./cli": "./dist/public/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.check.json",
+    "build": "tsc -b tsconfig.build.json",
+    "check": "tsc -b tsconfig.build.json && tsc -p tsconfig.check.json && tsc -p console/tsconfig.check.json",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:db": "vitest run --project db",
@@ -23,6 +27,11 @@
     "verify": "pnpm run build && pnpm run check && pnpm run lint && pnpm test && pnpm run verify:console && pnpm run check:docs && pnpm run check:ste && pnpm run check:guards && pnpm run check:fixtures",
     "verify:fast": "pnpm run check && pnpm run lint && pnpm run test:unit && pnpm run check:docs && pnpm run check:ste && pnpm run check:guards && pnpm run check:fixtures",
     "verify:console": "pnpm --filter @auracle/console build && pnpm --filter @auracle/console check && pnpm --filter @auracle/console test",
+    "dev:webhook": "tsx src/intake/webhook-main.ts",
+    "dev:imap": "tsx src/imap/main.ts",
+    "dev:consumer": "tsx src/coordinator/consumer-main.ts",
+    "dev:relay": "tsx src/relay/main.ts",
+    "dev:console": "tsx --tsconfig console/tsconfig.dev.json console/src/main.ts",
     "check:docs": "python3 scripts/check-docs.py && python3 scripts/test_check_docs.py",
     "check:ste": "python3 scripts/ste-check.py && python3 scripts/test_ste_check.py",
     "check:guards": "python3 .claude/hooks/test_fixtures_pii_guard.py && python3 .claude/hooks/test_live_db_approval.py && python3 .claude/hooks/test_commit_dec_citation.py && python3 evals/run.py",
@@ -46,7 +55,9 @@
     "fit-groundedness": "pnpm run build && node dist/groundedness/run.js",
     "report-groundedness": "pnpm run build && node dist/groundedness/report.js",
     "seed-history": "pnpm run build && node dist/seed/run.js",
-    "verify:db": "pnpm run test:db && pnpm run test:mail"
+    "verify:db": "pnpm run test:db && pnpm run test:mail",
+    "check:watch": "tsc -b tsconfig.build.json --watch",
+    "test:watch": "vitest --project unit"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^12.1.0",
@@ -55,6 +66,7 @@
     "@types/pg": "^8.23.1",
     "eslint": "^9.35.0",
     "testcontainers": "^12.1.0",
+    "tsx": "^4.23.13",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.43.0",
     "vitest": "^3.2.4"

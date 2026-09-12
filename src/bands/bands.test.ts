@@ -15,7 +15,9 @@ import { LOOKBACK_DAYS, METRICS, WINDOW_DAYS } from './metrics.js';
 import { evaluateMetric } from './evaluate.js';
 import type { DailySample } from './evaluate.js';
 import { validateBandsArtifact, writeBandsArtifact } from './artifact.js';
-import { bandLine, humanValue, lastCompleteDay, parseDay } from './run.js';
+import { bandLine, parseDay } from './run.js';
+import { humanValue } from './format.js';
+import { lastCompleteDay } from '../time/day.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 

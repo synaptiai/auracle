@@ -10,12 +10,20 @@
     "outDir": "dist",
     "types": [
       "node"
-    ]
+    ],
+    "composite": true,
+    "incremental": true,
+    "tsBuildInfoFile": "./dist/.tsbuildinfo/console.tsbuildinfo"
   },
   "include": [
     "src/**/*.ts"
   ],
   "exclude": [
     "src/**/*.test.ts"
+  ],
+  "references": [
+    {
+      "path": ".."
+    }
   ]
 }

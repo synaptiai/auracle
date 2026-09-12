@@ -1,0 +1,9 @@
+{
+  "//": "For `pnpm run dev:console` only. It maps `auracle/*` onto the core's source, so tsx runs the console and the core from source together. Without it tsx resolves the package through `exports` to dist/, and the console runs against whatever was last built — silently, which is worse than failing (issue #77).",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "composite": false,
+    "paths": { "auracle/*": ["../src/public/*.ts"] }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "//": "The solution. `tsc -b` on this builds the core and then the console, in that order, because console/tsconfig.json references the core. It is what makes a rename inside src/ fail the core's own check instead of passing three commands and breaking a fourth (issue #73).",
+  "files": [],
+  "references": [{ "path": "./tsconfig.json" }, { "path": "./console" }]
+}

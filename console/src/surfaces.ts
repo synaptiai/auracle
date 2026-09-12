@@ -20,12 +20,12 @@ import { escapeHtml, renderGates, renderMetricValue } from './render.js';
 // policy engine runs.
 import {
   POLICY_REASONS, reachedAgreementGate, readCoverageGate,
-} from 'auracle/dist/policy/policy.js';
+} from 'auracle/policy';
 // The class the coordinator derives `isIrreversible` from. Imported rather
 // than spelled here, so the console and the engine cannot disagree about
 // which action is the permanent one.
-import { COMPENSATION_ACTION_CLASS } from 'auracle/dist/adapters/types.js';
-import type { PolicyReason } from 'auracle/dist/policy/policy.js';
+import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
+import type { PolicyReason } from 'auracle/policy';
 import { CONSOLE_SCRIPT } from './script.js';
 import type { MetricValue } from './render.js';
 

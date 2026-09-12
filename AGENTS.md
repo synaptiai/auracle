@@ -17,9 +17,11 @@ check and test, `check:docs`, `check:ste`, `check:guards` and
 `check:fixtures`. Healthy output ends with the fixtures line and exit code 0.
 
 `pnpm run verify:fast` is the inner loop. It needs no Docker and takes about
-half a minute. It runs the unit project alone, and it also omits `build` and
-the console targets. So it proves nothing about a database suite or the
-console. It is not the contract.
+half a minute. It runs the unit project alone, so it proves nothing about a
+database suite. It is not the contract.
+
+It does type-check the console. `check` builds the solution first, and the
+console is part of that. It runs none of the console's own tests.
 
 `pnpm run verify:db` is the other half: the database and mail suites alone.
 CI runs the two as parallel jobs, with a third for the console.
@@ -28,12 +30,51 @@ The individual targets still exist and are worth running alone while you work:
 `pnpm run build`, `pnpm test`, `pnpm run lint`, `pnpm run test:unit`,
 `pnpm run verify:console`.
 
-`pnpm run check` runs the compiler with `--noEmit`. It is the fastest signal of all.
-Neither it nor `pnpm run verify:fast` is a substitute for `pnpm run verify`.
+`pnpm run check` is the fastest signal of all. Neither it nor
+`pnpm run verify:fast` is a substitute for `pnpm run verify`.
 
-`check` uses `tsconfig.check.json`, which covers the test files too.
-The build config excludes them, because they must not reach `dist/`.
+`check` runs three passes. The first is `tsc -b tsconfig.build.json`, which
+builds the core and then the console. The second and third cover the test
+files, which both build configs exclude because tests must not reach `dist/`.
 So a type error in a test appears here and never in the build.
+
+The first pass emits. `tsc -b --noEmit` is refused when one project
+references another, and the console references the core.
+
+The build is incremental, so a no-change `pnpm run build` takes about a third
+of a second. Each config writes its own `tsBuildInfoFile` under `dist/`,
+because two configs sharing one file poison each other's state.
+
+## Working from source
+
+`tsc -b tsconfig.build.json` is a solution build. The console references the
+core, so a rename inside `src/` that breaks the console fails the core's own
+`pnpm run check`. Before this, three commands passed and a fourth broke.
+
+The reference acts under `tsc -b` alone. `tsc -p` does not build a referenced
+project, so `pnpm run verify:console` still needs a built core first. CI
+builds before it runs that job.
+
+`check` type-checks the console against the core's **source**, not its
+compiled output. `tsc -b` compares file timestamps to decide what is up to
+date. A source file older than the build output is skipped. A check reading
+that stale output would then pass on broken code. An archive extraction or a
+`cp -p` restore is enough to produce it.
+
+Five processes start from source with no build step:
+
+```sh
+pnpm run dev:webhook    pnpm run dev:imap      pnpm run dev:consumer
+pnpm run dev:relay      pnpm run dev:console
+```
+
+They use `tsx`. Node's own type stripping cannot run this tree. It resolves a
+NodeNext `./x.js` specifier literally, and no `.js` file exists in `src/`. It
+also refuses a TypeScript parameter property, which five production classes
+use. `dev:console` reads the core from `dist/`, so build once first.
+
+Two watch modes exist: `pnpm run check:watch` recompiles the solution, and
+`pnpm run test:watch` reruns the unit project.
 
 ## Setup
 
@@ -127,6 +168,14 @@ Set `AURACLE_TEST_MAIL_REUSE=1` to keep the mail server warm the same way.
 
 Two cases in `src/artifacts/versioned.test.ts` skip under root. They deny access with
 a mode bit, and a mode bit never denies root. A skip is honest. A pass is not.
+
+`src/public/` holds the barrels another package may import: `ledger-read`,
+`policy`, `domain`, `format` and `cli`. `package.json` publishes those names
+and nothing else.
+
+It used to publish `./dist/*`. That made every compiled file public API, and
+the console reached 18 core modules through it. Two were CLI entry points,
+loaded only to format a number.
 
 ## Architecture
 

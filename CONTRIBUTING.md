@@ -33,7 +33,7 @@ The behaviour layer spends model calls and stays opt-in behind
 | Command | Task |
 |---------|------|
 | `pnpm run verify` | The contract. Everything below, in one command. |
-| `pnpm run verify:fast` | No Docker. Omits the database and mail projects, `build` and the console. |
+| `pnpm run verify:fast` | No Docker. Omits the database and mail projects, and the console's own tests. It does type-check the console, because `check` builds the solution. |
 | `pnpm run verify:db` | The database and mail suites alone. Needs both services. |
 | `pnpm run verify:console` | The console package's three targets. |
 

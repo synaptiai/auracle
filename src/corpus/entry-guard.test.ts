@@ -56,10 +56,14 @@ describe('a CLI module does not run when it is imported', () => {
     }
   });
 
-  // The latency CLI is the third of this class, and the one most exposed:
-  // `latency.test.ts` imports it for `humanMs` and `parseSince`, which is
-  // exactly the shape this suite's header describes. Unguarded, that import
-  // would open a pool and query the ledger inside the test process.
+  // The latency CLI is the third of this class. `latency.test.ts` imports it
+  // for `parseSince` and `excluded`, which is exactly the shape this suite's
+  // header describes. Unguarded, that import would open a pool and query the
+  // ledger inside the test process.
+  //
+  // `humanMs` was the other reason for that import until issue #73 moved it
+  // to `src/latency/format.ts`, which is pure. The guard still matters,
+  // because the two argument parsers stayed here.
   //
   // The observable is the catch handler, as in the induction case above, and
   // not a written artifact. A first version watched the artifact directory
@@ -91,10 +95,15 @@ describe('a CLI module does not run when it is imported', () => {
       process.exitCode = savedExit;
     }
   });
-  // The fourth of this class. `bands.test.ts` imports this CLI for
-  // `humanValue`, `parseDay`, `lastCompleteDay` and `bandLine`, which is the
-  // shape this suite's header describes: unguarded, that import would open a
-  // pool and query the ledger inside the test process.
+  // The fourth of this class. `bands.test.ts` imports this CLI for `parseDay`
+  // and `bandLine`, which is the shape this suite's header describes:
+  // unguarded, that import would open a pool and query the ledger inside the
+  // test process.
+  //
+  // `humanValue` and `lastCompleteDay` were also reasons for that import
+  // until issue #73 moved them to `src/bands/format.ts` and
+  // `src/time/day.ts`. Both are pure now, and the two that stayed keep the
+  // guard load-bearing.
   //
   // The observable is `--day` with no value, which this CLI alone reads and
   // which is refused before any pool is built. It touches no shared state, so

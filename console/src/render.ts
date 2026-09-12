@@ -186,5 +186,5 @@ export function renderMetricValue(metric: MetricValue): string {
 // this package apply one implementation. The reader trims before a surface
 // sees the value; this package re-exports it because the runs list reads the
 // escalations module, which does not.
-export { escalationHead } from 'auracle/dist/escalations/reason.js';
+export { escalationHead } from 'auracle/domain';
 

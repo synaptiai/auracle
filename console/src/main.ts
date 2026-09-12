@@ -19,20 +19,20 @@
 // something that authenticates.
 import { Pool } from 'pg';
 
-import { approveRun } from 'auracle/dist/approval/approve.js';
-import { readDays } from 'auracle/dist/bands/query.js';
-import { evaluateMetric } from 'auracle/dist/bands/evaluate.js';
-import { lastCompleteDay } from 'auracle/dist/bands/run.js';
-import { LOOKBACK_DAYS, METRICS } from 'auracle/dist/bands/metrics.js';
-import { humanValue } from 'auracle/dist/bands/run.js';
-import { probeLedger, requireDbUrl } from 'auracle/dist/db/config.js';
-import { LEDGER_STATES, listEscalations, listRuns, readRun } from 'auracle/dist/escalations/query.js';
-import { readRunJournal } from 'auracle/dist/journal/query.js';
-import { conversationOfRun, readConversation, turnAnsweredBy } from 'auracle/dist/conversation/query.js';
-import { readDocument } from 'auracle/dist/documents/query.js';
-import { CLASSIFIER_K } from 'auracle/dist/classifier/classifier.js';
-import { readLatency } from 'auracle/dist/latency/query.js';
-import { humanMs } from 'auracle/dist/latency/run.js';
+import { approveRun } from 'auracle/ledger-read';
+import { readDays } from 'auracle/ledger-read';
+import { evaluateMetric } from 'auracle/domain';
+import { lastCompleteDay } from 'auracle/format';
+import { LOOKBACK_DAYS, METRICS } from 'auracle/domain';
+import { humanValue } from 'auracle/format';
+import { probeLedger, requireDbUrl } from 'auracle/ledger-read';
+import { LEDGER_STATES, listEscalations, listRuns, readRun } from 'auracle/ledger-read';
+import { readRunJournal } from 'auracle/ledger-read';
+import { conversationOfRun, readConversation, turnAnsweredBy } from 'auracle/ledger-read';
+import { readDocument } from 'auracle/ledger-read';
+import { CLASSIFIER_K } from 'auracle/domain';
+import { readLatency } from 'auracle/ledger-read';
+import { humanMs } from 'auracle/format';
 
 import { approveFromConsole } from './approve.js';
 import { CONSOLE_CSS } from './css.js';
@@ -43,8 +43,8 @@ import { createConsole, RUNS_PAGE } from './server.js';
 import type {
   BandRow, LatencyRow, Percentile, RequestView, RunDetail, RunRow, RunView,
 } from './surfaces.js';
-import { runEntry } from 'auracle/dist/cli/entry.js';
-import { errorMessage } from 'auracle/dist/errors.js';
+import { runEntry } from 'auracle/cli';
+import { errorMessage } from 'auracle/cli';
 
 /**
  * The conversation to link at the foot of a run detail, or null.

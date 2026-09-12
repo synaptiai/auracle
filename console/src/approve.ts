@@ -15,7 +15,7 @@
 // This is the console's only statement against the ledger that is not a
 // SELECT, and `select-only.test.ts` is what holds that claim to one.
 import type { Pool } from 'pg';
-import type { ApproveOptions, ApproveOutcome } from 'auracle/dist/approval/approve.js';
+import type { ApproveOptions, ApproveOutcome } from 'auracle/ledger-read';
 
 /**
  * A run id is a UUID the ledger minted. It arrives from a form post, so it

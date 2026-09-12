@@ -29,6 +29,7 @@ import type { LatencyArtifact } from './artifact.js';
 import { readLatency } from './query.js';
 import type { LatencyWindow } from './query.js';
 import { runEntry } from '../cli/entry.js';
+import { humanMs } from './format.js';
 
 export interface LatencyJobOptions {
   pool: Pool;
@@ -122,17 +123,6 @@ export function parseSince(value: string): Date {
 export function excluded(counts: readonly (readonly [string, number])[]): string {
   const named = counts.filter(([, n]) => n > 0).map(([name, n]) => `${n} ${name}`);
   return named.length === 0 ? '' : ` (${named.join(', ')})`;
-}
-
-/** A duration as an operator reads it, not as the ledger stores it. */
-export function humanMs(ms: number | null): string {
-  if (ms === null) return '-';
-  if (ms < 1000) return `${ms}ms`;
-  const seconds = ms / 1000;
-  if (seconds < 90) return `${seconds.toFixed(1)}s`;
-  const minutes = seconds / 60;
-  if (minutes < 90) return `${minutes.toFixed(1)}m`;
-  return `${(minutes / 60).toFixed(1)}h`;
 }
 
 // CLI entry: `pnpm run latency` executes dist/latency/run.js.

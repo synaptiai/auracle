@@ -7,7 +7,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { excluded, humanMs, parseSince } from './run.js';
+import { excluded, parseSince } from './run.js';
+import { humanMs } from './format.js';
 import { TERMINAL_STATE_LIST } from './query.js';
 import { validateLatencyArtifact } from './artifact.js';
 

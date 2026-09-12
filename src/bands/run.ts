@@ -34,6 +34,8 @@ import type { DailySample } from './evaluate.js';
 import { LOOKBACK_DAYS, METRICS, WINDOW_DAYS } from './metrics.js';
 import { readDays } from './query.js';
 import { runEntry } from '../cli/entry.js';
+import { humanValue } from './format.js';
+import { lastCompleteDay } from '../time/day.js';
 
 export interface BandsJobOptions {
   pool: Pool;
@@ -45,21 +47,6 @@ export interface BandsJobOptions {
 
 export interface BandsJobResult {
   artifact: BandsArtifact;
-}
-
-/**
- * The most recent complete UTC day.
- *
- * Not today. A partial day's sample is compared against baselines built from
- * whole days, so a rate measured over three hours of traffic sits against a
- * mean of thirty full ones and every morning reads as an excursion. The
- * three-sigma action is a pull request, so that costs real work.
- */
-export function lastCompleteDay(now: Date = new Date()): string {
-  if (Number.isNaN(now.getTime())) {
-    throw new Error('bands: cannot name the last complete day from an invalid date');
-  }
-  return new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 /** Parse a day argument, or throw with what an operator should type. */
@@ -211,12 +198,6 @@ export async function runBandsJob(options: BandsJobOptions): Promise<BandsJobRes
 
   await writeBandsArtifact(artifact, dir);
   return { artifact };
-}
-
-/** A number as an operator reads it: a rate to three places, a count whole. */
-export function humanValue(value: number | null): string {
-  if (value === null) return '-';
-  return Number.isInteger(value) ? String(value) : value.toFixed(3);
 }
 
 /**

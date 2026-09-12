@@ -49,6 +49,7 @@
 // files, it must have looked at named ones, and the detector itself must still
 // flag every shape that does offend.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { posix } from 'node:path';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
@@ -82,21 +83,62 @@ const KNOWN_PURE_MENTIONERS = [
 ];
 
 /**
+ * Pure suites that import a ledger module for something that opens nothing.
+ *
+ * `clock-statement.test.ts` calls `runInsertStatement`, which builds a SQL
+ * string and touches no pool. The suite is genuinely pure.
+ *
+ * It is listed rather than merely allowed, because it used to pass by
+ * accident: the matcher compared path suffixes, so a sibling import spelled
+ * `./insert.js` matched nothing and the whole `src/ledger/` directory was
+ * invisible to this rule. Resolving specifiers against the importing file
+ * closed that, and this file is what the closure found. An entry here is a
+ * claim that a reader checked the import and it opens no connection.
+ */
+const KNOWN_PURE_LEDGER_IMPORTERS: ReadonlyMap<string, string> = new Map([
+  ['src/ledger/clock-statement.test.ts', "imports 'ledger/insert', which opens a connection"],
+]);
+
+/**
  * Modules that open a connection for their caller.
  *
  * A suite that imports one of these needs a database without ever naming
  * `pg`, which is how a suite actually drifts. `db/config.js` hands out a URL
  * and a live pool, `ledger/insert.js` writes through one, and
  * `test-support/schema.js` applies the migrations.
+ *
+ * `public/ledger-read` is here because the rule reads one level deep. It
+ * re-exports `db/config`, so without this entry a pure suite could reach a
+ * live pool through the barrel while the guard stayed green — the barrel
+ * would be a hole cut in the guard by the very change that added it (#73).
+ * Any future barrel that re-exports a module on this list belongs on it too.
  */
-const LEDGER_MODULES = ['db/config', 'ledger/insert', 'test-support/schema'];
+const LEDGER_MODULES = [
+  'db/config',
+  'ledger/insert',
+  'test-support/schema',
+  'public/ledger-read',
+];
 
-function ledgerModuleOf(specifier: string): string | undefined {
+/**
+ * The module a relative specifier names, as a path under `src/`.
+ *
+ * Resolved against the importing file rather than matched as a suffix. The
+ * suffix rule looked equivalent and was not: a file inside `src/public/`
+ * imports its neighbour as `./ledger-read.js`, which ends with no listed
+ * path, so the barrel that re-exports `db/config` was invisible to the guard
+ * from exactly the directory most likely to import it. A scratch suite proved
+ * it — the unit case spelled the import `../public/ledger-read.js` and
+ * passed, while the real sibling spelling walked straight through.
+ */
+function ledgerModuleOf(specifier: string, fromFile: string): string | undefined {
   if (!specifier.startsWith('.')) return undefined;
-  const normalised = specifier.replace(/\.js$/, '');
-  return LEDGER_MODULES.find(
-    (mod) => normalised === mod || normalised.endsWith(`/${mod}`),
-  );
+  const fromDir = fromFile.includes('/') ? fromFile.slice(0, fromFile.lastIndexOf('/')) : '.';
+  const resolved = posix
+    .normalize(posix.join(fromDir, specifier))
+    .replace(/\.js$/, '')
+    .replace(/^src\//, '');
+  return LEDGER_MODULES.find((mod) => resolved === mod);
 }
 
 function literalArgument(node: ts.CallExpression): string | undefined {
@@ -114,7 +156,20 @@ function literalArgument(node: ts.CallExpression): string | undefined {
  * Type-only imports are deliberately allowed: `import type { Pool } from 'pg'`
  * is erased before the file runs.
  */
-export function impurityReasons(source: string): string[] {
+export function impurityReasons(
+  source: string,
+  /**
+   * Where the source lives, so a relative specifier resolves to a real path.
+   *
+   * The default sits three levels under `src/`, deep enough that a case
+   * written `'../../db/config.js'` resolves inside the source tree. Two
+   * levels let that spelling climb out to a repository-root path, which
+   * matched only because the resolver strips a leading `src/` and could not
+   * tell the two apart — so the case read as "caught from a deeper
+   * directory" and was in fact "caught via a path outside `src/`".
+   */
+  fromFile = 'src/probe/deeper/probe.test.ts',
+): string[] {
   const tree = ts.createSourceFile('probe.ts', source, ts.ScriptTarget.ES2022, true);
   const reasons = new Set<string>();
 
@@ -123,7 +178,21 @@ export function impurityReasons(source: string): string[] {
       reasons.add("imports 'pg'");
       return;
     }
-    const ledger = ledgerModuleOf(specifier);
+    // The package's own name resolves back into this repository, because
+    // `exports` in package.json makes the core self-referential. So
+    // `auracle/ledger-read` reaches `db/config` by a spelling that is not
+    // relative and was therefore invisible here — adversarial review wrote a
+    // pure suite importing it and the guard passed. The subpath is the
+    // barrel's name, so it maps straight onto the module list.
+    const selfReference = /^auracle\/([\w-]+)$/.exec(specifier);
+    if (selfReference?.[1] !== undefined) {
+      const barrel = `public/${selfReference[1]}`;
+      if (LEDGER_MODULES.includes(barrel)) {
+        reasons.add(`imports '${barrel}', which opens a connection`);
+      }
+      return;
+    }
+    const ledger = ledgerModuleOf(specifier, fromFile);
     if (ledger !== undefined) reasons.add(`imports '${ledger}', which opens a connection`);
   };
 
@@ -220,16 +289,66 @@ describe('the detector', () => {
   it('flags a suite that reaches the ledger without naming pg', () => {
     // The realistic drift. A suite acquires a database through a helper, and
     // a rule that only knew the word `pg` would call it pure.
-    expect(impurityReasons("import { tryConnect } from '../db/config.js';")).toEqual([
+    expect(
+      impurityReasons("import { tryConnect } from '../db/config.js';", 'src/policy/a.test.ts'),
+    ).toEqual([
       "imports 'db/config', which opens a connection",
     ]);
-    expect(impurityReasons("import { requireDbUrl } from '../../db/config.js';")).toEqual([
+    // The package name resolves back into this repository, because
+    // `exports` makes the core self-referential. A pure suite can spell the
+    // barrel `auracle/ledger-read`, which is not relative, so the rule above
+    // never sees it. Review proved it: the suite passed and the import
+    // resolved at run time.
+    expect(impurityReasons("import { readRun } from 'auracle/ledger-read';")).toEqual([
+      "imports 'public/ledger-read', which opens a connection",
+    ]);
+    // A barrel that opens nothing stays legal under that spelling too.
+    expect(impurityReasons("import { humanMs } from 'auracle/format';")).toEqual([]);
+    expect(impurityReasons("import { CLASSIFIER_K } from 'auracle/domain';")).toEqual([]);
+
+    // A barrel is a one-level path of its own. `public/ledger-read`
+    // re-exports `db/config`, so a pure suite importing the barrel reaches a
+    // live pool; without the entry the guard reads the specifier, finds
+    // nothing on the list and passes. Issue #73 added the barrel and this
+    // case together for that reason.
+    expect(
+      impurityReasons("import { readRun } from '../public/ledger-read.js';", 'src/policy/a.test.ts'),
+    ).toEqual([
+      "imports 'public/ledger-read', which opens a connection",
+    ]);
+    expect(
+      impurityReasons(
+        "import { probeLedger } from '../../public/ledger-read.js';",
+        'src/a/b/c.test.ts',
+      ),
+    ).toEqual([
+      "imports 'public/ledger-read', which opens a connection",
+    ]);
+    // A barrel that opens nothing stays legal, so the rule bites the reach
+    // rather than the shape.
+    expect(
+      impurityReasons("import { humanMs } from '../public/format.js';", 'src/policy/a.test.ts'),
+    ).toEqual([]);
+    expect(
+      impurityReasons("import { CLASSIFIER_K } from '../public/domain.js';", 'src/policy/a.test.ts'),
+    ).toEqual([]);
+
+    expect(
+      impurityReasons("import { requireDbUrl } from '../../db/config.js';", 'src/a/b/c.test.ts'),
+    ).toEqual([
       "imports 'db/config', which opens a connection",
     ]);
-    expect(impurityReasons("import { fencedInsert } from '../ledger/insert.js';")).toEqual([
+    expect(
+      impurityReasons("import { fencedInsert } from '../ledger/insert.js';", 'src/policy/a.test.ts'),
+    ).toEqual([
       "imports 'ledger/insert', which opens a connection",
     ]);
-    expect(impurityReasons("import { applyLedgerSchema } from '../test-support/schema.js';")).toEqual([
+    expect(
+      impurityReasons(
+        "import { applyLedgerSchema } from '../test-support/schema.js';",
+        'src/policy/a.test.ts',
+      ),
+    ).toEqual([
       "imports 'test-support/schema', which opens a connection",
     ]);
   });
@@ -253,7 +372,7 @@ describe('the detector', () => {
 
   it('reads the two static-analysis suites as pure, because they are', () => {
     for (const file of KNOWN_PURE_MENTIONERS) {
-      expect({ file, reasons: impurityReasons(read(file)) }).toEqual({ file, reasons: [] });
+      expect({ file, reasons: impurityReasons(read(file), file) }).toEqual({ file, reasons: [] });
     }
   });
 });
@@ -269,17 +388,39 @@ describe('the pure-suffix contract is executable', () => {
   it('finds no *.test.ts that needs a database', () => {
     // A suite that needs Postgres belongs in the `db` project. Rename it to
     // `*.db.test.ts`; the runner does the rest.
-    const offenders = PURE.map((file) => ({ file, reasons: impurityReasons(read(file)) }))
+    // The allowlist forgives one named reason per file, never the file.
+    // Filtering the file out of the scan entirely was wider than the grant:
+    // adversarial review added `import { Pool } from 'pg'` to the allowlisted
+    // suite and the guard stayed green, so a listed file could open a live
+    // connection through the one door this rule exists to watch.
+    const offenders = PURE.map((file) => ({
+      file,
+      reasons: impurityReasons(read(file), file).filter(
+        (reason) => reason !== KNOWN_PURE_LEDGER_IMPORTERS.get(file),
+      ),
+    }))
       .filter((row) => row.reasons.length > 0)
       .map((row) => `${row.file}: ${row.reasons.join(', ')}`);
     expect(offenders).toEqual([]);
+  });
+
+  it('keeps the ledger-importer allowlist honest', () => {
+    // An allowlist that names a file which no longer trips the rule is a
+    // permission nobody needs, and one naming a file that no longer exists
+    // hides a rename. Both fail here rather than rotting quietly.
+    for (const [file, forgiven] of KNOWN_PURE_LEDGER_IMPORTERS) {
+      expect(PURE).toContain(file);
+      // The exact reason, not merely some reason. A file whose import moved
+      // on would otherwise keep a permission for something nobody reviewed.
+      expect(impurityReasons(read(file), file)).toContain(forgiven);
+    }
   });
 
   it('finds no *.db.test.ts that needs no database', () => {
     // The other direction. A pure suite wearing the database suffix makes
     // Docker mandatory for it and for nothing, which is the cost the split
     // exists to remove.
-    const misfiled = DB.filter((file) => impurityReasons(read(file)).length === 0);
+    const misfiled = DB.filter((file) => impurityReasons(read(file), file).length === 0);
     expect(misfiled).toEqual([]);
   });
 });

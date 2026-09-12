@@ -21,6 +21,7 @@ import { planHistory } from './plan.js';
 import { writeHistory } from './write.js';
 import { runEntry } from '../cli/entry.js';
 import { errorMessage } from '../errors.js';
+import { lastCompleteDay } from '../time/day.js';
 
 /** 'Arca', the same constant `scripts/generate-fixtures.mjs` uses. */
 export const DEFAULT_SEED = 0x41726361;
@@ -84,11 +85,6 @@ export function parseArgs(argv: readonly string[], today: string): SeedArgs {
     partitions: int('--partitions', DEFAULT_PARTITIONS),
     provider,
   };
-}
-
-/** The last complete UTC day, which is the newest day worth seeding. */
-export function lastCompleteDay(now: Date): string {
-  return new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10);
 }
 
 async function main(): Promise<void> {

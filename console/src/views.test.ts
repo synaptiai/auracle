@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { evidenceOf, latencyCaveats, stepSays, toDetail, toRow } from './views.js';
 import { ageSays, whenSays } from './surfaces.js';
-import type { JournalStep, RunJournal } from 'auracle/dist/journal/query.js';
+import type { JournalStep, RunJournal } from 'auracle/ledger-read';
 
 const RUN = '11111111-2222-4333-8444-555555555555';
 

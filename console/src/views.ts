@@ -7,11 +7,11 @@
 //
 // They map and nothing else. No statement is issued here, and every value
 // comes from a reader in the root package.
-import { CLASSIFIER_K } from 'auracle/dist/classifier/classifier.js';
-import type { JournalStep, RunJournal } from 'auracle/dist/journal/query.js';
+import { CLASSIFIER_K } from 'auracle/domain';
+import type { JournalStep, RunJournal } from 'auracle/ledger-read';
 
 import { escalationHead } from './render.js';
-import type { PartitionLatency } from 'auracle/dist/latency/query.js';
+import type { PartitionLatency } from 'auracle/ledger-read';
 
 import type {
   ClaimView, DocumentView, EvidenceView, RunDetail, RunRow, SentenceView,
