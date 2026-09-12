@@ -6,8 +6,19 @@ services:
       POSTGRES_PASSWORD: auracle
       POSTGRES_DB: auracle
     ports:
-      # Host 5432 is occupied by another local stack (nci-postgres).
-      - "5433:5432"
+      # Loopback, and deliberately. This file is the ledger for a checkout,
+      # and `docker-compose.dev.yml` extends it onto a host — where an
+      # unqualified mapping publishes the whole ledger on every interface,
+      # behind the compose default password below. A docker publish inserts
+      # into the DOCKER chain, so a host firewall does not cover it. Nothing
+      # needs the port off-box: a checkout reaches localhost and the stack's
+      # own services reach `db` over the compose network on 5432.
+      #
+      # The default is 5433, not 5432, because 5432 was occupied by another
+      # local stack on the machine this file was written on. That is one
+      # developer's fact, so it is a default and not a constant: set
+      # AURACLE_DB_PORT to move it.
+      - "127.0.0.1:${AURACLE_DB_PORT:-5433}:5432"
     volumes:
       - auracle-db-data:/var/lib/postgresql/data
     healthcheck:

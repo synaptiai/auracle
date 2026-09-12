@@ -1,0 +1,46 @@
+# The build stage copies what it needs by name. This list covers the paths a
+# COPY could still reach, and the two that would break the image if it did:
+# a host node_modules holds darwin binaries, and a host dist/ is whatever was
+# last built locally, which `tsc -b` would then trust by timestamp.
+node_modules
+**/node_modules
+dist
+**/dist
+.git
+.pnpm-store
+
+# Secrets. The image reads its configuration from the environment.
+#
+# Every directory, not the root alone. A path here is matched against the
+# whole context path, so a bare `.env` left `console/.env` and `src/.env` in
+# the context — and `cache-to: type=gha,mode=max` exports every intermediate
+# layer to the Actions cache. CI cannot hit it (a fresh checkout has no
+# untracked `.env`); a local `docker build` can.
+**/.env
+.env.*
+!.env.example
+
+# The gold corpus, 10MB. The consumer reads fixtures/taxonomy.json and nothing
+# else under fixtures/ reaches a process this image starts; the halves are for
+# the offline jobs, which run from a checkout.
+fixtures/gold
+
+# Run artifacts: the adopter's own traffic (DEC-17, DEC-19).
+corpus/
+triage/
+latency/
+bands/
+calibration/
+groundedness/
+
+# Session and tool state.
+.claude/
+.decisions/
+.trail/
+.gstack/
+.creatumo/
+.flow/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+.DS_Store

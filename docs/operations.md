@@ -63,6 +63,43 @@ The second command lists the tables. You should see `run`, `ticket_epoch`,
 `step_journal`, `outbox`, `document`, `intake`, `conversation`, `turn` and
 `schema_version`.
 
+## 1.1 The dev host
+
+The `dev` GitHub environment names a host, and
+`.github/workflows/release.yml` deploys the image to it on a merge to
+`main`. Nothing provisions that host. Prepare it once:
+
+1. Create the directory the deploy writes to. The default is `/srv/auracle`;
+   set the `DEV_APP_DIR` repository variable to change it.
+2. Put a filled `.env` in that directory. Start from `.env.example`. The
+   deploy overwrites both compose files on every run, so `.env` is the only
+   durable place for host configuration.
+3. Give the deploy user membership of the `docker` group.
+4. Set the `dev` environment's deployment branch policy to `main` only.
+
+Five secrets on the `dev` environment, and the deploy reports which are
+missing rather than failing:
+
+| Secret | What it is |
+|---|---|
+| `DEV_SSH_HOST` | the host the deploy reaches |
+| `DEV_SSH_USER` | the account it connects as |
+| `DEV_SSH_KEY` | that account's private key |
+| `DEV_SSH_KNOWN_HOSTS` | the host's public key, pinned |
+| `GHCR_READ_TOKEN` | a `read:packages` token, because the package is private |
+
+Two optional repository variables: `DEV_APP_DIR` and
+`DEV_COMPOSE_PROFILES`. Set the second to `mail` to run the IMAP intake.
+
+Every published port binds the loopback of the host. The console
+authenticates nobody. The webhook accepts every request while
+`WEBHOOK_SECRET` is empty.
+
+So a proxy authenticates anything that reaches them from another machine.
+That proxy sets `CONSOLE_IDENTITY_HEADER` (DEC-42).
+`CONSOLE_ALLOWED_HOSTS` must then name the host. Without it the console
+refuses the `Host` the browser sends.
+
 ## 2. Schema migrations
 
 The ledger schema evolves through numbered SQL files under `db/`. Each file is

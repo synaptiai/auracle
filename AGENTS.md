@@ -88,12 +88,51 @@ pnpm run build
 pnpm run db:migrate
 ```
 
-Compose publishes Postgres on host port 5433. Port 5432 belongs to another local stack.
-`pnpm run db:migrate` applies the SQL files under `db/` in order.
+Compose publishes Postgres on host port 5433, because 5432 belonged to another
+local stack. `AURACLE_DB_PORT` moves it. `pnpm run db:migrate` applies the SQL
+files under `db/` in order.
 
 Every CLI and daemon loads `./.env` through `process.loadEnvFile`. A shell variable always wins.
 Three commands read no `.env` file: `pnpm run escalations`, `pnpm run triage` and `pnpm run export-corpus`.
+The operator console reads none either, so its variables must be exported.
 Never commit `.env`. It holds `OPENROUTER_API_KEY`.
+
+`.env.example` names every variable a process reads, with a comment on each.
+`src/config/env-example.test.ts` proves it stays complete.
+
+That guard reads every SCREAMING_SNAKE literal in a file that mentions the
+environment. A narrower rule missed three shapes. One module reads a parameter rather than
+`process.env`. One reaches it through a helper that calls another helper. One
+holds the name in a frozen record.
+
+## The path to a running stack
+
+One image holds all five processes, and its command picks one:
+
+```sh
+docker build -t auracle:local .
+docker run --rm auracle:local            # prints the six it accepts
+cp .env.example .env                     # OPENROUTER_API_KEY at least
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+```
+
+The overlay sets `DATABASE_URL` itself and ignores the one in `.env`. That
+file names `localhost:5433`, which is right for a checkout and is a
+container's own loopback inside one.
+
+Every published port binds `127.0.0.1`. The console authenticates nobody.
+The webhook ships with no secret and accepts every request. So a proxy
+authenticates anything that reaches either from another machine.
+
+The stack runs the migration first, as a service the daemons depend on. So no
+process opens a connection to a ledger missing a table. `AURACLE_IMAGE` selects
+the tag, and defaults to a local build.
+
+A merge to `main` runs `.github/workflows/release.yml`, which builds that image
+and pushes it to GHCR tagged with the commit SHA. The tag is the SHA and never
+`latest`, because a tag that moves cannot be rolled back to. A second job deploys to the host the `dev` GitHub environment names.
+That job says what is missing rather than failing when the environment
+names no host.
 
 ## Running one test
 

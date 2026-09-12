@@ -1,0 +1,164 @@
+# The whole stack, from the image.
+#
+# `docker-compose.yml` runs the ledger alone, for a checkout that builds from
+# source. This file runs the five processes as well, from one image tagged
+# with a commit. It is what the dev host runs, and running it locally starts
+# the same artifact rather than a similar one.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# `depends_on` below orders this command and nothing else. After a host
+# reboot the daemons return under `unless-stopped` with no ordering against
+# the ledger, so each crash-loops on its startup probe until Postgres is
+# ready. That is self-healing and it is not the guarantee `up` gives.
+#
+# AURACLE_IMAGE selects the tag. The deploy job sets it to the commit SHA, so
+# the host runs a named build and a rollback is a tag change. The default
+# builds from this checkout, which is what you want locally.
+#
+# Every process reads its configuration from `.env`, which is never committed.
+# Copy `.env.example` and fill it in. `env_file` loads it into each container;
+# a variable already in the shell wins, as it does for a checkout.
+#
+# DATABASE_URL is the exception, and it is set here rather than read. The
+# documented start writes `DATABASE_URL=...@localhost:5433/...` into `.env`,
+# which is right for a checkout and is a container's own loopback inside one.
+# Interpolating it gave every service that value: `migrate` refused to
+# connect, the dependency below never completed, and the whole `up` failed.
+# The overlay runs against the `db` service, so it names it.
+#
+# An external ledger is a different stack, not this file with one variable
+# changed: drop the `db` service and the `depends_on` blocks with it.
+
+services:
+  db:
+    # Inherited whole, for the healthcheck the dependencies below need.
+    # `extends` appends `ports` rather than replacing them, so the loopback
+    # bind lives in that file and this one inherits it. No service here uses
+    # the mapping: they reach `db` over the compose network on 5432.
+    extends:
+      file: docker-compose.yml
+      service: db
+
+  # Runs to completion before any process starts, so no daemon opens a
+  # connection to a ledger that is missing a table. `service_completed_successfully`
+  # fails the whole `up` when the migration exits non-zero.
+  migrate:
+    image: ${AURACLE_IMAGE:-auracle:local}
+    build: .
+    command: ["migrate"]
+    env_file: [{ path: .env, required: false }]
+    environment:
+      DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  webhook:
+    image: ${AURACLE_IMAGE:-auracle:local}
+    build: .
+    command: ["webhook"]
+    env_file: [{ path: .env, required: false }]
+    environment:
+      DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+      # Named here as well as in the mapping, so the two cannot disagree.
+      # The mapping interpolates from the shell and from `.env`; the process
+      # reads only what reaches the container. A port set in the shell alone
+      # published 18080 while the process listened on 8080, and the
+      # published port answered nothing.
+      WEBHOOK_PORT: ${WEBHOOK_PORT:-8080}
+    # Loopback. An absent WEBHOOK_SECRET means the driver verifies nothing
+    # and says so at startup, and `.env.example` ships it empty — so a stack
+    # started from the documented copy accepts any request that reaches the
+    # port. Reaching it from outside the host goes through a proxy that
+    # terminates TLS and checks the secret.
+    ports:
+      - "127.0.0.1:${WEBHOOK_PORT:-8080}:${WEBHOOK_PORT:-8080}"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  imap:
+    image: ${AURACLE_IMAGE:-auracle:local}
+    build: .
+    command: ["imap"]
+    env_file: [{ path: .env, required: false }]
+    environment:
+      DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Refuses to start without IMAP_HOST, IMAP_USER and IMAP_PASS. That is
+    # correct, and it is why this service is in the `mail` profile: a stack
+    # with no mailbox configured starts the other four and leaves this out,
+    # rather than restarting it forever.
+    #
+    # Set COMPOSE_PROFILES=mail to include it. A container already running
+    # under a profile that is then disabled is left alone by
+    # `--remove-orphans` and never recreated, so it would keep serving the
+    # previous image after every deploy: stop it by hand if you turn the
+    # profile off.
+    profiles: [mail]
+    restart: unless-stopped
+
+  consumer:
+    image: ${AURACLE_IMAGE:-auracle:local}
+    build: .
+    command: ["consumer"]
+    env_file: [{ path: .env, required: false }]
+    environment:
+      DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+      # One consumer owns each partition (DEC-27), and the count must agree
+      # with every other process (DEC-36). A single consumer owns all eight.
+      # Two consumers need two services here, each naming its own half, and
+      # never an overlapping list.
+      CONSUMER_PARTITIONS: ${CONSUMER_PARTITIONS:-0,1,2,3,4,5,6,7}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  relay:
+    image: ${AURACLE_IMAGE:-auracle:local}
+    build: .
+    command: ["relay"]
+    env_file: [{ path: .env, required: false }]
+    environment:
+      DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  console:
+    image: ${AURACLE_IMAGE:-auracle:local}
+    build: .
+    command: ["console"]
+    env_file: [{ path: .env, required: false }]
+    environment:
+      DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+      # The container's own loopback reaches nothing outside it, so the bind
+      # is explicit and the mapping below is what limits reach.
+      CONSOLE_HOST: 0.0.0.0
+      # Named on both sides, and the same default the console itself uses
+      # (console/src/main.ts). The mapping used to default to 8081 while the
+      # process listened on 8787, so the published port answered nothing
+      # unless an operator happened to set the variable.
+      CONSOLE_PORT: ${CONSOLE_PORT:-8787}
+      # The console authenticates nobody: reaching the port is the whole of
+      # its access control, and it lists every gated run with its draft text
+      # and releases customer replies (DEC-12). Setting this to the dev
+      # host's name is what a proxy in front needs; without it the console
+      # derives loopback names only and refuses that Host.
+      CONSOLE_ALLOWED_HOSTS: ${CONSOLE_ALLOWED_HOSTS:-}
+    # Loopback, for the reason above. Reaching it from another machine goes
+    # through a proxy that authenticates the approver and sets
+    # CONSOLE_IDENTITY_HEADER (DEC-42).
+    ports:
+      - "127.0.0.1:${CONSOLE_PORT:-8787}:${CONSOLE_PORT:-8787}"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
