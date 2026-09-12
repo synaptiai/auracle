@@ -59,6 +59,8 @@ than deferring the write-before-act order.
 
 ## Decisions affected
 
+Affects: DEC-42, DEC-05, DEC-07, DEC-21, DEC-23, DEC-35, DEC-38
+
 DEC-42, ratified by this change. The ledger records an approver and names the
 value unverified.
 

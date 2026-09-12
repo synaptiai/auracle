@@ -49,6 +49,8 @@ three. That bound is pinned as part of the prompt contract (DEC-26).
 
 ## Decisions affected
 
+Affects: DEC-37, DEC-12
+
 DEC-37. The change implements it. DEC-12 supplies the trigger, because every
 customer reply passes through approval.
 

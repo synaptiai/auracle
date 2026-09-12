@@ -34,6 +34,8 @@ fit, the gold report and every document that quotes one of them.
 
 ## Decisions affected
 
+Affects: DEC-41, DEC-31, DEC-25, DEC-18
+
 DEC-41 governs the per-intent fit, and this change alters none of its
 behaviour. DEC-31 governs the split and the fit-report separation. DEC-25
 governs the spend a run reports. DEC-18 keeps the corpus synthetic. No DEC

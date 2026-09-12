@@ -54,6 +54,8 @@ a source that names nobody is not locked out.
 
 ## Decisions affected
 
+Affects: DEC-35, DEC-37, DEC-38, DEC-30
+
 Obeys DEC-35, DEC-37 and DEC-38. Obeys DEC-30: no new path retries an unknown
 delivery. Obeys section 4.2 rule 2, extended to the delete and the update that
 were exempt from it.

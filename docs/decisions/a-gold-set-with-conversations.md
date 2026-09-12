@@ -52,6 +52,8 @@ avoids the topic words of the intents above it in that table.
 
 ## Decisions affected
 
+Affects: DEC-35, DEC-38, DEC-39, DEC-18, DEC-31
+
 Obeys DEC-35, DEC-38, DEC-39, DEC-18 and DEC-31. Corrects section 6, which
 claimed a fit that never ran.
 

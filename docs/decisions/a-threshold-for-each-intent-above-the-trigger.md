@@ -49,6 +49,8 @@ needs a classifier run and the corpus it was measured on no longer exists.
 
 ## Decisions affected
 
+Affects: DEC-41, DEC-13
+
 DEC-41 and DEC-13. DEC-41 is obeyed and unchanged. DEC-13 was amended first,
 with the maintainer's approval, so that it binds below the trigger rather than
 absolutely. The amendment is its own commit and its own review.

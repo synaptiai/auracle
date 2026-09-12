@@ -52,7 +52,18 @@ SHIPPED_GLOBS = (
     "CONTRIBUTING.md",
     "REVIEW.md",
     "docs/*.md",
+    # Each of these is one level deep, and `docs/*.md` does not recurse. A
+    # glob that silently covers nothing reads exactly like a clean run, so
+    # `check-docs.py` keeps both directories flat and the retired-glob report
+    # below fails if either name stops matching.
+    #
+    # The archive is frozen, which means no file joins it — not that the
+    # files already there stop being read. They passed this checker as
+    # `intent/*.md` before they moved, and dropping them would have retired
+    # the rule for 35 shipped documents without saying so.
+    "docs/decisions/*.md",
     "intent/*.md",
+    "intent/archive/*.md",
     "fixtures/README.md",
     "db/README.md",
 )

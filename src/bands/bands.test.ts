@@ -6,7 +6,7 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -244,10 +244,18 @@ describe('the documents that cite bands.yaml', () => {
   // Standing documents only. `intent/` and `.decisions/` record the state
   // that motivated a change, so a sentence there describing the file as it
   // stood before that change is the record and not a defect.
+  //
+  // `docs/decisions/` is the same kind of thing and lives under `docs/`, so
+  // the recursive walk below reaches it. The exemption follows the records:
+  // they moved out of `intent/` when a design record stopped being an intent
+  // file, and a record that describes a superseded state is still a record.
+  // No record cites `bands.yaml` today, so this excludes nothing now. It
+  // exists so the next one does not fail a rule it was never inside.
+  const RECORDS = `decisions${sep}`;
   const SHIPPED = ['README.md', 'AGENTS.md', 'CONTRIBUTING.md'];
   const cites = [
     ...readdirSync(join(REPO_ROOT, 'docs'), { recursive: true, encoding: 'utf8' })
-      .filter((name) => name.endsWith('.md'))
+      .filter((name) => name.endsWith('.md') && !name.startsWith(RECORDS))
       .map((name) => join('docs', name)),
     ...SHIPPED,
   ]

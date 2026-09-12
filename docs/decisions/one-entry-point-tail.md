@@ -79,6 +79,8 @@ errno survives, because a filesystem cause carries it in its own message.
 
 ## Decisions affected
 
+Affects: DEC-36
+
 DEC-36 for the partition-count rule. Everything else is an implementation
 detail.
 

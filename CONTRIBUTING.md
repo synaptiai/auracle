@@ -3,7 +3,7 @@
 This guide takes you from a clean checkout to a merged pull request.
 Read it once before you write code.
 The design authority is `docs/v1-architecture.md`.
-That document holds decisions DEC-01 to DEC-42.
+That document holds decisions DEC-01 to DEC-43.
 A statement that does not trace to a DEC is an implementation detail.
 
 ## 1. Set up and verify your checkout
@@ -100,13 +100,29 @@ If your change contradicts a DEC, stop and raise the conflict before you write
 code.
 See `.claude/skills/decision-tracing` for the full rule set.
 
-## 4. Write the intent file
+## 4. Write a design record, if your change affects a decision
 
-Copy `intent/TEMPLATE.md` to `intent/<short-title>.md` and fill every section.
-Record the DEC IDs your change obeys under "Decisions affected".
-Write "none" there if your change is an implementation detail.
-Commit the intent file with your change.
+Step 3 asked you the question this step acts on.
+If your change cites a DEC, it leaves a design record beside the register.
+If it affects no decision, it leaves its rationale in the pull request alone.
+
+Copy `intent/TEMPLATE.md` to `docs/decisions/<short-title>.md`.
+Fill every section.
+Open "Decisions affected" with one line: `Affects: DEC-07, DEC-12`.
+Name every DEC your change cites, and section 2 of the register must define
+each one.
+Commit the record with your change.
 Reviewers read it first.
+
+Write no file when the answer is none.
+The declaration is a line, not a sentence, because a sentence cannot be read.
+"None. DEC-05 governs this" and "DEC-05 governs this, and none changes" say
+one thing and open with opposite words.
+
+`scripts/check-docs.py` refuses a record declaring `Affects: none`.
+It refuses a DEC section 2 does not define.
+It refuses any file left in `intent/` but the template.
+`intent/archive/` holds the records written before this rule, frozen.
 
 ## 5. Fixtures stay synthetic
 
@@ -222,11 +238,12 @@ that names what changed.
 
 Include these items in the description:
 
-1. The pasted output of `pnpm run verify`, with its exit code and the skip
+1. The problem, the outcome and the constraints your change respects.
+2. The pasted output of `pnpm run verify`, with its exit code and the skip
    count from the test run.
-2. A link to or copy of your intent file.
-3. One sentence per behaviour change that names the DEC it obeys, or states
-   that it is an implementation detail.
+3. One sentence per behaviour change that names the DEC it cites, or states
+   that it is an implementation detail. Link your design record here when the
+   change cites a DEC. This is the only place the description asks.
 4. Regenerated fixtures if you changed `scripts/generate-fixtures.mjs`.
 
 ## 8. The three-pass review
@@ -299,9 +316,12 @@ python3 scripts/check-docs.py
 
 It proves that each diagram declares and explains every box it draws an edge
 to. It also proves that every relative link resolves. And it proves that the
-register's design table accounts for every open item. CI runs it and its
-cases on every pull request. It decides structure and reference. It does not
-decide whether a document is true.
+register's design table accounts for every open item. It proves that each
+design record cites a decision the register defines, and that each archived
+record cites none.
+
+CI runs it and its cases on every pull request. It decides structure and
+reference. It does not decide whether a document is true.
 
 The script strips markdown structure first.
 Headings and list items count as their own units.

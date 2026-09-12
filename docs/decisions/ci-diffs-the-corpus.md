@@ -37,6 +37,8 @@ The job already installs Node, so the step needs no new setup.
 
 ## Decisions affected
 
+Affects: DEC-18
+
 DEC-18. The change adds enforcement for a rule the register already states. It
 changes no decision text.
 

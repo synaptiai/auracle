@@ -73,6 +73,8 @@ reported as zero.
 
 ## Decisions affected
 
+Affects: DEC-05, DEC-21, DEC-11, DEC-12, DEC-18, DEC-40
+
 DEC-05 and DEC-21 govern the display and this change obeys both. DEC-11,
 DEC-12, DEC-18 and DEC-40 bound the approval path and it does not move.
 

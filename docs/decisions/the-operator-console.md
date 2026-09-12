@@ -39,6 +39,8 @@ package on purpose, and that comment changes here.
 
 ## Decisions affected
 
+Affects: DEC-11, DEC-40
+
 DEC-11 and DEC-40. Both are obeyed and neither changes. DEC-40 was ratified in
 PR #30 and already permits exactly this, so no register row is written here.
 

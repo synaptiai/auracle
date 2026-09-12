@@ -17,6 +17,8 @@ into commands.
   links         Every relative link in a shipped document resolves.
   design-index  The register's design table accounts for every open item it
                 lists, and every file it names exists.
+  decisions     Every design record cites a decision the register defines, and
+                every archived record cites none.
 
 A Mermaid parser accepts an edge to an undeclared node. It mints a new
 unlabelled box instead of joining the two the author meant, so the diagram
@@ -45,6 +47,8 @@ import sys
 MAP = "docs/architecture-map.md"
 REGISTER = "docs/v1-architecture.md"
 DESIGN_DIR = ".creatumo/design"
+DECISIONS_DIR = "docs/decisions"
+ARCHIVE_DIR = "intent/archive"
 DIAGRAM_COUNT = 3
 
 # A shipped document is prose. Anything larger is not one, and reading it
@@ -618,6 +622,164 @@ def check_design_index(root: str, findings: list[str]) -> None:
                 f"under {DESIGN_DIR}/")
 
 
+DECISIONS_SECTION = re.compile(
+    r"^## Decisions affected\s*$(.*?)(?=^## |\Z)", re.M | re.S)
+# Not fixed-width. The register holds DEC-43 today, and at DEC-100 a `\d{2}`
+# pattern reads the first two digits and reports a citation nobody wrote.
+DEC_ID = re.compile(r"DEC-\d{2,}")
+# A row of the register's own table. Applied to section 2 alone, because that
+# is the section this rule names: a DEC quoted in a later section's prose, or
+# in a table of something else, defines nothing.
+REGISTER_ROW = re.compile(r"^\s*\|\s*(DEC-\d{2,})\s*\|", re.M)
+SECTION_2 = re.compile(r"^## 2\.\s.*?(?=^## |\Z)", re.M | re.S)
+# The declaration a record carries, and the whole of what this check reads.
+#
+# An earlier rule read the verdict out of the section's opening sentence. It
+# cannot be done. "None. DEC-05 governs this work and none of it changes" and
+# "DEC-05 governs this work, and none of it changes" say the same thing and
+# open with opposite words, and the repository's own corpus holds both
+# spellings. Worse, the phrase CONTRIBUTING.md tells an author to write for a
+# change that affects nothing — "Implementation detail." — does not begin with
+# "none" either, so the rule admitted exactly what it existed to refuse.
+#
+# So the author declares and the checker reads. There is no sentence to parse.
+AFFECTS = re.compile(r"^Affects:\s*(.*?)\s*$", re.M)
+AFFECTS_NONE = re.compile(r"^none$", re.I)
+
+
+def register_decs(register: str) -> set[str]:
+    """The decisions section 2 defines, and no others."""
+    section = SECTION_2.search(prose_text(register))
+    if section is None:
+        return set()
+    return set(REGISTER_ROW.findall(section.group(0)))
+
+
+def affects_line(text: str, path: str, findings: list[str]) -> str | None:
+    """The record's declaration, or None with a finding explaining which fault.
+
+    Exactly one line, inside the section. Two would let a record say both
+    things and leave the reader to choose.
+    """
+    section = DECISIONS_SECTION.search(prose_text(text))
+    if section is None:
+        findings.append(f"{path}: no 'Decisions affected' section")
+        return None
+    declared = AFFECTS.findall(section.group(1))
+    if not declared:
+        findings.append(
+            f"{path}: names no 'Affects:' line under 'Decisions affected'")
+        return None
+    if len(declared) > 1:
+        findings.append(f"{path}: carries {len(declared)} 'Affects:' lines")
+        return None
+    return declared[0]
+
+
+def markdown_under(root: str, directory: str, findings: list[str],
+                   ) -> list[tuple[str, bool]]:
+    """Every markdown file under one directory, as (path, is at the top level).
+
+    Walks, rather than listing one level. A record filed one directory deeper
+    was reached by nothing, which made the whole rule optional to anyone who
+    made a subdirectory.
+    """
+    where = os.path.join(root, directory)
+    if not os.path.isdir(where):
+        findings.append(f"{directory}/: not a directory")
+        return []
+    found = []
+    for base, dirs, files in os.walk(
+            where, onerror=lambda error: findings.append(
+                f"{error.filename}: {error.strerror or error}")):
+        dirs.sort()
+        for name in sorted(files):
+            if not name.endswith(".md") or name == "README.md":
+                continue
+            path = os.path.join(base, name)
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            found.append((rel, os.path.dirname(path) == where))
+    return found
+
+
+def check_decisions(root: str, findings: list[str]) -> None:
+    """A design record declares the decisions it cites, and lives beside them.
+
+    Three directories, so the rule cannot be escaped by choosing a fourth:
+
+      docs/decisions/  a record, declaring at least one DEC the register
+                       defines. Flat: a subdirectory would fall out of the
+                       style gate, whose glob is one level deep.
+      intent/          the template alone. This is the path the workflow named
+                       before this rule, so it is the habit a contributor
+                       falls back into, and a file left here would be read by
+                       nothing while still passing the style gate.
+      intent/archive/  frozen, and closed. No record there declares anything,
+                       because the declaration did not exist when they were
+                       written. One that does is a live record misfiled.
+
+    Only `docs/decisions/` fails closed on emptiness. The archive may be
+    emptied one day and that is not a fault; a repository with no design
+    record at all has lost them.
+    """
+    register = read_repo_file(root, REGISTER, findings)
+    if register is None:
+        return
+    defined = register_decs(register)
+    if not defined:
+        findings.append(f"{REGISTER}: section 2 defines no decision to cite")
+        return
+
+    records = markdown_under(root, DECISIONS_DIR, findings)
+    if not records:
+        findings.append(f"{DECISIONS_DIR}/ holds no design record")
+    for path, at_top in records:
+        if not at_top:
+            findings.append(
+                f"{path}: design records sit directly in {DECISIONS_DIR}/, "
+                f"because the style checker reads one level")
+            continue
+        text = read_repo_file(root, path, findings)
+        if text is None:
+            continue
+        declared = affects_line(text, path, findings)
+        if declared is None:
+            continue
+        if AFFECTS_NONE.match(declared):
+            findings.append(
+                f"{path}: declares 'Affects: none', so it is not a design "
+                f"record. Its rationale belongs in the pull request")
+            continue
+        cited = DEC_ID.findall(declared)
+        if not cited:
+            findings.append(f"{path}: declares 'Affects: {declared}', "
+                            f"which names no DEC")
+            continue
+        unknown = sorted(set(cited) - defined)
+        if unknown:
+            findings.append(
+                f"{path}: declares {', '.join(unknown)}, which section 2 of "
+                f"{REGISTER} does not define")
+
+    stray = [name for name in sorted(os.listdir(os.path.join(root, "intent")))
+             if name.endswith(".md") and name != "TEMPLATE.md"]
+    for name in stray:
+        findings.append(
+            f"intent/{name}: intent/ holds the template alone. A design "
+            f"record belongs under {DECISIONS_DIR}/, and a change that "
+            f"affects no decision writes no file")
+
+    for path, _ in markdown_under(root, ARCHIVE_DIR, findings):
+        text = read_repo_file(root, path, findings)
+        if text is None:
+            continue
+        section = DECISIONS_SECTION.search(prose_text(text))
+        if section is not None and AFFECTS.search(section.group(1)):
+            findings.append(
+                f"{path}: declares 'Affects:', so it is a design record and "
+                f"belongs under {DECISIONS_DIR}/. The archive is frozen")
+
+
 CHECKS = {
     "diagrams": check_diagrams,
     "legends": check_legends,
@@ -626,6 +788,7 @@ CHECKS = {
     "er-unenforced": check_er_unenforced,
     "links": check_links,
     "design-index": check_design_index,
+    "decisions": check_decisions,
 }
 
 

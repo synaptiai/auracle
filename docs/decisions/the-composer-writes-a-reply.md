@@ -51,6 +51,8 @@ and the seeder all change. The groundedness gate does not.
 
 ## Decisions affected
 
+Affects: DEC-43, DEC-05, DEC-07, DEC-12, DEC-18, DEC-23
+
 DEC-43, ratified by this change. Obeys DEC-05, DEC-07, DEC-12, DEC-18, DEC-23.
 
 ## Open questions

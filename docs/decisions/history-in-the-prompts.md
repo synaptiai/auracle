@@ -50,6 +50,8 @@ multi-turn deployment goes live.
 
 ## Decisions affected
 
+Affects: DEC-37, DEC-38, DEC-24, DEC-05
+
 Ratifies DEC-37 and DEC-38. DEC-24 holds: run identity stays out of the key.
 DEC-05 holds: the two gates are unchanged and read no history.
 

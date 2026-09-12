@@ -38,6 +38,8 @@ Recount the strata only when multi-turn fixtures land.
 
 ## Decisions affected
 
+Affects: DEC-39
+
 Ratifies DEC-39, the last of the five. Section 1.2 no longer lists
 conversation state as outside V1, and section 7 closes open item 3.
 

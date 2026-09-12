@@ -30,6 +30,8 @@ what section 4.7 states. Only the source of the claim boundaries changes.
 
 ## Decisions affected
 
+Affects: DEC-07, DEC-05
+
 DEC-07 and DEC-05 are unchanged. The gate stays independent of agreement.
 Section 4.7 described the split as a step of this component, so that
 paragraph changes with the code.

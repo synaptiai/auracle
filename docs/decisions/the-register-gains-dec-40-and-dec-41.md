@@ -47,6 +47,8 @@ Neither open item closes here. Item 5 closes when the mechanism ships.
 
 ## Decisions affected
 
+Affects: DEC-40, DEC-41, DEC-11, DEC-13, DEC-12, DEC-14, DEC-05
+
 Adds DEC-40 and DEC-41. Supersedes part of DEC-11 and part of DEC-13, and
 rewrites neither. DEC-12 and DEC-14 keep every effect they had, so a customer
 reply still needs approval and a non-empty disclosure. DEC-05 keeps the two

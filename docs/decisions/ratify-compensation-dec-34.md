@@ -54,6 +54,8 @@ No behaviour changes. The register records what already runs.
 
 ## Decisions affected
 
+Affects: DEC-34, DEC-03, DEC-29, DEC-30
+
 Adds DEC-34. Extends DEC-03 without changing it. DEC-29 and DEC-30 keep the
 delivery rule and the unknown-state rule.
 

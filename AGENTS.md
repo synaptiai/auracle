@@ -251,7 +251,7 @@ It decides structure and reference. It does not decide whether a diagram is true
 ## Change workflow
 
 1. Trace the change to a DEC, or state that it is an implementation detail. The skill `decision-tracing` holds the rules.
-2. Copy `intent/TEMPLATE.md` to `intent/<short-title>.md`. Fill every section and commit it with the change.
+2. Write a design record only when step 1 named a DEC. Copy `intent/TEMPLATE.md` to `docs/decisions/<short-title>.md`, fill every section and commit it with the change. Open "Decisions affected" with one line, `Affects: DEC-07, DEC-12`, naming every DEC the change cites. The declaration is read; the prose beside it is not, because "None. DEC-05 governs this" and "DEC-05 governs this, and none changes" say one thing in two words. A change that affects no decision writes no file; its rationale goes in the pull request. `scripts/check-docs.py` refuses four things. A record declaring `Affects: none`. A DEC section 2 of the register does not define. A record filed in a subdirectory. Any file left in `intent/` but the template. `intent/archive/` holds the records written before this rule, frozen.
 3. Install the commit hook once: `cp hooks/commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg`.
    It blocks an edit to `docs/v1-architecture.md` that cites no DEC. `.github/workflows/guardrails.yml` runs the same check on every commit in the pull request.
 4. Run the three-pass review in `REVIEW.md`: bugs, security, compliance.
@@ -260,10 +260,13 @@ It decides structure and reference. It does not decide whether a diagram is true
 
 `CONTRIBUTING.md` holds the full procedure. `scripts/ste-check.py` is the style checker.
 Session hooks in `.claude/settings.json` block fixture PII and live database commands.
-The live-database rule is not enforced on a pull request, and neither is the
-intent-file rule. CI checks style rules 1 and 2 with `scripts/ste-check.py`,
-and rules 3 to 5 need a reader. CI also diffs the corpus against the
-generator.
+The live-database rule is not enforced on a pull request.
+
+The design-record rule is enforced there. `scripts/check-docs.py` runs in CI
+and reads both directories. It cannot tell that a change needed a record and wrote none,
+because that depends on the diff. CI checks style rules 1 and 2 with
+`scripts/ste-check.py`, and rules 3 to 5 need a reader. CI also diffs the
+corpus against the generator.
 
 No hook blocks a test edit during a bug fix. One did, and it blocked the
 regression test a bug fix exists to add. `REVIEW.md` holds the rule now.

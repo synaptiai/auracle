@@ -40,6 +40,8 @@ failing the park. The ledger-side guard still stops a blind repeat there.
 
 ## Decisions affected
 
+Affects: DEC-24, DEC-11, DEC-14
+
 DEC-24 now covers the park, which had no key. DEC-11 and DEC-14 are
 unchanged. Section 4.9 lists three obligations instead of two.
 

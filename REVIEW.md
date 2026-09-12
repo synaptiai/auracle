@@ -36,6 +36,10 @@ Check the change against `docs/v1-architecture.md`.
 
 - Every behaviour change cites a DEC or states that it is an implementation
   detail.
+- A change that cites a DEC commits a design record under `docs/decisions/`,
+  declaring those DECs on its `Affects:` line. A change that cites none commits
+  no record. CI proves a record is well formed. Only a reader can tell that a
+  change needing one wrote it.
 - No change blends the two gates into one score (DEC-05). Each gate catches a
   failure the other cannot see. A blend lets one strong signal mask one failed
   gate.
@@ -97,21 +101,28 @@ DEC that motivated each attack.
 | No test edits during a bug fix | none, by decision | no | n/a |
 | Live database approval | live-db validator hook | no | yes |
 | Simplified Technical English | none | rules 1 and 2 | yes |
-| An intent file for each change | none | no | no |
+| A design record cites a defined DEC | none | yes | yes |
 | Fixtures match the generator | none | yes | n/a |
 
 Two columns exist because they differ. A job that runs a guard's own cases
 proves the guard works. It does not apply the rule to the pull request.
 
-Two rules are not enforced on a pull request. One depends on context that
-exists only inside a session. One has no checker at all. State this when it
-matters. Do not pretend coverage exists.
+One rule is not enforced on a pull request. It depends on context that exists
+only inside a session. State this when it matters. Do not pretend coverage
+exists.
+
+The design-record rule is half enforced, and the half matters. CI proves that
+every record under `docs/decisions/` declares a decision section 2 of the
+register defines. It proves that `intent/` holds the template alone, and that
+no archived record declares one. It cannot prove that a change which needed a
+record wrote one, because that depends on the diff. Pass 3 above owns that
+reading.
 
 The test-edit rule has no checker by decision (issue #74).
 A session hook used to block any test-file edit on a `fix/` branch.
 CONTRIBUTING.md requires that prefix for a defect.
 So a bug fix could not carry its own regression test. The rule survives as a review
-duty: the bugs pass below owns it. A fix adds a failing-first test and never
+duty: the bugs pass above owns it. A fix adds a failing-first test and never
 relaxes an existing assertion.
 
 The PII guard has no clause for a person's name. It never reads an image.

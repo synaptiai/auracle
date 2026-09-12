@@ -73,6 +73,8 @@ first.
 
 ## Decisions affected
 
+Affects: DEC-06, DEC-30, DEC-01, DEC-11, DEC-14, DEC-18, DEC-24, DEC-33, DEC-35
+
 DEC-06 and DEC-30 for the policy rule. DEC-01, DEC-11, DEC-14, DEC-18, DEC-24,
 DEC-33 and DEC-35 for the adapter. Section 4.8 of `docs/v1-architecture.md` gains the
 second capability line, and its `Obeys` list gains DEC-30. No register row

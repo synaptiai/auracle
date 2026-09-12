@@ -47,6 +47,8 @@ be its own decision.
 
 ## Decisions affected
 
+Affects: DEC-35, DEC-34
+
 Ratifies DEC-35, which the design document proposed as its DEC-34. The
 register assigns the number, so the document's numbers shift by one.
 

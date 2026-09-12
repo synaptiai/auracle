@@ -57,6 +57,8 @@ retention or purge job.
 
 ## Decisions affected
 
+Affects: DEC-37
+
 DEC-37. The change implements it. The decision already states that history
 enters the prompts; nothing in its text changes.
 

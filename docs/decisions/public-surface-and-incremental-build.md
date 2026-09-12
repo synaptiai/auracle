@@ -59,6 +59,8 @@ deep. `public/ledger-read` re-exports `db/config`, so it is listed beside it.
 
 ## Decisions affected
 
+Affects: DEC-11
+
 DEC-11. The change strengthens the boundary in the direction it was silent
 about. Everything else is an implementation detail.
 

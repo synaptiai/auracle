@@ -58,8 +58,9 @@ jobs:
       # A document drifts quietly. These checks decide the claims a machine
       # can decide: every diagram box is declared and explained, the parked
       # reply reaches a person through the adapter, every relative link
-      # resolves, and section 7.1 accounts for every open item.
-      - name: Documentation claims (diagrams, links, design index)
+      # resolves, section 7.1 accounts for every open item, and every design
+      # record declares a decision the register defines.
+      - name: Documentation claims (diagrams, links, design index, design records)
         run: python3 scripts/check-docs.py
 
       - name: Documentation checker cases

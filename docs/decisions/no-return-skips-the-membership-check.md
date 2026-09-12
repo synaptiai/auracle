@@ -54,6 +54,8 @@ paths that need no forgery.
 
 ## Decisions affected
 
+Affects: DEC-35
+
 Obeys DEC-35. Corrects an implementation detail of `742b616`.
 
 ## Open questions

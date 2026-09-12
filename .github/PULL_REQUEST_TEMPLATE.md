@@ -1,11 +1,22 @@
 <!--
-CONTRIBUTING.md section 7 asks for four things. They are the four numbered
-headings below. A pull request without them waits for a person to ask.
+CONTRIBUTING.md section 7 asks for these headings. A pull request without them
+waits for a person to ask.
+
+The first three carry what an intent file used to carry. A change that affects
+no decision writes no file, so this is where its rationale lives.
 -->
 
-## What changed, and why
+## Problem
 
-<!-- One paragraph. Say what a reader gains, not which lines moved. -->
+<!-- What is wrong or missing. State the observable symptom. -->
+
+## Outcome
+
+<!-- What is true now that this is done. Say what a reader gains. -->
+
+## Constraints
+
+<!-- The limits this change respects. Say which ones bound the approach. -->
 
 ## 1. Verify
 
@@ -24,19 +35,19 @@ $ pnpm run verify
 # exit 0
 ```
 
-## 2. The intent file
-
-<!-- Link or paste `intent/<short-title>.md`. Reviewers read it first. -->
-
-## 3. Decisions
+## 2. Decisions
 
 <!--
-One sentence per behaviour change. Name the DEC it obeys, or state that it is
-an implementation detail. A change that contradicts a DEC needs a decision
-first, not a pull request.
+Asked once, here. One sentence per behaviour change: name the DEC it cites, or
+state that it is an implementation detail. A change that contradicts a DEC
+needs a decision first, not a pull request.
+
+If it cites a DEC, link the design record you committed under
+`docs/decisions/`. If it cites none, this section is the whole record and no
+file is needed.
 -->
 
-## 4. Fixtures
+## 3. Fixtures
 
 <!--
 Did you change `scripts/generate-fixtures.mjs`? If so, paste the output of:
@@ -47,8 +58,8 @@ If not, write "unchanged".
 ## Checklist
 
 - [ ] `pnpm run verify` ran, and its output is pasted above with the exit code.
-- [ ] An intent file is committed with this change.
 - [ ] Every behaviour change cites a DEC or declares itself an implementation detail.
+- [ ] A design record under `docs/decisions/` accompanies this change, or it cites no DEC.
 - [ ] No real email, phone number, name or account identifier enters the repository (DEC-18).
 - [ ] No API key, token or database password appears in the pasted output.
 - [ ] The three-pass review in `REVIEW.md` ran: bugs, security, compliance.

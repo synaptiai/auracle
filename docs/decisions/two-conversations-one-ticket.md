@@ -59,6 +59,8 @@ baseline to judge.
 
 ## Decisions affected
 
+Affects: DEC-24, DEC-35, DEC-38
+
 Obeys DEC-24, DEC-35 and DEC-38. Corrects an implementation detail of `db/012`.
 
 ## Open questions

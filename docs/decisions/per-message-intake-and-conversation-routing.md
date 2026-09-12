@@ -53,6 +53,8 @@ The tests ask where a message landed rather than predicting it.
 
 ## Decisions affected
 
+Affects: DEC-36
+
 Ratifies DEC-36. History reaches the coordinator but no prompt reads it yet,
 so it cites no decision until the next step.
 

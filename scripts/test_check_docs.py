@@ -629,7 +629,17 @@ def case_design_index_names_absent_file(root):
     return "design-index", FAIL, "does not exist"
 
 
-REGISTER_OK = """## 7. Open items for V2
+# Section 2 defines the decisions, and section 7 lists the open items. One
+# fixture carries both, because the blank `--only` case below runs every check
+# against a single root and each of the two reads its own section.
+REGISTER_OK = """## 2. Decision register
+
+| ID | Decision | Rejected alternatives |
+|----|----------|----------------------|
+| DEC-01 | The first decision | Something else |
+| DEC-02 | The second decision | Something else |
+
+## 7. Open items for V2
 
 1. One.
 2. Two. **Closed.**
@@ -651,6 +661,169 @@ REGISTER_OK = """## 7. Open items for V2
 | 6. Six | none | closed without one |
 | 7. Seven | `aaa.md` | proposed |
 """
+
+
+
+# A design record declares the decisions it cites. An archived record declares
+# nothing, because the declaration did not exist when it was written.
+RECORD = """# A change
+
+## Decisions affected
+
+Affects: DEC-01
+
+DEC-01. The change ratifies it.
+"""
+
+ARCHIVED = """# A detail
+
+## Decisions affected
+
+None. DEC-01 and DEC-02 govern this work and neither changes.
+"""
+
+
+def write_decisions(root, record=RECORD, archived=ARCHIVED, register=None):
+    write(root, "docs/v1-architecture.md", register or REGISTER_OK)
+    write(root, "docs/decisions/a-record.md", record)
+    write(root, "intent/archive/a-detail.md", archived)
+    write(root, "intent/TEMPLATE.md", "# The template\n")
+
+
+def case_decisions_pass(root):
+    write_decisions(root)
+    return "decisions", PASS, None
+
+
+def case_record_citing_an_unknown_dec(root):
+    write_decisions(root, record=RECORD.replace("Affects: DEC-01", "Affects: DEC-99"))
+    return "decisions", FAIL, "declares DEC-99, which section 2 of docs/v1-architecture.md does not define"
+
+
+def case_a_dec_defined_outside_section_2(root):
+    # The rule names section 2. A row in a later section, or a DEC quoted in
+    # prose, defines nothing — and a whole-document scan cannot tell the
+    # difference. Without this case that scoping can be deleted and every
+    # other case stays green.
+    grown = REGISTER_OK + "\n## 9. Later\n\nDEC-77 was considered and rejected.\n"
+    write_decisions(root, record=RECORD.replace("Affects: DEC-01", "Affects: DEC-77"),
+                    register=grown)
+    return "decisions", FAIL, "declares DEC-77, which section 2 of docs/v1-architecture.md does not define"
+
+
+def case_record_declaring_none(root):
+    # The phrase CONTRIBUTING.md tells an author to write for a change that
+    # affects nothing. The rule this replaced admitted it.
+    write_decisions(root, record=RECORD.replace("Affects: DEC-01", "Affects: none"))
+    return "decisions", FAIL, "declares 'Affects: none', so it is not a design record"
+
+
+def case_record_declaring_none_in_any_case(root):
+    write_decisions(root, record=RECORD.replace("Affects: DEC-01", "Affects: NONE"))
+    return "decisions", FAIL, "declares 'Affects: none', so it is not a design record"
+
+
+def case_record_with_no_affects_line(root):
+    # A record whose section is prose alone. This is every record written
+    # before the declaration existed, so it must not read as clean.
+    write_decisions(root, record=ARCHIVED.replace("None. ", "DEC-01 governs this, and "))
+    return "decisions", FAIL, "names no 'Affects:' line under 'Decisions affected'"
+
+
+def case_record_with_two_affects_lines(root):
+    doubled = RECORD.replace("Affects: DEC-01", "Affects: DEC-01\nAffects: none")
+    write_decisions(root, record=doubled)
+    return "decisions", FAIL, "carries 2 'Affects:' lines"
+
+
+def case_affects_naming_no_dec(root):
+    write_decisions(root, record=RECORD.replace("Affects: DEC-01", "Affects: the composer"))
+    return "decisions", FAIL, "which names no DEC"
+
+
+def case_record_without_the_section(root):
+    write_decisions(root, record="# A change\n\n## Problem\n\nNone stated.\n")
+    return "decisions", FAIL, "no 'Decisions affected' section"
+
+
+def case_record_in_a_subdirectory(root):
+    # The style checker's glob reads one level. A record filed deeper would
+    # leave both checks behind while looking filed.
+    write_decisions(root)
+    write(root, "docs/decisions/2026/hidden.md", RECORD.replace("Affects: DEC-01", "Affects: none"))
+    return "decisions", FAIL, "design records sit directly in docs/decisions/"
+
+
+def case_a_loose_record_left_in_intent(root):
+    # The path the workflow named before this rule, so it is the habit a
+    # contributor falls back into.
+    write_decisions(root)
+    write(root, "intent/a-change.md", RECORD)
+    return "decisions", FAIL, "intent/ holds the template alone"
+
+
+def case_a_live_record_misfiled_into_the_archive(root):
+    write_decisions(root, archived=RECORD)
+    return "decisions", FAIL, "declares 'Affects:', so it is a design record"
+
+
+def case_the_archive_may_hold_prose_citing_decs(root):
+    # 25 of the 35 archived records name DECs in their prose. The archive rule
+    # reads the declaration alone, so none of them is a finding.
+    write_decisions(root, archived=ARCHIVED.replace(
+        "None. DEC-01", "None. DEC-01, DEC-02, DEC-99"))
+    return "decisions", PASS, None
+
+
+def case_no_design_records_at_all(root):
+    # Fails closed. An empty directory must not read the same as a clean one.
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    write(root, "docs/decisions/README.md", "The design records live here.\n")
+    write(root, "intent/TEMPLATE.md", "# The template\n")
+    write(root, "intent/archive/a-detail.md", ARCHIVED)
+    return "decisions", FAIL, "holds no design record"
+
+
+def case_an_empty_archive_is_not_a_fault(root):
+    # Asymmetric on purpose: the archive is frozen and may be emptied.
+    write_decisions(root)
+    os.remove(os.path.join(root, "intent/archive/a-detail.md"))
+    return "decisions", PASS, None
+
+
+def case_readme_is_not_a_record(root):
+    write_decisions(root)
+    write(root, "docs/decisions/README.md", "The design records live here.\n")
+    write(root, "intent/archive/README.md", "Frozen records live here.\n")
+    return "decisions", PASS, None
+
+
+def case_register_that_defines_no_decision(root):
+    write_decisions(root, register="## 2. Decision register\n\nNothing yet.\n")
+    return "decisions", FAIL, "section 2 defines no decision to cite"
+
+
+def case_declaration_inside_a_fence_is_not_one(root):
+    # The template shows the shape in a fence. Reading a fenced example as the
+    # real declaration would let every record inherit the template's answer.
+    fenced = "# A change\n\n## Decisions affected\n\n```\nAffects: DEC-01\n```\n\nprose.\n"
+    write_decisions(root, record=fenced)
+    return "decisions", FAIL, "names no 'Affects:' line under 'Decisions affected'"
+
+
+def case_a_three_digit_dec_is_read_whole(root):
+    # `DEC-\d{2}` reads the first two digits of DEC-100 and reports a citation
+    # nobody wrote. The register holds 43 today; this is the rule, not a bug
+    # anyone can see yet.
+    grown = REGISTER_OK.replace(
+        "| DEC-02 | The second decision | Something else |",
+        "| DEC-02 | The second decision | Something else |\n"
+        "| DEC-100 | The hundredth decision | Something else |")
+    write_decisions(root, record=RECORD.replace("Affects: DEC-01", "Affects: DEC-100"),
+                    register=grown)
+    return "decisions", PASS, None
+
+
 
 # Two cases below deny access with a mode bit, and a mode bit never denies
 # root. Cloud agents and CI containers commonly run as root, where those cases
@@ -729,6 +902,30 @@ CASES = [
     ("a chain keeps its middle node", case_chain_keeps_its_middle_node),
     ("a pipe inside a quoted label is not a label",
      case_pipe_inside_a_quoted_label),
+    ("a design record and an archived record pass", case_decisions_pass),
+    ("a record citing an unknown DEC fails", case_record_citing_an_unknown_dec),
+    ("a DEC defined outside section 2 is not a definition",
+     case_a_dec_defined_outside_section_2),
+    ("a record declaring none fails", case_record_declaring_none),
+    ("a record declaring NONE fails too", case_record_declaring_none_in_any_case),
+    ("a record with no Affects line fails", case_record_with_no_affects_line),
+    ("a record with two Affects lines fails", case_record_with_two_affects_lines),
+    ("an Affects line naming no DEC fails", case_affects_naming_no_dec),
+    ("a record without the section fails", case_record_without_the_section),
+    ("a record in a subdirectory fails", case_record_in_a_subdirectory),
+    ("a loose record left in intent/ fails", case_a_loose_record_left_in_intent),
+    ("a live record misfiled into the archive fails",
+     case_a_live_record_misfiled_into_the_archive),
+    ("the archive may hold prose citing DECs",
+     case_the_archive_may_hold_prose_citing_decs),
+    ("no design record at all is a finding", case_no_design_records_at_all),
+    ("an empty archive is not a fault", case_an_empty_archive_is_not_a_fault),
+    ("a README is not a record", case_readme_is_not_a_record),
+    ("a register defining no decision is a finding",
+     case_register_that_defines_no_decision),
+    ("a declaration inside a fence is not one",
+     case_declaration_inside_a_fence_is_not_one),
+    ("a three-digit DEC is read whole", case_a_three_digit_dec_is_read_whole),
     ("an edge with no target is a finding", case_an_edge_with_no_target),
     ("an inline declaration before an edge is read",
      case_inline_declaration_then_edge),
@@ -844,13 +1041,13 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as root:
         write(root, "docs/architecture-map.md", GOOD_FLOW + SMALL + ER)
         write(root, ".creatumo/design/aaa.md", "x\n")
-        write(root, "docs/v1-architecture.md", REGISTER_OK)
+        write_decisions(root)
         failures += check_cli("an unknown check is a usage error",
                               ["--root", root, "--only", "nonsense"], 2,
                               "unknown check 'nonsense'")
         failures += check_cli("a blank --only runs every check",
                               ["--root", root, "--only", " , , "], 0,
-                              "docs clean: 7 check(s)")
+                              "docs clean: 8 check(s)")
         failures += check_cli("a repeated --only runs once",
                               ["--root", root, "--only", "links,links,links"], 0,
                               "docs clean: 1 check(s)")

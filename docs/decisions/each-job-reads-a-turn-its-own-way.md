@@ -55,6 +55,8 @@ only; a first turn's prompt is byte-identical to before.
 
 ## Decisions affected
 
+Affects: DEC-37, DEC-39, DEC-32
+
 Obeys DEC-37 and DEC-39. Obeys DEC-32: the replay still scores the observed
 queue and never the intent label.
 
