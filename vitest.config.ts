@@ -78,7 +78,13 @@ export default defineConfig({
           setupFiles: ['./src/test-support/db-url.setup.ts'],
           // Both suites drive the one GreenMail server and own mailboxes on
           // it; running them at once races for the same mail.
-          poolOptions: { forks: { singleFork: true, isolate: true } },
+          //
+          // Top-level, not under `poolOptions`. Vitest 4 removed that block
+          // and reads these names directly; the old spelling was accepted in
+          // silence, with one deprecation line in a run nobody reads, and the
+          // two suites raced again.
+          singleFork: true,
+          isolate: true,
           hookTimeout: 60_000,
           testTimeout: 30_000,
         },

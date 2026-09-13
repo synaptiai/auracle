@@ -13,7 +13,7 @@
 // rename on either side is a compile error rather than an undefined at run
 // time. `dbUrl` is the server's admin URI; a suite never uses it directly.
 import { randomUUID } from 'node:crypto';
-import { inject } from 'vitest';
+import { beforeAll, expect, inject } from 'vitest';
 
 // Pulls in the ProvidedContext augmentation, so `inject('dbUrl')` is typed
 // rather than `never`.
@@ -31,4 +31,11 @@ process.env['DATABASE_URL'] = url;
 
 // The run's teardown reads these back and fails when one database served two
 // files. No single file can see that about itself.
-recordDatabase(runId, databaseOf(url));
+//
+// Recorded from a hook rather than here, because `expect.getState().testPath`
+// is empty at module scope and populated inside one. The path is what makes
+// the check able to see a setup that stopped running per file: two files on
+// one database are two lines naming it, however this module was evaluated.
+beforeAll(() => {
+  recordDatabase(runId, databaseOf(url), String(expect.getState().testPath ?? 'unknown'));
+});

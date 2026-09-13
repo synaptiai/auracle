@@ -7,7 +7,7 @@
 //
 // GreenMail is not started here. It belongs to the `mail` project's setup,
 // so the database suites in this project do not wait on a JVM.
-import type { GlobalSetupContext } from 'vitest/node';
+import type { TestProject } from 'vitest/node';
 
 import { ensurePostgres, stopContainers } from './containers.js';
 import { assertIsolation, clearIsolation } from './isolation-registry.js';
@@ -15,7 +15,10 @@ import { dropRunDatabases, newRunId, prepareTemplate } from './template-db.js';
 
 let runId = '';
 
-export async function setup({ provide }: GlobalSetupContext): Promise<void> {
+// Vitest 4 hands the global setup the project itself, where vitest 3 handed a
+// `GlobalSetupContext` holding a bare `provide`. The type is gone, so this is
+// a rename rather than a behaviour change: `project.provide` is the same call.
+export async function setup({ provide }: TestProject): Promise<void> {
   const adminUrl = await ensurePostgres();
   runId = newRunId();
   // One migrated template for this run; db-url.setup.ts clones it per file.
