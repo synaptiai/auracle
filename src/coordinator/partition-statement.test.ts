@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { partitionOf } from './coordinator.js';
+import { isFrozenRecord } from '../test-support/frozen-records.js';
 
 const REPO_ROOT = new URL('../../', import.meta.url).pathname;
 /** This suite states the stale spellings, so it must not scan itself. */
@@ -49,7 +50,12 @@ describe('the partition key the repository states (DEC-36)', () => {
     const files = [
       ...SHIPPED_TREES.flatMap((tree) => shippedFiles(join(REPO_ROOT, tree))),
       ...SHIPPED_FILES.map((name) => join(REPO_ROOT, name)),
-    ].filter((path) => path !== SELF);
+    ]
+      .filter((path) => path !== SELF)
+      // A frozen record states the partition key as it stood when the
+      // record was written. Two do say the ticket id alone, and both
+      // predate DEC-36 (issue #79).
+      .filter((path) => !isFrozenRecord(path));
     const naming = files
       .filter((path) =>
         readFileSync(path, 'utf8')

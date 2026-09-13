@@ -15,7 +15,7 @@ questions:
 
 Nothing here is a decision. A document becomes a decision only when a row
 enters the register's table in section 2. Where design material already exists
-under `.creatumo/design/`, this document reports it and names its status.
+under `docs/design/`, this document reports it and names its status.
 
 Four items stay open: 1, 4, 5 and 7. Items 1, 4 and 5 have never closed.
 Item 7 has its measurement and not its correction. So it has a section of

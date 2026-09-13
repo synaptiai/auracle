@@ -25,6 +25,7 @@ import { ImapPoller } from '../ingress/imap-poller.js';
 import { pollCycle } from '../imap/daemon.js';
 import type { ImapDaemonLogEntry } from '../imap/daemon.js';
 import { ImapMailboxFetcher, imapFlowFactory } from '../imap/fetcher.js';
+import { resetMailboxes } from '../test-support/mailbox-reset.js';
 
 const PARTITION_COUNT = 8;
 // One GreenMail server now serves every mail suite, so each suite owns its
@@ -54,6 +55,16 @@ const greenmail = inject('mail');
 
 afterAll(async () => {
   await pool.end();
+});
+
+beforeEach(async () => {
+  // The compose GreenMail service outlives the run (issue #80), so the
+  // mailbox this suite reads carries the previous run's mail unless it is
+  // emptied. A throwaway container was empty by construction and hid it.
+  await resetMailboxes(
+    { host: greenmail.host, imapPort: greenmail.imapPort, user: SUPPORT_USER, pass: 'synthetic-password' },
+    ['INBOX'],
+  );
 });
 
 

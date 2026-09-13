@@ -1,0 +1,195 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+    body { margin: 0; }
+    .root {
+      --bg:#0d0e10; --panel:#141619; --panel2:#1a1d21; --ink:#e6e7e8; --mut:#878d95;
+      --dim:#5b626a; --rule:#25292e; --rule2:#31363c;
+      --accent:oklch(0.66 0.11 255); --warn:oklch(0.72 0.11 78); --hot:oklch(0.66 0.13 42);
+      --crit:oklch(0.62 0.15 22); --ok:oklch(0.68 0.09 155);
+      font-family:'IBM Plex Sans',system-ui,sans-serif; background:var(--bg); color:var(--ink);
+      font-size:13px; line-height:1.45; min-height:100%; box-sizing:border-box;
+      -webkit-font-smoothing:antialiased;
+    }
+    .root[data-theme="light"] {
+      --bg:#f7f7f5; --panel:#ffffff; --panel2:#f1f1ee; --ink:#17181a; --mut:#5f656c;
+      --dim:#9198a0; --rule:#e4e4e0; --rule2:#d3d3ce;
+      --accent:oklch(0.52 0.12 255); --warn:oklch(0.58 0.11 78); --hot:oklch(0.55 0.14 42);
+      --crit:oklch(0.52 0.16 22); --ok:oklch(0.52 0.10 155);
+    }
+    .root *, .root *::before, .root *::after { box-sizing:border-box; }
+    .m { font-family:'IBM Plex Mono',ui-monospace,monospace; font-variant-numeric:tabular-nums; }
+    a { color:var(--accent); text-decoration:none; }
+    a:hover { color:var(--ink); text-decoration:underline; }
+    .lbl { font-size:10px; letter-spacing:.09em; text-transform:uppercase; color:var(--dim); font-weight:500; }
+    .chip { display:inline-flex; align-items:center; gap:5px; padding:2px 7px; border:1px solid var(--rule2);
+      border-radius:3px; font-size:11px; font-family:'IBM Plex Mono',monospace; color:var(--mut); }
+    .dot { width:6px; height:6px; border-radius:50%; background:currentColor; flex:none; }
+    .wrap { padding:20px 24px 26px; display:flex; flex-direction:column; gap:16px; }
+    .hd { display:flex; align-items:flex-start; justify-content:space-between; gap:20px;
+      padding-bottom:13px; border-bottom:1px solid var(--rule); }
+    .grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px; }
+    .card { background:var(--panel); border:1px solid var(--rule); border-radius:5px;
+      display:flex; flex-direction:column; }
+    .card > header { padding:11px 14px; border-bottom:1px solid var(--rule); display:flex;
+      align-items:center; justify-content:space-between; gap:10px; }
+    .card > .body { padding:14px; display:flex; flex-direction:column; gap:12px; }
+    .big { font-family:'IBM Plex Mono',monospace; font-size:29px; font-weight:500; letter-spacing:-.02em;
+      font-variant-numeric:tabular-nums; line-height:1; }
+    .verdict { display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:3px;
+      font-size:11px; font-family:'IBM Plex Mono',monospace; font-weight:500; }
+    .kv { display:grid; grid-template-columns:auto auto; gap:2px 12px; font-size:11px; }
+    .kv dt { color:var(--dim); font-family:'IBM Plex Mono',monospace; }
+    .kv dd { margin:0; font-family:'IBM Plex Mono',monospace; color:var(--mut); }
+    .legend { display:flex; gap:20px; flex-wrap:wrap; padding:12px 15px; background:var(--panel);
+      border:1px solid var(--rule); border-radius:5px; }
+    .lg { display:flex; gap:8px; align-items:flex-start; }
+    .shortfall { border:1px dashed var(--rule2); border-radius:4px; padding:16px 14px;
+      display:flex; flex-direction:column; gap:5px; align-items:flex-start; }
+  </style>
+</helmet>
+<div class="root" data-theme="{{theme}}">
+<div class="wrap">
+
+  <div class="hd">
+    <div>
+      <div style="font-size:16px; font-weight:600">Control bands</div>
+      <div style="color:var(--mut); font-size:12px; margin-top:4px">
+        One UTC day judged against the thirty measured days before it. The day is never inside its own baseline.
+      </div>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center">
+      <span class="chip">day 2026-09-03</span>
+      <span class="chip">baseline 08-04 &rarr; 09-02</span>
+      <span class="chip" style="color:var(--accent)">artifact bands/v18.json</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <sc-for list="{{cards}}" as="c" hint-placeholder-count="4">
+    <div class="card">
+      <header>
+        <span class="m" style="font-size:12.5px">{{c.name}}</span>
+        <span class="verdict" style="color: {{c.vColor}}; background: {{c.vBg}}">{{c.verdict}}</span>
+      </header>
+      <div class="body">
+        <sc-if value="{{c.measured}}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex; align-items:baseline; gap:11px">
+            <span class="big" style="color: {{c.vColor}}">{{c.value}}</span>
+            <span class="m" style="font-size:11.5px; color:var(--dim)">over {{c.pop}}</span>
+          </div>
+          <svg viewBox="0 0 560 96" style="width:100%; height:96px; overflow:visible" preserveAspectRatio="none">
+            <rect x="0" y="{{c.b3y}}" width="560" height="{{c.b3h}}" fill="oklch(0.62 0.15 22 / .10)"></rect>
+            <rect x="0" y="{{c.b2y}}" width="560" height="{{c.b2h}}" fill="oklch(0.66 0.13 42 / .10)"></rect>
+            <rect x="0" y="{{c.b1y}}" width="560" height="{{c.b1h}}" fill="oklch(0.72 0.11 78 / .10)"></rect>
+            <line x1="0" y1="48" x2="560" y2="48" stroke="var(--rule2)" stroke-dasharray="3 4"></line>
+            <path d="{{c.path}}" fill="none" stroke="var(--mut)" stroke-width="1.4"></path>
+            <circle cx="548" cy="{{c.todayY}}" r="4" fill="{{c.vColor}}"></circle>
+          </svg>
+          <div style="display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap">
+            <dl class="kv">
+              <dt>baseline mean</dt><dd>{{c.mean}}</dd>
+              <dt>baseline sigma</dt><dd>{{c.sigma}}</dd>
+            </dl>
+            <dl class="kv">
+              <dt>distance</dt><dd style="color: {{c.vColor}}">{{c.dist}}</dd>
+              <dt>days in window</dt><dd>{{c.days}}</dd>
+            </dl>
+          </div>
+        </sc-if>
+        <sc-if value="{{c.shortfall}}" hint-placeholder-val="{{ false }}">
+          <div class="shortfall">
+            <span class="lbl" style="color:var(--warn)">No verdict</span>
+            <span class="m" style="font-size:12.5px">{{c.shortfallText}}</span>
+            <span style="font-size:11.5px; color:var(--mut)">{{c.shortfallWhy}}</span>
+          </div>
+          <dl class="kv">
+            <dt>today</dt><dd>{{c.value}}</dd>
+            <dt>over</dt><dd>{{c.pop}}</dd>
+          </dl>
+        </sc-if>
+      </div>
+    </div>
+    </sc-for>
+  </div>
+
+  <div class="legend">
+    <div class="lg"><span class="dot" style="color:var(--warn); margin-top:5px"></span>
+      <div><div class="m" style="font-size:11.5px">1 sigma</div><div style="font-size:11px; color:var(--mut)">Log it. Take no action.</div></div></div>
+    <div class="lg"><span class="dot" style="color:var(--hot); margin-top:5px"></span>
+      <div><div class="m" style="font-size:11.5px">2 sigma</div><div style="font-size:11px; color:var(--mut)">Diagnose, read only. Change nothing.</div></div></div>
+    <div class="lg"><span class="dot" style="color:var(--crit); margin-top:5px"></span>
+      <div><div class="m" style="font-size:11.5px">3 sigma</div><div style="font-size:11px; color:var(--mut)">A change is warranted. Open a pull request. This console opens none.</div></div></div>
+    <div class="lg" style="margin-left:auto"><span class="dot" style="color:var(--dim); margin-top:5px"></span>
+      <div><div class="m" style="font-size:11.5px">no verdict</div><div style="font-size:11px; color:var(--mut)">A quantity that could not be measured is never reported as zero.</div></div></div>
+  </div>
+
+</div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark","section":"Display"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const tone = {
+      steady: ['var(--ok)', 'oklch(0.68 0.09 155 / .14)'],
+      one:    ['var(--warn)','oklch(0.72 0.11 78 / .14)'],
+      two:    ['var(--hot)', 'oklch(0.66 0.13 42 / .14)'],
+      three:  ['var(--crit)','oklch(0.62 0.15 22 / .14)'],
+      none:   ['var(--dim)', 'transparent']
+    };
+    // 48 is the baseline mean line; 13px of vertical space per sigma.
+    const S = 13, MID = 48;
+    const band = (a, b) => ({ y: MID - b * S, h: (b - a) * 2 * S });
+    const seed = (n, spread, drift) => {
+      let out = [], v = 0;
+      for (let i = 0; i < n; i++) {
+        v = Math.sin(i * 1.7) * spread + Math.cos(i * 0.9) * spread * 0.5 + drift * i;
+        out.push(v);
+      }
+      return out;
+    };
+    const spark = (vals, todaySigma) => {
+      const pts = vals.concat([todaySigma]);
+      const step = 548 / (pts.length - 1);
+      return pts.map((s, i) => (i ? 'L' : 'M') + (i * step).toFixed(1) + ' ' + (MID - s * S).toFixed(1)).join(' ');
+    };
+    const mk = (o) => {
+      const b1 = band(0, 1), b2 = band(1, 2), b3 = band(2, 3);
+      return Object.assign({
+        measured: !o.shortfall, vColor: tone[o.tone][0], vBg: tone[o.tone][1],
+        b1y: b1.y, b1h: b1.h, b2y: b2.y, b2h: b2.h, b3y: b3.y, b3h: b3.h,
+        path: o.sigmaToday === undefined ? '' : spark(seed(29, 0.8, 0), o.sigmaToday),
+        todayY: MID - (o.sigmaToday || 0) * S
+      }, o);
+    };
+    return {
+      cards: [
+        mk({ name:'abstain_rate', verdict:'within 1 sigma', tone:'steady', value:'0.083',
+             pop:'241 composed', mean:'0.079', sigma:'0.011', dist:'+0.4 sigma', days:'30 of 30',
+             sigmaToday:0.4, shortfall:false }),
+        mk({ name:'gate_pass_rate', verdict:'2 sigma — diagnose', tone:'two', value:'0.712',
+             pop:'168 reached the comparison', mean:'0.804', sigma:'0.042', dist:'-2.2 sigma', days:'30 of 30',
+             sigmaToday:-2.2, shortfall:false }),
+        mk({ name:'approval_edit_distance', verdict:'no verdict', tone:'none', value:'0.061',
+             pop:'54 approvals', shortfall:true,
+             shortfallText:'provider changed on 2026-08-22',
+             shortfallWhy:'The baseline holds days composed by the offline stand-in and today was composed by the live model. A band across that change would measure the provider, not the system.' }),
+        mk({ name:'relay_delivery_unknown_count', verdict:'no verdict', tone:'none', value:'0',
+             pop:'312 sends', shortfall:true,
+             shortfallText:'sigma is zero over 30 days',
+             shortfallWhy:'The healthy value is zero, so a healthy window has no spread at all. A distance over a zero spread is not a number.' })
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

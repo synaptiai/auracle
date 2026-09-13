@@ -17,7 +17,7 @@ A customer reply is not reversible: the customer reads it and acts on it.
 So each reply waits for approval by a person (DEC-12).
 
 The design authority is `docs/v1-architecture.md`.
-That document holds decisions DEC-01 to DEC-42.
+That document holds decisions DEC-01 to DEC-43.
 This README states the compliance position per DEC-19.
 No machine check can decide who controls the data, so the documents carry that position.
 
@@ -25,12 +25,14 @@ No machine check can decide who controls the data, so the documents carry that p
 
 | Document | What it gives you |
 |---|---|
+| [The quick map](docs/quick-map.md) | One screen: which decisions each `src/` directory answers to, and what turns red |
 | [The architecture map](docs/architecture-map.md) | Three diagrams of the system, with a legend for every box |
-| [The decision register](docs/v1-architecture.md) | DEC-01 to DEC-42. The only design authority |
+| [The decision register](docs/v1-architecture.md) | DEC-01 to DEC-43. The only design authority |
 | [The runbook](docs/operations.md) | What an operator runs, and in what order |
 | [The V2 roadmap](docs/v2-roadmap.md) | What is left, what blocks it, and who owns each blocker |
 | [The contributing guide](CONTRIBUTING.md) | A clean checkout to a merged change |
 | [The review guide](REVIEW.md) | The three passes every change makes |
+| [The playbook](docs/agentic-support-playbook.html) | The narrative case for this design, for a reader of prose rather than a register ([PDF](docs/agentic-support-playbook.pdf)) |
 
 ## The flow
 

@@ -349,7 +349,7 @@ def case_no_diagram_to_judge(root):
 def case_register_grows_an_open_item(root):
     # The item count is read from section 7, not assumed. An eighth item with
     # no row must report.
-    write(root, ".creatumo/design/aaa.md", "x\n")
+    write(root, "docs/design/aaa.md", "x\n")
     grown = REGISTER_OK.replace("7. Seven.\n", "7. Seven.\n8. Eight.\n")
     write(root, "docs/v1-architecture.md", grown)
     return "design-index", FAIL, "no row for open item 8"
@@ -357,7 +357,7 @@ def case_register_grows_an_open_item(root):
 
 def case_section_71_inside_a_fence(root):
     # Splitting on the first occurrence anywhere read a fence as the table.
-    write(root, ".creatumo/design/aaa.md", "x\n")
+    write(root, "docs/design/aaa.md", "x\n")
     write(root, "docs/v1-architecture.md",
           "```\n### 7.1 an example, not the table\n```\n\n" + REGISTER_OK)
     return "design-index", PASS, None
@@ -612,13 +612,13 @@ def case_no_flow_diagram(root):
 
 
 def case_design_index_pass(root):
-    write(root, ".creatumo/design/aaa.md", "x\n")
+    write(root, "docs/design/aaa.md", "x\n")
     write(root, "docs/v1-architecture.md", REGISTER_OK)
     return "design-index", PASS, None
 
 
 def case_design_index_missing_item(root):
-    write(root, ".creatumo/design/aaa.md", "x\n")
+    write(root, "docs/design/aaa.md", "x\n")
     write(root, "docs/v1-architecture.md", REGISTER_OK.replace(
         "| 4. Clusters | `aaa.md` | blocked |\n", ""))
     return "design-index", FAIL, "no row for open item 4"
@@ -841,7 +841,248 @@ def denies_permission() -> bool:
     return getuid is None or getuid() != 0
 
 
+
+# --- dec-range (issue #79) ---------------------------------------------
+
+RANGE_REGISTER = """## 2. Decision register
+
+| ID | Decision | Rejected alternatives |
+|----|----------|----------------------|
+| DEC-01 | The first decision | Something else |
+| DEC-02 | The second decision | Something else |
+| DEC-03 | The third decision | Something else |
+"""
+
+
+def range_repo(root, readme):
+    write(root, "docs/v1-architecture.md", RANGE_REGISTER)
+    write(root, "README.md", readme)
+    write(root, "CONTRIBUTING.md", "# Contributing\n")
+    write(root, "AGENTS.md", "# Agents\n")
+    # Every document in RANGE_DOCS, because an unreadable one is a finding:
+    # the check fails closed rather than passing over a document it cannot
+    # read.
+    write(root, "docs/quick-map.md", "# Quick map\n")
+
+
+def case_dec_range_matches(root):
+    range_repo(root, "The register holds DEC-01 to DEC-03.\n")
+    return "dec-range", PASS, None
+
+
+def case_dec_range_stale(root):
+    # The defect: README said DEC-42 while the register defined 43.
+    range_repo(root, "The register holds DEC-01 to DEC-02.\n")
+    return "dec-range", FAIL, "states DEC-01 to DEC-02"
+
+
+def case_dec_count_stale(root):
+    range_repo(root, "It holds 5 numbered decisions, DEC-01 to DEC-03.\n")
+    return "dec-range", FAIL, "states 5 decisions"
+
+
+def case_dec_count_matches(root):
+    range_repo(root, "It holds 3 numbered decisions, DEC-01 to DEC-03.\n")
+    return "dec-range", PASS, None
+
+
+def case_dec_range_stated_nowhere(root):
+    # Fail closed. A rename that stops every document stating the range would
+    # otherwise pass by saying nothing at all.
+    range_repo(root, "# Readme\n")
+    return "dec-range", FAIL, "proved nothing"
+
+
+def case_dec_range_in_a_fence(root):
+    # A fenced example is not a claim. `prose_text` blanks it, like every
+    # other check here.
+    range_repo(root, "```\nDEC-01 to DEC-99\n```\n\nThe register holds DEC-01 to DEC-03.\n")
+    return "dec-range", PASS, None
+
+
+def case_dec_register_skips_a_number(root):
+    # A gap makes any range false, and the register is what would carry it.
+    range_repo(root, "The register holds DEC-01 to DEC-03.\n")
+    write(root, "docs/v1-architecture.md", RANGE_REGISTER.replace(
+        "| DEC-02 | The second decision | Something else |\n", ""))
+    return "dec-range", FAIL, "skips DEC-02"
+
+
+# --- script-index (issue #79) ------------------------------------------
+
+def script_repo(root, scripts, runbook):
+    write(root, "package.json", '{"scripts": ' + scripts + '}')
+    write(root, "docs/operations.md", runbook)
+
+
+def case_script_index_complete(root):
+    script_repo(root, '{"build": "tsc", "seed-history": "node x.js"}',
+                "Run `pnpm run build`, then `pnpm run seed-history`.\n")
+    return "script-index", PASS, None
+
+
+def case_script_index_missing(root):
+    # The defect: `seed-history` was in the manifest and in no document.
+    script_repo(root, '{"build": "tsc", "seed-history": "node x.js"}',
+                "Run `pnpm run build`.\n")
+    return "script-index", FAIL, "names no `pnpm run seed-history`"
+
+
+def case_script_index_bare_word_is_not_a_command(root):
+    # "build" is ordinary English. A substring rule counted every prose use of
+    # it and reported a runbook that documented nothing.
+    script_repo(root, '{"build": "tsc"}', "The build is incremental.\n")
+    return "script-index", FAIL, "names no `pnpm run build`"
+
+
+def case_script_index_accepts_the_short_spelling(root):
+    # `pnpm test` is how the repository writes that one.
+    script_repo(root, '{"test": "vitest run"}', "Run `pnpm test`.\n")
+    return "script-index", PASS, None
+
+
+def case_script_index_manifest_not_json(root):
+    script_repo(root, '{"build": "tsc",}', "Run `pnpm run build`.\n")
+    return "script-index", FAIL, "not JSON"
+
+
+def case_script_index_no_scripts(root):
+    write(root, "package.json", '{"name": "x"}')
+    write(root, "docs/operations.md", "# Runbook\n")
+    return "script-index", FAIL, "proved nothing"
+
+
+
+def case_dec_range_wrapped_across_lines(root):
+    # The claim the scan could not see. "DEC-01 to\nDEC-43" is one sentence a
+    # line break split, and the quick map wraps exactly there — so a stale
+    # range in it passed in silence.
+    range_repo(root, "The register holds every decision, DEC-01 to\nDEC-02.\n")
+    return "dec-range", FAIL, "states DEC-01 to DEC-02"
+
+
+def case_dec_range_evasive_connector(root):
+    # A fixed alternation of to|through|- let ordinary English through.
+    range_repo(root, "The register holds DEC-01 up to DEC-02.\n")
+    return "dec-range", FAIL, "states DEC-01 to DEC-02"
+
+
+def case_dec_list_is_not_a_range(root):
+    # "DEC-01, DEC-02" and "DEC-01 and DEC-02" name a pair. Reading either as a
+    # span reported a false range in this repository's own quick map.
+    range_repo(root, "It affects DEC-01, DEC-02.\n\nDEC-01 and DEC-02 hold.\n"
+                     "The register holds DEC-01 to DEC-03.\n")
+    return "dec-range", PASS, None
+
+
+def case_dec_range_in_the_quick_map(root):
+    # The fourth document, which this repository added and the scan did not
+    # read. `AGENTS.md` states a range, so the fail-closed clause never fired.
+    range_repo(root, "The register holds DEC-01 to DEC-03.\n")
+    write(root, "docs/quick-map.md", "Holds every decision, DEC-01 to DEC-02.\n")
+    return "dec-range", FAIL, "states DEC-01 to DEC-02"
+
+
+def case_script_index_runbook_names_a_dropped_script(root):
+    # The other direction. A runbook naming a command that no longer exists
+    # sends a reader to a failure, and a script is deleted far more often than
+    # the paragraph describing it.
+    script_repo(root, '{"build": "tsc"}',
+                "Run `pnpm run build`, then `pnpm run seed-history`.\n")
+    return "script-index", FAIL, "names `pnpm run seed-history`"
+
+
+def case_script_index_pnpm_subcommand_collision(root):
+    # A script whose name collides with a pnpm subcommand passed undocumented,
+    # because the setup section contains `pnpm install`.
+    script_repo(root, '{"install": "node x.js"}', "Run `pnpm install` first.\n")
+    return "script-index", FAIL, "names no `pnpm run install`"
+
+
+MAP_REGISTER = """## 2. Decision register
+
+| ID | Decision | Rejected alternatives |
+|----|----------|----------------------|
+| DEC-01 | The first decision | Something else |
+| DEC-02 | The second decision | Something else |
+| DEC-03 | The third decision | Something else |
+"""
+
+
+def map_repo(root, listed, rows=None):
+    write(root, "docs/v1-architecture.md", MAP_REGISTER)
+    body = rows if rows is not None else (
+        "\n".join(f"| `dir{n}` | DEC-0{n} | `src/x.test.ts` | 1. Setup |" for n in (1, 2))
+    )
+    write(root, "docs/quick-map.md",
+          "# Quick map\n\n| dir | Decisions | Key test | Runbook |\n|---|---|---|---|\n"
+          + body + "\n\n## Decisions no row names\n\n" + listed
+          + "\n\nProse below may mention DEC-01 freely.\n")
+
+
+def case_map_coverage_matches(root):
+    map_repo(root, "DEC-03.")
+    return "map-coverage", PASS, None
+
+
+def case_map_coverage_understates(root):
+    # The defect: the map said two decisions appeared in no row. Four did.
+    # Two rows, because one row is a table this check refuses to trust.
+    map_repo(root, "DEC-03.", rows=(
+        "| `dir1` | DEC-01 | `src/x.test.ts` | 1. Setup |\n"
+        "| `dir2` | DEC-01 | `src/x.test.ts` | 1. Setup |"))
+    return "map-coverage", FAIL, "DEC-02"
+
+
+def case_map_coverage_names_a_covered_decision(root):
+    map_repo(root, "DEC-02, DEC-03.")
+    return "map-coverage", FAIL, "DEC-02"
+
+
+def case_map_coverage_section_absent(root):
+    write(root, "docs/v1-architecture.md", MAP_REGISTER)
+    write(root, "docs/quick-map.md",
+          "# Quick map\n\n| dir | Decisions | Key test | Runbook |\n|---|---|---|---|\n"
+          + "\n".join(f"| `dir{n}` | DEC-0{n} | `src/x.test.ts` | 1. Setup |" for n in (1, 2, 3))
+          + "\n")
+    return "map-coverage", FAIL, "has no '## Decisions no row names' section"
+
+
+def case_map_coverage_reads_no_rows(root):
+    write(root, "docs/v1-architecture.md", MAP_REGISTER)
+    write(root, "docs/quick-map.md", "# Quick map\n\nNo table here.\n")
+    return "map-coverage", FAIL, "scanned nothing"
+
+
 CASES = [
+    ("a stated DEC range that matches the register passes", case_dec_range_matches),
+    ("a range split by a line break is still read", case_dec_range_wrapped_across_lines),
+    ("an evasive range connector is still read", case_dec_range_evasive_connector),
+    ("a list of decisions is not a range", case_dec_list_is_not_a_range),
+    ("a stale range in the quick map fails", case_dec_range_in_the_quick_map),
+    ("a runbook naming a dropped script fails",
+     case_script_index_runbook_names_a_dropped_script),
+    ("a script colliding with a pnpm subcommand fails",
+     case_script_index_pnpm_subcommand_collision),
+    ("a quick map whose uncovered list is right passes", case_map_coverage_matches),
+    ("a quick map that understates what it omits fails", case_map_coverage_understates),
+    ("a quick map naming a covered decision fails",
+     case_map_coverage_names_a_covered_decision),
+    ("a quick map with no uncovered section fails", case_map_coverage_section_absent),
+    ("a quick map with no rows fails", case_map_coverage_reads_no_rows),
+    ("a stale DEC range fails", case_dec_range_stale),
+    ("a stale DEC count fails", case_dec_count_stale),
+    ("a DEC count that matches passes", case_dec_count_matches),
+    ("a range stated in no document fails", case_dec_range_stated_nowhere),
+    ("a DEC range inside a fence is not a claim", case_dec_range_in_a_fence),
+    ("a register that skips a number fails", case_dec_register_skips_a_number),
+    ("a runbook naming every script passes", case_script_index_complete),
+    ("a script named in no document fails", case_script_index_missing),
+    ("a bare word is not a documented command",
+     case_script_index_bare_word_is_not_a_command),
+    ("the short pnpm spelling counts", case_script_index_accepts_the_short_spelling),
+    ("a manifest that is not JSON fails", case_script_index_manifest_not_json),
+    ("a manifest with no scripts fails", case_script_index_no_scripts),
     ("three tagged fences with declared nodes pass", case_diagrams_pass),
     ("an edge to an undeclared node fails", case_undeclared_node),
     ("a labelled edge to an undeclared node fails",
@@ -1040,14 +1281,25 @@ def main() -> int:
     # not a finding, and a blank or repeated `--only` must not change what runs.
     with tempfile.TemporaryDirectory() as root:
         write(root, "docs/architecture-map.md", GOOD_FLOW + SMALL + ER)
-        write(root, ".creatumo/design/aaa.md", "x\n")
+        write(root, "docs/design/aaa.md", "x\n")
         write_decisions(root)
+        # `dec-range` and `script-index` read four more files, and a root that
+        # holds none of them reports rather than passing in silence. The
+        # register here is the one `write_decisions` wrote, which defines two.
+        write(root, "README.md", "The register holds DEC-01 to DEC-02.\n")
+        write(root, "CONTRIBUTING.md", "# Contributing\n")
+        write(root, "AGENTS.md", "# Agents\n")
+        write(root, "package.json", '{"scripts": {"build": "tsc"}}')
+        write(root, "docs/operations.md", "Run `pnpm run build`.\n")
+        write(root, "docs/quick-map.md",
+              "| `a` | DEC-01 | `x.test.ts` | 1 |\n| `b` | DEC-02 | `x.test.ts` | 1 |\n"
+              "\n## Decisions no row names\n\nnone.\n")
         failures += check_cli("an unknown check is a usage error",
                               ["--root", root, "--only", "nonsense"], 2,
                               "unknown check 'nonsense'")
         failures += check_cli("a blank --only runs every check",
                               ["--root", root, "--only", " , , "], 0,
-                              "docs clean: 8 check(s)")
+                              "docs clean: 11 check(s)")
         failures += check_cli("a repeated --only runs once",
                               ["--root", root, "--only", "links,links,links"], 0,
                               "docs clean: 1 check(s)")

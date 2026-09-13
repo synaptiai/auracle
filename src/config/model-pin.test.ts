@@ -14,6 +14,7 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_CHAT_MODEL_VER } from './env.js';
+import { isFrozenRecord } from '../test-support/frozen-records.js';
 
 const REPO_ROOT = new URL('../../', import.meta.url).pathname;
 
@@ -41,7 +42,11 @@ function shippedFiles(dir: string, acc: string[] = []): string[] {
 
 function shipped(): string[] {
   const acc = SHIPPED_TREES.flatMap((tree) => shippedFiles(join(REPO_ROOT, tree)));
-  return [...acc, ...SHIPPED_FILES.map((name) => join(REPO_ROOT, name))];
+  // A frozen record is dated reasoning, not guidance. Two design records name
+  // the model pinned when they were written, and that is what they are for
+  // (issue #79). `src/test-support/frozen-records.ts` says which directories.
+  return [...acc, ...SHIPPED_FILES.map((name) => join(REPO_ROOT, name))]
+    .filter((path) => !isFrozenRecord(path));
 }
 
 /**

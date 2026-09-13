@@ -174,6 +174,13 @@ def check_migration_target() -> int:
     file. An earlier version of this test wrote the repository's own .env and
     restored it afterwards; a crash in between would have destroyed the key
     it holds. A test must not be able to cost you that.
+
+    The shell half runs against an isolated copy of the guard, for the reason
+    `isolated_hook` gives. It did not, and "nothing to resolve" therefore read
+    the real ./.env: a checkout that had followed the documented setup failed
+    this case and CI passed it, with no code change between them. `.env.example`
+    names DATABASE_URL, and `scripts/bootstrap.sh` copies it on a fresh clone
+    (issue #80), so every new contributor met a failing `pnpm run verify`.
     """
     failures = 0
     command = "pnpm run db:" + "migrate"
@@ -185,13 +192,18 @@ def check_migration_target() -> int:
         ("DATABASE_URL exported to the shell", BLOCK,
          dict(clean, DATABASE_URL="postgres://u:p@db.example.com/app")),
     ]
-    for name, want, env in shell_cases:
-        got = run(command, env)
-        if got == want:
-            print(f"pass a migration with {name}")
-        else:
-            failures += 1
-            print(f"FAIL a migration with {name}: want {label[want]}, got {label.get(got, got)}")
+    tmp = tempfile.mkdtemp()
+    try:
+        hook = isolated_hook(tmp)
+        for name, want, env in shell_cases:
+            got = run(command, env, hook)
+            if got == want:
+                print(f"pass a migration with {name}")
+            else:
+                failures += 1
+                print(f"FAIL a migration with {name}: want {label[want]}, got {label.get(got, got)}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
     # The parser must agree with Node's loadEnvFile about every spelling.
     # `export DATABASE_URL=` read as absent here and as present to Node, so a

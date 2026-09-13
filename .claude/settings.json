@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/fixtures_pii_guard.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/fixtures_pii_guard.py\""
           }
         ]
       },
@@ -15,11 +15,21 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/commit_dec_citation.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/commit_dec_citation.py\""
           },
           {
             "type": "command",
-            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/live_db_approval.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/live_db_approval.py\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/bootstrap.sh\" --check"
           }
         ]
       }

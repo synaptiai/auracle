@@ -1,0 +1,86 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "title": "Runs",
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 900
+    },
+    {
+      "file": "RunDetail.dc.html",
+      "title": "Run detail",
+      "x": 1560,
+      "y": 0,
+      "w": 1440,
+      "h": 1000
+    },
+    {
+      "file": "Approvals.dc.html",
+      "title": "Approval queue",
+      "x": 0,
+      "y": 1140,
+      "w": 1440,
+      "h": 940
+    },
+    {
+      "file": "Bands.dc.html",
+      "title": "Control bands",
+      "x": 1560,
+      "y": 1140,
+      "w": 1440,
+      "h": 940
+    },
+    {
+      "file": "Latency.dc.html",
+      "title": "Partition latency",
+      "x": 0,
+      "y": 2220,
+      "w": 1440,
+      "h": 760
+    },
+    {
+      "file": "Conversation.dc.html",
+      "title": "Conversation",
+      "x": 1560,
+      "y": 2220,
+      "w": 1440,
+      "h": 900
+    },
+    {
+      "file": "Document.dc.html",
+      "title": "Evidence base",
+      "x": 0,
+      "y": 3220,
+      "w": 1440,
+      "h": 760
+    }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 0,
+      "y": -190,
+      "w": 620,
+      "text": "Auracle operator console — direction: engineering instrument.\nDense, monospace for every identifier and number, light and dark on the theme tweak.\n\nThree registers, one rule: monospace is what the ledger recorded, the sans is the console's own chrome, and a serif is words a person wrote or will read — at a reading measure, under 68 characters a line.\n\nOne rule the design enforces everywhere: the two gates are shown apart. No screen anywhere combines agreement and coverage into one confidence score."
+    },
+    {
+      "id": "approval-note",
+      "x": 0,
+      "y": 2090,
+      "w": 620,
+      "text": "The approve action is the one write on the whole console. It commits the same transaction as the command line. DEC-11 named it a rejected alternative, so it needed a register amendment before it shipped; DEC-40 is that amendment.\n\nThe reply is drawn because an approver who cannot read it cannot approve it. It is not editable here: the relay sends the helpdesk copy, so text typed on this console would be recorded and never sent."
+    },
+    {
+      "id": "evidence-note",
+      "x": 1560,
+      "y": 3130,
+      "w": 620,
+      "text": "A claim is drawn with the document it cites, and marked when the judge did not support it. Three states, never two: a claim nobody judged is not a claim the judge refused.\n\nNo rank and no score appears for a retrieved document. DEC-21 fuses ranks and keeps neither, so a column of scores would be a number the ledger does not hold."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}

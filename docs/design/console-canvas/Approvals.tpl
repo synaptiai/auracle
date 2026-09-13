@@ -1,0 +1,205 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+/*CSS*/
+    .shell { display:grid; grid-template-columns:300px 1fr; height:100%; }
+    .list { border-right:1px solid var(--rule); background:var(--panel); display:flex; flex-direction:column; }
+    .lhd { padding:14px 16px; border-bottom:1px solid var(--rule); }
+    .item { padding:12px 16px; border-bottom:1px solid var(--rule); cursor:default; }
+    .item:hover { background:var(--panel2); }
+    .item.on { background:var(--panel2); box-shadow:inset 2px 0 0 var(--accent); }
+    .pane { padding:20px 26px 24px; display:flex; flex-direction:column; gap:15px; overflow:auto; }
+    .card { background:var(--panel); border:1px solid var(--rule); border-radius:5px; }
+    .card > header { padding:10px 14px; border-bottom:1px solid var(--rule); display:flex;
+      align-items:center; justify-content:space-between; gap:10px; }
+    .card > .body { padding:14px; }
+    .edit { border:1px solid var(--accent); border-radius:4px; padding:14px; line-height:1.65;
+      background:var(--panel2); font-size:13px; position:relative; }
+    .caret { display:inline-block; width:1.5px; height:15px; background:var(--accent);
+      vertical-align:-3px; margin-left:1px; }
+    .ins { background:oklch(0.68 0.09 155 / .22); border-bottom:1px solid var(--ok); }
+    .del { color:var(--dim); text-decoration:line-through; }
+    .discl { border-left:2px solid var(--warn); padding:10px 13px; background:var(--panel2); font-size:11.5px; }
+    .btn { padding:8px 18px; border-radius:4px; font-size:12.5px; font-weight:600; border:1px solid transparent;
+      font-family:'IBM Plex Sans',sans-serif; }
+    .primary { background:var(--ok); color:#0d0e10; }
+    .ghost { border-color:var(--rule2); color:var(--mut); background:transparent; }
+    .warnbar { display:flex; gap:9px; align-items:flex-start; border:1px solid var(--rule2);
+      border-left:2px solid var(--accent); border-radius:4px; padding:11px 13px; background:var(--panel); }
+    .kv { display:grid; grid-template-columns:auto auto; gap:3px 14px; font-size:11px; }
+    .kv dt { color:var(--dim); font-family:'IBM Plex Mono',monospace; }
+    .kv dd { margin:0; font-family:'IBM Plex Mono',monospace; color:var(--mut); }
+    .prose { font-family:Charter,'Bitstream Charter','Sitka Text',Cambria,Georgia,serif;
+      font-size:15px; line-height:1.62; max-width:68ch; color:var(--ink); }
+    .claim { border-radius:2px; padding:0 1px; }
+    .claim.unsupported { background:color-mix(in oklab, var(--hot) 18%, transparent);
+      box-shadow:inset 0 -2px 0 var(--hot); }
+    .cite { font-family:'IBM Plex Mono',ui-monospace,monospace; font-size:9.5px;
+      vertical-align:super; margin-left:2px; padding:0 2px; border-radius:2px;
+      background:var(--panel2); color:var(--accent); text-decoration:none; }
+    .src { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:7px 0;
+      border-bottom:1px solid var(--rule); }
+    .src:last-child { border-bottom:0; }
+  </style>
+</helmet>
+<div class="root" data-theme="{{theme}}">
+<div class="shell">
+
+  <div class="list">
+    <div class="lhd">
+      <div style="font-size:14px; font-weight:600">Approval queue</div>
+      <div class="lbl" style="margin-top:3px">7 parked drafts &middot; oldest 41m</div>
+    </div>
+    <sc-for list="{{items}}" as="i" hint-placeholder-count="5">
+    <div class="item {{i.cls}}">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px">
+        <span class="m" style="font-size:11.5px; color:var(--accent)">{{i.ticket}}</span>
+        <span class="m" style="font-size:11px; color:var(--dim)">{{i.age}}</span>
+      </div>
+      <div style="margin-top:4px; font-size:12px; color:var(--ink)">{{i.subject}}</div>
+      <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap">
+        <span class="chip" style="color: {{i.riskColor}}">{{i.risk}}</span>
+        <span class="chip">{{i.intent}}</span>
+      </div>
+    </div>
+    </sc-for>
+  </div>
+
+  <div class="pane">
+
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:20px">
+      <div>
+        <div style="display:flex; align-items:center; gap:10px">
+          <span style="font-size:16px; font-weight:600">Duplicate charge, refund requested</span>
+          <span class="chip" style="color:var(--hot)">high risk</span>
+        </div>
+        <div class="m" style="color:var(--mut); font-size:11.5px; margin-top:5px">
+          SYN-002841 &middot; run a41f2c9e &middot; conversation turn 2 &middot; parked 2m ago
+        </div>
+      </div>
+      <a href="#" class="chip" style="color:var(--accent); padding:6px 11px">
+        open draft #4471 in freescout &#8599;
+      </a>
+    </div>
+
+    <div class="warnbar">
+      <span class="dot" style="color:var(--accent); margin-top:6px"></span>
+      <div style="font-size:11.5px; color:var(--mut)">
+        Approving here commits the same single transaction as the command line: the run moves to
+        <span class="m" style="color:var(--ink)">resolved</span>, the outbox row is written, and the
+        approver is recorded. Nothing sends until the relay drains that row. No edit distance is
+        recorded here: this console captures no reply text, so there is nothing to measure it from.
+      </div>
+    </div>
+
+    <div class="card">
+      <header>
+        <span class="lbl">The reply, as the system drafted it</span>
+        <span class="chip">helpdesk draft SYN-DRAFT-4471</span>
+      </header>
+      <div class="body">
+        <div class="prose">
+          <span class="claim">We can see two charges against your subscription for the same
+          month.<a class="cite" href="#src-SYN-DOC-01">1</a></span>
+          <span class="claim">The duplicate is not correct, and we are refunding it to the card that
+          was charged.<a class="cite" href="#src-SYN-DOC-01">2</a></span>
+          <span class="claim unsupported">Refunds reach most banks within five working
+          days.<a class="cite" href="#src-SYN-DOC-03">3</a></span>
+          <span class="claim">Your subscription itself is unchanged and the next renewal date stays
+          as it was.<a class="cite" href="#src-SYN-DOC-02">4</a></span>
+        </div>
+        <p class="discl" style="margin-top:12px">
+          1 of 4 claims cite a document that does not support them
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <header>
+        <span class="lbl">The documents these claims cite</span>
+        <span class="chip">3 cited &middot; 5 retrieved</span>
+      </header>
+      <div class="body">
+        <div class="src" id="src-SYN-DOC-01">
+          <span class="m" style="color:var(--accent)">SYN-DOC-01</span>
+          <span>Refund eligibility windows</span>
+        </div>
+        <div class="src" id="src-SYN-DOC-02">
+          <span class="m" style="color:var(--accent)">SYN-DOC-02</span>
+          <span>Changing a plan mid cycle</span>
+        </div>
+        <div class="src" id="src-SYN-DOC-03">
+          <span class="m" style="color:var(--accent)">SYN-DOC-03</span>
+          <span>Refund settlement times</span>
+          <span class="chip" style="color:var(--warn)">changed since this run read it</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <header>
+        <span class="lbl">Disclosure</span>
+        <span class="chip" style="color:var(--warn)">required and non-empty &middot; travels with the message</span>
+      </header>
+      <div class="body">
+        <div class="discl">
+          This reply was drafted by an automated assistant and approved by a person before it was sent.
+        </div>
+        <div style="display:flex; gap:28px; margin-top:13px; flex-wrap:wrap">
+          <dl class="kv">
+            <dt>generated_by</dt><dd>auracle/composer</dd>
+            <dt>model_id</dt><dd>z-ai/glm-5.3-flash</dd>
+            <dt>prompt_ver</dt><dd>compose-p3</dd>
+          </dl>
+          <dl class="kv">
+            <dt>adapter</dt><dd>freescout</dd>
+            <dt>idem_key</dt><dd>reply:CONV-SYN-002841:2</dd>
+            <dt>read_back</dt><dd style="color:var(--ok)">draft found &middot; body current</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap">
+      <div class="m" style="font-size:11px; color:var(--dim); max-width:460px">
+        A missing draft refuses the approval rather than guessing the edit distance.
+      </div>
+      <div style="display:flex; gap:9px">
+        <button class="btn ghost">Reject and escalate</button>
+        <button class="btn ghost">Save without sending</button>
+        <button class="btn primary">Approve and send</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark","section":"Display"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const risk = { high:'var(--hot)', medium:'var(--warn)', low:'var(--mut)' };
+    const raw = [
+      ['SYN-002841','Duplicate charge, refund requested','high','refund-request','2m','on'],
+      ['SYN-002836','Invoice total does not match the plan','high','billing-dispute','14m',''],
+      ['SYN-002829','Asking to close the account and delete data','high','data-deletion-request','23m',''],
+      ['SYN-002824','Card declined on renewal','medium','payment-failure','31m',''],
+      ['SYN-002819','Export finishes but the file is empty','medium','export-broken','41m','']
+    ];
+    return {
+      items: raw.map(([ticket, subject, r, intent, age, cls]) => ({
+        ticket, subject, intent, age, cls, risk: r, riskColor: risk[r]
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

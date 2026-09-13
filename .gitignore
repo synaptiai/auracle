@@ -46,7 +46,13 @@ dist/
 # and no checkout adopts it. src/groundedness/reference.test.ts proves that.
 /groundedness/*
 !/groundedness/reference-v3.json
-.creatumo/MEMORY.md
+
+# Per-session state of the agent tooling, including one config that embeds a
+# developer's absolute home directory. The design records that lived under
+# `.creatumo/design/` are shipped documentation and moved to `docs/design/`,
+# which `scripts/check-docs.py` resolves the register's section 7.1 against
+# (issue #79).
+.creatumo/
 
 # Agent session transcripts. Never commit.
 .trail/
@@ -55,12 +61,19 @@ dist/
 __pycache__/
 *.pyc
 
-# Lock files the decision-journal recorder leaves behind. They are
-# process state, never a record of a decision.
-.decisions/*.lock
+# The decision journals the workflow commands write, one per issue, plus the
+# lock files the recorder leaves beside them. Session state of the tooling,
+# never a record of a decision: `docs/decisions/` holds those, and the
+# register holds the decisions themselves (issue #79).
+.decisions/
 
 # Worktrees a subagent creates for parallel work. Harness state, never source.
 /.claude/worktrees/
+
+# What the review agents remember between sessions. It belongs to agents this
+# repository does not define — `.claude/agents/` holds two, and neither of
+# them (issue #79).
+.claude/agent-memory/
 .gstack/
 
 # A vendored design handoff, 604K of JavaScript nobody in this repository

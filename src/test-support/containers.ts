@@ -33,6 +33,11 @@
 // The durability flags below are test-only: data lives on tmpfs inside the
 // Docker VM for the length of one run and is discarded afterwards.
 //
+// The container path is the fallback, not the default route. `testcontainers`
+// is an optional dependency, so it may be absent: the loader below says so in
+// a sentence rather than failing the project at import time. `docker compose
+// up -d` starts both servers, and DATABASE_URL and MAIL_HOST point at them.
+//
 // Set AURACLE_TEST_DB_REUSE=1 to keep one warm container across local runs
 // instead of starting fresh each time, and AURACLE_TEST_MAIL_REUSE=1 for the
 // mail server. Reuse stays off on CI; reused containers are exempt from Ryuk
@@ -40,10 +45,10 @@
 // TESTCONTAINERS_REUSE_ENABLE=false to ignore the flag.
 import { ImapFlow } from 'imapflow';
 import type { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { PostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool } from 'pg';
-import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import type { StartedTestContainer } from 'testcontainers';
 import { errorMessage } from '../errors.js';
+import { loadOptional } from './optional-modules.js';
 
 /** GreenMail's host, and the mapped SMTP and IMAP ports. */
 export interface MailAddress {
@@ -166,6 +171,11 @@ async function startPostgres(): Promise<string> {
     return existing;
   }
 
+  const { PostgreSqlContainer } = await loadOptional(
+    '@testcontainers/postgresql',
+    () => import('@testcontainers/postgresql'),
+    'DATABASE_URL',
+  );
   let builder = new PostgreSqlContainer(IMAGE)
     .withTmpFs({ '/var/lib/postgresql/data': 'rw' })
     // tmpfs covers the parent of PGDATA; the entrypoint creates the
@@ -243,6 +253,11 @@ async function startMail(): Promise<MailAddress> {
     return configured;
   }
 
+  const { GenericContainer } = await loadOptional(
+    'testcontainers',
+    () => import('testcontainers'),
+    'MAIL_HOST',
+  );
   let builder = new GenericContainer(MAIL_IMAGE)
     .withEnvironment({
       GREENMAIL_OPTS:

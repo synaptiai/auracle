@@ -6,13 +6,14 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { join, sep } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 import { LOOKBACK_DAYS, METRICS, WINDOW_DAYS } from './metrics.js';
 import { evaluateMetric } from './evaluate.js';
+import { isFrozenRecord } from '../test-support/frozen-records.js';
 import type { DailySample } from './evaluate.js';
 import { validateBandsArtifact, writeBandsArtifact } from './artifact.js';
 import { bandLine, parseDay } from './run.js';
@@ -249,14 +250,17 @@ describe('the documents that cite bands.yaml', () => {
   // the recursive walk below reaches it. The exemption follows the records:
   // they moved out of `intent/` when a design record stopped being an intent
   // file, and a record that describes a superseded state is still a record.
-  // No record cites `bands.yaml` today, so this excludes nothing now. It
-  // exists so the next one does not fail a rule it was never inside.
-  const RECORDS = `decisions${sep}`;
+  // Named once in `src/test-support/frozen-records.ts`, because issue #79
+  // moved eleven design records into `docs/design/` and three more guards
+  // met the same question on the same day. Two of those records do claim
+  // `bands.yaml` holds a baseline; both were written before the file did
+  // not, which is history rather than a document to correct.
   const SHIPPED = ['README.md', 'AGENTS.md', 'CONTRIBUTING.md'];
   const cites = [
     ...readdirSync(join(REPO_ROOT, 'docs'), { recursive: true, encoding: 'utf8' })
-      .filter((name) => name.endsWith('.md') && !name.startsWith(RECORDS))
-      .map((name) => join('docs', name)),
+      .filter((name) => name.endsWith('.md'))
+      .map((name) => join('docs', name))
+      .filter((path) => !isFrozenRecord(path)),
     ...SHIPPED,
   ]
     .filter((path) => readFileSync(join(REPO_ROOT, path), 'utf8').includes('bands.yaml'))

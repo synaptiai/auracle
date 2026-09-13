@@ -19,6 +19,13 @@ into commands.
                 lists, and every file it names exists.
   decisions     Every design record cites a decision the register defines, and
                 every archived record cites none.
+  dec-range     Every document that states the register's range states the
+                range the register actually defines.
+  script-index  Every script `package.json` defines appears in the runbook as
+                a command a reader can run, and the runbook names no script
+                the manifest has dropped.
+  map-coverage  The quick map's list of decisions no row names is exactly the
+                set no row names.
 
 A Mermaid parser accepts an edge to an undeclared node. It mints a new
 unlabelled box instead of joining the two the author meant, so the diagram
@@ -39,6 +46,7 @@ check passes.
 from collections.abc import Iterator
 
 import argparse
+import json
 import os
 import re
 import stat
@@ -46,9 +54,16 @@ import sys
 
 MAP = "docs/architecture-map.md"
 REGISTER = "docs/v1-architecture.md"
-DESIGN_DIR = ".creatumo/design"
+DESIGN_DIR = "docs/design"
 DECISIONS_DIR = "docs/decisions"
 ARCHIVE_DIR = "intent/archive"
+MANIFEST = "package.json"
+RUNBOOK = "docs/operations.md"
+QUICK_MAP = "docs/quick-map.md"
+# The documents that state the register's range. Each says it in prose a
+# reader believes, and each went stale when DEC-43 arrived: two said DEC-42
+# while the register defined 43 (issue #79).
+RANGE_DOCS = ("README.md", "CONTRIBUTING.md", "AGENTS.md", "docs/quick-map.md")
 DIAGRAM_COUNT = 3
 
 # A shipped document is prose. Anything larger is not one, and reading it
@@ -780,6 +795,210 @@ def check_decisions(root: str, findings: list[str]) -> None:
                 f"belongs under {DECISIONS_DIR}/. The archive is frozen")
 
 
+# "DEC-01 to DEC-43", and every ordinary way of writing it.
+#
+# The connector is "any few words or punctuation", not a fixed alternation.
+# The first version listed `to|through|-`, and "DEC-01 up to DEC-42" walked
+# straight through it — a guard that pins one spelling is the same
+# class-for-member mistake it exists to catch. The digits are `\d+`, so
+# "DEC-1" counts too.
+#
+# A comma, a full stop, a newline or a digit ends the connector, so a list
+# ("DEC-05, DEC-06") is not read as a range and two sentences that each
+# mention a decision are not joined into one. "and" and "or" are excluded for
+# the same reason: "DEC-08 and DEC-15 hold across the repository" names a pair,
+# not a span, and reading it as one reported a false range in this repository's
+# own quick map.
+DEC_RANGE = re.compile(r"DEC-(\d+)(?:(?!\band\b|\bor\b)[^,.\n\d]){1,14}DEC-(\d+)")
+# "43 numbered decisions" and "It holds 43 decisions".
+DEC_COUNT = re.compile(r"(\d+)\s+(?:numbered\s+)?decisions")
+
+
+def check_dec_range(root: str, findings: list[str]) -> None:
+    """Every stated range and count matches what section 2 defines.
+
+    README.md said DEC-01 to DEC-42 in two places while the register defined
+    43, and CONTRIBUTING.md and AGENTS.md said 43. Three documents, two
+    answers, and the register settles it — so nothing but drift kept them
+    apart (issue #79).
+
+    The register is read the way `decisions` reads it, through section 2's
+    table rows, so one parse decides both checks.
+    """
+    register = read_repo_file(root, REGISTER, findings)
+    if register is None:
+        return
+    decs = register_decs(register)
+    if not decs:
+        findings.append(f"{REGISTER}: section 2 defines no decisions, so no range can be checked")
+        return
+    numbers = sorted(int(dec.split("-")[1]) for dec in decs)
+    lowest, highest = numbers[0], numbers[-1]
+    # A gap makes "DEC-01 to DEC-43" false even when both ends are right, and
+    # the register is the thing that would carry the gap.
+    if numbers != list(range(lowest, highest + 1)):
+        missing = sorted(set(range(lowest, highest + 1)) - set(numbers))
+        findings.append(
+            f"{REGISTER}: section 2 skips "
+            + ", ".join(f"DEC-{n:02d}" for n in missing)
+            + ", so no document can state a range")
+        return
+
+    checked = 0
+    for doc in RANGE_DOCS:
+        text = read_repo_file(root, doc, findings)
+        if text is None:
+            continue
+        # Whitespace collapsed first. "DEC-01 to\nDEC-43" is one claim that a
+        # line break split in two, and a scan that stopped at the newline read
+        # this repository's own quick map as stating no range at all — passing
+        # a stale one in silence, which is the defect this check exists for.
+        bare = re.sub(r"\s+", " ", prose_text(text))
+        for first, last in DEC_RANGE.findall(bare):
+            checked += 1
+            if (int(first), int(last)) != (lowest, highest):
+                findings.append(
+                    f"{doc}: states DEC-{first} to DEC-{last}; section 2 of "
+                    f"{REGISTER} defines DEC-{lowest:02d} to DEC-{highest:02d}")
+        for count in DEC_COUNT.findall(bare):
+            checked += 1
+            if int(count) != len(decs):
+                findings.append(
+                    f"{doc}: states {count} decisions; section 2 of "
+                    f"{REGISTER} defines {len(decs)}")
+    # Fail closed. A rename that stops these documents stating the range at
+    # all would otherwise pass by saying nothing.
+    if checked == 0:
+        findings.append(
+            "no document states the register's range or count, so this check "
+            f"proved nothing; one of {', '.join(RANGE_DOCS)} must state it")
+
+
+def manifest_scripts(root: str, findings: list[str]) -> list[str]:
+    """The script names `package.json` defines, in the order it defines them.
+
+    Read with the JSON parser rather than a pattern, because a script body can
+    hold a brace and a quoted name.
+    """
+    text = read_repo_file(root, MANIFEST, findings)
+    if text is None:
+        return []
+    try:
+        scripts = json.loads(text).get("scripts", {})
+    except json.JSONDecodeError as error:
+        findings.append(f"{MANIFEST}: not JSON ({error})")
+        return []
+    if not isinstance(scripts, dict):
+        findings.append(f"{MANIFEST}: 'scripts' is not an object")
+        return []
+    return [name for name in scripts if isinstance(name, str)]
+
+
+def check_script_index(root: str, findings: list[str]) -> None:
+    """Every script the manifest defines is a command the runbook names.
+
+    `seed-history` existed in `package.json` and in no document at all, so the
+    only way to learn of it was to read the manifest (issue #79).
+
+    The match is on the command a reader would type — `pnpm run <name>` or
+    `pnpm <name>` — not on the bare word. "build", "check" and "test" are
+    ordinary English, and a substring rule counted every prose use of them and
+    reported a runbook that documented nothing.
+    """
+    names = manifest_scripts(root, findings)
+    if not names:
+        if not findings:
+            findings.append(f"{MANIFEST}: defines no scripts, so this check proved nothing")
+        return
+    runbook = read_repo_file(root, RUNBOOK, findings)
+    if runbook is None:
+        return
+    # Fenced commands count: that is where a runbook puts them.
+    # `pnpm run <name>`, and the short spelling only for the names this
+    # repository actually writes that way. A bare `pnpm <word>` match let any
+    # script whose name collides with a pnpm subcommand pass undocumented: a
+    # script called `install` was satisfied by the `pnpm install` in the setup
+    # section, and so were `exec`, `dlx` and `store`.
+    SHORT = {"test"}
+    typed = set(re.findall(r"pnpm\s+run\s+([A-Za-z0-9:_-]+)", runbook))
+    typed |= {
+        name for name in re.findall(r"pnpm\s+([A-Za-z0-9:_-]+)", runbook)
+        if name in SHORT
+    }
+    for name in names:
+        if name not in typed:
+            findings.append(
+                f"{RUNBOOK}: names no `pnpm run {name}`, which {MANIFEST} defines")
+    # The other direction. A runbook naming a command that no longer exists
+    # sends a reader to a failure, and it is the likelier rot: a script is
+    # deleted far more often than the paragraph describing it.
+    defined = set(names)
+    for name in sorted(typed):
+        if name not in defined:
+            findings.append(
+                f"{RUNBOOK}: names `pnpm run {name}`, which {MANIFEST} does not define")
+
+
+# A quick-map row opens with the directory in backticks: `| `coordinator` |`.
+MAP_ROW = re.compile(r"^\|\s*`([A-Za-z0-9_-]+)`\s*\|(.*)$", re.M)
+# The list itself: the first paragraph under the heading, and nothing after
+# it. Reading the whole section let the prose below name a decision the list
+# had dropped, so removing two ids from the list changed nothing — the same
+# vacuity this check exists to refuse.
+MAP_UNCOVERED = re.compile(
+    r"^##\s*Decisions no row names\s*$\s*\n(.*?)(?:\n\s*\n|\Z)", re.M | re.S)
+
+
+def check_map_coverage(root: str, findings: list[str]) -> None:
+    """The quick map's own list of what it leaves out is the truth.
+
+    The map said two decisions appeared in no row. Four did. A sentence
+    counting rows of a table beside it is exactly the claim a checker should
+    decide, and this file's whole argument is that such claims get checked
+    (issue #79).
+
+    The list is read as a set of ids, not a count, so a number in prose never
+    has to be kept in step with it.
+    """
+    text = read_repo_file(root, QUICK_MAP, findings)
+    if text is None:
+        return
+    bare = prose_text(text)
+    rows = MAP_ROW.findall(bare)
+    # Two, not a number sized for today's map. The hazard is a scan that read
+    # nothing at all — a renamed heading, a reshaped table — not a map that is
+    # briefly small.
+    if len(rows) < 2:
+        findings.append(f"{QUICK_MAP}: found {len(rows)} directory rows, so it scanned nothing")
+        return
+    covered: set[str] = set()
+    for _, rest in rows:
+        covered |= set(re.findall(r"DEC-(\d+)", rest))
+
+    register = read_repo_file(root, REGISTER, findings)
+    if register is None:
+        return
+    defined = {dec.split("-")[1] for dec in register_decs(register)}
+    if not defined:
+        findings.append(f"{REGISTER}: section 2 defines no decisions")
+        return
+    uncovered = {f"DEC-{n}" for n in sorted(defined - covered)}
+
+    section = MAP_UNCOVERED.search(bare)
+    if section is None:
+        findings.append(
+            f"{QUICK_MAP}: has no '## Decisions no row names' section, so the "
+            f"decisions its rows leave out are stated nowhere")
+        return
+    listed = set(re.findall(r"DEC-\d+", section.group(1)))
+    if listed != uncovered:
+        missing = ", ".join(sorted(uncovered - listed)) or "none"
+        extra = ", ".join(sorted(listed - uncovered)) or "none"
+        findings.append(
+            f"{QUICK_MAP}: the section lists the wrong set. Named and covered "
+            f"by a row: {extra}. Covered by no row and not named: {missing}")
+
+
 CHECKS = {
     "diagrams": check_diagrams,
     "legends": check_legends,
@@ -789,6 +1008,9 @@ CHECKS = {
     "links": check_links,
     "design-index": check_design_index,
     "decisions": check_decisions,
+    "dec-range": check_dec_range,
+    "script-index": check_script_index,
+    "map-coverage": check_map_coverage,
 }
 
 

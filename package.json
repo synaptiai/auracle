@@ -18,6 +18,7 @@
   },
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
+    "bootstrap": "bash scripts/bootstrap.sh",
     "check": "tsc -b tsconfig.build.json && tsc -p tsconfig.check.json && tsc -p console/tsconfig.check.json",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",

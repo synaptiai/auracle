@@ -27,5 +27,60 @@ services:
       timeout: 3s
       retries: 10
 
+  # The mail server the mail suites drive (issue #80). Test-only: see the
+  # profile below.
+  #
+  # `src/test-support/containers.ts` already honours MAIL_HOST the way it
+  # honours DATABASE_URL: set it, and the setup probes that server instead of
+  # starting a throwaway container. Nothing provided one, so the only local
+  # path was testcontainers, which costs 95 packages and three native build
+  # allowances on every install.
+  #
+  # The tag is pinned and must match the one in `containers.ts` and in
+  # `.github/workflows/tests.yml`. Three copies of a version is two too many,
+  # and a floating tag is a test suite that changes under you.
+  #
+  # `greenmail.auth.disabled` accepts any credentials, and the setup invents a
+  # mailbox per suite. That is right for a server that holds synthetic mail
+  # only (DEC-18) and reachable from loopback alone.
+  mail:
+    # Behind a profile, so it starts for a test run and for nothing else.
+    #
+    # `.github/workflows/release.yml` deploys with
+    # `-f docker-compose.yml -f docker-compose.dev.yml up -d`, which starts
+    # every service the merged file declares. Without this the dev host ran a
+    # mail server that accepts any credentials for any account, reachable by
+    # every local process and every container on the compose network. The
+    # `imap` service in the dev overlay is gated the same way and for a
+    # related reason.
+    #
+    # So the local test command names the profile:
+    #
+    #   docker compose --profile test up -d
+    #
+    # `db` carries no profile, so it starts either way.
+    profiles: [test]
+    image: greenmail/standalone:2.1.12
+    environment:
+      GREENMAIL_OPTS: -Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled
+    ports:
+      # Loopback, for the reason the ledger above gives. An open SMTP port is
+      # worse than an open database: it is a relay.
+      - "127.0.0.1:${AURACLE_SMTP_PORT:-3025}:3025"
+      - "127.0.0.1:${AURACLE_IMAP_PORT:-3143}:3143"
+    healthcheck:
+      # The JVM answers IMAP last, so a TCP probe of 3143 is the readiness
+      # signal. `awaitMailReady` in `containers.ts` waits on the same port.
+      #
+      # `bash -c`, not CMD-SHELL. `/dev/tcp` is a bash builtin and CMD-SHELL
+      # runs `/bin/sh`, which is dash in this image: the probe failed with
+      # "cannot create /dev/tcp/..." on every interval and the service read
+      # `unhealthy` while answering IMAP perfectly. The image ships bash, and
+      # `.github/workflows/tests.yml` spells the same probe the same way.
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/3143"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
 volumes:
   auracle-db-data:

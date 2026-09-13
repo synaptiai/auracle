@@ -81,16 +81,45 @@ Two watch modes exist: `pnpm run check:watch` recompiles the solution, and
 You need Node 22 or later and Docker.
 
 ```sh
-docker compose up -d
+./scripts/bootstrap.sh
+docker compose --profile test up -d
 export DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle
-pnpm install
-pnpm run build
+export MAIL_HOST=127.0.0.1
 pnpm run db:migrate
 ```
 
+`scripts/bootstrap.sh` does the steps that need no choice from you. It enables
+corepack, installs from the frozen lockfile, installs the commit hook and
+copies `.env.example` to `.env`. It is idempotent, and it overwrites nothing.
+
+It starts no container and runs no migration. Both write, and it cannot know
+which database you meant. It prints whatever is left, including the API key
+nobody but you can supply.
+
+A `SessionStart` hook in `.claude/settings.json` runs it with `--check`. That
+mode reports and changes nothing. The hook names a script this repository
+tracks, so a branch could rewrite it. Installing packages and writing an
+executable into `.git/hooks/` are things a person chooses.
+
 Compose publishes Postgres on host port 5433, because 5432 belonged to another
-local stack. `AURACLE_DB_PORT` moves it. `pnpm run db:migrate` applies the SQL
-files under `db/` in order.
+local stack. `AURACLE_DB_PORT` moves it. GreenMail sits behind the `test`
+profile on 3025 and 3143, moved by `AURACLE_SMTP_PORT` and
+`AURACLE_IMAP_PORT`. That server accepts any credentials, so the profile keeps
+it out of the stack `.github/workflows/release.yml` deploys. A plain
+`docker compose up -d` starts the ledger alone.
+`pnpm run db:migrate` applies the SQL files under `db/` in order.
+
+**The two variables are the local test path.** With `DATABASE_URL` and
+`MAIL_HOST` set, no suite starts a throwaway container and no test opens a
+Docker socket. Without them the suites fall back to `testcontainers`, which 95
+packages hang off. It loads through a dynamic import. A tree that lacks it
+gets a sentence naming both ways out, rather than a resolution error.
+
+`testcontainers` stays a development dependency. `optionalDependencies` puts
+it in the production graph, and the runtime image installs with `--prod`.
+`pnpm install --no-optional` is not the lean install it looks like. It also
+drops rollup's platform-native package. Every vitest project then fails to
+collect.
 
 Every CLI and daemon loads `./.env` through `process.loadEnvFile`. A shell variable always wins.
 Three commands read no `.env` file: `pnpm run escalations`, `pnpm run triage` and `pnpm run export-corpus`.
@@ -190,8 +219,15 @@ Vitest completes every project's setup before it runs any file.
 So the split pays on the inner loop, not on the combined run.
 
 An explicit `DATABASE_URL` disables the container and targets that database instead.
-The setup probes that database first. An unreachable one fails the run.
+`MAIL_HOST` does the same for the mail server, with `MAIL_SMTP_PORT` and
+`MAIL_IMAP_PORT` beside it.
+The setup probes both first. An unreachable one fails the run.
 Without the probe every database suite skips itself and the run still exits 0.
+
+The compose mail server outlives the run, unlike a throwaway container. So
+each mail suite empties the mailboxes it owns before every case, through
+`src/test-support/mailbox-reset.ts`. Without it a second run found the drafts
+the first run left.
 
 The `db` project runs its files in parallel. Each file gets a database of its
 own, cloned from a migrated template by `src/test-support/db-url.setup.ts`.

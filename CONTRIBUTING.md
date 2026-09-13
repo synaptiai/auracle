@@ -9,6 +9,14 @@ A statement that does not trace to a DEC is an implementation detail.
 ## 1. Set up and verify your checkout
 
 You need Node 22 or later and Docker.
+
+```sh
+pnpm run bootstrap
+```
+
+That installs from the frozen lockfile, installs the commit hook of section 6,
+and copies `.env.example` to `.env`. It is idempotent and overwrites nothing.
+It starts no container and runs no migration, and it prints what is left.
 Follow the "Run it" section of `README.md` for the database setup.
 
 One command defines the contract. It must exit 0.
@@ -187,11 +195,14 @@ A committed fixture file must match the generator output byte for byte.
 
 ## 6. Install the hooks
 
-Install the commit hook:
+`pnpm run bootstrap` installs the commit hook. By hand:
 
 ```sh
 cp hooks/commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
 ```
+
+In a worktree, `.git` is a file rather than a directory. Ask git where the
+hooks live: `git rev-parse --git-path hooks`. The bootstrap does that itself.
 
 The commit hook blocks a change to `docs/v1-architecture.md` that carries no DEC
 citation.

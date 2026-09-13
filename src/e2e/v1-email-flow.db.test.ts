@@ -34,6 +34,7 @@ import type { AdapterCapabilities as PolicyCapabilities } from '../policy/policy
 import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
 import { relayPending } from '../relay/relay.js';
 import { indexDocument } from '../retriever/retriever.js';
+import { resetMailboxes } from '../test-support/mailbox-reset.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
@@ -205,6 +206,13 @@ async function waitFor(condition: () => Promise<boolean>, what: string): Promise
 describe('email duplex flow end to end', () => {
   beforeEach(async () => {
     await truncateLedger(pool);
+    // The mailbox is state this system keeps outside the ledger, and the
+    // compose GreenMail service outlives the run (issue #80). Without this
+    // the second run against it found four drafts where the case asserts one.
+    await resetMailboxes(
+      { host: greenmail.host, imapPort: greenmail.imapPort, user: SUPPORT_USER, pass: 'synthetic-password' },
+      ['INBOX', 'Drafts'],
+    );
     await indexDocument(
       pool,
       {

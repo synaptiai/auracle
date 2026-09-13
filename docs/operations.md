@@ -13,8 +13,12 @@ It draws the processes, the jobs and the tables this runbook operates.
 
 You need Node 22 or later and Docker.
 
+`pnpm run bootstrap` does the steps that need no choice from you. It installs
+from the frozen lockfile, installs the commit hook and copies `.env.example`.
+It starts no container and runs no migration. It prints whatever is left.
+
 ```sh
-docker compose up -d
+docker compose --profile test up -d
 export DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle
 pnpm install
 pnpm run build
@@ -1548,3 +1552,92 @@ prints when a day carries no band.
 The criteria to leave Phase 2 are undecided. They are open item 1 for V2. Do
 not invent exit criteria. Watch the bands and wait for the decision.
 `docs/v2-roadmap.md` states what blocks that decision and who owns each part.
+
+## 9. Every command this repository defines
+
+The tables below index the scripts `package.json` defines, so a reader learns
+of a command without reading the manifest. `seed-history` existed in the
+manifest and in no document at all.
+
+`scripts/check-docs.py` proves two things. Every script this repository
+defines appears in this runbook. This runbook names no script the manifest has
+dropped. Both fail `pnpm run check:docs`.
+
+No count is written here. A number in prose goes stale when a script is
+added. This file already holds the list a reader needs.
+
+The sections above explain the operator commands in full. This is the index,
+not the explanation.
+
+**Building and type-checking.**
+
+| Command | What it does |
+|---|---|
+| `pnpm run bootstrap` | Brings a fresh clone to a state where `pnpm run verify` can run. Idempotent, and it overwrites nothing. `--check` reports and changes nothing, which is the mode the session hook uses. |
+| `pnpm run build` | Compiles the solution into `dist/`. |
+| `pnpm run check` | Builds, then type-checks the test files and the console. |
+| `pnpm run check:watch` | The same build, recompiled as files change. |
+
+**Testing.**
+
+| Command | What it does |
+|---|---|
+| `pnpm test` | Runs all three projects: unit, database and mail. |
+| `pnpm run test:unit` | The pure cases alone. No Docker. |
+| `pnpm run test:db` | The database cases alone. |
+| `pnpm run test:mail` | The mail cases alone. |
+| `pnpm run test:watch` | Reruns the unit project as files change. |
+
+**Verifying.**
+
+| Command | What it does |
+|---|---|
+| `pnpm run verify` | The contract. Everything below, in order, plus the console. |
+| `pnpm run verify:fast` | The inner loop. No Docker, and it proves nothing about a database suite. |
+| `pnpm run verify:db` | The database and mail suites alone. |
+| `pnpm run verify:console` | The console package's own build, check and tests. |
+| `pnpm run lint` | ESLint over the repository. |
+| `pnpm run check:docs` | The documentation claims a machine can decide. |
+| `pnpm run check:ste` | Simplified Technical English, rules 1 and 2. |
+| `pnpm run check:guards` | The session hooks and the structural eval layer. |
+| `pnpm run check:fixtures` | Regenerates the corpus and refuses any difference. |
+
+**The four daemons.** Section 3 explains each one.
+
+| Command | What it does |
+|---|---|
+| `pnpm run webhook` | Takes messages in over HTTP. |
+| `pnpm run imap` | Takes messages in over IMAP. |
+| `pnpm run consumer` | Walks the state machine for its partitions. |
+| `pnpm run relay` | Drains the outbox to the adapters. |
+
+Each daemon also starts from source with no build step, for a local session:
+`pnpm run dev:webhook`, `pnpm run dev:imap`, `pnpm run dev:consumer`,
+`pnpm run dev:relay` and `pnpm run dev:console`. They use `tsx`. AGENTS.md
+explains why Node's own type stripping cannot run this tree.
+
+**Operator commands.**
+
+| Command | What it does |
+|---|---|
+| `pnpm run db:migrate` | Applies the SQL files under `db/` in order. |
+| `pnpm run escalations` | Lists what needs a person, and why. |
+| `pnpm run approve` | Approves or rejects one parked reply. |
+| `pnpm run latency` | Reports queue wait and service time per partition. |
+| `pnpm run bands` | Reports the four `bands.yaml` metrics for one day. |
+| `pnpm run dev:console` | Starts the operator console from source. |
+
+**Offline jobs.** Section 5 explains each one. None touches live traffic.
+
+| Command | What it does |
+|---|---|
+| `pnpm run calibrate` | Fits the agreement threshold on the fit half. |
+| `pnpm run gold-report` | Reports the gold-set numbers from the report half. |
+| `pnpm run triage` | Selects the tickets a person should label next. |
+| `pnpm run replay` | Scores past runs against observable dispositions. |
+| `pnpm run export-corpus` | Writes the corpus a job reads. |
+| `pnpm run induce` | Induces a taxonomy from the corpus. |
+| `pnpm run load-docs` | Indexes documents for retrieval. |
+| `pnpm run fit-groundedness` | Fits the two coverage thresholds. |
+| `pnpm run report-groundedness` | Reports coverage against the fitted pair. |
+| `pnpm run seed-history` | Writes a backdated synthetic history for a demo. It pins `seed` as the prompt version, so the queue shows which runs it wrote (DEC-18). |

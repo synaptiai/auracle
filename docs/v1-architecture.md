@@ -1167,7 +1167,7 @@ own words describe what shipped.
 ### 7.1 Where the V2 design documents live
 
 The table below accounts for every open item above. Most have a design
-document under `.creatumo/design/`, and the table names the one item that
+document under `docs/design/`, and the table names the one item that
 needed none. The register stays the only authority. A document becomes a
 decision only when a row enters the table in section 2.
 
