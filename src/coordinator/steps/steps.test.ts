@@ -23,10 +23,12 @@ import type { EgressAdapter } from '../../adapters/types.js';
 import { UnreadableAnswerError } from '../../models/provider.js';
 import type { ModelProvider } from '../../models/provider.js';
 import { PermanentEgressError } from '../../adapters/types.js';
+import { CoordinatorFaultError } from '../fault.js';
 import { classify } from './classify.js';
 import { compose } from './compose.js';
 import {
-  createRunContext, meterProvider, stopEscalated, type RunContext,
+  CONTINUE, createRunContext, finishStep, meterProvider, stateAfter, stopEscalated,
+  transitionOrStop, type RunContext,
 } from './context.js';
 import { execute } from './execute.js';
 import { gate } from './gate.js';
@@ -67,14 +69,19 @@ interface Recorder {
  * transition therefore throws, and the case says so: the alternative is a
  * stub that pretends the ledger accepted a write it never saw.
  */
-function recordingPool(entries: Entry[] = []): Recorder {
+function recordingPool(
+  entries: Entry[] = [],
+  /**
+   * Rows for a read the case needs answered. Every statement still records;
+   * this only decides what comes back. `park` refuses on the strength of a
+   * SELECT, so a stub that answers nothing can never reach that branch.
+   */
+  answer: (statement: string) => unknown[] = () => [],
+): Recorder {
   const record = (text: string, values?: readonly unknown[]) => {
-    entries.push({
-      kind: 'sql',
-      statement: text.trim().split('\n')[0]!.trim(),
-      values: values ?? [],
-    });
-    return Promise.resolve({ rows: [] });
+    const statement = text.trim().split('\n')[0]!.trim();
+    entries.push({ kind: 'sql', statement, values: values ?? [] });
+    return Promise.resolve({ rows: answer(statement) });
   };
   const client = { query: record, release: () => undefined };
   const pool = { query: record, connect: () => Promise.resolve(client) };
@@ -191,7 +198,11 @@ describe('a step answers without a ledger behind it', () => {
   // approve and a run that paid for one. A future edit that folds the limit
   // check into the sequencer fails this case.
   it('parks a composed reply even when every limit is exhausted', async () => {
-    const recorder = recordingPool();
+    // The pool answers the prior-park SELECT, so this case also holds the
+    // branch guard shut: the ledger-only park never runs that check, and
+    // dropping the guard would escalate this run instead of parking it.
+    const recorder = recordingPool([], (statement) =>
+      statement.startsWith('SELECT 1') ? [{ '?column?': 1 }] : []);
     const ctx = context(recorder.pool, unreadableProvider('truncated'), {
       deps: { limits: { maxCostMicros: 0, maxSteps: 0, deadlineAt: new Date(Date.now() - 1) } },
     });
@@ -292,6 +303,208 @@ describe('a step answers without a ledger behind it', () => {
     expect(reason).toBe(JSON.stringify({ reason: 'limit_cost' }));
   });
 
+  // The refusal comes before the journal row, because it refuses rather than
+  // acts (issue #94). Journalling first left a 'park' row at status 'started'
+  // with a null result forever on every refusal.
+  //
+  // The pool answers the SELECT this check reads. A stub that answers nothing
+  // never reaches the branch at all, which is why nothing drove it before.
+  it('leaves no half-written row when it refuses to park (DEC-11)', async () => {
+    const entries: Entry[] = [];
+    const recorder = recordingPool(entries, (statement) =>
+      statement.startsWith('SELECT 1') ? [{ '?column?': 1 }] : []);
+    const ctx = context(recorder.pool, unreadableProvider('truncated'), {
+      input: { isCustomerVisible: true },
+    });
+    ctx.state.draft = 'Your refund is on its way.';
+
+    expect(await park(ctx)).toEqual({ kind: 'escalate', reason: 'park_unresolved' });
+
+    // The SELECT ran, and nothing else did. Not the write-before-act row, so
+    // no step_journal statement of any kind.
+    expect(recorder.statements().filter((line) => /step_journal/.test(line))).toEqual([]);
+    expect(entries.some((entry) => entry.kind === 'egress')).toBe(false);
+    expect(ctx.progress.stepsUsed).toBe(0);
+  });
+
+});
+
+/**
+ * A defect inside the walk ends the run where an operator reads it (#94).
+ *
+ * Four checks assert an invariant this system owns. Each threw a plain
+ * `Error` and escaped `coordinateTicket`, so the run kept whatever state it
+ * last reached and journalled nothing — and `src/escalations/query.ts` reads
+ * its reason from an `escalate` row. The class is what the sequencer catches,
+ * so each site is driven here and the class is asserted, not the message.
+ */
+describe('a fault inside the walk', () => {
+  it('names the producer when a step ran before the step it reads', () => {
+    expect(() => stateAfter({}, 'classification', 'gate', 'classify'))
+      .toThrow(CoordinatorFaultError);
+    expect(() => stateAfter({}, 'classification', 'gate', 'classify'))
+      .toThrow('gate ran before classify: the run has no classification');
+  });
+
+  it('raises a fault when the transition addresses a run the ledger lost', async () => {
+    const recorder = recordingPool();
+    const ctx = context(recorder.pool, unreadableProvider('truncated'));
+
+    // The stub answers no row, which `fencedTransition` reads as a run that
+    // is not there.
+    await expect(transitionOrStop(ctx, 'classified')).rejects
+      .toThrow(CoordinatorFaultError);
+  });
+
+  it('raises a fault when the gate meets an intent the taxonomy lost', async () => {
+    const entries: Entry[] = [];
+    const recorder = recordingPool(entries);
+    const ctx = context(recorder.pool, unreadableProvider('truncated'));
+    // `classify` refuses a label the taxonomy does not hold, so this state is
+    // only reachable when the taxonomy gated against is not the one
+    // classified against.
+    ctx.state.classification = {
+      intentId: 'chargeback', agreement: 1, unreadableSamples: 0,
+    } as NonNullable<RunContext['state']['classification']>;
+    // No retrieved text, so the judge makes no model call and the run reaches
+    // the taxonomy lookup on the stub alone.
+    ctx.state.docs = [];
+    ctx.state.composed = {
+      claims: [{ text: 'Your refund is on its way.', citations: [] }],
+    } as unknown as NonNullable<RunContext['state']['composed']>;
+
+    await expect(gate(ctx)).rejects.toThrow(CoordinatorFaultError);
+    await expect(gate(ctx)).rejects
+      .toThrow('classified intent chargeback is absent from the taxonomy');
+
+    // And it refuses before it journals, like `park` does. Below the
+    // write-before-act row this left a 'gate' row at status 'started' with a
+    // null result forever — the shape this issue removes — and paid for a
+    // coverage judge on a run certain to fault (issue #94).
+    expect(recorder.statements().filter((line) => /step_journal/.test(line))).toEqual([]);
+    expect(entries.some((entry) => entry.kind === 'egress')).toBe(false);
+    expect(ctx.progress.stepsUsed).toBe(0);
+    expect(ctx.meter.cost()).toBe(0);
+  });
+
+  it('raises a fault when a final step asks the walk to go on', async () => {
+    const recorder = recordingPool();
+    const ctx = context(recorder.pool, unreadableProvider('truncated'));
+
+    await expect(finishStep(ctx, CONTINUE)).rejects.toThrow(CoordinatorFaultError);
+    await expect(finishStep(ctx, CONTINUE)).rejects
+      .toThrow("a final step of run run-1 answered 'continue'");
+  });
+
+  // The row an operator reads. `internal_fault` names a defect and not a
+  // step, so the message rides beside the reason — and `reason` is written
+  // last, so a detail key of that name cannot displace it.
+  it('journals the fault message beside the reason', async () => {
+    const entries: Entry[] = [];
+    const recorder = recordingPool(entries);
+    const ctx = context(recorder.pool, unreadableProvider('truncated'));
+
+    await expect(
+      stopEscalated(ctx, 'internal_fault', { fault: 'gate ran before classify', reason: 'wrong' }),
+    ).rejects.toThrow('transition target vanished from the ledger');
+
+    const result = entries
+      .filter((entry) => entry.kind === 'sql')
+      .map((entry) => entry as { statement: string; values: readonly unknown[] })
+      .find((entry) => entry.statement.startsWith('UPDATE step_journal'))?.values[3];
+    expect(result).toBe(
+      JSON.stringify({ fault: 'gate ran before classify', reason: 'internal_fault' }),
+    );
+  });
+
+  // Structural, because the hazard is a check added later. A fifth invariant
+  // written as a bare `Error` escapes the sequencer's catch and puts the run
+  // back where this issue found it, with every suite green.
+  //
+  // The first version asked for a `throw` of a `new Identifier(...)`, which is
+  // a regex with a parser behind it. An adversarial pass walked four ordinary
+  // spellings straight through it — `throw held`, `throw make(msg)`,
+  // `throw new globalThis.Error(msg)` and `Promise.reject(new Error(msg))` —
+  // with the suite green on each. The repository's rule is to parse source
+  // rather than pattern-match it, and parsing the wrong shape is still
+  // matching. So this asks two questions instead.
+  //
+  // One: every `new <name>Error(...)` in these modules is a
+  // `CoordinatorFaultError`. That covers a built Error thrown later, one
+  // returned by a helper, one reached through `globalThis`, and one handed to
+  // `Promise.reject` — none of which is a throw statement at the site.
+  //
+  // Two: every `throw` raises either a `new CoordinatorFaultError(...)` or the
+  // binding of an enclosing `catch`. The second is a rethrow, which `park` and
+  // three other steps do for an error they decided not to own.
+  //
+  // The file list is read from the directory, not typed out. A hand-kept list
+  // omitted `digest.ts`, which is a module of the walk that `retrieve.ts`
+  // imports, so a new file under `steps/` was unguarded by default.
+  it('raises no bare Error from any module of the walk', () => {
+    const files = [
+      join(STEPS_DIR, '..', 'coordinator.ts'),
+      join(STEPS_DIR, '..', 'fault.ts'),
+      ...readdirSync(STEPS_DIR)
+        .filter((f) => f.endsWith('.ts') && !f.includes('.test.'))
+        .map((f) => join(STEPS_DIR, f)),
+    ];
+    // The scan found the modules. Without this it passes when the directory
+    // moves and nothing is read at all.
+    expect(files.length, 'no module of the walk was scanned').toBeGreaterThan(8);
+
+    const bare: string[] = [];
+    /** The `catch (x)` bindings in scope at this node, innermost last. */
+    const rethrows = (node: ts.Node): string[] => {
+      const names: string[] = [];
+      for (let at: ts.Node | undefined = node; at !== undefined; at = at.parent) {
+        if (ts.isCatchClause(at) && at.variableDeclaration !== undefined) {
+          const name = at.variableDeclaration.name;
+          if (ts.isIdentifier(name)) names.push(name.text);
+        }
+      }
+      return names;
+    };
+    const errorName = (node: ts.NewExpression): string =>
+      ts.isIdentifier(node.expression)
+        ? node.expression.text
+        : node.expression.getText().split('.').pop() ?? node.expression.getText();
+
+    for (const file of files) {
+      const source = ts.createSourceFile(
+        file, readFileSync(file, 'utf8'), ts.ScriptTarget.ESNext, true,
+      );
+      const visit = (node: ts.Node): void => {
+        // Every Error built here, wherever it goes next.
+        if (ts.isNewExpression(node) && /Error$/.test(errorName(node))
+          && errorName(node) !== 'CoordinatorFaultError') {
+          bare.push(`${basename(file)}: new ${errorName(node)}`);
+        }
+        // Every throw, whatever it raises.
+        if (ts.isThrowStatement(node) && node.expression !== undefined) {
+          const raised = node.expression;
+          const isFault = ts.isNewExpression(raised)
+            && errorName(raised) === 'CoordinatorFaultError';
+          const isRethrow = ts.isIdentifier(raised)
+            && rethrows(node).includes(raised.text);
+          if (!isFault && !isRethrow) {
+            bare.push(`${basename(file)}: throw ${raised.getText().split('(')[0]}`);
+          }
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
+    // The delivery-rule refusal in `coordinateTicket` is the one exception,
+    // and it is not in the walk: it runs before the run row exists, so there
+    // is nothing to journal a reason against and nothing to move to a
+    // terminal state. It is a caller defect, refused to the caller. It appears
+    // twice because both questions above see it.
+    expect(bare.sort()).toEqual([
+      'coordinator.ts: new Error',
+      'coordinator.ts: throw new Error',
+    ]);
+  });
 });
 
 /**

@@ -59,6 +59,25 @@ describe('escalations CLI queries', () => {
     await truncateLedger(pool);
   });
 
+  // Issue #94: `internal_fault` names a defect inside the coordinator and not
+  // a step, so the invariant message is the whole of what an operator has. The
+  // runbook tells them to quote it into an issue, and this reader is the one
+  // `pnpm run escalations` goes through — before this the field reached the
+  // ledger and no reader at all.
+  it('surfaces the fault message of a run that met a defect', async () => {
+    const run = await seedRun('escalated');
+    await journalStep(run.runId, 'escalate', {
+      reason: 'internal_fault',
+      fault: 'gate ran before classify: the run has no classification',
+    });
+
+    const items = await listEscalations(pool);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]!.reason).toBe('internal_fault');
+    expect(items[0]!.fault).toBe('gate ran before classify: the run has no classification');
+  });
+
   it('surfaces a coordinator escalation with its limit reason', async () => {
     const run = await seedRun('escalated');
     await journalStep(run.runId, 'escalate', { reason: 'limit_cost' });
@@ -75,6 +94,9 @@ describe('escalations CLI queries', () => {
       // produced one in the queue they work from.
       promptVer: 'p1',
       reason: 'limit_cost',
+      // Null for every reason but `internal_fault`, which is the only one
+      // that writes the key (issue #94).
+      fault: null,
       // This run escalated and never gated, so the queue has no rule to
       // name and no coverage to report. Null and not a guess: a person
       // reading `customer_visible` on a run that never reached the gate

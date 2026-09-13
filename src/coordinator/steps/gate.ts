@@ -8,6 +8,7 @@
 import { checkGroundedness } from '../../groundedness/groundedness.js';
 import { UnreadableAnswerError } from '../../models/provider.js';
 import { COMPENSATION_ACTION_CLASS } from '../../adapters/types.js';
+import { CoordinatorFaultError } from '../fault.js';
 import { SEED_THRESHOLDS, evaluatePolicyDetailed } from '../../policy/policy.js';
 import {
   CONTINUE,
@@ -27,6 +28,22 @@ export async function gate(ctx: RunContext): Promise<StepResult> {
 
   const gateLimit = limitHit(ctx);
   if (gateLimit !== null) return { kind: 'escalate', reason: gateLimit };
+
+  // Before the journal row and before the judge call, because this refuses
+  // rather than acts. `classify` refuses a label the taxonomy does not hold,
+  // so reaching here means the taxonomy this run gated against is not the one
+  // it classified against. A defect, not a model answer: it escalates as
+  // `internal_fault` rather than escaping the walk (issue #94).
+  //
+  // Below `journalStart` it left a 'gate' row at status 'started' with a null
+  // result forever — the shape this issue removes from `park` — and paid for a
+  // coverage judge on a run certain to fault.
+  const intent = ctx.deps.taxonomy.intents.find((i) => i.id === classification.intentId);
+  if (intent === undefined) {
+    throw new CoordinatorFaultError(
+      `classified intent ${classification.intentId} is absent from the taxonomy`,
+    );
+  }
 
   await journalStart(ctx, 'gate');
   // The composer's own claim partition, not a re-split of the joined draft.
@@ -58,12 +75,6 @@ export async function gate(ctx: RunContext): Promise<StepResult> {
       return { kind: 'escalate', reason: 'gate_unreadable' };
     }
     throw error;
-  }
-  const intent = ctx.deps.taxonomy.intents.find((i) => i.id === classification.intentId);
-  if (intent === undefined) {
-    throw new Error(
-      `classified intent ${classification.intentId} is absent from the taxonomy`,
-    );
   }
   const gateThresholds = ctx.deps.thresholds ?? SEED_THRESHOLDS;
   const outcome = evaluatePolicyDetailed({

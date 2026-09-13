@@ -1025,12 +1025,32 @@ coordinator can record appears below. A queued message that failed
 | `retriever_unreadable` | The embedder answered with something the retriever could not read. | Check the embedding model pin and the provider response. |
 | `composer_unreadable` | The composer answered nothing at all. | The same cause, on the compose step. |
 | `gate_unreadable` | The coverage judge answered with no verdict. | The same cause, on the gate step. |
+| `internal_fault` | An invariant inside the coordinator did not hold. | A defect in this system. Read `fault` on the escalate row, then file an issue with that message. |
 
 Four of these name a model answer this system could not read:
 `classifier_unreadable`, `retriever_unreadable`, `composer_unreadable` and
 `gate_unreadable`. They are not a verdict and not an abstain, so the run stops
 rather than record one. `classifier_no_label` is not one of them: those
 samples were readable.
+
+The last reason names this system rather than a model, a limit or a target
+system. Four checks raise it. A step read a value the step before it never
+wrote. A transition addressed a run row the ledger does not hold. The gate met
+an intent the taxonomy does not define. A final step asked the run to go on.
+
+The escalate row carries a `fault` field beside the reason. It holds the
+message of the check that refused. The reason alone names no step and no
+value, so quote that message in the issue you file. `pnpm run escalations`
+prints it in the JSON output, and under the table with `--pretty`. A retry
+never clears one of these, so the run escalates and the queued message is
+acked.
+
+One of the four reaches no terminal state. It is the check that says the run
+row is gone. The escalation moves that same missing row, so it fails again.
+The escalate row is still written, because the journal holds no foreign key to
+the run. The queue selects runs by state, so it cannot show that row. Read
+`step_journal` directly when a consumer logs this message and the queue shows
+nothing.
 
 The journal entry carries the shape of the fault. It also carries
 `costUnknown` when the provider reported no cost for the call it refused.

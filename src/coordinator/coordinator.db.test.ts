@@ -25,6 +25,7 @@ import type { FakeStep } from '../models/fake.js';
 import type { AdapterCapabilities } from '../policy/policy.js';
 import { COMPENSATION_ACTION_CLASS, CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
 import { indexDocument } from '../retriever/retriever.js';
+import { listEscalations } from '../escalations/query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
@@ -638,6 +639,60 @@ describe('section 4.3 run coordinator', () => {
     });
   });
 
+  // Issue #94: a defect inside the walk reaches the same place every other
+  // failure does. The four checks are invariants this system owns, so none is
+  // reachable by feeding the run bad input — this one is driven by taking the
+  // intent away between the step that classified it and the step that gates
+  // on it, which is exactly the state the check exists to name.
+  //
+  // End to end, against the real ledger, because the claim is about the row
+  // an operator reads and the state the run stops in. A stub can assert the
+  // statements; only the ledger can answer `pnpm run escalations`.
+  it('escalates a coordinator fault to a row the escalations view names (#94)', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const base = makeDeps(happyScript());
+    const intents = [...base.taxonomy.intents];
+    const inner = base.provider;
+    const deps: CoordinatorDeps = {
+      ...base,
+      taxonomy: { intents },
+      // The retrieval embedding is the one call between classify and gate, so
+      // emptying the taxonomy here puts the run in the state the gate's check
+      // names: it gated against a taxonomy it did not classify against.
+      provider: {
+        complete: (call) => inner.complete(call),
+        embed: (call) => {
+          intents.length = 0;
+          return inner.embed(call);
+        },
+      },
+    };
+
+    const result = await coordinateTicket(deps, autoInput(ticketId, 1n));
+
+    expect(result.outcome).toBe('escalated');
+    if (result.outcome === 'escalated') expect(result.reason).toBe('internal_fault');
+    // Terminal, not stranded in whatever state the walk last reached.
+    expect(await runState(result.runId)).toBe('escalated');
+
+    // The row, with the message beside the reason. `internal_fault` names a
+    // defect and not a step, so the message is the whole of what an operator
+    // has to go on.
+    const escalate = (await journalRows(result.runId)).find((row) => row.step_id === 'escalate');
+    expect(escalate?.status).toBe('done');
+    expect(escalate?.result).toEqual({
+      reason: 'internal_fault',
+      fault: 'classified intent password_reset is absent from the taxonomy',
+    });
+
+    // And the operator's own view, which is the whole point: the reader joins
+    // the escalate step, so a run that journalled none showed nothing here.
+    const queue = await listEscalations(pool);
+    const item = queue.find((entry) => entry.runId === result.runId);
+    expect(item?.reason).toBe('internal_fault');
+    expect(item?.state).toBe('escalated');
+  });
+
   it('records the attrition beside an agreement it depressed', async () => {
     const ticketId = 'T-' + randomUUID().slice(0, 8);
     // One unreadable sample of nine. The run proceeds; the journal says the
@@ -991,6 +1046,12 @@ describe('section 4.3 run coordinator', () => {
       [ticketId],
     );
     expect(drafts.rows).toHaveLength(0);
+
+    // Issue #94: the refusal comes before the write-before-act row, so the
+    // run leaves no 'park' row at status 'started' with a null result. The
+    // step refuses rather than acts, so DEC-04 still holds.
+    const parkRows = (await journalRows(result.runId)).filter((row) => row.step_id === 'park');
+    expect(parkRows).toEqual([]);
   });
 
   // DEC-43, on the path that ships. Every other assertion on the compose row's

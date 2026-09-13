@@ -16,6 +16,7 @@ function item(over: Partial<EscalationItem> = {}): EscalationItem {
     ticketId: 'T-0001',
     state: 'awaiting_approval',
     reason: null,
+    fault: null,
     gateReason: 'customer_visible',
     intentId: 'refund-request',
     coverage: 0.94,
@@ -34,6 +35,30 @@ function item(over: Partial<EscalationItem> = {}): EscalationItem {
 }
 
 describe('the escalations table', () => {
+  // Issue #94: `internal_fault` names a defect inside the coordinator and not
+  // a step, so the invariant message is the whole of what an operator has to
+  // go on. The runbook tells them to quote it into an issue, and it reached
+  // the ledger and no reader at all.
+  it('prints the fault message of a run that met a defect', () => {
+    const table = renderTable([
+      item({
+        state: 'escalated',
+        reason: 'internal_fault',
+        fault: 'gate ran before classify: the run has no classification',
+      }),
+    ]);
+
+    expect(table).toContain('internal_fault');
+    expect(table).toContain('FAULTS');
+    expect(table).toContain('gate ran before classify: the run has no classification');
+  });
+
+  // And nothing under the table when no run met one, so the ordinary queue
+  // reads exactly as it did.
+  it('prints no fault block when no run carries one', () => {
+    expect(renderTable([item()])).not.toContain('FAULTS');
+  });
+
   // The defect. This report selects `escalated` and `awaiting_approval`, and
   // only the first has an escalation reason.
   it('names the gate rule for a run that has not escalated', () => {

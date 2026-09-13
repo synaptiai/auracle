@@ -7,6 +7,9 @@
  *   pnpm run escalations -- --since 24h      arrived in the last day
  *   pnpm run escalations -- --state awaiting_approval
  *
+ * An `internal_fault` row carries the invariant message in its `fault` field.
+ * The JSON output holds it on the item; `--pretty` prints it under the table.
+ *
  * Filters: --since takes an ISO timestamp or a duration like `45m`, `24h`,
  * `7d`; --state takes `escalated`, `awaiting_approval` or `delivery_unknown`.
  * Note the ledger deletes intake rows once a ticket is picked up, so
@@ -74,7 +77,21 @@ export function renderTable(items: readonly EscalationItem[]): string {
   );
   const line = (cells: readonly string[]) =>
     cells.map((cell, i) => cell.padEnd(widths[i]!)).join('  ');
-  return [line(header), ...rows.map(line)].join('\n');
+  const table = [line(header), ...rows.map(line)].join('\n');
+  // The fault messages, under the table rather than in it.
+  //
+  // `internal_fault` names a defect inside the coordinator and not a step, so
+  // this message is the whole of what an operator has to go on (issue #94).
+  // It is a sentence, so a column for it would set every other column's width
+  // from the longest one. The runbook tells a person to quote it into an
+  // issue, and before this the field reached the ledger and no reader.
+  //
+  // The JSON output carries it on every item, so a script needs no parsing of
+  // this block.
+  const faults = items.filter((item) => item.fault !== null);
+  if (faults.length === 0) return table;
+  const notes = faults.map((item) => `${item.runId.slice(0, 8)}  ${item.fault}`);
+  return [table, '', 'FAULTS', ...notes].join('\n');
 }
 
 async function main(): Promise<void> {

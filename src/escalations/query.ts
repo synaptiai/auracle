@@ -23,6 +23,25 @@ export interface EscalationItem {
   /** Coordinator reason from the `escalate` step; null when not journaled. */
   readonly reason: string | null;
   /**
+   * What the reason does not say, from the same `escalate` row.
+   *
+   * `internal_fault` names a defect inside the coordinator rather than a step,
+   * so the invariant message is the whole of what an operator has to go on
+   * (issue #94). The runbook tells them to quote it into an issue, and it was
+   * written to the ledger and projected by nothing — reachable only by
+   * hand-written SQL, which this repository's own session hooks refuse against
+   * a live database.
+   *
+   * Null for every other reason: no other escalate row writes the key.
+   *
+   * Untrimmed, unlike `reason`. `CoordinatorFaultError` requires the message
+   * to interpolate only what this system named itself, and `pnpm run
+   * escalations` is a command rather than an unauthenticated page. The console
+   * never receives it: `toRow` and `toDetail` name the fields they carry, and
+   * `views.test.ts` holds that shut.
+   */
+  readonly fault: string | null;
+  /**
    * The policy rule that sent this run to a person, from the `gate` step.
    *
    * Distinct from `reason` above, and the distinction is the whole point. A
@@ -140,6 +159,7 @@ const RUN_SELECT_BODY = `
          r.steps_used        AS steps_used,
          r.created_at        AS created_at,
          esc.result ->> 'reason'          AS reason,
+         esc.result ->> 'fault'           AS fault,
          gate.result ->> 'reason'          AS gate_reason,
          CASE WHEN jsonb_typeof(gate.result -> 'groundedness') = 'number'
               THEN (gate.result ->> 'groundedness')::float8 END AS coverage,
@@ -205,6 +225,7 @@ const OUTBOX_SELECT = `
          r.steps_used        AS steps_used,
          r.created_at        AS created_at,
          esc.result ->> 'reason'           AS reason,
+         esc.result ->> 'fault'            AS fault,
          gate.result ->> 'reason'           AS gate_reason,
          CASE WHEN jsonb_typeof(gate.result -> 'groundedness') = 'number'
               THEN (gate.result ->> 'groundedness')::float8 END AS coverage,
@@ -234,6 +255,7 @@ function toItem(row: Record<string, unknown>): EscalationItem {
     ticketId: row['ticket_id'] as string,
     state: row['state'] as string,
     reason: (row['reason'] as string | null) ?? null,
+    fault: (row['fault'] as string | null) ?? null,
     gateReason: (row['gate_reason'] as string | null) ?? null,
     intentId: (row['intent_id'] as string | null) ?? null,
     // Null, never zero. A run that never gated has no coverage, and zero is

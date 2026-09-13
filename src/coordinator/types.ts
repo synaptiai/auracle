@@ -166,7 +166,15 @@ export type EscalationReason =
   /** Samples were readable and named no intent this taxonomy holds. */
   | 'classifier_no_label'
   /** The embedder answered with something the retriever could not read. */
-  | 'retriever_unreadable';
+  | 'retriever_unreadable'
+  /**
+   * An invariant inside the coordinator did not hold (issue #94).
+   *
+   * A defect in this system, not a model answer and not a limit. The
+   * escalate row carries the fault message beside the reason, because the
+   * reason alone names no step and no value.
+   */
+  | 'internal_fault';
 
 export type CoordinateOutcome =
   | { runId: string; outcome: 'resolved' }

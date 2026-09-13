@@ -150,7 +150,7 @@ export async function journalStep(
 }
 
 /**
- * Writes the intent: this step is about to act (section 4.2, DEC-04).
+ * Writes the intent: this step is about to act (section 4.3 task 3, DEC-04).
  *
  * The status is fixed at 'started' and `result` is null, which is what makes
  * the row a marker rather than a record. A crash between this and the finish

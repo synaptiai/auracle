@@ -259,10 +259,21 @@ describe('the escalation reasons the runbook explains', () => {
     const reasons = [...new Set([...declared, ...escalated])];
     expect(reasons.length).toBeGreaterThanOrEqual(10);
     const runbook = readFileSync(join(REPO_ROOT, 'docs/operations.md'), 'utf8');
+    // The table row, not the file. A mention anywhere satisfied the earlier
+    // scan, so prose that named a reason made its own operator-facing row
+    // deletable in silence — and the row is what carries "what you do about
+    // it". An adversarial pass deleted the `internal_fault` row with this
+    // suite green, because the paragraph beside the table held the token
+    // (issue #94).
+    const rows = new Set(
+      [...runbook.matchAll(/^\|\s*`([a-z_]+)`\s*\|/gm)].map((m) => m[1] as string),
+    );
+    expect(rows.size, 'the runbook holds no reason table at all').toBeGreaterThanOrEqual(10);
     for (const reason of reasons) {
-      expect(runbook, `${reason} is a cause the runbook does not explain`).toContain(
-        `\`${reason}\``,
-      );
+      expect(
+        [...rows],
+        `${reason} has no row in the runbook's table of causes`,
+      ).toContain(reason);
     }
   });
 });

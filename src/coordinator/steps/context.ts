@@ -16,6 +16,7 @@
 import type { Pool } from 'pg';
 
 import type { Classification } from '../../classifier/classifier.js';
+import { CoordinatorFaultError } from '../fault.js';
 import type { ComposerResult } from '../../composer/composer.js';
 import {
   journalFinish as writeJournalFinish,
@@ -134,7 +135,9 @@ export function stateAfter<K extends keyof RunState>(
 ): NonNullable<RunState[K]> {
   const value = state[key];
   if (value === undefined) {
-    throw new Error(`${step} ran before ${producer}: the run has no ${String(key)}`);
+    throw new CoordinatorFaultError(
+      `${step} ran before ${producer}: the run has no ${String(key)}`,
+    );
   }
   return value as NonNullable<RunState[K]>;
 }
@@ -203,9 +206,12 @@ export function limitHit(ctx: RunContext): EscalationReason | null {
 }
 
 /**
- * The write-before-act entry: this step is about to run (section 4.2,
- * DEC-04). Through `src/ledger/journal-write.ts`, which owns the column
- * list.
+ * The write-before-act entry: this step is about to run (section 4.3 task 3,
+ * DEC-04). Through `src/ledger/journal-write.ts`, which owns the column list.
+ *
+ * Section 4.2 defines the `step_journal` table and states the two outbox
+ * rules. It states nothing about writing before acting; that is task 3 of the
+ * coordinator's own list.
  */
 export async function journalStart(ctx: RunContext, stepId: string): Promise<void> {
   await writeJournalStart(ctx.pool, {
@@ -261,7 +267,7 @@ export async function transitionOrStop(
       highestAcceptedEpoch: result.highestAcceptedEpoch,
     };
   }
-  throw new Error(`transition target vanished from the ledger: ${ctx.runId}`);
+  throw new CoordinatorFaultError(`transition target vanished from the ledger: ${ctx.runId}`);
 }
 
 /**
@@ -270,15 +276,53 @@ export async function transitionOrStop(
  * One place, so every reason reaches `src/escalations/query.ts` in the same
  * shape. A fence that refuses the transition wins: the run stops as the
  * ledger says it stopped, not as this function intended.
+ *
+ * No `fromState`: a run escalates from any active state, and the fault
+ * handler reaches this from every one of them. A named source state would
+ * refuse the transition for the state the run actually held and strand it
+ * where the throw left it, which is the failure this exit exists to end.
  */
 export async function stopEscalated(
   ctx: RunContext,
   reason: EscalationReason,
+  /**
+   * What the reason does not say, journalled beside it. `internal_fault`
+   * names a defect and not a step, so the fault message is the whole of what
+   * an operator has to go on (issue #94). `reason` is written last, so a
+   * detail key of that name cannot displace the value the queue reads.
+   */
+  detail: Record<string, unknown> = {},
 ): Promise<CoordinateOutcome> {
   await journalStart(ctx, 'escalate');
-  await journalFinish(ctx, 'escalate', 'done', { reason });
+  await journalFinish(ctx, 'escalate', 'done', { ...detail, reason });
   const stop = await transitionOrStop(ctx, 'escalated');
   return stop ?? { runId: ctx.runId, outcome: 'escalated', reason };
+}
+
+/**
+ * What a step answered, as the run's outcome.
+ *
+ * Every escalate answer reaches the ledger through `stopEscalated`, which is
+ * the single writer of the row; the sequencer's fault handler is its other
+ * caller. So each reason reaches `src/escalations/query.ts` in one shape,
+ * whether a step chose it or a defect did.
+ *
+ * A step that answers 'continue' where the run has to end is a defect in the
+ * walk: park and execute both end it, so 'continue' from either means the
+ * sequencer lost track of its own order. It raises a fault rather than
+ * returning, and the sequencer's catch ends the run at 'escalated' (#94).
+ *
+ * A function rather than a closure inside `coordinateTicket`, so the fault is
+ * reachable from a test. It was unreachable from outside the module before,
+ * which is the only reason the case for it could not be written.
+ */
+export async function finishStep(
+  ctx: RunContext,
+  result: StepResult,
+): Promise<CoordinateOutcome> {
+  if (result.kind === 'stop') return result.outcome;
+  if (result.kind === 'escalate') return stopEscalated(ctx, result.reason);
+  throw new CoordinatorFaultError(`a final step of run ${ctx.runId} answered 'continue'`);
 }
 
 /** A step, as the sequencer sees one. */

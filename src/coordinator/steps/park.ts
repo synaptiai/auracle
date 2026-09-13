@@ -73,6 +73,20 @@ async function priorParkUnresolved(
 export async function park(ctx: RunContext): Promise<StepResult> {
   const draft = stateAfter(ctx.state, 'draft', 'park', 'compose');
 
+  // Before the journal row, because this refuses rather than acts. The check
+  // is one SELECT and changes nothing, so DEC-04 still holds: the row below is
+  // written before the first thing this step does to the world, and a read is
+  // not one of those things. Journalling first left
+  // a 'park' row at status 'started' with a null result forever on every
+  // refusal — a step the ledger says began and nothing says ended (issue #94).
+  //
+  // Guarded on the customer branch, which is the only one that parks in the
+  // target system and so the only one a half-finished prior park can concern.
+  if (ctx.input.isCustomerVisible
+    && await priorParkUnresolved(ctx.pool, ctx.input.ticketId, ctx.runId)) {
+    return { kind: 'escalate', reason: 'park_unresolved' };
+  }
+
   await journalStart(ctx, 'park');
 
   if (!ctx.input.isCustomerVisible) {
@@ -111,10 +125,8 @@ export async function park(ctx: RunContext): Promise<StepResult> {
   // record what it created. An earlier run that died in that window left a
   // draft with no handle in the journal; parking again would show the
   // customer two. So the ledger states the intent first, and a run that
-  // finds an unresolved one escalates for a person to reconcile.
-  if (await priorParkUnresolved(ctx.pool, ctx.input.ticketId, ctx.runId)) {
-    return { kind: 'escalate', reason: 'park_unresolved' };
-  }
+  // finds an unresolved one escalates for a person to reconcile — which the
+  // check at the top of this step has already done by the time you read this.
   // DEC-24: the park's key comes from the action and the ticket, never
   // from this run. Two runs of the same park derive the same key, so the
   // adapter recognises the repeat and returns the first draft.

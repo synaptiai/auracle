@@ -28,14 +28,15 @@ import { randomUUID } from 'node:crypto';
 
 import { COMPENSATION_ACTION_CLASS } from '../adapters/types.js';
 import { fencedInsert } from '../ledger/insert.js';
+import { CoordinatorFaultError } from './fault.js';
 import { classify } from './steps/classify.js';
 import { compose } from './steps/compose.js';
 import {
   createRunContext,
+  finishStep,
   meterProvider,
   stateAfter,
-  stopEscalated as stepStopEscalated,
-  type StepResult,
+  stopEscalated,
 } from './steps/context.js';
 import { execute } from './steps/execute.js';
 import { gate } from './steps/gate.js';
@@ -129,41 +130,65 @@ export async function coordinateTicket(
     };
   }
 
-  /**
-   * What a step answered, as the run's outcome.
-   *
-   * The escalate row is written here and nowhere else, so every DEC-25
-   * reason reaches `src/escalations/query.ts` in one shape. A step never
-   * answers 'continue' where this is called: the loop below handles that
-   * case, and park and execute both end the run.
-   */
-  const finish = async (result: StepResult): Promise<CoordinateOutcome> => {
-    if (result.kind === 'stop') return result.outcome;
-    if (result.kind === 'escalate') return stepStopEscalated(ctx, result.reason);
-    throw new Error(`a final step of run ${runId} answered 'continue'`);
-  };
-
-  // The walk, and the only statement of its order. Each step journals
-  // itself before it acts (section 4.2), checks the DEC-25 limits before it
-  // spends, and writes what it produced into `ctx.state` for the steps
-  // after it. Remove one from this list and the run fails: the steps after
-  // it read a value nobody wrote, and `coordinator.db.test.ts` turns red —
-  // 23, 21, 17 and 11 cases for classify, retrieve, compose and gate.
-  for (const step of [classify, retrieve, compose, gate]) {
-    const result = await step(ctx);
-    if (result.kind !== 'continue') return finish(result);
-  }
-
-  // DEC-12: a gated action waits for a person, inside the target system or
-  // in the ledger. Anything else takes the automatic path.
+  // A defect inside the walk ends the run like every other failure: an
+  // `escalate` row an operator reads out of `pnpm run escalations`, and a
+  // terminal state (issue #94). Four checks raise `CoordinatorFaultError`,
+  // and only those are caught here.
   //
-  // Through `stateAfter`, like every other cross-step read, because the
-  // default here is the dangerous one. An unset decision is not `'gated'`,
-  // so a bare comparison would route to `execute`, which inserts the outbox
-  // record the relay then sends — an ungated customer reply or an
-  // irreversible compensation, with the gate row recording a verdict the run
-  // never acted on. A named fault is the only safe reading of "gate did not
-  // run".
-  const decision = stateAfter(ctx.state, 'decision', 'the walk', 'gate');
-  return finish(await (decision === 'gated' ? park : execute)(ctx));
+  // Caught and not rethrown, because a fault is deterministic. Rethrowing
+  // sends the message round the consumer's retry ceiling, which spends a
+  // classifier budget and files an orphan run on each of the 50 attempts
+  // before abandoning it — against a defect no attempt can clear. Every
+  // other error still propagates untouched: a dropped connection or a
+  // provider timeout may well clear, and that retry floor is theirs.
+  //
+  // `return await` rather than `return`, so a rejected promise is caught
+  // here rather than handed to the caller unread.
+  try {
+    // The walk, and the only statement of its order. Each step journals
+    // itself before it acts (section 4.3 task 3, DEC-04), checks the DEC-25
+    // limits before it spends, and writes what it produced into `ctx.state`
+    // for the steps after it. Remove one from this list and the run fails:
+    // the steps after it read a value nobody wrote, and
+    // `coordinator.db.test.ts` turns red — 23, 21, 17 and 11 cases for
+    // classify, retrieve, compose and gate.
+    for (const step of [classify, retrieve, compose, gate]) {
+      const result = await step(ctx);
+      if (result.kind !== 'continue') return await finishStep(ctx, result);
+    }
+
+    // DEC-12: a gated action waits for a person, inside the target system or
+    // in the ledger. Anything else takes the automatic path.
+    //
+    // Through `stateAfter`, like every other cross-step read, because the
+    // default here is the dangerous one. An unset decision is not `'gated'`,
+    // so a bare comparison would route to `execute`, which inserts the outbox
+    // record the relay then sends — an ungated customer reply or an
+    // irreversible compensation, with the gate row recording a verdict the run
+    // never acted on. A named fault is the only safe reading of "gate did not
+    // run".
+    const decision = stateAfter(ctx.state, 'decision', 'the walk', 'gate');
+    return await finishStep(ctx, await (decision === 'gated' ? park : execute)(ctx));
+  } catch (error) {
+    if (!(error instanceof CoordinatorFaultError)) throw error;
+    try {
+      // The message beside the reason: `internal_fault` names a defect and
+      // not a step, so the message is the whole of what an operator has.
+      return await stopEscalated(ctx, 'internal_fault', { fault: error.message });
+    } catch (duringEscalation) {
+      // The recovery writes to the ledger, and that write can fail. A throw
+      // here is inside the catch, so this block's own try is the only thing
+      // that can see it — without this the ledger's complaint replaced the
+      // invariant message and the consumer logged that instead.
+      //
+      // One fault makes this certain rather than unlikely. "transition target
+      // vanished from the ledger" says the run row is gone, and the recovery's
+      // transition addresses that same missing row, so it fails identically.
+      // Such a run reaches no terminal state, because there is no row to move;
+      // the escalate row is still written, because `step_journal` holds no
+      // foreign key to `run`. `docs/operations.md` says so rather than
+      // promising an exit this system cannot make.
+      throw new CoordinatorFaultError(error.message, { cause: duringEscalation });
+    }
+  }
 }

@@ -100,6 +100,21 @@ describe('what a run row carries onto a page', () => {
     expect(trimmed.reason).not.toContain('ada@x.example');
   });
 
+  // Issue #94: the escalations module gained a `fault` field, whole and
+  // untrimmed, because `pnpm run escalations` is a command and this page is
+  // not. A row carries the fields this function names and no others, so a
+  // field added to the reader cannot reach a surface by accident — which is
+  // the property the trim above depends on.
+  it('carries no field this boundary did not name', () => {
+    const row = toRow({
+      ...item,
+      fault: 'gate ran before classify: the run has no classification',
+    } as Parameters<typeof toRow>[0]);
+
+    expect(Object.keys(row)).not.toContain('fault');
+    expect(JSON.stringify(row)).not.toContain('ran before classify');
+  });
+
   it('leaves a reason from the closed vocabulary whole', () => {
     expect(toRow({ ...item, reason: 'policy_escalated' }).reason).toBe('policy_escalated');
   });
