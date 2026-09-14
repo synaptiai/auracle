@@ -558,9 +558,13 @@ person. Reaching the console is the whole access control. So an incident could
 not separate the operator from anyone else who reached the port.
 
 The approval records an approver. Today the value is a claim, not an
-authentication. A caller supplies it. The approval bounds what it keeps. A
-value that is too long, or that carries an ASCII control character, names
-nobody.
+authentication. A caller supplies it, and the approval bounds what it keeps.
+
+A name may hold letters, marks, numbers, punctuation, symbols and single ASCII
+spaces. It holds no character that draws nothing, such as a joiner, a variation
+selector or a blank filler. A mark needs a character before it, and no
+character carries more than four stacking marks. A value that is too long, or
+that breaks one of these rules, names nobody.
 
 An approval that names nobody records `unattributed`. That is a recorded fact
 and not a missing row. A null in the column means no approval reached the run.

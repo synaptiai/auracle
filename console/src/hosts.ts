@@ -90,7 +90,7 @@ export function allowedHosts(host: string, port: number): string[] {
  * console cannot check that from inside, and a variable that is only ever set
  * deliberately is the closest thing to a statement of it.
  *
- * The rest of the rule lives where it can be enforced: `approverFrom` in
+ * The rest of the rule lives where it can be enforced: `claimedApprover` in
  * `server.ts` refuses a value that arrived more than once, because a proxy
  * that appends rather than replaces is the failure this cannot otherwise see.
  *

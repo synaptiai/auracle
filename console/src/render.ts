@@ -29,6 +29,30 @@ export function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => ESCAPES[c] ?? c);
 }
 
+/**
+ * A person's initials, for the rail's avatar: the first character of each of
+ * the first two words, upper-cased.
+ *
+ * By visible character rather than by UTF-16 unit or code point. A name in
+ * decomposed form, a letter then its mark, is composed first, so `Å` shows as
+ * one letter. A word that opens with a mark gives no initial. One visible
+ * character after upper-casing too, because some letters upper-case to two:
+ * `ß` becomes `SS`. The caller escapes the result like any other text.
+ */
+export function initialsOf(name: string): string {
+  const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+  const first = (text: string): string => graphemes.segment(text)[Symbol.iterator]().next().value?.segment ?? '';
+  return name
+    .normalize('NFC')
+    .trim()
+    .split(/\s+/)
+    // A word that opens with a mark has no letter to show.
+    .filter((word) => word.length > 0 && !/^\p{M}/u.test(word))
+    .slice(0, 2)
+    .map((word) => first(first(word).toUpperCase()))
+    .join('');
+}
+
 export interface GateValues {
   /** Null when the run was gated before the agreement comparison ran. */
   readonly agreement: number | null;

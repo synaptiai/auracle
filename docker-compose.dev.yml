@@ -154,8 +154,8 @@ services:
       # derives loopback names only and refuses that Host.
       CONSOLE_ALLOWED_HOSTS: ${CONSOLE_ALLOWED_HOSTS:-}
     # Loopback, for the reason above. Reaching it from another machine goes
-    # through a proxy that authenticates the approver and sets
-    # CONSOLE_IDENTITY_HEADER (DEC-42).
+    # through a proxy that authenticates the approver and sets the header
+    # CONSOLE_IDENTITY_HEADER names, which `.env` supplies (DEC-42).
     ports:
       - "127.0.0.1:${CONSOLE_PORT:-8787}:${CONSOLE_PORT:-8787}"
     depends_on:

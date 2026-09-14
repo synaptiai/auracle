@@ -39,6 +39,12 @@ import type {
   ThreadView, Theme,
 } from './surfaces.js';
 import { describeFault } from 'auracle/cli';
+// The approval's own bound on a claimed name, so the rail names exactly who
+// the ledger would record.
+import { approverFrom, UNATTRIBUTED } from 'auracle/domain';
+// A host, an origin and a claimed approver all arrive from the request, and
+// JSON leaves several line breaks raw.
+import { logLine } from 'auracle/format';
 
 /**
  * Everything the console reads or writes, injected.
@@ -196,6 +202,22 @@ const SAFETY_HEADERS = {
   'cache-control': 'no-store',
 } as const;
 
+/**
+ * A request value as a log field: its first 64 characters, and its length.
+ * Both count characters, never UTF-16 units, so a value that is whole reads as
+ * whole.
+ *
+ * The form takes 64 KiB and a header up to Node's limit, and anyone who reaches
+ * the port may send either. The log says what arrived without copying it.
+ */
+const LOGGED_PREFIX = 64;
+function logged(value: string): string {
+  return Array.from(value).slice(0, LOGGED_PREFIX).join('');
+}
+function loggedLength(value: string): number {
+  return Array.from(value).length;
+}
+
 function send(res: ServerResponse, status: number, body: string, type = 'text/html'): void {
   res.writeHead(status, { ...SAFETY_HEADERS, 'content-type': `${type}; charset=utf-8` });
   res.end(body);
@@ -204,9 +226,10 @@ function send(res: ServerResponse, status: number, body: string, type = 'text/ht
 /**
  * A page with no rail.
  *
- * Used for the refusal, which answers a request whose `Host` this console does
- * not serve. The rail names the ledger this console is bound to, and a
- * refused request is exactly the one that should not be told.
+ * Used for every refusal: a `Host` this console does not serve, a form past its
+ * bound, and a run id of another shape. The rail names the ledger this console
+ * is bound to and the reviewer, and a refused request is exactly the one that
+ * should not be told.
  */
 function bare(title: string, says: string, theme: Theme): string {
   return [
@@ -310,37 +333,63 @@ function safeReturn(back: string | null, surfaces: readonly string[]): string {
 /**
  * The approver a trusted proxy named, or undefined (DEC-42).
  *
- * Two conditions, and both are necessary. The operator must have named the
- * header, because a console cannot guess which of its request headers a proxy
- * controls. And the operator must have named the hosts this console answers
- * to, because that is what says a proxy is in front of it at all: on the
- * loopback default there is none, so anyone reaching the port sets the header
- * themselves and the audit trail becomes forgeable.
+ * One condition: the operator named the header. A console cannot guess which
+ * of its request headers a proxy controls, and naming one is the operator's
+ * statement that a proxy in front sets it and strips any copy a client sent.
+ * `identityHeader()` in `hosts.ts` says why the hosts no longer decide this.
  *
- * Undefined rather than a fallback string. `approveRun` decides what an
- * unnamed approver records, and two places deciding that would eventually
- * disagree.
+ * Undefined rather than a fallback string. `approverFrom` decides what an
+ * unnamed approver records, and it has two callers: the approval records its
+ * answer, and the rail names the same answer. A third place deciding would
+ * eventually disagree with both.
  */
-function approverFrom(req: IncomingMessage, options: ConsoleOptions): string | undefined {
+function claimedApprover(req: IncomingMessage, options: ConsoleOptions): string | undefined {
   const header = options.identityHeader;
   if (header === undefined) return undefined;
-  const claimed = req.headers[header.toLowerCase()];
-  if (claimed === undefined) return undefined;
   // A repeated header is two claims, and this console cannot say which one
-  // the proxy meant — so it names nobody rather than guessing.
+  // the proxy meant — so it names nobody rather than guessing. A proxy that
+  // sets this header once and does not strip an inbound copy produces exactly
+  // that, which is the forgeable audit trail DEC-42 refuses.
   //
-  // Node does not hand those over as an array. Only `set-cookie` arrives that
-  // way; every other repeated header is joined with a comma into one string,
-  // so a check for an array was dead code and two headers reached the ledger
-  // as `ops-oncall, mallory`. A proxy that sets this header once and does not
-  // strip an inbound copy produces exactly that, which is the forgeable audit
-  // trail DEC-42 refuses.
-  //
+  // Read from `headersDistinct`, which keeps every line. `headers` joins a
+  // repeated `x-forwarded-user` with a comma, but for some names, such as
+  // `From` and `Authorization`, it keeps the first value and drops the rest
+  // without a sign. The operator may name any header.
+  const values = req.headersDistinct[header.toLowerCase()];
+  if (values === undefined || values.length !== 1) return undefined;
+  const claimed = values[0]!;
   // A comma cannot appear in a principal this console will keep, because it
-  // cannot tell one name containing a comma from two names joined by one.
-  if (Array.isArray(claimed)) return undefined;
+  // cannot tell one name containing a comma from two names a proxy folded
+  // into one line.
   if (claimed === '' || claimed.includes(',')) return undefined;
-  return claimed;
+  return headerText(claimed);
+}
+
+/**
+ * A header value as the text its sender meant.
+ *
+ * Node reads header bytes as Latin-1, one character per byte. A proxy that
+ * sends a name as UTF-8 then arrives as `NystrÃ¶m`, and that is what the
+ * ledger would record. So bytes that decode as UTF-8 are read as UTF-8.
+ *
+ * Bytes that do not decode stay as Node read them, because they are Latin-1
+ * text. A lone byte from 0xF5 to 0xFF, for example, never occurs in UTF-8.
+ * Plain ASCII reads the same either way. A comma never appears inside a
+ * UTF-8 sequence, so the check above sees every one.
+ *
+ * One trade-off remains. A Latin-1 name whose bytes also form valid UTF-8
+ * reads as UTF-8: the Latin-1 pair 0xC3 0xA9 records as one letter. Such a
+ * name needs a byte from 0xC2 to 0xF4 followed by one from 0x80 to 0xBF,
+ * which Latin-1 names rarely hold.
+ */
+function headerText(value: string): string {
+  const bytes = Buffer.from(value, 'latin1');
+  if (bytes.every((byte) => byte < 0x80)) return value;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return value;
+  }
 }
 
 /** A percent-escape that does not decode is a path nobody has, not a fault. */
@@ -356,9 +405,10 @@ export interface ConsoleOptions {
   /**
    * The header a trusted proxy sets to name the approver (DEC-42).
    *
-   * Undefined unless the operator named both this and the hosts to answer to.
-   * Naming the hosts is what says a proxy is in front; without it the console
-   * is on a bind where anyone reaching the port sets the header themselves.
+   * Undefined unless `CONSOLE_IDENTITY_HEADER` names it. Naming it is the
+   * operator's statement that a trusted proxy sets this header and strips any
+   * copy a client sent. The hosts do not decide this; `identityHeader()` in
+   * `hosts.ts` says why.
    */
   readonly identityHeader?: string;
   /**
@@ -391,8 +441,9 @@ export function createConsole(
       // in `CONSOLE_ALLOWED_HOSTS`. Without the refused `Host` on record the
       // console looks healthy and answers nothing, which is the one failure
       // an operator cannot diagnose from the page.
-      console.error(JSON.stringify({
+      console.error(logLine({
         event: 'console_refused',
+        reason: 'not_same_origin',
         method: req.method ?? null,
         host: req.headers.host ?? null,
         secFetchSite: req.headers['sec-fetch-site'] ?? null,
@@ -416,7 +467,7 @@ export function createConsole(
       // So the operator gets a tag and the log gets the text. They read the
       // log already; the refused-request line above is written for them.
       const tag = randomUUID().slice(0, 8);
-      console.error(JSON.stringify({ event: 'console_error', tag, error: reason }));
+      console.error(logLine({ event: 'console_error', tag, error: reason }));
       send(
         res,
         500,
@@ -426,14 +477,27 @@ export function createConsole(
   });
 }
 
+/**
+ * The reviewer the rail names: the approver this request would record, or
+ * null when it would record nobody (DEC-42).
+ *
+ * Read through the approval's own bound rather than restated, so the rail can
+ * never show a name the ledger would store as `unattributed`.
+ */
+function reviewerFor(req: IncomingMessage, options: ConsoleOptions): string | null {
+  const recorded = approverFrom(claimedApprover(req, options));
+  return recorded === UNATTRIBUTED ? null : recorded;
+}
+
 /** The shell for a surface, given what this request knows. */
 function shellFor(
   options: ConsoleOptions,
   theme: Theme,
   path: string,
   approvals: number | null,
+  reviewer: string | null,
 ): Shell {
-  return { theme, path, approvals, ledger: options.ledger };
+  return { theme, path, approvals, ledger: options.ledger, reviewer };
 }
 
 async function route(
@@ -456,8 +520,9 @@ async function route(
   }
   const path = url.pathname;
   const surfaces = ['/', '/approvals', '/bands', '/latency'];
+  const reviewer = reviewerFor(req, options);
   const shell = (at: string, approvals: number | null = null): Shell =>
-    shellFor(options, theme, at, approvals);
+    shellFor(options, theme, at, approvals, reviewer);
 
   if (req.method === 'GET' && path === CSS_PATH) {
     send(res, 200, css, 'text/css');
@@ -625,11 +690,30 @@ async function route(
   }
 
   if (req.method === 'POST' && path === '/approve') {
+    // Read before the body, and used by every line this route logs. A client
+    // that hangs up destroys its socket, and a later read of the address may
+    // find nothing.
+    const from = req.socket.remoteAddress ?? null;
     let form;
     try {
       form = await readForm(req);
     } catch (error) {
-      if (!(error instanceof OversizedForm)) throw error;
+      // Checked first: leaving the read loop past the bound destroys the stream
+      // too, and that is a refusal of the sender, not a hang-up.
+      if (!(error instanceof OversizedForm)) {
+        if (req.destroyed || req.readableAborted) {
+          // The client hung up mid-body. Nobody is left to answer, and it is not
+          // a console fault, so it is named and not sent to the fault handler.
+          console.error(logLine({
+            event: 'console_refused',
+            reason: 'client_aborted',
+            host: req.headers.host ?? null,
+            from,
+          }));
+          return;
+        }
+        throw error;
+      }
       // Refused, not failed. The stream is destroyed rather than drained,
       // because reading the rest of a body already past the bound is work
       // done on behalf of whoever sent it.
@@ -637,30 +721,52 @@ async function route(
       send(res, 413, bare('Refused', 'The approval form is larger than this console accepts.', theme));
       return;
     }
-    const runId = form.get('runId') ?? '';
+    const runId = (form.get('runId') ?? '').trim();
+    // A run id of another shape is a request this console declines, not a
+    // fault, so it never reaches the approval. `approveFromConsole` would throw
+    // on it, and the page would blame the ledger for a request that never got
+    // there. The GET routes answer the same input with a refusal too.
+    if (!isRunId(runId)) {
+      console.error(logLine({
+        event: 'console_refused',
+        reason: 'not_a_run_id',
+        runId: logged(runId),
+        runIdLength: loggedLength(runId),
+        host: req.headers.host ?? null,
+        from,
+      }));
+      send(res, 400, bare('Refused', 'That is not a run id, so nothing was approved.', theme));
+      return;
+    }
     // The run id is the whole request. Any other field is ignored, because
     // the relay sends the parked draft verbatim and a body posted here would
     // be recorded as the approved reply without ever reaching the customer.
     // DEC-42: who approved, when a trusted proxy named them.
     //
-    // Read only where the operator named the proxy this console sits behind.
-    // Anyone reaching the port can set a header, so on any other bind this
+    // Read only when the operator named the header a trusted proxy sets.
+    // Anyone reaching the port can set a header, so with no header named this
     // sends nothing and the approval records `unattributed` — a forgeable
     // audit trail is worse than none.
-    const outcome = await deps.approve(runId, approverFrom(req, options));
+    const claimed = claimedApprover(req, options);
+    const outcome = await deps.approve(runId, claimed);
     // The one write this console makes, and until now the only request it did
     // not record. The ledger journals that a run was approved; it does not
     // journal which client asked, and this console authenticates nobody, so
     // reaching it is the whole access control. Without this line an incident
     // has no console-side evidence separating the operator from anyone else
     // who could reach the port.
-    console.error(JSON.stringify({
+    console.error(logLine({
       event: 'console_approved',
       runId,
       outcome,
-      approvedBy: approverFrom(req, options) ?? null,
+      // What was claimed, and what the ledger records. They differ when the
+      // approval would not keep the claim, and an incident reader must not
+      // see a name the ledger never held.
+      claimedBy: claimed === undefined ? null : logged(claimed),
+      claimedLength: claimed === undefined ? null : loggedLength(claimed),
+      approvedBy: outcome === 'approved' ? approverFrom(claimed) : null,
       host: req.headers.host ?? null,
-      from: req.socket.remoteAddress ?? null,
+      from,
     }));
     // See other, so a refresh cannot post the approval twice.
     //

@@ -36,6 +36,7 @@ import type { DraftReadBack } from '../adapters/types.js';
 import { recordApprovedReply } from '../ledger/conversation.js';
 import { fencedTransition } from '../ledger/insert.js';
 import { deriveIdemKey } from '../ledger/keys.js';
+import { approverFrom } from './approver.js';
 import { recordApprovalEditDistance } from './measure.js';
 
 export type ApproveOutcome =
@@ -73,7 +74,7 @@ export interface ApproveOptions {
    * DEC-42: who approved, as a claim rather than an authentication.
    *
    * A caller supplies this only when a trusted proxy named the approver. The
-   * console reads that header only when the operator names the proxy, and
+   * console reads that header only when `CONSOLE_IDENTITY_HEADER` names it, and
    * passes nothing otherwise — because anyone reaching the port can set a
    * header, and a forgeable audit trail is worse than none.
    *
@@ -82,32 +83,6 @@ export interface ApproveOptions {
    * approval reached.
    */
   readonly approvedBy?: string;
-}
-
-/** DEC-42: what the ledger records when no trusted proxy named an approver. */
-export const UNATTRIBUTED = 'unattributed';
-
-/**
- * A principal a header claimed, reduced to something an audit column can hold.
- *
- * The bound and the character check live here rather than in the caller, so a
- * console that forgets them cannot bypass them: this function is the one
- * chokepoint every approval path goes through.
- *
- * A control character in an audit value is a log-injection primitive — it
- * lets one recorded approver forge the appearance of another line — and this
- * value arrives from a header. A value that fails either check names nobody,
- * so it records `unattributed` rather than throwing: DEC-42 already says an
- * unnamed approver is a recorded fact, and refusing the approval over the
- * audit field would put a customer reply behind a header's formatting.
- */
-export function approverFrom(claimed: string | undefined): string {
-  const named = claimed?.trim();
-  if (named === undefined || named === '') return UNATTRIBUTED;
-  // Generous for a proxy-supplied principal, and far below what `text` takes.
-  if (named.length > 256) return UNATTRIBUTED;
-  if (/[\u0000-\u001f\u007f]/.test(named)) return UNATTRIBUTED;
-  return named;
 }
 
 /** What the coordinator's `park` step recorded in the journal. */

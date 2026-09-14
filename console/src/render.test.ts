@@ -11,7 +11,9 @@
 // zero rather than an absence of one.
 import { describe, expect, it } from 'vitest';
 
-import { escalationHead, escapeHtml, renderGates, renderMetricValue } from './render.js';
+import {
+  escalationHead, escapeHtml, initialsOf, renderGates, renderMetricValue,
+} from './render.js';
 
 describe('the gate display', () => {
   it('shows agreement and coverage as two values, never one', () => {
@@ -229,5 +231,45 @@ describe('an escalation reason on an operator surface', () => {
 
   it('passes a null through as a null', () => {
     expect(escalationHead(null)).toBeNull();
+  });
+});
+
+// The rail's avatar (issue #100). Characters, not UTF-16 units: a name that
+// opens with a letter outside the basic plane must not render half of a
+// surrogate pair.
+describe('initialsOf', () => {
+  it('takes the first character of each of the first two words, upper-cased', () => {
+    expect(initialsOf('Ida Lindqvist')).toBe('IL');
+    expect(initialsOf('ida lindqvist')).toBe('IL');
+    expect(initialsOf('Åsa Berg Nyström')).toBe('ÅB');
+  });
+
+  // Some letters upper-case to two. The avatar holds one per word.
+  it('keeps one character per word when upper-casing yields two', () => {
+    expect(initialsOf('ßa Berg')).toBe('SB');
+  });
+
+  // A header may carry a name in decomposed form, a letter then its mark. The
+  // avatar shows the letter a reader sees, and a word that opens with a mark
+  // alone gives no initial.
+  it('takes the first visible character of each word', () => {
+    const decomposed = 'A\u030asa Nystro\u0308m';
+    expect(initialsOf(decomposed)).toBe('\u00c5N');
+    expect(initialsOf('ops \u0301')).toBe('O');
+    expect(initialsOf('\u0301')).toBe('');
+  });
+
+  it('takes one initial from a one-word name', () => {
+    expect(initialsOf('ops-oncall')).toBe('O');
+  });
+
+  it('counts a character outside the basic plane as one', () => {
+    const name = '\u{1D4D0}da Lind';
+    const initials = initialsOf(name);
+    expect(Array.from(initials)).toEqual(['\u{1D4D0}', 'L']);
+  });
+
+  it('ignores the whitespace around and between words', () => {
+    expect(initialsOf('  Ida   Lindqvist  ')).toBe('IL');
   });
 });

@@ -33,6 +33,9 @@ import { readDocument } from 'auracle/ledger-read';
 import { CLASSIFIER_K } from 'auracle/domain';
 import { readLatency } from 'auracle/ledger-read';
 import { humanMs } from 'auracle/format';
+// Every log line this process writes, so a value from a request cannot break
+// one line into two.
+import { logLine } from 'auracle/format';
 
 import { approveFromConsole } from './approve.js';
 import { CONSOLE_CSS } from './css.js';
@@ -205,7 +208,7 @@ async function main(): Promise<void> {
     try {
       await pool.end();
     } catch (error) {
-      console.error(JSON.stringify({
+      console.error(logLine({
         event: 'console_pool_end_failed',
         error: errorMessage(error),
       }));
@@ -220,7 +223,7 @@ async function main(): Promise<void> {
   // runs for as long as an operator keeps it open, so the exposure is its
   // whole uptime.
   pool.on('error', (error: Error & { code?: string }) => {
-    console.error(JSON.stringify({
+    console.error(logLine({
       event: 'console_pool_error',
       error: error.message,
       code: error.code ?? null,
@@ -466,9 +469,10 @@ async function main(): Promise<void> {
     },
   }, CONSOLE_CSS, {
     allowedHosts: hosts,
-    // DEC-42: read only where the operator named the proxy this console sits
-    // behind. `allowedHosts` names it, and naming nothing means loopback —
-    // where anyone reaching the port sets the header themselves.
+    // DEC-42: read only when `CONSOLE_IDENTITY_HEADER` names the header.
+    // Naming it is the operator's statement that a trusted proxy sets it and
+    // strips any copy a client sent. `identityHeader()` says why the hosts no
+    // longer decide this.
     ...(identity === undefined ? {} : { identityHeader: identity }),
     // The whole closed set. The filter offers every state the ledger can
     // hold, so a state with no runs today still has a link that says so —
@@ -482,7 +486,7 @@ async function main(): Promise<void> {
   // operator gets a raw stack for a busy port rather than the named-variable
   // message every other fault here produces.
   server.on('error', (error: Error & { code?: string }) => {
-    console.error(JSON.stringify({
+    console.error(logLine({
       event: 'console_listen_failed',
       error: error.message,
       code: error.code ?? null,
@@ -494,7 +498,7 @@ async function main(): Promise<void> {
   });
 
   server.listen(port, host, () => {
-    console.log(JSON.stringify({ event: 'console_listening', host, port }));
+    console.log(logLine({ event: 'console_listening', host, port }));
   });
 
   // Stop accepting, let an in-flight approval finish, close the pool. The

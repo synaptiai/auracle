@@ -24,7 +24,7 @@ import {
   type FencedRunInput,
 } from '../ledger/insert.js';
 import { indexDocument } from '../retriever/retriever.js';
-import { UNATTRIBUTED } from '../approval/approve.js';
+import { UNATTRIBUTED } from '../approval/approver.js';
 import { approvalEditDistance, tokenizeBody } from '../approval/edit_distance.js';
 import { SEED_THRESHOLDS } from '../policy/policy.js';
 import { journalStep } from '../ledger/journal-write.js';

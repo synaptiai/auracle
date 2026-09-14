@@ -260,9 +260,8 @@ async function startGuarded(
     allowedHosts: namedProxy === undefined
       ? [`127.0.0.1:${port}`, `localhost:${port}`]
       // Named, plus the loopback the test client actually connects over. The
-      // exclusivity of the allowlist is `hosts.test.ts`'s subject; here the
-      // point is that a proxy was named at all, which is what gates the
-      // identity header.
+      // exclusivity of the allowlist is `hosts.test.ts`'s subject. The hosts
+      // do not gate the identity header; only `identityHeader` does.
       : [...hostsFor(namedProxy, port), `127.0.0.1:${port}`],
     ...(identityHeader === undefined ? {} : { identityHeader }),
     states: [...STATES],
@@ -453,6 +452,34 @@ describe('the console against a page it did not serve', () => {
     expect(res.status).toBe(403);
     // The point: no reply was sent.
     expect(approve).not.toHaveBeenCalled();
+  });
+
+  // Two refusals share the event name, so each says which rule refused.
+  it('names the rule when it refuses a request from another site', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({ approve: vi.fn().mockResolvedValue('approved') }));
+      await fetch(`${base}/approve`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          'sec-fetch-site': 'cross-site',
+          origin: 'https://evil.example',
+        },
+        body: new URLSearchParams({ runId: RUN }).toString(),
+        redirect: 'manual',
+      });
+      const refused = logged
+        .map((entry) => JSON.parse(entry) as Record<string, unknown>)
+        .filter((entry) => entry['event'] === 'console_refused');
+      expect(refused).toHaveLength(1);
+      expect(refused[0]!['reason']).toBe('not_same_origin');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('refuses a form post whose Origin is another site', async () => {
@@ -716,6 +743,301 @@ describe('what a fault and a refusal tell the operator', () => {
       expect(record['runId']).toBe(RUN);
       expect(record['outcome']).toBe('approved');
       expect(record['from']).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // A run id of another shape is a request the console declines, not a
+  // fault. It never reaches the approval, and the refusal is logged.
+  it('refuses a run id of another shape without reaching the approval', async () => {
+    const approved: string[] = [];
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(
+        deps({ approve: async (runId: string) => { approved.push(runId); return 'approved'; } }),
+      );
+      const res = await fetch(base + '/approve', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          'sec-fetch-site': 'same-origin',
+        },
+        body: 'runId=abc',
+        redirect: 'manual' as const,
+      });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toContain('not a run id');
+      expect(approved).toEqual([]);
+      expect(logged.some((entry) => entry.includes('console_approved'))).toBe(false);
+      const refused = logged
+        .map((entry) => JSON.parse(entry) as Record<string, unknown>)
+        .find((entry) => entry['event'] === 'console_refused' && entry['reason'] === 'not_a_run_id');
+      expect(refused).toBeDefined();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // The form's run id reaches the refusal log. JSON leaves NEL and the Unicode
+  // line separator raw, and some log readers break a line at either, so one
+  // request could write what reads as a second entry.
+  // The log names what arrived without copying it. The form takes 64 KiB and a
+  // header up to Node's limit, and anyone who reaches the port may send either.
+  it('logs a bounded prefix and the length of an oversized run id', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({ approve: async () => 'approved' }));
+      await fetch(base + '/approve', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          'sec-fetch-site': 'same-origin',
+        },
+        body: 'runId=' + 'a'.repeat(10_000),
+        redirect: 'manual' as const,
+      });
+      const line = logged.find((entry) => entry.includes('"reason":"not_a_run_id"'));
+      expect(line).toBeDefined();
+      expect(line!.length).toBeLessThan(1_000);
+      const record = JSON.parse(line!) as Record<string, unknown>;
+      expect(record['runId']).toBe('a'.repeat(64));
+      expect(record['runIdLength']).toBe(10_000);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('logs a bounded prefix and the length of an oversized claimed approver', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({ approve: async () => 'approved' }), undefined, 'x-forwarded-user');
+      await fetch(base + '/approve', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          'sec-fetch-site': 'same-origin',
+          'x-forwarded-user': 'b'.repeat(8_000),
+        },
+        body: `runId=${RUN}`,
+        redirect: 'manual' as const,
+      });
+      const line = logged.find((entry) => entry.includes('console_approved'));
+      expect(line).toBeDefined();
+      expect(line!.length).toBeLessThan(1_000);
+      const record = JSON.parse(line!) as Record<string, unknown>;
+      expect(record['claimedBy']).toBe('b'.repeat(64));
+      expect(record['claimedLength']).toBe(8_000);
+      expect(record['approvedBy']).toBe('unattributed');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // The prefix and the length count the same unit: characters, not UTF-16
+  // units, so a name of emoji reads as whole when it is whole.
+  it('counts the logged prefix and the length in the same unit', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({ approve: async () => 'approved' }), undefined, 'x-forwarded-user');
+      const port = Number(new URL(base).port);
+      const claim = String.fromCodePoint(0x1f600).repeat(10);
+      const raw = Buffer.from(claim, 'utf8').toString('latin1');
+      await new Promise<void>((resolve, reject) => {
+        const req = request(
+          {
+            host: '127.0.0.1', port, path: '/approve', method: 'POST',
+            headers: [
+              'host', `127.0.0.1:${port}`,
+              'sec-fetch-site', 'same-origin',
+              'content-type', 'application/x-www-form-urlencoded',
+              'x-forwarded-user', raw,
+            ],
+          },
+          (res) => { res.resume(); res.on('end', resolve); },
+        );
+        req.on('error', reject);
+        req.end(`runId=${RUN}`);
+      });
+      const record = JSON.parse(logged.find((entry) => entry.includes('console_approved')) ?? '{}') as Record<string, unknown>;
+      expect(record['claimedBy']).toBe(claim);
+      expect(record['claimedLength']).toBe(10);
+      expect(record['approvedBy']).toBe(claim);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // A client that hangs up mid-body is not a console fault. It is refused and
+  // named for what it is, never logged as a failed ledger read.
+  it('names a client that hung up mid-body, and logs no console fault', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({ approve: async () => 'approved' }));
+      const port = Number(new URL(base).port);
+      await new Promise<void>((resolve) => {
+        const req = request({
+          host: '127.0.0.1', port, path: '/approve', method: 'POST',
+          headers: [
+            'host', `127.0.0.1:${port}`,
+            'sec-fetch-site', 'same-origin',
+            'content-type', 'application/x-www-form-urlencoded',
+            'content-length', '1000',
+          ],
+        });
+        req.on('error', () => resolve());
+        req.write('runId=abc');
+        setTimeout(() => { req.destroy(); resolve(); }, 50);
+      });
+      await new Promise((r) => setTimeout(r, 150));
+      const events = logged.map((entry) => JSON.parse(entry) as Record<string, unknown>);
+      expect(events.some((e) => e['event'] === 'console_error')).toBe(false);
+      const aborted = events.find((e) => e['event'] === 'console_refused' && e['reason'] === 'client_aborted');
+      expect(aborted).toBeDefined();
+      expect(aborted!['from']).toBe('127.0.0.1');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('keeps the refusal record on one line whatever the form carried', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({ approve: async () => 'approved' }));
+      await fetch(base + '/approve', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          'sec-fetch-site': 'same-origin',
+        },
+        body: 'runId=r%C2%85%E2%80%A8%7B%22event%22%3A%22forged%22%7D',
+        redirect: 'manual' as const,
+      });
+      const line = logged.find((entry) => entry.includes('"reason":"not_a_run_id"'));
+      expect(line).toBeDefined();
+      for (const code of [0x85, 0x2028]) {
+        expect(line, `U+${code.toString(16)}`).not.toContain(String.fromCharCode(code));
+      }
+      const record = JSON.parse(line ?? '{}') as Record<string, unknown>;
+      expect(record['runId']).toBe('r' + String.fromCharCode(0x85, 0x2028) + '{"event":"forged"}');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // The log names what was claimed and what the ledger records. They differ
+  // when the claim is one the approval would not keep, and an incident reader
+  // must not see a name the ledger never held.
+  it('logs the claimed approver beside the one the ledger records', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({ approve: async () => 'approved' }), undefined, 'x-forwarded-user');
+      await fetch(base + '/approve', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          'sec-fetch-site': 'same-origin',
+          'x-forwarded-user': 'a'.repeat(257),
+        },
+        body: `runId=${RUN}`,
+        redirect: 'manual' as const,
+      });
+      const line = logged.find((entry) => entry.includes('console_approved'));
+      expect(line).toBeDefined();
+      const record = JSON.parse(line ?? '{}') as Record<string, unknown>;
+      expect(record['claimedBy']).toBe('a'.repeat(64));
+      expect(record['claimedLength']).toBe(257);
+      expect(record['approvedBy']).toBe('unattributed');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // Nothing was recorded when the approval did not happen, so the log names
+  // no recorded approver for it.
+  it('names no recorded approver when the approval did not happen', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({ approve: async () => 'unknown_run' }), undefined, 'x-forwarded-user');
+      await fetch(base + '/approve', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          'sec-fetch-site': 'same-origin',
+          'x-forwarded-user': 'ops-oncall',
+        },
+        body: `runId=${RUN}`,
+        redirect: 'manual' as const,
+      });
+      const record = JSON.parse(logged.find((entry) => entry.includes('console_approved')) ?? '{}') as Record<string, unknown>;
+      expect(record['outcome']).toBe('unknown_run');
+      expect(record['claimedBy']).toBe('ops-oncall');
+      expect(record['approvedBy']).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // The claimed approver comes from a header, as raw bytes. Bytes that decode
+  // to NEL and the Unicode line separator must not break the approval line.
+  it('keeps the approval record on one line whatever the header carried', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({ approve: async () => 'approved' }), undefined, 'x-forwarded-user');
+      const port = Number(new URL(base).port);
+      const claim = 'ops' + String.fromCharCode(0x2028, 0x85) + 'mallory';
+      const raw = Buffer.from(claim, 'utf8').toString('latin1');
+      await new Promise<void>((resolve, reject) => {
+        const req = request(
+          {
+            host: '127.0.0.1', port, path: '/approve', method: 'POST',
+            headers: [
+              'host', `127.0.0.1:${port}`,
+              'sec-fetch-site', 'same-origin',
+              'content-type', 'application/x-www-form-urlencoded',
+              'x-forwarded-user', raw,
+            ],
+          },
+          (res) => { res.resume(); res.on('end', resolve); },
+        );
+        req.on('error', reject);
+        req.end(`runId=${RUN}`);
+      });
+      const line = logged.find((entry) => entry.includes('console_approved'));
+      expect(line).toBeDefined();
+      for (const code of [0x85, 0x2028]) {
+        expect(line, `U+${code.toString(16)}`).not.toContain(String.fromCharCode(code));
+      }
+      const record = JSON.parse(line ?? '{}') as Record<string, unknown>;
+      expect(record['claimedBy']).toBe(claim);
+      expect(record['approvedBy']).toBe('unattributed');
     } finally {
       spy.mockRestore();
     }
@@ -1506,15 +1828,31 @@ describe('who the ledger records as the approver', () => {
     return calls;
   }
 
-  // DEC-42. Both conditions are necessary. The operator names the header,
-  // because a console cannot guess which of its request headers a proxy
-  // controls. And the operator names the hosts, because that is what says a
-  // proxy is in front at all.
+  // DEC-42. The operator names the header, because a console cannot guess
+  // which of its request headers a proxy controls. Naming it is the
+  // operator's statement that a proxy in front sets it.
   it('takes the header a trusted proxy set, once the operator names it', async () => {
     expect(await approveWith(
       { identityHeader: 'x-forwarded-user' },
       { 'x-forwarded-user': 'ops-oncall' },
     )).toEqual(['ops-oncall']);
+  });
+
+  // Node reads header bytes as Latin-1. A proxy that sends UTF-8 bytes would
+  // otherwise put a name like `NystrÃ¶m` in the audit column.
+  it('passes on a name a proxy sent as UTF-8 bytes as the name it sent', async () => {
+    expect(await approveWith(
+      { identityHeader: 'x-forwarded-user' },
+      { 'x-forwarded-user': Buffer.from('Åsa Nyström', 'utf8').toString('latin1') },
+    )).toEqual(['Åsa Nyström']);
+  });
+
+  // A byte that is not UTF-8 is Latin-1 text, and it stays as Node read it.
+  it('passes on a Latin-1 name unchanged', async () => {
+    expect(await approveWith(
+      { identityHeader: 'x-forwarded-user' },
+      { 'x-forwarded-user': 'Åsa Nyström' },
+    )).toEqual(['Åsa Nyström']);
   });
 
   it('sends nothing when the operator named no header', async () => {
@@ -1553,6 +1891,43 @@ describe('who the ledger records as the approver', () => {
             'content-type': 'application/x-www-form-urlencoded',
             'x-forwarded-user': ['ops-oncall', 'mallory'],
           },
+        },
+        (res) => { res.resume(); res.on('end', resolve); },
+      );
+      req.on('error', reject);
+      req.end(`runId=${RUN}`);
+    });
+    expect(calls).toEqual([undefined]);
+  });
+
+  // Node joins a repeated header only for some names. For others, such as
+  // `From`, it keeps the first value and drops the rest without a sign. The
+  // operator may name any header, so the second claim must still be seen.
+  it('names nobody when a header Node keeps only once arrived twice', async () => {
+    const calls: (string | undefined)[] = [];
+    const base = await startGuarded(
+      deps({
+        approve: async (runId: string, approvedBy: string | undefined) => {
+          calls.push(approvedBy);
+          return 'approved';
+        },
+      }),
+      undefined,
+      'from',
+    );
+    const port = Number(new URL(base).port);
+    await new Promise<void>((resolve, reject) => {
+      const req = request(
+        {
+          host: '127.0.0.1', port, path: '/approve', method: 'POST',
+          // The flat form, because the typed one allows `From` only once.
+          headers: [
+            'host', `127.0.0.1:${port}`,
+            'sec-fetch-site', 'same-origin',
+            'content-type', 'application/x-www-form-urlencoded',
+            'from', 'ops-oncall',
+            'from', 'mallory',
+          ],
         },
         (res) => { res.resume(); res.on('end', resolve); },
       );
@@ -2257,5 +2632,131 @@ describe('what the gate panel says when a threshold decided nothing', () => {
     }));
     const html = await (await fetch(base + '/approvals')).text();
     expect(html).not.toContain('before it read');
+  });
+});
+
+// The rail every surface shares (issue #100). Three groups in the reviewer
+// design; a group with no surface behind it is left out rather than drawn as
+// a heading over nothing.
+describe('the rail', () => {
+  /** The rail's markup, cut from a rendered page. */
+  function railOf(html: string): string {
+    const start = html.indexOf('<div class="rail">');
+    const end = html.indexOf('<div class="main">');
+    expect(start, 'the page draws a rail').toBeGreaterThanOrEqual(0);
+    expect(end, 'the rail sits before the main column').toBeGreaterThan(start);
+    return html.slice(start, end);
+  }
+
+  /** Each group's label and the link titles under it, in page order. */
+  function groupsOf(rail: string): [string, string[]][] {
+    const groups: [string, string[]][] = [];
+    for (const part of rail.split('<div class="navgroup">').slice(1)) {
+      const label = /^<div class="lbl">([^<]*)<\/div>/.exec(part)?.[1];
+      expect(label, 'every group carries a label').toBeDefined();
+      const titles = [...part.matchAll(/<span class="navlabel">([^<]*)<\/span>/g)]
+        .map((m) => m[1]!);
+      groups.push([label!, titles]);
+    }
+    return groups;
+  }
+
+  it('groups the surfaces as work and administration', async () => {
+    const base = await startGuarded(deps());
+    const rail = railOf(await (await fetch(base + '/bands')).text());
+    expect(groupsOf(rail)).toEqual([
+      ['Work', ['Approval queue']],
+      ['Admin', ['Runs', 'Control bands', 'Partition latency']],
+    ]);
+  });
+
+  it('names the product as a support console', async () => {
+    const base = await startGuarded(deps());
+    const rail = railOf(await (await fetch(base + '/bands')).text());
+    expect(rail).toContain('support console');
+    expect(rail).not.toContain('operator console');
+  });
+
+  // The label shrinks and the badge does not. Without the split a long title
+  // wraps inside the rail, and a badge inside the label wraps with it.
+  it('keeps the badge outside the label it counts', async () => {
+    const base = await startGuarded(deps());
+    const rail = railOf(await (await fetch(base + '/approvals')).text());
+    expect(rail).toMatch(
+      /<a href="\/approvals" class="on"><span class="navlabel">Approval queue<\/span><span class="badge">\d+<\/span><\/a>/,
+    );
+  });
+
+  describe('the reviewer it names', () => {
+    async function footWith(
+      identityHeader: string | undefined,
+      headers: Record<string, string>,
+    ): Promise<string> {
+      const base = await startGuarded(deps(), undefined, identityHeader);
+      const html = await (await fetch(base + '/bands', { headers })).text();
+      const rail = railOf(html);
+      const foot = rail.indexOf('<div class="railfoot">');
+      expect(foot, 'the rail has a foot').toBeGreaterThanOrEqual(0);
+      return rail.slice(foot);
+    }
+
+    it('names the person a trusted proxy named, with their initials', async () => {
+      const foot = await footWith('x-forwarded-user', { 'x-forwarded-user': 'Ida Lindqvist' });
+      expect(foot).toContain('>Ida Lindqvist<');
+      expect(foot).toContain('>IL<');
+      expect(foot).not.toContain('no reviewer named');
+    });
+
+    // DEC-42: no header was named, so any header a caller sent is its own
+    // claim and names nobody.
+    it('names nobody when the operator named no header', async () => {
+      const foot = await footWith(undefined, { 'x-forwarded-user': 'Ida Lindqvist' });
+      expect(foot).toContain('no reviewer named');
+      expect(foot).not.toContain('Ida Lindqvist');
+    });
+
+    it('names nobody when the proxy sent no name', async () => {
+      const foot = await footWith('x-forwarded-user', {});
+      expect(foot).toContain('no reviewer named');
+    });
+
+    // The rail must name the value the ledger would record. A name the
+    // approval would store as `unattributed` is not a name to show.
+    it('names nobody the ledger would not record', async () => {
+      const foot = await footWith('x-forwarded-user', { 'x-forwarded-user': 'a'.repeat(257) });
+      expect(foot).toContain('no reviewer named');
+      expect(foot).not.toContain('a'.repeat(257));
+    });
+
+    it('names nobody when two names arrived as one', async () => {
+      const foot = await footWith('x-forwarded-user', { 'x-forwarded-user': 'ops-oncall, mallory' });
+      expect(foot).toContain('no reviewer named');
+      expect(foot).not.toContain('mallory');
+    });
+
+    it('escapes the name it was handed', async () => {
+      const foot = await footWith('x-forwarded-user', { 'x-forwarded-user': '<b>ida</b>' });
+      expect(foot).toContain('&lt;b&gt;ida&lt;/b&gt;');
+      expect(foot).not.toContain('<b>ida</b>');
+    });
+
+    // Node reads header bytes as Latin-1. A proxy that sends a name as UTF-8
+    // bytes must still reach the rail, and the ledger, as the name it sent.
+    it('reads a name a proxy sent as UTF-8 bytes', async () => {
+      const utf8AsLatin1 = Buffer.from('Åsa Nyström', 'utf8').toString('latin1');
+      expect(utf8AsLatin1).not.toBe('Åsa Nyström');
+      const foot = await footWith('x-forwarded-user', { 'x-forwarded-user': utf8AsLatin1 });
+      expect(foot).toContain('>Åsa Nyström<');
+      expect(foot).toContain('>ÅN<');
+    });
+
+    // A header carries Latin-1, so an accented name reaches the rail whole.
+    it('takes initials from the first two words of the name', async () => {
+      const one = await footWith('x-forwarded-user', { 'x-forwarded-user': 'ops-oncall' });
+      expect(one).toContain('>O<');
+      const accented = await footWith('x-forwarded-user', { 'x-forwarded-user': 'Åsa Berg Nyström' });
+      expect(accented).toContain('>ÅB<');
+      expect(accented).toContain('>Åsa Berg Nyström<');
+    });
   });
 });

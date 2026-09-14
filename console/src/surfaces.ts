@@ -14,7 +14,7 @@
 // operator should see; a rendered page is a claim about what the ledger
 // holds, and the two are not the same document. Every omission of that kind
 // is named in `docs/operations.md`.
-import { escapeHtml, renderGates, renderMetricValue } from './render.js';
+import { escapeHtml, initialsOf, renderGates, renderMetricValue } from './render.js';
 // The engine's own record of which rules reach which gate. Re-deriving that
 // order here would be a second copy of it, free to drift from the one the
 // policy engine runs.
@@ -82,15 +82,25 @@ export interface Shell {
   readonly approvals: number | null;
   /** Which ledger this console is bound to, without its credentials. */
   readonly ledger: string;
+  /**
+   * The person a trusted proxy named for this request, as the ledger would
+   * record them (DEC-42), or null when nobody is named.
+   *
+   * Null rather than a placeholder. A rail that invented a name would claim
+   * an identity the approval would not record.
+   */
+  readonly reviewer: string | null;
 }
 
 /**
- * The rail, in two groups.
+ * The rail's groups: the work, the knowledge behind it, and administration.
  *
- * Two audiences with different units of work. A responder works a
- * conversation and a queue; an administrator audits a run and reads a band.
- * Five peers made every operator scan all five, and put the queue — the one
- * surface with a deadline on it — beside a latency report.
+ * A reviewer clears a queue, and an engineer audits a run or reads a band.
+ * The work group comes first because it is the one with a deadline on it;
+ * the surfaces an engineer audits sit under Admin, out of that path.
+ *
+ * A group with no surface behind it is left out rather than drawn as a
+ * heading over nothing, so the knowledge group appears with its first screen.
  *
  * `Conversations` has no listing of its own. A conversation is reached from
  * the run that answered it, because the ledger has no ordering over
@@ -105,8 +115,11 @@ const GROUPS: readonly {
     title: 'Work',
     surfaces: [{ href: '/approvals', title: 'Approval queue' }],
   },
+  // Declared with no surface, so its place between the work and the admin
+  // surfaces is fixed before its first screen exists. It draws nothing yet.
+  { title: 'Knowledge', surfaces: [] },
   {
-    title: 'Instrument',
+    title: 'Admin',
     surfaces: [
       { href: '/', title: 'Runs' },
       { href: '/bands', title: 'Control bands' },
@@ -114,7 +127,6 @@ const GROUPS: readonly {
     ],
   },
 ];
-
 
 /**
  * The theme the next click asks for, and the label that names it.
@@ -130,29 +142,55 @@ function themeLink(shell: Shell): string {
     + `<span class="dot"></span>${next} theme</a>`;
 }
 
+/**
+ * Who is working, at the foot of the rail.
+ *
+ * The name a trusted proxy supplied, or a sentence saying nobody is named.
+ * The sub-line says where the name came from, because DEC-42 records it as a
+ * claim the proxy made and not as a login this console checked.
+ */
+function reviewerBlock(reviewer: string | null): string {
+  if (reviewer === null) {
+    return '<div class="reviewer"><span class="absent">no reviewer named</span></div>';
+  }
+  return [
+    '<div class="reviewer">',
+    `<span class="avatar m">${escapeHtml(initialsOf(reviewer))}</span>`,
+    '<div>',
+    `<div class="rname">${escapeHtml(reviewer)}</div>`,
+    '<div class="rsub">named by the proxy</div>',
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
 /** The rail every surface renders beside. */
 function rail(shell: Shell): string {
-  const groups = GROUPS.map((group) => {
+  const groups = GROUPS.filter((group) => group.surfaces.length > 0).map((group) => {
     const links = group.surfaces.map((surface) => {
       const on = surface.href === shell.path ? ' class="on"' : '';
       // The badge counts only what this page actually counted.
       const badge = surface.href === '/approvals' && shell.approvals !== null
         ? `<span class="badge">${escapeHtml(String(shell.approvals))}</span>`
         : '';
-      return `<a href="${surface.href}"${on}>${escapeHtml(surface.title)}${badge}</a>`;
+      // The label and the badge are siblings. The label may shrink and
+      // ellipsise; the badge never does, so a long title cannot push a count
+      // onto a second line.
+      return `<a href="${surface.href}"${on}>`
+        + `<span class="navlabel">${escapeHtml(surface.title)}</span>${badge}</a>`;
     }).join('');
     return `<div class="navgroup"><div class="lbl">${escapeHtml(group.title)}</div>${links}</div>`;
   }).join('');
   return [
     '<div class="rail">',
     '<div class="brand">',
-    '<div class="m" style="font-size:15px; font-weight:600; letter-spacing:-.01em">auracle</div>',
-    '<div class="lbl" style="margin-top:3px">operator console</div>',
+    '<div class="m brandname">auracle</div>',
+    '<div class="lbl brandsub">support console</div>',
     '</div>',
     `<div class="nav">${groups}</div>`,
     '<div class="railfoot">',
-    '<div class="lbl">Bound to</div>',
-    `<span class="chip"><span class="dot" style="color:var(--ok)"></span>${escapeHtml(shell.ledger)}</span>`,
+    reviewerBlock(shell.reviewer),
+    `<span class="chip"><span class="dot" style="color:var(--ok)"></span>ledger · ${escapeHtml(shell.ledger)}</span>`,
     themeLink(shell),
     '</div>',
     '</div>',

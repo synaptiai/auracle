@@ -100,7 +100,8 @@ authenticates nobody. The webhook accepts every request while
 `WEBHOOK_SECRET` is empty.
 
 So a proxy authenticates anything that reaches them from another machine.
-That proxy sets `CONSOLE_IDENTITY_HEADER` (DEC-42).
+That proxy sets the header `CONSOLE_IDENTITY_HEADER` names, and strips any
+copy a client sent (DEC-42).
 `CONSOLE_ALLOWED_HOSTS` must then name the host. Without it the console
 refuses the `Host` the browser sends.
 
@@ -1177,8 +1178,20 @@ Seven surfaces read live data. Runs, one run in detail, and the approval
 queue. One conversation and one document. The control bands and the partition
 latency.
 
-The rail holds four of them, in two groups. The queue is the work an operator
-comes to do. The runs, the bands and the latency are what they audit.
+The rail holds four of them, in two groups. Work holds the queue, which is
+what a reviewer comes to do. Admin holds the runs, the bands and the latency,
+which an engineer audits. The rail draws no group that has no surface.
+
+A reviewer is an operator who approves a reply. The foot of the rail names the
+reviewer. The name is the one a trusted proxy supplies, bounded the way the
+approval bounds it (DEC-42). So the rail shows
+the name the ledger would record. When the approval would record
+`unattributed`, the rail says that no reviewer is named.
+
+The proxy may send the name as UTF-8 or as Latin-1. The console reads bytes
+that decode as UTF-8 as UTF-8, and any other bytes as Latin-1. A Latin-1 name
+whose bytes also form valid UTF-8 therefore reads as UTF-8. Such a name is
+rare.
 
 A conversation and a document are reached from the run that names them. The
 ledger orders conversations by when a problem opened. That is not when one
