@@ -21,6 +21,57 @@ CASES = [
     ("six sentences pass", PASS,
      " ".join(f"Line {n} is short." for n in range(6)) + "\n"),
     ("seven sentences break rule 2", FAIL, SEVEN + "\n"),
+    # Front matter is metadata, not prose. No shipped file opens with it, but a
+    # run that names a design document reads one, and its keys would read as
+    # one 30-word sentence.
+    ("front matter at the start is not prose", PASS,
+     "---\ntitle: \"" + ("word " * 20).strip() + "\"\nauthor: code\n"
+     + "tags: [a, b, c]\n---\n\nThe relay sends first.\n"),
+    # Only at the start. A thematic break later in a document is a rule,
+    # and the prose between two of them is prose.
+    ("prose between two later rules still breaks rule 1", FAIL,
+     "The relay sends first.\n\n---\n" + LONG.strip() + ".\n---\n"),
+    ("a long sentence after front matter still breaks rule 1", FAIL,
+     "---\ntitle: short\n---\n\n" + LONG.strip() + ".\n"),
+    # A block that opens and never closes is not front matter, so its text
+    # stays prose rather than vanishing from the check.
+    ("an unclosed opening rule is not front matter", FAIL,
+     "---\n" + LONG.strip() + ".\n"),
+    # A block is front matter only when every line in it is a known key. A
+    # blank line or a sentence ends it, so prose between an opening rule and a
+    # later one stays prose, and a later pair of rules hides nothing.
+    ("prose after a blank line under an opening rule is not front matter", FAIL,
+     "---\n\n" + LONG.strip() + ".\n\n---\n"),
+    ("front matter that runs into a blank line is not front matter", FAIL,
+     "---\ntitle: x\n\n" + LONG.strip() + ".\n\n---\n"),
+    ("a later pair of rules after real front matter hides nothing", FAIL,
+     "---\ntitle: short\n---\n\nShort.\n\n---\n\n" + LONG.strip() + ".\n\n---\n"),
+    # Front matter holds metadata keys alone. Prose between two rules is prose,
+    # with or without a key above it and with no blank line anywhere.
+    ("prose between an opening rule and its closer is not front matter", FAIL,
+     "---\n" + LONG.strip() + ".\n---\n\nShort.\n"),
+    ("a key line does not make the prose under it metadata", FAIL,
+     "---\ntitle: x\n" + LONG.strip() + ".\n---\n"),
+    ("a later rule with no blank line hides nothing after front matter", FAIL,
+     "---\ntitle: b\n---\n" + LONG.strip() + ".\n---\n"),
+    ("an unknown key is not front matter", FAIL,
+     "---\nnote: " + LONG.strip() + ".\n---\n"),
+    # Only at the very start. A block further down is a rule and prose, and the
+    # prose above it is never dropped.
+    ("front matter below prose is not front matter", FAIL,
+     LONG.strip() + ".\n\n---\ntitle: x\n---\n"),
+    ("front matter below prose with no blank line is not front matter", FAIL,
+     LONG.strip() + ".\n---\ntitle: x\n---\n"),
+    # A block that never closes is not front matter, even at the end of a file.
+    ("a key line that never closes is prose", FAIL,
+     "---\ntitle: " + LONG.strip() + "."),
+    # A key is a key only with its colon. A sentence that opens with a key word
+    # is prose.
+    ("a line that only opens with a key word is prose", FAIL,
+     "---\ntitle: x\ntags are " + LONG.strip() + ".\n---\n"),
+    # A byte-order mark is not text. Front matter after one is still metadata.
+    ("front matter after a byte-order mark is not prose", PASS,
+     "\ufeff---\ntitle: \"" + ("word " * 20).strip() + "\"\n---\n\nThe relay sends first.\n"),
     # Rule 2 is prose only. A procedure of seven steps is legal.
     ("seven numbered steps pass", PASS,
      "\n".join(f"{n}. Step {n} runs." for n in range(1, 8)) + "\n"),

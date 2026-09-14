@@ -120,7 +120,7 @@ flowchart TB
 | ADAPT | The components that connect the system to one external system. |
 | HD | The reference helpdesk adapter. It holds fixtures and reaches no network. |
 | SMTP | The mail adapter. An adopter chooses it, and then real mail leaves. |
-| PERSON | A reviewer. For a customer reply they read the draft inside the tool they already use. |
+| PERSON | A reviewer. For a customer reply they read the draft in the helpdesk or the operator console. |
 | APPR | The command a reviewer runs to approve one parked action. |
 | RELAYD | The daemon that drains the outbox. |
 | RL | It sends the action, and only then records that it sent. |
@@ -129,10 +129,11 @@ Read the two arrows into the outbox together. A reversible internal write goes
 automatically. A customer reply does not, so it waits (DEC-12).
 
 Two kinds of work wait for a person, and they wait in different places. A
-customer reply parks as a draft in the adapter. The reviewer opens it in
-the tool they already use (DEC-11). A gated internal write has nothing to park
-there, so it parks in the ledger and calls no adapter (DEC-34). The escalations
-report is how a person finds that second kind.
+customer reply parks as a draft in the adapter. The reviewer opens it in the
+helpdesk or the operator console (DEC-11, DEC-40, DEC-44). A gated internal
+write has nothing to park there, so it parks in the ledger and calls no
+adapter (DEC-34). The escalations report is how a person finds that second
+kind.
 
 The order inside the relay matters. A status written before the send turns a
 crash into an action that looks sent and never was.

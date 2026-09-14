@@ -11,7 +11,7 @@ Check correctness against the claimed behaviour.
   idempotency keys against them. The epoch is a number that increases. It makes
   a write from a stale owner fail instead of corrupt the state. The
   idempotency key comes from the action data, not the run identity. Two runs of
-  one action therefore share a key and land once on the target.
+  one request therefore share a key and land once on the target.
 - Check liveness. A run must not wait for a result that no component supplies.
   A run that loses an outbox insert must stop as `superseded`, never wait in
   `queued`.

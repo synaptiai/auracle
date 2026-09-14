@@ -28,6 +28,10 @@ length pass as long as a bullet followed it.
 Code fences drop out entirely. Inline code collapses to one word, because a
 path or an identifier is one term to a reader.
 
+A YAML front-matter block that opens a file drops out too, when every line in
+it is a known metadata key. No file in the shipped set opens with one; the
+rule serves a run that names a file, such as a design document.
+
 Usage: python3 scripts/ste-check.py [FILE ...]
 With no FILE, it checks the shipped set named by SHIPPED_GLOBS below.
 That set is the one definition. `pnpm run check:ste` and the Guardrails
@@ -122,8 +126,37 @@ def sentences(text: str) -> list[str]:
     return joined
 
 
+# The keys front matter holds in this repository. A line with any other shape
+# makes the block prose, so a sentence cannot pass as metadata by sitting
+# between two rules. Documents under docs/design/ use only these five.
+FRONT_MATTER_KEYS = ("title", "author", "tags", "created_at", "updated_at")
+FRONT_MATTER_LINE = re.compile(
+    r"(?:" + "|".join(FRONT_MATTER_KEYS) + r")[ \t]*:(?:[ \t].*)?"
+)
+RULE_LINE = re.compile(r"---[ \t]*")
+
+
+def strip_front_matter(text: str) -> str:
+    """Drops a YAML block that opens the file and holds metadata keys alone.
+
+    The block must close, and every line in it must be a known key. Otherwise
+    nothing is dropped and the lines are read as prose, so a malformed block
+    is a visible finding rather than a silent pass.
+    """
+    lines = text.split("\n")
+    if not lines or not RULE_LINE.fullmatch(lines[0]):
+        return text
+    for index in range(1, len(lines)):
+        if RULE_LINE.fullmatch(lines[index]):
+            return "\n".join(lines[index + 1:])
+        if not FRONT_MATTER_LINE.fullmatch(lines[index]):
+            return text
+    return text
+
+
 def normalize(text: str) -> str:
     """Strips what a reader does not read as prose."""
+    text = strip_front_matter(text)
     text = re.sub(r"```.*?```", "", text, flags=re.S)
     text = re.sub(r"`[^`]*`", "x", text)
     # A heading is its own unit, even with no blank line around it.
@@ -173,7 +206,9 @@ def read_text(path: str) -> tuple[str, list[str]]:
     document that is not UTF-8 was a finding there and a traceback here.
     """
     try:
-        with open(path, encoding="utf-8") as handle:
+        # `utf-8-sig`, so a byte-order mark is not read as text before the
+        # front matter. Bytes that are not UTF-8 still raise.
+        with open(path, encoding="utf-8-sig") as handle:
             return handle.read(), []
     except UnicodeDecodeError:
         return "", [f"{path}: not UTF-8"]

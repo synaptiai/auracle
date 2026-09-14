@@ -4,7 +4,7 @@ One screen. Which decisions a directory answers to, and what turns red when
 you change it. The last column points at the runbook.
 
 `docs/v1-architecture.md` is the authority and holds every decision, DEC-01 to
-DEC-43. This page indexes it and never restates it. A cell names the decisions a
+DEC-51. This page indexes it and never restates it. A cell names the decisions a
 reader most needs. It does not name every decision the directory mentions.
 
 The key test is the file that turns red first. It is not the only test that
@@ -57,7 +57,8 @@ surface. A pointer to a section that does not cover them is worse than a gap.
 
 ## Decisions no row names
 
-DEC-01, DEC-08, DEC-15, DEC-33.
+DEC-01, DEC-08, DEC-15, DEC-33, DEC-44, DEC-45, DEC-46, DEC-47, DEC-48, DEC-49,
+DEC-50, DEC-51.
 
 DEC-08 and DEC-15 hold across the repository, so no directory owns either.
 DEC-08 fixes the language this system is written in. DEC-15 states that no
@@ -66,6 +67,11 @@ runtime path removes personal data.
 DEC-01 and DEC-33 do belong to directories. `adapters` cites DEC-01 in four
 module headers, and `adapters` and `approval` both carry DEC-33. Neither made
 a cell that holds four decisions at most. Read the module headers for those.
+
+The eight rows the register gained on 2026-09-14 have no directory that
+implements them yet. Each joins the row of the directory that implements it,
+in the change that ships it. Until then a row names the decisions its code
+obeys today.
 
 `scripts/check-docs.py` proves this list is exactly the set no row names. A
 decision that leaves the table, or joins it, fails `pnpm run check:docs`.

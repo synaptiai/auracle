@@ -353,6 +353,36 @@ correction, and no correction exists.
 
 ---
 
+## The reviewer console
+
+### What it asks
+
+A small team of part-time engineers reviews every case the system hands to a
+person. The operator console becomes their working tool. A reviewer takes a
+case, edits the reply there and sends it.
+
+### Where it stands
+
+The register gained DEC-44 to DEC-51 on 2026-09-14. They cover the review
+tool, an authenticated reviewer, a reservation, a product and the ways a case
+ends. They also cover a new attempt, knowledge written from a case and a held
+send. `c8b2e42f-b76d-43ef-8010-f7e8932bde48.md` under `docs/design/` records
+the reasoning.
+
+### What blocks it
+
+One defect blocks the rows that move a parked reply. A consumer start, or a
+later run on the same ticket, raises the fence over a reply already parked.
+No approval then accepts that reply, and issue 113 records it.
+
+### The next step
+
+Work the register already permitted proceeds: the visual design, the grouped
+queue and the case screen. Each row ships in its own change, and that change
+corrects the statements the proposal lists for it.
+
+---
+
 ## The items that have closed
 
 | Item | What settles it |

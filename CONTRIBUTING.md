@@ -3,7 +3,7 @@
 This guide takes you from a clean checkout to a merged pull request.
 Read it once before you write code.
 The design authority is `docs/v1-architecture.md`.
-That document holds decisions DEC-01 to DEC-43.
+That document holds decisions DEC-01 to DEC-51.
 A statement that does not trace to a DEC is an implementation detail.
 
 ## 1. Set up and verify your checkout

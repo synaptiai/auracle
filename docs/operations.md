@@ -419,8 +419,8 @@ The flow has these steps:
 4. A person reviews the draft in the helpdesk or in the Drafts mailbox.
 5. A person approves with `pnpm run approve -- --run <run-id>`.
 6. The approval writes a record to the outbox. The idempotency key comes from
-   the action semantics (DEC-24). Two runs of one action then produce the same
-   key, so a retry cannot deliver the reply twice.
+   the action semantics (DEC-24). Two runs of one request then produce the
+   same key, so a retry cannot deliver the reply twice.
 7. The relay picks up the record and delivers the reply through the adapter.
 
 Each customer reply carries a non-empty `disclosure` field (DEC-14).

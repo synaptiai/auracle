@@ -9,7 +9,8 @@
 // not a list of assertions. It partitions its own output into sentences and
 // labels each one. A claim cites a retrieved span. A courtesy sentence opens
 // or closes the reply and states no fact. The draft is those sentences in
-// order, so the text a customer reads is the text the gate scored.
+// order, so the text the composer drafts is the text the gate scored. A person
+// may still edit it before it is sent (DEC-40, DEC-44).
 //
 // An earlier prompt asked for "one claim per line" and joined the lines. That
 // contract could only ever produce a bag of sentences, and it did: a run

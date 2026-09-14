@@ -254,7 +254,7 @@ loaded only to format a number.
 
 ## Architecture
 
-The authoritative design is `docs/v1-architecture.md`. It holds 43 numbered decisions, DEC-01 to DEC-43. The decisions are the only design authority. If a statement does not trace to a DEC, the statement is an implementation detail. You can change an implementation detail. You cannot change a DEC.
+The authoritative design is `docs/v1-architecture.md`. It holds 51 numbered decisions, DEC-01 to DEC-51. The decisions are the only design authority. If a statement does not trace to a DEC, the statement is an implementation detail. You can change an implementation detail. You cannot change a DEC.
 
 Core shape: TypeScript, a Postgres ledger (`tsvector` and `pgvector`), a plain state machine, a transactional outbox. No orchestration framework. Models come through OpenRouter.
 
@@ -371,7 +371,7 @@ like, and that is not the corpus.
   and a missing idempotency or read-back capability.
   The journalled `reason` says which rule decided; `reachedAgreementGate` says whether the comparison happened.
 - Setting the classifier temperature to zero. At zero, agreement is always 1.0 and the gate passes every ticket (section 4.5).
-- Deriving the idempotency key from `run_id` or a timestamp. Two runs of the same action must produce the same key (section 3.4).
+- Deriving the idempotency key from `run_id` or a timestamp. Two runs of the same request must produce the same key. A crash retry and a redelivered message are the same request (section 3.4, DEC-49).
 - Mixing BM25 scores and cosine scores in a weighted average. RRF uses ranks only (DEC-21, section 4.6).
 - Retrying when the delivery state is unknown. Unknown means `delivery_unknown` and escalate (DEC-30).
 - Scoring replay against intent labels. Action match scores against observable dispositions (DEC-32, section 4.10).

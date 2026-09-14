@@ -91,6 +91,14 @@ statement is an implementation detail. You can change it.
 | DEC-41 | Above the labelled-case trigger the system fits a threshold for each intent. Each case records what labelled it, and the artifact records the count and the accuracy of each kind | One global threshold above the trigger; per-intent thresholds with no record of what labelled the cases |
 | DEC-42 | The ledger records an approver, and names it unverified. A trusted proxy supplies the identity. Without one the approval records `unattributed` | An authenticating console; no record of who approved; a header trusted on any bind |
 | DEC-43 | The composer writes the reply a support person would send, and labels each sentence a claim or a courtesy. Coverage counts claims alone | A draft that is its claims joined; a second model call that rewrites claims into prose |
+| DEC-44 | A reviewer console is the primary place a person reviews a gated action, and it writes on every adapter. Some helpdesks cannot send a parked copy. For their adapters, the ledger holds the approved reply, and every approval path sends it. Other adapters keep the DEC-40 draft path | Edit the helpdesk draft in place; a sendable draft beside the ledger text; two copies that both may send |
+| DEC-45 | The console serves nothing to a request with no roster identity, and a trusted proxy authenticates that identity. The ledger records where each approver's name came from | Passwords or sessions the console holds; an unverified header; one shared account; pages open to anyone who reaches the port |
+| DEC-46 | Taking a case reserves it for one reviewer, and the reservation lapses. A second reviewer may take it over after confirming. A console outcome on a reply the ledger holds applies only to the case as its reviewer was shown it | No reservation; a reservation that refuses a write; a lease with a lock service |
+| DEC-47 | Each run records the product of the channel its message arrived on. A run retrieves the documents of its product and the documents that declare no product | No product; a product the model infers; a product label that retrieval ignores; one product for a whole conversation |
+| DEC-48 | A reviewer may close a case with no reply, snooze it or hand it over. A reviewer may rewrite a reply the ledger holds. Each job counts each outcome for what it is | Approve as the only outcome; outcomes that reuse `resolved`; a snooze that looks resolved or counts as service time |
+| DEC-49 | A reviewer may send a case back for a new attempt. No helpdesk copy of its reply may exist that a person could send. The attempt is part of every key of its turn | The run id in a key; a digest of the composed body; a new attempt that reuses the old key |
+| DEC-50 | A reviewer may write a document from a case with a mapped product. It declares an owner, a review date and at least one product, and it carries no identifier of the case. Retrieval ignores it until it is embedded | The console calls the embedding model; a separate authoring tool; a document with no owner or review date |
+| DEC-51 | A console send of a reply the ledger holds waits for a hold period. An undo inside the hold returns the run to approval and removes every effect of the approval | An undo after the send; a delay in the browser; an undo that keeps the outbox row |
 
 ---
 
@@ -420,9 +428,13 @@ A claim cites a retrieved span. A courtesy sentence opens or closes the reply.
 A courtesy sentence states nothing about the customer, the account, the policy
 or the outcome.
 
-The draft is those sentences in order. So the text a customer reads is the text
-the gate scored. A second model call rewriting the claims into prose breaks that
-identity. It also restores the failure this section removed.
+The draft is those sentences in order. So the text the composer drafts is the
+text the gate scored. A second model call rewriting the claims into prose breaks
+that identity. It also restores the failure this section removed.
+
+Today a person may edit the draft in the helpdesk before the relay sends it
+(DEC-40). DEC-44 and DEC-48 also let a person rewrite a reply the ledger
+holds. Once that ships, a rewritten reply reports no coverage.
 
 The shape is one optional courtesy sentence, then the claims, then one optional
 courtesy sentence. The parser refuses anything else. A draft that cites nothing
@@ -524,9 +536,12 @@ It does not measure the cost of an error. These are different quantities.
 The bridge writes each gated customer reply into the draft state of the adapter.
 A gated write with no customer draft parks in the ledger alone (DEC-34).
 It makes no adapter call, so no unsent draft is left behind after approval.
-Adopters do not install a new interface to receive a draft. That is the
-purpose of DEC-11, and DEC-40 keeps it: a draft parks in the helpdesk and
-nowhere else. DEC-40 permits an operator console to approve one as well.
+
+Today a draft parks in the helpdesk and nowhere else, and an operator console
+may approve one (DEC-40). DEC-44 makes that console the primary place a
+person reviews. It lets the ledger hold the reply for an adapter whose helpdesk
+cannot send its parked copy. No adapter declares that capability yet, so every
+customer reply still parks as a helpdesk draft.
 
 Each customer reply must have three items:
 
@@ -536,26 +551,29 @@ Each customer reply must have three items:
 
 The bridge refuses to send a reply that does not have all three items.
 
-**Who approved it.** Obeys DEC-42.
+**Who approved it.** Obeys DEC-42. DEC-45 changes it for the console.
 
 The ledger records that a person approved a reply. It did not record which
 person. Reaching the console is the whole access control. So an incident could
 not separate the operator from anyone else who reached the port.
 
-The approval records an approver. The value is a claim, not an authentication.
-A caller supplies it. The approval bounds what it keeps. A value that is too
-long, or that carries a control character, names nobody.
+The approval records an approver. Today the value is a claim, not an
+authentication. A caller supplies it. The approval bounds what it keeps. A
+value that is too long, or that carries an ASCII control character, names
+nobody.
 
 An approval that names nobody records `unattributed`. That is a recorded fact
 and not a missing row. A null in the column means no approval reached the run.
 
 Only a trusted proxy may name an approver. Anyone reaching a console can set a
-header. So a console reads one only where the operator names its proxy. Until
-a caller does that, every approval records `unattributed`.
+header. So a console reads one only when the operator names the header its
+proxy sets. Until an operator does that, every approval records `unattributed`.
 
-This grants no authority. It changes no gate, and it does not decide who may
-approve. DEC-12 still puts a person on every customer reply. DEC-40 still
-permits the console to be that person's interface.
+DEC-42 grants no authority, and it changes no gate. DEC-45 moves the console to
+a roster a trusted proxy authenticates. The roster then decides who may review
+there. Until that ships, the console records the claim this section describes.
+DEC-12 still puts a person on every customer reply. DEC-40 still permits the
+console to be that person's interface.
 
 **Why the park needs a key.**
 
@@ -1186,6 +1204,7 @@ decision only when a row enters the table in section 2.
 | (none) | `ab98fd60-4327-4891-bb4e-00e51e66bdbd.md` partition concurrency | a trace. No row needed |
 | (none) | `bbc657f2-8083-47be-84e9-672825e2158d.md` online A/B tests | proposed, blocked |
 | (none) | `af2c0364-dc11-4547-a0b0-90f51592ae2b.md` ledger implementation | V1 background |
+| (none) | `c8b2e42f-b76d-43ef-8010-f7e8932bde48.md` a reviewer console four people work from | ratified as DEC-44 to DEC-51 |
 
 A DEC number inside one of those documents is provisional. The register
 assigns the real number at ratification. So two documents may propose the
@@ -1203,6 +1222,8 @@ same thing.
 | action class | A group of actions that share one delivery rule |
 | adapter | A component that connects the system to one external system |
 | agreement | The fraction of classifier samples that give the same label |
+| attempt | One run of a turn, with its crash retries. The first run is attempt 1, and only a person's request starts another |
+| case | An item a person examines. It is a turn to label, or the runs of one ticket a reviewer takes |
 | compensation | A second action that repairs a write the system cannot reverse |
 | coverage | The result of the groundedness check |
 | disposition | An observable result of how a person handled a ticket |
@@ -1210,13 +1231,17 @@ same thing.
 | gate | A test that a run must pass before it continues |
 | gold set | The labelled cases that fit the threshold and give the reports |
 | groundedness | The fraction of claims that the retrieved text supports |
+| hold period | The time a console send waits in the outbox before the relay may send it |
 | idempotency key | A value that lets a target system find a repeated request |
 | intent | One category in the taxonomy |
 | ledger | The Postgres tables that hold all state |
 | outbox | The table that holds actions before the relay sends them |
 | partition | A group of tickets that one consumer owns |
+| product | What a channel serves. A run records its channel's product |
 | relay | The process that sends the outbox records |
+| reservation | A lapsing claim one reviewer holds on a case |
 | risk tier | The cost of an error for one intent. A person sets it |
+| roster | The list of reviewers a trusted proxy can name |
 | routing | The choice of which queue or component receives a ticket |
 | run | One pass of the coordinator over one ticket |
 | taxonomy | The curated list of a maximum of 25 intents |

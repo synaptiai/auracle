@@ -17,7 +17,7 @@
     },
     {
       "id": "idempotency-key-run-identity",
-      "guards": "Section 3.4. Two runs of one action must produce the same key.",
+      "guards": "Section 3.4. Two runs of one request must produce the same key.",
       "decs": ["DEC-24"],
       "case_file": "evals/cases/idempotency-key-run-identity.json"
     },

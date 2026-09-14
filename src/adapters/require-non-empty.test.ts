@@ -11,7 +11,7 @@
 // another compiled. The field name is never empty, so a swapped call always
 // passed and an empty `idemKey` could reach the outbox. DEC-24 is the
 // guarantee that key carries: the key comes from the action semantics, so two
-// runs of one action produce the same key and land once on the target. A key
+// runs of one request produce the same key and land once on the target. A key
 // that is empty carries nothing.
 //
 // The whitespace rule mattered on its own. A single space was rejected by two
