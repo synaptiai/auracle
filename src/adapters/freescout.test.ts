@@ -16,6 +16,9 @@
  * arguments the adapter meant to send cannot see a header that never made it
  * onto the wire.
  */
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -158,7 +161,10 @@ describe('createDraft parks a draft over the network (DEC-11)', () => {
 
   it('treats a refused payload as permanent and a server fault as transient', async () => {
     instance.createStatus = 422;
-    await expect(adapter.createDraft(reply())).rejects.toThrow(PermanentEgressError);
+    const refused = await adapter.createDraft(reply()).catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(PermanentEgressError);
+    // A refused write keeps the helpdesk's reason: the relay escalates with it.
+    expect((refused as Error).message).toContain('refused');
 
     instance.createStatus = 503;
     const transient = await adapter.createDraft(reply()).catch((error: unknown) => error);
@@ -337,6 +343,95 @@ describe('the body a draft carries', () => {
   });
 });
 
+// A conversation read that fails reaches the console's read-back log. The
+// helpdesk's error page can quote request details or a customer, so the
+// error names the status and not the body.
+describe('a refused conversation read', () => {
+  it('names the status and leaves the response body out', async () => {
+    const parked = await adapter.createDraft(reply());
+    instance.readStatus = 500;
+    instance.readBody = 'debug: customer synthetic.person@example.invalid';
+    const failure = await adapter.readDraft(parked.draftExternalId).catch((error: unknown) => error);
+    expect((failure as Error).message).toContain('HTTP 500');
+    expect((failure as Error).message).not.toContain('example.invalid');
+  });
+});
+
+// The API key travels in a header of its own, which fetch keeps on a
+// redirect to another origin. So a redirect is refused, and the key reaches
+// only the base URL the operator named.
+describe('a FreeScout request that is redirected', () => {
+  it('refuses the redirect, and the key never reaches the other host', async () => {
+    const keysSeen: (string | undefined)[] = [];
+    const elsewhere = createServer((request, response) => {
+      keysSeen.push(request.headers['x-freescout-api-key'] as string | undefined);
+      response.end('{}');
+    });
+    await new Promise<void>((resolve) => elsewhere.listen(0, '127.0.0.1', resolve));
+    const redirecting = createServer((_request, response) => {
+      response.statusCode = 302;
+      response.setHeader('Location', `http://127.0.0.1:${(elsewhere.address() as AddressInfo).port}/api/x`);
+      response.end();
+    });
+    await new Promise<void>((resolve) => redirecting.listen(0, '127.0.0.1', resolve));
+    try {
+      const redirected = new FreeScoutEgressAdapter({
+        baseUrl: `http://127.0.0.1:${(redirecting.address() as AddressInfo).port}`,
+        apiKey: FREESCOUT_TEST_API_KEY,
+        userId: FREESCOUT_TEST_USER_ID,
+      });
+      const failure = await redirected.readDraft(formatDraftId('41', '101')).catch((error: unknown) => error);
+      // Named, and permanent: a base URL that redirects is a configuration
+      // fault a retry finds again. The target is not quoted.
+      expect(failure).toBeInstanceOf(PermanentEgressError);
+      expect((failure as Error).message).toContain('HTTP 302');
+      expect((failure as Error).message).toContain('FREESCOUT_BASE_URL');
+      expect((failure as Error).message).not.toContain(String((elsewhere.address() as AddressInfo).port));
+      expect(keysSeen).toEqual([]);
+    } finally {
+      redirecting.close();
+      elsewhere.close();
+    }
+  });
+});
+
+describe('a conversation read that answers something other than JSON', () => {
+  // A proxy or a debug page can answer 200 with HTML. Parsing it quoted the
+  // start of the body in the error, and that error reaches the read-back log.
+  it('names the status and quotes nothing from the body', async () => {
+    const parked = await adapter.createDraft(reply());
+    instance.readStatus = 200;
+    instance.readBody = 'Synthetic Person, synthetic.person@example.invalid';
+    const failure = await adapter.readDraft(parked.draftExternalId).catch((error: unknown) => error);
+    expect((failure as Error).message).toContain('HTTP 200');
+    expect((failure as Error).message).not.toContain('Synthetic');
+  });
+});
+
+describe('a draft read the caller stops waiting for', () => {
+  it('ends when the caller aborts, not at the adapter bound', async () => {
+    const silent = createServer(() => undefined);
+    await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve));
+    try {
+      const slow = new FreeScoutEgressAdapter({
+        baseUrl: `http://127.0.0.1:${(silent.address() as AddressInfo).port}`,
+        apiKey: FREESCOUT_TEST_API_KEY,
+        userId: FREESCOUT_TEST_USER_ID,
+        timeoutMs: 10_000,
+      });
+      const controller = new AbortController();
+      const started = Date.now();
+      const read = slow.readDraft(formatDraftId('41', '101'), { signal: controller.signal });
+      setTimeout(() => controller.abort(new Error('the console gave up')), 100);
+      await expect(read).rejects.toThrow('the console gave up');
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      silent.closeAllConnections();
+      silent.close();
+    }
+  });
+});
+
 describe('configuration comes from the environment and has no default', () => {
   it('reads a complete configuration', () => {
     const config = freeScoutConfigFromEnv({
@@ -359,6 +454,35 @@ describe('configuration comes from the environment and has no default', () => {
       const partial = { ...complete, [name]: undefined };
       expect(() => freeScoutConfigFromEnv(partial), name).toThrow(new RegExp(name));
     }
+  });
+
+  // `fetch` refuses a URL carrying credentials, and its error text quotes the
+  // whole URL. That text reached the console's read-back log on every
+  // approval, so the configuration refuses it where the process starts.
+  it('refuses a base URL that carries a user name or password, without echoing it', () => {
+    for (const url of ['https://synthetic-user:synthetic-secret@helpdesk.invalid', 'https://synthetic-user@helpdesk.invalid']) {
+      let message = '';
+      try {
+        freeScoutConfigFromEnv({ FREESCOUT_BASE_URL: url, FREESCOUT_API_KEY: FREESCOUT_TEST_API_KEY, FREESCOUT_USER_ID: '7' });
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message, url).toContain('FREESCOUT_BASE_URL');
+      expect(message, url).not.toContain('synthetic-secret');
+      expect(message, url).not.toContain('synthetic-user');
+    }
+  });
+
+  it('refuses a base URL that is not http or https', () => {
+    expect(() => freeScoutConfigFromEnv({
+      FREESCOUT_BASE_URL: 'ftp://helpdesk.invalid', FREESCOUT_API_KEY: FREESCOUT_TEST_API_KEY, FREESCOUT_USER_ID: '7',
+    })).toThrow(/^FREESCOUT_BASE_URL is not an http or https URL$/);
+  });
+
+  it('refuses a base URL that is not a URL, without echoing it', () => {
+    expect(() => freeScoutConfigFromEnv({
+      FREESCOUT_BASE_URL: 'helpdesk synthetic-secret', FREESCOUT_API_KEY: FREESCOUT_TEST_API_KEY, FREESCOUT_USER_ID: '7',
+    })).toThrow(/^FREESCOUT_BASE_URL is not an http or https URL$/);
   });
 
   it('refuses a user id that is not a positive integer', () => {

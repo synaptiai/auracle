@@ -164,6 +164,47 @@ export interface ImapSmtpEgressConfig {
   readonly fromAddress: string;
   /** IMAP mailbox gated replies park in (DEC-11). */
   readonly draftsMailbox: string;
+  /**
+   * How long one IMAP operation may wait to connect, to be greeted, or on an
+   * idle socket. Defaults to {@link IMAP_OPERATION_TIMEOUT_MS}.
+   */
+  readonly timeoutMs?: number;
+}
+
+/**
+ * The bound on one IMAP operation, as the FreeScout adapter bounds its HTTP
+ * call. ImapFlow's own socket default is five minutes, and a console that
+ * gave up on a read would otherwise leave that connection open for as long.
+ */
+export const IMAP_OPERATION_TIMEOUT_MS = 15_000;
+
+/**
+ * How long an operation that already has its answer waits for LOGOUT before
+ * closing the connection. Short, so a read fits well inside the console's
+ * four-second read-back.
+ */
+export const IMAP_LOGOUT_GRACE_MS = 1_000;
+
+/**
+ * The whole budget for marking a sent draft seen, which runs after
+ * `sendDraft` has returned. It bounds how long that extra connection stays.
+ */
+export const IMAP_MARK_SEEN_BUDGET_MS = 2_000;
+
+/**
+ * Refuses a draft id that is not a UID, or returns it.
+ *
+ * This adapter mints a draft id from an APPEND UID, which is a number. IMAP
+ * reads `42:1007` as a range and `*` as the newest message, so an id from
+ * another adapter would fetch a draft nobody parked for this run.
+ */
+function requireUid(draftExternalId: string): string {
+  if (!/^[0-9]+$/.test(draftExternalId)) {
+    throw new PermanentEgressError(
+      `draft id '${draftExternalId}' is not a UID; this adapter parks drafts under a numeric UID`,
+    );
+  }
+  return draftExternalId;
 }
 
 /**
@@ -500,6 +541,7 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
 
   constructor(private readonly config: ImapSmtpEgressConfig) {}
 
+
   async createDraft(reply: DraftReply): Promise<{ readonly draftExternalId: string }> {
     requireNonEmpty('reply.ticketExternalId', reply.ticketExternalId);
     requireNonEmpty('reply.body', reply.body);
@@ -567,47 +609,63 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
   async sendDraft(draftExternalId: string, idemKey: string): Promise<{ readonly externalId: string }> {
     requireNonEmpty('draftExternalId', draftExternalId);
     requireNonEmpty('idemKey', idemKey);
+    requireUid(draftExternalId);
 
-    return this.withImap(async (client) => {
+    // Three steps, and only the first two can fail the send. The draft is
+    // read on one connection and sent over SMTP with no IMAP connection open.
+    // Marking it seen then opens a connection of its own. A connection that
+    // dropped while the draft was marked would otherwise report a send the
+    // customer already received as failed, and SMTP has no read-back to
+    // correct that, so the relay would escalate it as an unknown delivery.
+    const source = await this.withImap(async (client) => {
       await client.mailboxOpen(this.config.draftsMailbox);
       const fetched = await client.fetchOne(draftExternalId, { source: true }, { uid: true });
-      const source = fetched !== false ? fetched.source : undefined;
-      if (source === undefined || source === null) {
-        throw new Error(
-          `no draft with UID '${draftExternalId}' in '${this.config.draftsMailbox}'`,
-        );
-      }
-      const parsed = normalizeMime(source.toString());
-      if (parsed.toAddresses.length === 0) {
-        throw new Error(`draft '${draftExternalId}' has no To address to send to`);
-      }
-
-      const transport = createTransport({
-        host: this.config.smtp.host,
-        port: this.config.smtp.port,
-        secure: this.config.smtp.secure,
-      });
-      const info = await transport.sendMail({
-        envelope: {
-          from: parsed.fromAddress ?? this.config.fromAddress,
-          to: [...parsed.toAddresses],
-        },
-        raw: source,
-      });
-
-      // Mark the parked draft seen: an operator scanning Drafts sees which
-      // replies went out. Best effort only — the send already happened.
-      await client
-        .messageFlagsAdd(draftExternalId, ['\\Seen'], { uid: true })
-        .catch(() => false);
-
-      // Nodemailer generates no messageId for raw sends, so the external
-      // id is the draft's own Message-ID (always set by buildDraftMessage);
-      // the chain ends in a non-empty draftExternalId, never undefined.
-      const externalId: string =
-        parsed.messageId ?? info.messageId ?? draftExternalId;
-      return { externalId };
+      return fetched !== false ? fetched.source : undefined;
     });
+    // Permanent, as the FreeScout adapter says of a missing draft: a retry
+    // finds the same absence.
+    if (source === undefined || source === null) {
+      throw new PermanentEgressError(
+        `no draft with UID '${draftExternalId}' in '${this.config.draftsMailbox}'`,
+      );
+    }
+    const parsed = normalizeMime(source.toString());
+    if (parsed.toAddresses.length === 0) {
+      throw new PermanentEgressError(`draft '${draftExternalId}' has no To address to send to`);
+    }
+
+    const transport = createTransport({
+      host: this.config.smtp.host,
+      port: this.config.smtp.port,
+      secure: this.config.smtp.secure,
+    });
+    const info = await transport.sendMail({
+      envelope: {
+        from: parsed.fromAddress ?? this.config.fromAddress,
+        to: [...parsed.toAddresses],
+      },
+      raw: source,
+    });
+
+    // Mark the parked draft seen: an operator scanning Drafts sees which
+    // replies went out. Best effort only — the send already happened.
+    //
+    // Not waited for. The relay records the send only once this returns, SMTP
+    // takes no idempotency key, and a relay killed in that window would send
+    // the customer the reply again. Not left unbounded either: its own budget
+    // closes the connection it opens, so each send leaves at most one extra
+    // connection open, for at most the budget and the logout grace.
+    void this.withImap(async (client) => {
+      await client.mailboxOpen(this.config.draftsMailbox);
+      await client.messageFlagsAdd(draftExternalId, ['\\Seen'], { uid: true });
+    }, AbortSignal.timeout(IMAP_MARK_SEEN_BUDGET_MS)).catch(() => undefined);
+
+    // Nodemailer generates no messageId for raw sends, so the external
+    // id is the draft's own Message-ID (always set by buildDraftMessage);
+    // the chain ends in a non-empty draftExternalId, never undefined.
+    const externalId: string =
+      parsed.messageId ?? info.messageId ?? draftExternalId;
+    return { externalId };
   }
 
   /**
@@ -617,8 +675,12 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
    * the edit distance. This reads draft state only; delivery read-back
    * stays forbidden (DEC-30), which is why `readBack` still throws.
    */
-  async readDraft(draftExternalId: string): Promise<{ readonly body: string } | null> {
+  async readDraft(
+    draftExternalId: string,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<{ readonly body: string } | null> {
     requireNonEmpty('draftExternalId', draftExternalId);
+    requireUid(draftExternalId);
 
     return this.withImap(async (client) => {
       await client.mailboxOpen(this.config.draftsMailbox);
@@ -628,7 +690,7 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
         return null;
       }
       return { body: normalizeMime(source.toString()).bodyText };
-    });
+    }, options?.signal);
   }
 
   async performAction(
@@ -647,24 +709,78 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
     );
   }
 
-  /** One fresh connection per operation: no pooling, no idle state. */
-  private async withImap<T>(fn: (client: ImapFlow) => Promise<T>): Promise<T> {
+  /**
+   * One fresh connection per operation: no pooling, no idle state.
+   *
+   * ImapFlow reports a connection that drops as an `'error'` event, not as a
+   * rejection. With no listener Node rethrows that event outside every
+   * promise and the process dies, so the listener turns it into this
+   * operation's rejection. Each wait is bounded by `timeoutMs`, and a caller
+   * that aborts through `signal` closes the connection at once.
+   */
+  private async withImap<T>(
+    fn: (client: ImapFlow) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    // A caller that already stopped waiting gets no connection. Closing a
+    // client before it connects closes nothing, so the socket would open anyway.
+    signal?.throwIfAborted();
+    const timeoutMs = this.config.timeoutMs ?? IMAP_OPERATION_TIMEOUT_MS;
     const client = new ImapFlow({
       host: this.config.imap.host,
       port: this.config.imap.port,
       secure: this.config.imap.secure,
       auth: { user: this.config.imap.user, pass: this.config.imap.pass },
       logger: false,
+      connectionTimeout: timeoutMs,
+      greetingTimeout: timeoutMs,
+      socketTimeout: timeoutMs,
     });
-    try {
+    let dropped: (error: unknown) => void = () => undefined;
+    const failure = new Promise<never>((_, reject) => {
+      dropped = reject;
+    });
+    // Handled here as well as in the race, so an error after the operation
+    // settled is not an unhandled rejection.
+    failure.catch(() => undefined);
+    client.on('error', (error: unknown) => {
+      dropped(error);
+    });
+    const abort = (): void => {
+      dropped(signal?.reason ?? new Error('the IMAP operation was aborted'));
+      client.close();
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    const work = (async () => {
       await client.connect();
-      return await fn(client);
+      return fn(client);
+    })();
+    work.catch(() => undefined);
+    try {
+      return await Promise.race([work, failure]);
     } finally {
-      try {
-        await client.logout();
-      } catch {
-        client.close();
-      }
+      // The operation's answer is already in hand, so the logout gets a short
+      // grace and the connection is closed when it runs out. Nothing runs on
+      // behind the operation, so connections never pile up.
+      await logoutWithin(client, IMAP_LOGOUT_GRACE_MS);
+      signal?.removeEventListener('abort', abort);
     }
+  }
+}
+
+/**
+ * Logs out, or closes the connection when the server has not answered within
+ * `graceMs`. Never rejects: by then the operation has its answer.
+ */
+async function logoutWithin(client: ImapFlow, graceMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const grace = new Promise<'grace'>((resolve) => {
+    timer = setTimeout(() => resolve('grace'), graceMs);
+  });
+  try {
+    const first = await Promise.race([client.logout().then(() => 'out' as const, () => 'failed' as const), grace]);
+    if (first !== 'out') client.close();
+  } finally {
+    clearTimeout(timer);
   }
 }

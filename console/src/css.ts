@@ -17,9 +17,10 @@
 // joining them into one stylesheet meant resolving four collisions. A
 // concatenation would have let the last artboard read win, silently:
 //
-//   - `.shell` is a 188px rail beside the main column on Main, and a 300px
-//     queue beside a detail pane on Approvals. The rail is the shell every
-//     surface shares, so the queue became `.split` inside it.
+//   - `.shell` is a 188px rail beside the main column on Main. On Approvals
+//     the canvas drew a queue beside a detail pane. The rail is the shell every
+//     surface shares, so the queue is a list page inside it, and each case is a
+//     page of its own.
 //   - `.gate` is a 44px bar in a Main table cell and a bordered card on Run
 //     detail. The runs table shows no gate, so only the card survives.
 //   - `.track` is a 6px bar carrying threshold markers on Run detail and a
@@ -194,15 +195,11 @@ tbody tr:hover { background:var(--panel); }
   padding:8px 0; border-bottom:1px solid var(--rule); font-size:12px; }
 .ev:last-child { border-bottom:0; }
 
-/* The approval queue: the waiting list beside the run it is showing. */
-.split { display:grid; grid-template-columns:300px 1fr; min-height:0; flex:1; }
-.list { border-right:1px solid var(--rule); background:var(--panel); display:flex;
-  flex-direction:column; }
+/* The approval queue: every waiting run, each row a link to its case. */
+.list { background:var(--panel); display:flex; flex-direction:column; }
 .lhd { padding:14px 16px; border-bottom:1px solid var(--rule); }
 .item { display:block; padding:12px 16px; border-bottom:1px solid var(--rule); color:inherit; }
 .item:hover { background:var(--panel2); text-decoration:none; color:inherit; }
-.item.on { background:var(--panel2); box-shadow:inset 2px 0 0 var(--accent); }
-.pane { padding:20px 26px 24px; display:flex; flex-direction:column; gap:15px; }
 .btn { padding:8px 18px; border-radius:4px; font-size:12.5px; font-weight:600;
   border:1px solid transparent; font-family:var(--sans); cursor:pointer; }
 .primary { background:var(--ok); color:#0d0e10; }
@@ -210,6 +207,10 @@ tbody tr:hover { background:var(--panel); }
   border-left:2px solid var(--accent); border-radius:4px; padding:11px 13px; background:var(--panel); }
 .outcome { border:1px solid var(--rule2); border-left:2px solid var(--accent); border-radius:4px;
   padding:11px 13px; background:var(--panel); font-size:12px; margin:0; }
+/* Only an approval reads as a success. A refusal sent nothing, and it must not
+ * wear the colour of one that did. */
+.outcome.ok { border-left-color:var(--ok); }
+.outcome.refused { border-left-color:var(--hot); color:var(--ink); }
 
 /* Control bands: one card for each metric, and the legend the actions come from. */
 .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px; }
@@ -283,7 +284,8 @@ tbody tr:hover { background:var(--panel); }
 
 /* One claim of a draft. The mark is the point: an unsupported claim is the
  * sentence an approver came to find. */
-.claim { border-radius: 2px; padding: 0 1px; }
+.claim { border-radius: 2px; padding: 0 1px;
+  box-shadow: inset 0 -2px 0 color-mix(in oklab, var(--ok) 55%, transparent); }
 .claim.unsupported {
   background: color-mix(in oklab, var(--hot) 18%, transparent);
   box-shadow: inset 0 -2px 0 var(--hot);
@@ -352,11 +354,6 @@ td a, dd a { display: inline-block; }
 @media (max-width: 720px) {
   .turn { grid-template-columns: minmax(0, 1fr); }
   .said { grid-column: 1; }
-  /* The queue stacks: the waiting list above the case it draws. A 300px list
-   * beside a pane leaves the pane too little room at this width. The list is
-   * uncapped, so it scrolls inside half the screen and the case stays near. */
-  .split { grid-template-columns: minmax(0, 1fr); }
-  .list { border-right: 0; border-bottom: 1px solid var(--rule); max-height: 50vh; overflow-y: auto; }
 }
 
 /* The rail's groups. The label is what separates them; a rule would read as
@@ -364,6 +361,54 @@ td a, dd a { display: inline-block; }
 .navgroup { display: flex; flex-direction: column; }
 .navgroup + .navgroup { margin-top: 14px; }
 .navgroup > .lbl { padding: 0 14px 5px; }
+
+/* --- the case -------------------------------------------------------------
+ *
+ * Two columns that wrap. The main column holds what the customer reads and
+ * what it rests on; the context column holds why a person has it. Flex bases
+ * rather than grid tracks: a fixed track cannot give way, and a case read
+ * beside the rail at 907px has too little room for two. Below about 800px of
+ * case width the context column drops under the main one, and takes the
+ * whole width there. */
+.casehd { padding:14px 24px; border-bottom:1px solid var(--rule); background:var(--panel);
+  display:flex; flex-direction:column; gap:6px; }
+.casehd .back { font-size:12px; color:var(--mut); align-self:flex-start; }
+.casetitle { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.casesubj { font-size:15px; font-weight:600; overflow-wrap:anywhere; }
+.casemeta { font-size:11px; color:var(--dim); overflow-wrap:anywhere; }
+.case { display:flex; flex-wrap:wrap; gap:24px; padding:20px 24px 28px; align-items:flex-start;
+  container-type:inline-size; }
+.casemain { flex:1 1 460px; min-width:0; display:flex; flex-direction:column; gap:16px; }
+.caseside { flex:1 1 300px; max-width:360px; min-width:0; display:flex; flex-direction:column; gap:16px; }
+@container (max-width: 783px) {
+  .caseside { max-width:none; }
+}
+/* The rule the journal recorded is the reason a person has this case. */
+.why { border-left:2px solid var(--hot); }
+.why p { margin:0 0 8px; font-size:12.5px; }
+.why p:last-child { margin-bottom:0; }
+/* The approval stays in reach at the foot of the window, however long the
+ * reply is. The warning sits beside the button, so the bar stays short enough
+ * to leave the case readable on a short screen, and wraps when it cannot. */
+.actionbar { position:sticky; bottom:0; z-index:1; background:var(--panel);
+  border-top:1px solid var(--rule2); padding:10px 24px; display:flex; flex-wrap:wrap;
+  align-items:center; gap:8px 16px; }
+.actionbar .warnbar { flex:1 1 420px; min-width:0; }
+.actionbar form { flex:none; margin:0; }
+.actionbar .discl { flex:1 1 100%; margin:0; }
+.actionbar .readback { flex:1 1 100%; margin:0; font-size:11px; color:var(--mut); }
+/* The gates one above the other, in a column too narrow for two cards. */
+.gates.rows { grid-template-columns:minmax(0, 1fr); }
+/* Why a gate has no value, beside its dash. */
+.gateabsent { font-size:11px; color:var(--mut); }
+/* The verdict in a word, beside the sentence it marks. The underline is
+ * colour, and colour is not read by everyone. */
+.vw { font-family:var(--mono); font-size:9.5px; letter-spacing:.04em; text-transform:uppercase;
+  margin-left:4px; font-style:normal; white-space:nowrap; }
+.vw.ok { color:var(--ok); }
+.vw.refused { color:var(--hot); }
+.vw.unread { color:var(--dim); }
+.vw.courtesy { color:var(--mut); }
 
 /* Spans the run detail's two columns. Prose in a 326px track is prose at
  * forty characters, and the reading measure is the point of the register. */

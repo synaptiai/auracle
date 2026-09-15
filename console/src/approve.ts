@@ -15,7 +15,10 @@
 // This is the console's only statement against the ledger that is not a
 // SELECT, and `select-only.test.ts` is what holds that claim to one.
 import type { Pool } from 'pg';
-import type { ApproveOptions, ApproveOutcome } from 'auracle/ledger-read';
+import type { ApproveOptions, ApproveOutcome, DraftReadBack } from 'auracle/ledger-read';
+
+import { ReadBackFailed } from './read-back.js';
+import type { ConsoleReadBack } from './read-back.js';
 
 /**
  * A run id is a UUID the ledger minted. It arrives from a form post, so it
@@ -45,7 +48,30 @@ export interface ApproveDeps {
     runId: string,
     options?: ApproveOptions,
   ) => Promise<ApproveOutcome>;
+  /**
+   * The helpdesk the draft is read back from, or undefined when the console
+   * reads nothing back (section 4.10). `read-back.ts` decides which, and
+   * bounds the read.
+   */
+  readonly readDraft?: DraftReadBack;
+  /**
+   * Where a failed read-back's fault goes. The page names the failure and
+   * nothing more, so the fault is kept beside the run it stopped.
+   */
+  readonly onReadBackFailed?: (runId: string, fault: string, draftExternalId: string | null) => void;
 }
+
+/**
+ * What the console's approval answered: the ledger's outcome, or a read-back
+ * that failed before the ledger was asked.
+ *
+ * A console outcome rather than a new ledger one. `approveRun` reads the draft
+ * before its transaction opens, so a failed read committed nothing, and the
+ * command line reports the same fault as an error.
+ */
+export type ConsoleApproveOutcome =
+  | ApproveOutcome
+  | { readonly outcome: 'read_back_failed'; readonly fault: string };
 
 /**
  * The console approves; it does not compose.
@@ -76,15 +102,55 @@ export interface ApproveRequest {
 export async function approveFromConsole(
   deps: ApproveDeps,
   request: ApproveRequest,
-): Promise<ApproveOutcome> {
+): Promise<ConsoleApproveOutcome> {
   const runId = request.runId.trim();
   if (!RUN_ID.test(runId)) {
     throw new Error(`'${request.runId}' is not a run id`);
   }
-  // No final body and no read-back: this is the CLI's manual path, the one
-  // `pnpm run approve` takes without `--read-back`. The distance stays null,
-  // which is the truthful reading when nobody captured what the person sent.
-  const options: ApproveOptions =
-    request.approvedBy === undefined ? {} : { approvedBy: request.approvedBy };
-  return deps.approveRun(deps.pool, runId, options);
+  // No final body. With an adapter, this is the path `pnpm run approve
+  // --read-back` takes: the helpdesk copy is read and the distance measured
+  // against it. Without one it is the manual path, and the distance stays
+  // null, which is the truthful reading when nobody captured what was sent.
+  const options: ApproveOptions = {
+    ...(request.approvedBy === undefined ? {} : { approvedBy: request.approvedBy }),
+    ...(deps.readDraft === undefined ? {} : { readDraft: deps.readDraft }),
+  };
+  try {
+    return await deps.approveRun(deps.pool, runId, options);
+  } catch (error) {
+    if (error instanceof ReadBackFailed) {
+      deps.onReadBackFailed?.(runId, error.message, error.draftExternalId);
+      return { outcome: 'read_back_failed', fault: error.message };
+    }
+    throw error;
+  }
+}
+
+/**
+ * The approval the console's entry point hands its server.
+ *
+ * It reads the draft back through `readBack` when there is one, logs a failed
+ * read-back with its run and its draft, and answers the outcome alone. The
+ * page names the failure; the fault stays in the log.
+ */
+export function approvalFor(deps: {
+  readonly pool: Pool;
+  readonly approveRun: ApproveDeps['approveRun'];
+  readonly readBack: ConsoleReadBack | null;
+  readonly log: (record: Readonly<Record<string, unknown>>) => void;
+}): (runId: string, approvedBy: string | undefined) => Promise<ConsoleApproveOutcome['outcome']> {
+  return async (runId, approvedBy) => {
+    const outcome = await approveFromConsole(
+      {
+        pool: deps.pool,
+        approveRun: deps.approveRun,
+        ...(deps.readBack === null ? {} : { readDraft: deps.readBack.readDraft }),
+        onReadBackFailed: (failedRun, fault, draftExternalId) => {
+          deps.log({ event: 'console_read_back_failed', runId: failedRun, draftExternalId, fault });
+        },
+      },
+      approvedBy === undefined ? { runId } : { runId, approvedBy },
+    );
+    return outcome.outcome;
+  };
 }

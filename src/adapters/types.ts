@@ -269,8 +269,14 @@ export interface DraftReadBack {
    * Read one parked draft's current body. Null means the target system
    * holds no such draft: it was deleted or never parked. The caller must
    * treat null as a refusal, never as an empty body.
+   *
+   * `signal` says the caller stopped waiting. An adapter that holds a
+   * connection for the read closes it then, rather than at its own bound.
    */
-  readDraft(draftExternalId: string): Promise<{ readonly body: string } | null>;
+  readDraft(
+    draftExternalId: string,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<{ readonly body: string } | null>;
 }
 
 /**

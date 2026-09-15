@@ -72,6 +72,18 @@ export interface GateValues {
   /** DEC-07's two coverage lines, as journalled with the run. */
   readonly coverageBlock?: number | null;
   readonly coverageReview?: number | null;
+  /**
+   * Why each value is absent, in words, when it is. The caller knows whether
+   * the journal held nothing or held no value for this gate; this module does
+   * not, so it says only that nothing was recorded when no reason is given.
+   */
+  readonly agreementAbsent?: string | null;
+  readonly coverageAbsent?: string | null;
+  /**
+   * One gate under the other rather than side by side, for a column too
+   * narrow to hold two cards. Still two cards, and still built apart.
+   */
+  readonly stacked?: boolean;
 }
 
 /**
@@ -84,10 +96,11 @@ export interface GateValues {
  */
 export function renderGates(values: GateValues): string {
   return [
-    '<div class="gates">',
+    `<div class="gates${values.stacked === true ? ' rows' : ''}">`,
     gateCard({
       label: 'Sample agreement',
       value: values.agreement,
+      absent: values.agreementAbsent ?? null,
       detail: values.agreementDetail ?? null,
       marks: values.agreementThreshold === undefined || values.agreementThreshold === null
         ? []
@@ -96,6 +109,7 @@ export function renderGates(values: GateValues): string {
     gateCard({
       label: 'Groundedness coverage',
       value: values.coverage,
+      absent: values.coverageAbsent ?? null,
       detail: null,
       marks: [
         ...(values.coverageBlock === undefined || values.coverageBlock === null
@@ -111,6 +125,8 @@ export function renderGates(values: GateValues): string {
 interface GateCard {
   readonly label: string;
   readonly value: number | null;
+  /** Why the value is absent. Drawn only when it is. */
+  readonly absent: string | null;
   readonly detail: string | null;
   readonly marks: readonly { readonly at: number; readonly name: string }[];
 }
@@ -140,6 +156,11 @@ function gateCard(gate: GateCard): string {
     `<div class="lbl">${escapeHtml(gate.label)}</div>`,
     '<div style="display:flex; align-items:baseline; gap:9px; flex-wrap:wrap">',
     `<span class="big">${gateValue(gate.value)}</span>`,
+    // The reason beside the dash, as text. A dash with its reason in a tooltip
+    // told a keyboard or touch reader nothing.
+    gate.value === null
+      ? `<span class="m gateabsent">${escapeHtml(gate.absent ?? NOT_RECORDED)}</span>`
+      : '',
     gate.detail === null
       ? ''
       : `<span class="m" style="font-size:11px; color:var(--dim)">${escapeHtml(gate.detail)}</span>`,
@@ -150,20 +171,18 @@ function gateCard(gate: GateCard): string {
   ].join('');
 }
 
+/** What an absent gate value says when its caller named no reason. */
+const NOT_RECORDED = 'not recorded';
+
 /**
  * One gate's value.
  *
- * A gate that was never reached shows an em dash and says so. Zero would
- * claim the samples disagreed completely, which is a measurement rather than
- * its absence.
+ * A gate with no value shows an em dash, and the card says why beside it.
+ * Zero would claim the samples disagreed completely, which is a measurement
+ * rather than its absence.
  */
 function gateValue(value: number | null): string {
-  // "not read", never "not reached". They are different facts and only one
-  // of them is this console's: `reachedAgreementGate` in the policy engine
-  // distinguishes a run that never got to the comparison from one that did,
-  // and this console reads neither value. Claiming the run did not reach the
-  // gate would be an assertion about the ledger that nothing here checked.
-  if (value === null) return '<span title="not read by the console">—</span>';
+  if (value === null) return '—';
   // Three places, not two. Agreement is a count out of nine, so 1/9 reads
   // 0.111 and two places round two distinct sample counts onto one number.
   return escapeHtml(value.toFixed(3));

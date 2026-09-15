@@ -6,12 +6,16 @@
 // from bands, `readLatency` from latency — so a metric has one definition and
 // the console displays what those jobs publish rather than a second opinion.
 //
-// The one write is `approveFromConsole`, which hands off to `approveRun`.
+// The one write is the approval `approvalFor` builds, which hands off to
+// `approveRun`.
 //
 // Configuration:
 // - DATABASE_URL      the ledger (required; the console refuses to guess)
 // - CONSOLE_PORT      the port to listen on (default: 8787)
 // - CONSOLE_HOST      the interface to bind (default: 127.0.0.1)
+// - APPROVE_ADAPTER   the adapter an approval reads the parked draft back
+//                     through: imap-smtp or freescout, with that adapter's
+//                     own variables. Unset or helpdesk reads nothing back.
 //
 // The default bind is loopback on purpose. This console approves customer
 // replies, and DEC-11's boundary is about what an adopter installs, not about
@@ -19,8 +23,7 @@
 // something that authenticates.
 import { Pool } from 'pg';
 
-import { approveRun } from 'auracle/ledger-read';
-import type { ApproveOutcome } from 'auracle/ledger-read';
+import { approveRun, selectReadBackAdapter } from 'auracle/ledger-read';
 import { readDays } from 'auracle/ledger-read';
 import { evaluateMetric } from 'auracle/domain';
 import { lastCompleteDay } from 'auracle/format';
@@ -37,7 +40,9 @@ import { humanMs } from 'auracle/format';
 // one line into two.
 import { logLine } from 'auracle/format';
 
-import { approveFromConsole } from './approve.js';
+import { approvalFor } from './approve.js';
+import { readBackFor } from './read-back.js';
+import { SHUTDOWN_GRACE_MS } from './shutdown.js';
 import { CONSOLE_CSS } from './css.js';
 import { allowedHosts, identityHeader } from './hosts.js';
 import { ledgerName } from './ledger-name.js';
@@ -75,9 +80,9 @@ async function conversationLink(
 /**
  * The message one run answered, shaped for a surface.
  *
- * One statement for one run. The approval queue draws one selection, and the
- * queue is uncapped by design — a turn read per waiting row would be a
- * statement for each row of a list that has been 476 long.
+ * One statement for one run, read by the run detail and the case. The queue
+ * reads none: it is uncapped by design, and a turn read per waiting row would
+ * be a statement for each row of a list that has been 476 long.
  */
 async function requestFor(pool: Pool, runId: string): Promise<RequestView | null> {
   const turn = await turnAnsweredBy(pool, runId);
@@ -148,14 +153,6 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
  * value that was wrong.
  */
 /**
- * How long a shutdown waits for a request that is still running.
- *
- * Shorter than any ordinary supervisor's grace period, so the bounded wait
- * ends before SIGKILL rather than after it.
- */
-const SHUTDOWN_GRACE_MS = 5_000;
-
-/**
  * How long the queue header's counts are held (issue #101). A figure for the
  * day stays true enough for this long, and a reloaded page costs no count.
  */
@@ -191,6 +188,11 @@ function requirePort(raw: string | undefined): number {
  */
 let closePool: (() => Promise<void>) | null = null;
 
+/** One log line, written so a value from a request cannot break it in two. */
+function log(record: Readonly<Record<string, unknown>>): void {
+  console.error(logLine(record));
+}
+
 async function main(): Promise<void> {
   // Every configuration value is read and refused before a socket is opened.
   //
@@ -208,6 +210,10 @@ async function main(): Promise<void> {
   // is the operator stating that a proxy they trust sets it and strips any
   // copy a client sent — `hosts.ts` says why that cannot be inferred.
   const identity = identityHeader();
+  // The adapter an approval reads the draft back through (section 4.10).
+  // Built here, so a name or a configuration the adapter refuses stops the
+  // console before it opens the pool, rather than on the first approval.
+  const readBack = readBackFor(process.env, selectReadBackAdapter, log);
   const connectionString = requireDbUrl('the operator console');
 
   const pool = new Pool(consolePoolConfig(connectionString));
@@ -426,6 +432,7 @@ async function main(): Promise<void> {
         conversationId: thread.conversationId,
         primaryTicketId: thread.primaryTicketId,
         state: thread.state,
+        openedAt: thread.openedAt,
         participantNamed: thread.participantNamed,
         turns: thread.turns.map((turn) => ({
           turnNumber: turn.turnNumber,
@@ -443,52 +450,9 @@ async function main(): Promise<void> {
 
     readDocument: async (docId) => readDocument(pool, docId),
 
-    readApprovalEvidence: async (runId) => {
-      const journal = await readRunJournal(pool, runId);
-      // The request is read whichever way the journal goes. A run that
-      // journalled nothing still answered a turn, and the run detail draws it
-      // in both branches — so returning null here made one surface show the
-      // message and the other show nothing, for the same run.
-      const request = await requestFor(pool, runId);
-      if (journal === null) {
-        return {
-          request,
-          evidence: {
-        draftBody: null, sentences: null, claims: null,
-        documents: null, documentsMalformed: false,
-      },
-          gates: {
-            agreement: null, coverage: null, agreementThreshold: null,
-            agreementDetail: null, coverageBlock: null, coverageReview: null,
-          },
-        };
-      }
-      const agreement = journal.agreement;
-      return {
-        request,
-        evidence: evidenceOf(journal),
-        // DEC-05: two readings, side by side and never combined. The queue
-        // drew a dash for both because it read no journal; it reads this one,
-        // so the dash was saying "not read by the console" about a value the
-        // console had.
-        gates: {
-          agreement: agreement?.agreement ?? null,
-          coverage: journal.coverage?.groundedness ?? null,
-          agreementThreshold: agreement?.threshold ?? null,
-          agreementDetail: agreement === null ? null : agreementDetail(agreement.agreement),
-          coverageBlock: journal.coverage?.blockThreshold ?? null,
-          coverageReview: journal.coverage?.reviewThreshold ?? null,
-        },
-      };
-    },
-
-    approve: async (runId, approvedBy): Promise<ApproveOutcome['outcome']> => {
-      const outcome = await approveFromConsole(
-        { pool, approveRun },
-        approvedBy === undefined ? { runId } : { runId, approvedBy },
-      );
-      return outcome.outcome;
-    },
+    // The page says a read-back failed and nothing was sent. The fault is
+    // logged beside the run and the draft it stopped.
+    approve: approvalFor({ pool, approveRun, readBack, log }),
   }, CONSOLE_CSS, {
     allowedHosts: hosts,
     // DEC-42: read only when `CONSOLE_IDENTITY_HEADER` names the header.
@@ -501,6 +465,7 @@ async function main(): Promise<void> {
     // an operator checking for escalations needs the empty answer too.
     states: [...LEDGER_STATES],
     ledger: ledgerName(connectionString),
+    readBack: readBack?.name ?? null,
   });
 
   // `listen` reports a bind failure by event, after `main`'s promise has

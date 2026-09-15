@@ -26,7 +26,7 @@ import {
 // which action is the permanent one.
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
 import type { PolicyReason } from 'auracle/policy';
-import type { ApproveOutcome } from 'auracle/ledger-read';
+import type { ConsoleApproveOutcome } from './approve.js';
 import { CONSOLE_SCRIPT } from './script.js';
 import { groupQueue } from './queue.js';
 import type { QueueGroup } from './queue.js';
@@ -75,6 +75,11 @@ export interface Shell {
   readonly theme: Theme;
   /** The surface being shown, so the rail can mark it. */
   readonly path: string;
+  /**
+   * Where the theme toggle returns, when that is more than the path: a case
+   * or the queue with the rule a person chose. The server checks it again.
+   */
+  readonly back?: string;
   /**
    * Runs waiting for a person, or null when this page did not count them.
    *
@@ -140,7 +145,7 @@ const GROUPS: readonly {
  */
 function themeLink(shell: Shell): string {
   const next: Theme = shell.theme === 'dark' ? 'light' : 'dark';
-  const back = encodeURIComponent(shell.path);
+  const back = encodeURIComponent(shell.back ?? shell.path);
   return `<a class="chip" href="/theme?to=${next}&amp;back=${back}">`
     + `<span class="dot"></span>${next} theme</a>`;
 }
@@ -171,7 +176,10 @@ function reviewerBlock(reviewer: string | null): string {
 function rail(shell: Shell): string {
   const groups = GROUPS.filter((group) => group.surfaces.length > 0).map((group) => {
     const links = group.surfaces.map((surface) => {
-      const on = surface.href === shell.path ? ' class="on"' : '';
+      // A case is the queue's work, so the queue stays marked while one is open.
+      const on = surface.href === shell.path || (surface.href === '/' && shell.path.startsWith('/case/'))
+        ? ' class="on"'
+        : '';
       // The badge counts only what this page actually counted.
       const badge = surface.href === '/' && shell.approvals !== null
         ? `<span class="badge">${escapeHtml(String(shell.approvals))}</span>`
@@ -436,6 +444,11 @@ export interface RunDetail extends RunRow {
    * Null for a draft-backed park, whose act is the reply above it.
    */
   readonly payload: Readonly<Record<string, unknown>> | null;
+  /**
+   * Whether an approval recorded this run's approver (DEC-42). An approval's
+   * outcome is shown only on a run that has one.
+   */
+  readonly approved: boolean;
 }
 
 /** One journal row, worded for the timeline. */
@@ -501,16 +514,6 @@ export interface SentenceView {
   readonly docId: string | null;
   readonly claimIndex: number | null;
   readonly supported: boolean | null;
-}
-
-/** The two gates as the journal recorded them, for one run. */
-export interface GateReading {
-  readonly agreement: number | null;
-  readonly coverage: number | null;
-  readonly agreementThreshold: number | null;
-  readonly agreementDetail: string | null;
-  readonly coverageBlock: number | null;
-  readonly coverageReview: number | null;
 }
 
 /**
@@ -668,7 +671,7 @@ function evidence(documents: readonly DocumentView[] | null): string {
 /**
  * The drafted reply, with every claim tied to the document behind it.
  *
- * One builder, drawn by the run detail and by the approval pane. Two
+ * One builder, drawn by the run detail and by the case. Two
  * assemblies of the same evidence would eventually disagree about a run, and
  * the one an approver reads is the one that has to be right.
  *
@@ -799,7 +802,7 @@ function replyProse(
     // no verdict mark. It is still part of the reply and still shown, because
     // the customer reads it.
     if (sentence.docId === null || sentence.claimIndex === null) {
-      return `<span class="courtesy">${escapeHtml(sentence.text)}</span>`;
+      return `<span class="courtesy">${escapeHtml(sentence.text)}</span>${verdictWord('courtesy')}`;
     }
     const mark = sentence.supported === false
       ? ' unsupported'
@@ -812,9 +815,29 @@ function replyProse(
       escapeHtml(sentence.text),
       `<a class="cite" href="#src-${escapeHtml(sentence.docId)}"`,
       ` title="${escapeHtml(title)}">${escapeHtml(String(sentence.claimIndex + 1))}</a>`,
+      verdictWord(sentence.supported === true ? 'accepted' : sentence.supported === false ? 'refused' : 'unread'),
       '</span>',
     ].join('');
   }).join(' ')}</div>`;
+}
+
+/**
+ * What each mark means, as a word beside the sentence it marks.
+ *
+ * The underline and the wash are colour, and colour is not read by everyone.
+ * A reader who cannot tell the hues apart still reads the word. The words
+ * are the judge's three answers and the courtesy sentence's absence of one.
+ */
+const VERDICT_WORDS = {
+  accepted: { css: 'ok', says: 'accepted' },
+  refused: { css: 'refused', says: 'refused' },
+  unread: { css: 'unread', says: 'not judged' },
+  courtesy: { css: 'courtesy', says: 'courtesy' },
+} as const;
+
+function verdictWord(verdict: keyof typeof VERDICT_WORDS): string {
+  const word = VERDICT_WORDS[verdict];
+  return `<span class="vw ${word.css}">${word.says}</span>`;
 }
 
 /**
@@ -907,7 +930,6 @@ function sourceList(
     '</header><div class="body">',
     ...cited.map((docId) => {
       const doc = sources.get(docId);
-      const moved = doc?.bodyUnchanged === false;
       return [
         `<div class="src" id="src-${escapeHtml(docId)}" data-source="${escapeHtml(docId)}">`,
         `<a class="m" href="/document/${encodeURIComponent(docId)}">${escapeHtml(docId)}</a>`,
@@ -921,19 +943,33 @@ function sourceList(
           : doc.title === null
             ? '<span class="mut">no such document today</span>'
             : `<span>${escapeHtml(doc.title)}</span>`,
-        moved
-          // The claim rested on text that is no longer there. Said plainly,
-          // because a reader checking a citation against today's document
-          // would otherwise conclude the claim was wrong.
-          ? ' <span class="chip" style="color:var(--warn)">changed since this run read it</span>'
-          : doc !== undefined && doc.bodyUnchanged === null
-            ? ' <span class="chip" style="color:var(--dim)">not compared</span>'
-            : '',
+        ' ',
+        bodyFlag(doc),
         '</div>',
       ].join('');
     }),
     '</div></div>',
   ].join('');
+}
+
+/**
+ * Whether a cited document still says what the run read. Three answers, and
+ * every cited row carries exactly one.
+ *
+ * Unchanged is said as plainly as changed. A row that drew nothing for an
+ * unchanged document read the same as a row nothing was compared for, which
+ * is two states pretending to be three.
+ *
+ * A document the run did not retrieve, or one no row answers for today, has
+ * no digest to compare. So it is not compared, whatever else its row says.
+ */
+function bodyFlag(doc: DocumentView | undefined): string {
+  if (doc?.bodyUnchanged === true) return chip('unchanged', 'ok');
+  // The claim rested on text that is no longer there. Said plainly, because a
+  // reader checking a citation against today's document would otherwise
+  // conclude the claim was wrong.
+  if (doc?.bodyUnchanged === false) return chip('changed since this run read it', 'warn');
+  return chip('not compared', 'dim');
 }
 
 /** Surface 2: one run, with its two gates shown apart. */
@@ -1000,43 +1036,6 @@ export function renderRunDetail(run: RunView): string {
 }
 
 /**
- * Surface 3: the approval queue, and the console's one write.
- *
- * A list of everything waiting, beside the one run the operator is looking
- * at. One, not all of them: the queue is deliberately uncapped, because
- * capping it would drop the oldest waiting replies off the end and show an
- * operator a queue they had finished. A first version drew a full card for
- * every row of that uncapped list, so a 476-run queue rendered a page of 8 MB
- * that repeated the list beside itself.
- *
- * The selection travels in the query string, because this console ships no
- * JavaScript. An absent or unknown selection falls back to the head of the
- * queue, which is the run an operator works next.
- */
-/** A waiting run, with the journal read for the one the operator opened. */
-export interface ApprovalView extends RunDetail {
-  /**
-   * The gate values, read for the drawn selection.
-   *
-   * This surface drew a dash for both, because reading a journal for every
-   * waiting run would be one statement per row of an uncapped list. It reads
-   * one journal now — for the run it draws — so the dash was saying "not read
-   * by the console" about a value the console had.
-   */
-  readonly gates: GateReading | null;
-  /**
-   * The draft and its claims, or null when this run's journal was not read.
-   *
-   * Read for the drawn selection alone. The queue is uncapped by design, and
-   * reading a journal for every waiting run would be one statement per row of
-   * a list that has been 476 rows long.
-   */
-  readonly evidence: EvidenceView | null;
-  /** The message this run answered, when it answered one. */
-  readonly request: RequestView | null;
-}
-
-/**
  * The gate rules a queue can be narrowed to, in the order a person meets them.
  *
  * Derived from what is waiting rather than fixed, so a rule that nothing
@@ -1080,8 +1079,8 @@ function gateFilters(runs: readonly RunDetail[], active: string | null): string 
  * it would have escalated rather than waited.
  *
  * One note for both gates and both surfaces. Only `customer_visible` was
- * named before, and only on the run detail, so the approval card contradicted
- * the queue row two inches above it.
+ * named before, and only on the run detail, so a case contradicted the queue
+ * row that led to it.
  */
 function gatesNotReadSays(policyReason: string | null): string {
   if (!isPolicyReason(policyReason)) return '';
@@ -1224,18 +1223,19 @@ function agreementSays(agreement: number | null, gateReason: string | null): str
     : ` · agreement ${escapeHtml(agreement.toFixed(2))} (not read)`;
 }
 
-/** The waiting runs in working order: the groups in turn, oldest first in each. */
-export function queueOrder(runs: readonly RunDetail[]): readonly RunDetail[] {
-  return groupQueue(runs).flatMap((section) => section.runs);
-}
-
+/**
+ * Surface 3: the approval queue, as a list (issue #102).
+ *
+ * Each row opens its case. The queue draws no case beside itself, because a
+ * case needs a page of its own and the queue is deliberately uncapped:
+ * capping it would drop the oldest waiting replies off the end and show a
+ * person a queue they had finished.
+ *
+ * A chosen rule travels on each row's link, so opening a case and coming back
+ * keeps the filter.
+ */
 export function renderApprovals(
   runs: readonly RunDetail[],
-  outcome: string,
-  selected: string | null,
-  evidence: EvidenceView | null,
-  gates: GateReading | null,
-  request: RequestView | null,
   rule: string | null,
   today: QueueTodayRead,
 ): string {
@@ -1251,23 +1251,15 @@ export function renderApprovals(
   if (shownRuns.length === 0) {
     // For approval, not for a person. An escalated run waits for a person as
     // well, and the line above says where it is.
-    return header + outcome + nothing(
+    return header + nothing(
       rule === null
         ? 'Nothing is waiting for approval.'
         : 'Nothing waiting carries that rule.',
     );
   }
   const sections = groupQueue(shownRuns);
-  // The first run in working order, when the link names none that is shown.
-  const shown = shownRuns.find((run) => run.runId === selected) ?? sections[0]!.runs[0]!;
-  const drawn: ApprovalView = { ...shown, evidence, gates, request };
   const row = (run: RunDetail): string => [
-    `<a class="item${run.runId === shown.runId ? ' on' : ''}"`,
-    // `&amp;`, not `&`. A bare ampersand in an attribute is a character
-    // reference the parser has to guess at, and every other attribute on
-    // this console is escaped.
-    ` href="/?run=${encodeURIComponent(run.runId)}`
-    + `${rule === null ? '' : `&amp;rule=${encodeURIComponent(rule)}`}">`,
+    `<a class="item" href="${escapeHtml(caseHref(run.runId, rule))}">`,
     '<div class="itop">',
     `<span class="m isubj">${escapeHtml(run.ticketId)}</span>`,
     // How long it has waited, on the row. The header says the oldest is on
@@ -1303,8 +1295,6 @@ export function renderApprovals(
   ].join('');
   return [
     header,
-    outcome,
-    '<div class="split">',
     '<div class="list">',
     `<div class="lhd"><span class="lbl">Waiting · ${escapeHtml(String(shownRuns.length))}`
       + `${rule === null ? '' : escapeHtml(` · ${rule === UNRULED ? 'no gate rule' : gateRuleSays(rule)}`)}`
@@ -1320,111 +1310,288 @@ export function renderApprovals(
       ].join('');
     }),
     '</div>',
-    `<div class="pane">${approvalCard(drawn, rule)}</div>`,
+  ].join('');
+}
+
+/** The case page of a run, with a chosen queue rule kept for the way back. */
+export function caseHref(runId: string, rule: string | null): string {
+  return `/case/${encodeURIComponent(runId)}`
+    + (rule === null || rule === '' ? '' : `?rule=${encodeURIComponent(rule)}`);
+}
+
+/** The queue, with a chosen rule kept. */
+function queueHref(rule: string | null): string {
+  return rule === null || rule === '' ? '/' : `/?rule=${encodeURIComponent(rule)}`;
+}
+
+/**
+ * What the ledger holds about the customer a case answers.
+ *
+ * Three answers, because they send a reader to different places: the run
+ * answered no conversation, it names one the ledger no longer holds, or here
+ * is the conversation.
+ */
+export type CustomerRead =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'thread'; readonly thread: ThreadView }
+  /** The read failed. The log holds the fault under this tag. */
+  | { readonly kind: 'unread'; readonly tag: string };
+
+/** One case: the run as the run detail reads it, and its customer. */
+export interface CaseView extends RunView {
+  readonly customer: CustomerRead;
+}
+
+export interface CaseOptions {
+  /** The outcome of the approval just posted, drawn above the case. */
+  readonly outcome: string;
+  /** The queue rule a person came from, kept on the way back. */
+  readonly rule: string | null;
+  /**
+   * The adapter the console reads drafts back through, or null when it reads
+   * none (section 4.10). The case says which, because it decides whether an
+   * approval records an edit distance.
+   */
+  readonly readBack: string | null;
+}
+
+/**
+ * Surface 3a: one case, and everything a person needs to decide on it
+ * (issue #102, DEC-40).
+ *
+ * The main column is what the customer reads and what it rests on: their
+ * message, the drafted reply sentence by sentence, and the documents it
+ * cites. The context column is why a person has it: the rule the journal
+ * recorded, the two gates, the customer and the run's steps. The approval
+ * sits in a bar at the foot, so it is in reach wherever the reader is.
+ *
+ * The case reads any run the ledger holds, so the outcome of an approval is
+ * drawn on the case it approved. Only a waiting run offers the approval.
+ */
+export function renderCase(view: CaseView, options: CaseOptions): string {
+  const act = actOf(view);
+  const waiting = view.state === 'awaiting_approval';
+  const rule = view.policyReason;
+  return [
+    '<div class="casehd">',
+    `<a class="back" href="${escapeHtml(queueHref(options.rule))}">← Needs a person</a>`,
+    '<div class="casetitle">',
+    `<span class="m casesubj">${escapeHtml(view.ticketId)}</span>`,
+    chip(rule === null ? 'no rule journalled' : gateRuleSays(rule), 'hot'),
+    chip(view.riskTier === null ? 'tier unrecorded' : `${view.riskTier} risk`),
+    chip(view.state, waiting ? 'accent' : 'dim'),
     '</div>',
+    '<div class="m casemeta">',
+    escapeHtml([
+      view.request === null ? 'no turn' : `turn ${view.request.turnNumber}`,
+      view.intentId ?? 'intent unrecorded',
+      // An age says how long a case has waited, which is true only while it
+      // waits. A case that left the queue says when it opened.
+      waiting ? `waiting ${ageSays(view.createdAt)}` : `opened ${whenSays(view.createdAt)}`,
+    ].join(' · ')),
+    ` · run <a href="/run/${encodeURIComponent(view.runId)}">${escapeHtml(view.runId)}</a>`,
+    '</div>',
+    '</div>',
+    options.outcome === '' ? '' : renderOutcome(options.outcome, { state: view.state, approved: view.approved }),
+    '<div class="case">',
+    '<div class="casemain">',
+    evidenceBlock(view.evidence, view.draftExternalId, view.request),
+    act.kind === 'action' ? payloadBlock(view.payload) : '',
+    '</div>',
+    '<div class="caseside">',
+    whyBlock(view, act),
+    '<div class="card"><header>',
+    '<span class="lbl">The two gates</span>',
+    chip('independent · never combined'),
+    '</header><div class="body">',
+    renderGates({
+      agreement: view.agreement,
+      coverage: view.coverage,
+      agreementThreshold: view.agreementThreshold,
+      agreementDetail: view.agreementDetail,
+      coverageBlock: view.coverageBlock,
+      coverageReview: view.coverageReview,
+      agreementAbsent: 'the journal holds no agreement for this run',
+      coverageAbsent: 'the journal holds no coverage for this run',
+      stacked: true,
+    }),
+    gatesNotReadSays(rule),
+    '</div></div>',
+    customerBlock(view),
+    '<div class="card"><header>',
+    '<span class="lbl">How the run walked</span>',
+    chip('no durations · none is stored'),
+    '</header><div class="body">',
+    timeline(view.steps),
+    '</div></div>',
+    '</div>',
+    '</div>',
+    actionBar(view, act, options),
   ].join('');
 }
 
 /**
- * One waiting run, and everything a person needs to decide about it.
+ * Why a case reached a person, for each rule the policy engine writes.
  *
- * The evidence is the point. This surface used to draw an Approve button
- * above a reply the approver could not read, which is DEC-40 permitting a
- * console to approve while the console withheld the thing being approved.
+ * A record over the whole union, so a rule the engine gains fails the build
+ * here until it has a sentence. The sentence says what the rule means; the
+ * rule itself is printed beside it, from the journal.
  */
-function approvalCard(run: ApprovalView, rule: string | null): string {
+const WHY_YOURS: Readonly<Record<PolicyReason, string>> = {
+  no_idempotency: 'The adapter cannot tell a repeated send from a new one, so nothing it sends goes out without a person.',
+  no_read_back: 'The adapter cannot confirm what it delivered, so nothing it sends goes out without a person.',
+  customer_visible: 'A reply to a customer always waits for a person.',
+  // What the engine judged, not a claim about the act. The act's own warning
+  // is read from the action class in the bar, as it always was.
+  irreversible: 'The policy engine judged this write irreversible, so a person approves it.',
+  high_risk: 'The policy engine judged this intent high risk, so a person approves it.',
+  agreement: 'The classifier samples did not agree enough for the system to act alone.',
+  groundedness_block: 'Too little of the reply rests on its documents for the system to act alone.',
+  groundedness_review: 'Less of the reply rests on its documents than the review line asks, so a person reads it.',
+  auto: 'The policy engine let this act run alone. The ledger does not say why it waits for a person.',
+};
+
+/**
+ * What the delivery rule the park recorded means for the approved act
+ * (DEC-29, DEC-30). The relay decides a retry; this says what it may decide.
+ */
+function deliverySays(delivery: string | null): string {
+  if (delivery === 'at_most_once') {
+    return 'It is sent at most once and never retried, so a send nobody can confirm escalates rather than repeating.';
+  }
+  if (delivery === 'at_least_once') {
+    return 'A send that fails may be sent again, where the relay can show that the first one did not land.';
+  }
+  return delivery === null
+    ? 'The park recorded no delivery rule.'
+    : 'The park recorded a delivery rule this console does not know.';
+}
+
+/** "Why this is yours": the journal's rule, what it means, and the delivery contract. */
+function whyBlock(view: CaseView, act: Act): string {
+  const rule = view.policyReason;
+  const said = rule === null
+    ? '<p>The journal recorded no policy rule for this run.</p>'
+    : isPolicyReason(rule)
+      ? `<p><span class="m">${escapeHtml(rule)}</span>. ${escapeHtml(WHY_YOURS[rule])}</p>`
+      : '<p>The journal recorded a rule this console does not know.</p>';
+  // What approving does, said only while there is an approval to make.
+  const does = view.state !== 'awaiting_approval'
+    ? null
+    : act.kind === 'reply'
+      ? 'Approving sends the helpdesk draft to the customer.'
+      : act.kind === 'action'
+        ? `Approving performs ${view.actionClass ?? 'the parked action'} through the adapter.`
+        : null;
   return [
-    '<div class="card"><header>',
-    `<span class="m" style="font-size:12.5px">${escapeHtml(run.ticketId)}</span>`,
-    `<span class="chip">${escapeHtml(run.state)}</span>`,
+    '<div class="card why"><header>',
+    '<span class="lbl">Why this is yours</span>',
+    chip('from the journal'),
     '</header><div class="body">',
-    // What a person needs to decide, rather than an id and a button. DEC-12
-    // puts a person on every customer reply, so the queue has to tell them
-    // which ticket, what state it is in and why it stopped.
-    '<dl class="kv">',
-    `<dt>run</dt><dd><a href="/run/${encodeURIComponent(run.runId)}">${escapeHtml(run.runId)}</a></dd>`,
-    // The gate rule first, because it is the answer to why this is a person's
-    // to decide. The escalation reason stays beside it and is null for a run
-    // that has not escalated, which is every run on this queue.
-    `<dt>needs a person</dt><dd>${escapeHtml(gateRuleSays(run.gateReason))}</dd>`,
-    `<dt>intent</dt><dd>${escapeHtml(run.intentId ?? '—')}</dd>`,
-    `<dt>waiting</dt><dd>${escapeHtml(ageSays(run.createdAt))}`
-      + ` <span class="dim">· opened ${escapeHtml(whenSays(run.createdAt))}</span></dd>`,
-    `<dt>escalation</dt><dd>${escapeHtml(run.reason ?? '—')}</dd>`,
-    `<dt>draft</dt><dd>${escapeHtml(run.draftExternalId ?? '—')}</dd>`,
-    '</dl>',
-    renderGates(run.gates === null
-      ? {
-        agreement: run.agreement,
-        coverage: run.coverage,
-        agreementThreshold: run.agreementThreshold,
-        coverageReview: run.coverageReviewThreshold,
-      }
-      : {
-        agreement: run.gates.agreement,
-        coverage: run.gates.coverage,
-        agreementThreshold: run.gates.agreementThreshold,
-        agreementDetail: run.gates.agreementDetail,
-        coverageBlock: run.gates.coverageBlock,
-        coverageReview: run.gates.coverageReview,
-      }),
-    // The same note the run detail carries. Without it this panel drew a
-    // block line beside a coverage the engine never compared, two inches
-    // under a row that said the coverage was not read.
-    gatesNotReadSays(run.gateReason),
-    // The reply, before the button that sends it.
-    run.evidence === null
-      ? nothing('The journal for this run has not been read.')
-      : evidenceBlock(run.evidence, run.draftExternalId, run.request),
-    approveControl(run, rule),
+    said,
+    does === null ? '' : `<p class="discl">${escapeHtml(does)} ${escapeHtml(deliverySays(view.delivery))}</p>`,
     '</div></div>',
   ].join('');
 }
 
 /**
+ * What the ledger holds about the customer, and a sentence for what it does
+ * not. The ledger records a conversation, its turns and whether a participant
+ * is bound to it. It records no name, plan or history, so none is drawn.
+ */
+function customerBlock(view: CaseView): string {
+  const open = ['<div class="card"><header>', '<span class="lbl">This customer</span>', '</header><div class="body">'];
+  const close = '</div></div>';
+  const customer = view.customer;
+  if (customer.kind === 'none') {
+    return [...open, '<p class="absent">This run answered no conversation, so the ledger holds nothing about its customer.</p>', close].join('');
+  }
+  if (customer.kind === 'unread') {
+    return [...open, `<p class="absent">The customer was not read. The console log names the fault ${escapeHtml(customer.tag)}.</p>`, close].join('');
+  }
+  if (customer.kind === 'missing') {
+    return [...open, '<p class="absent">The ledger holds no conversation under this id.</p>', close].join('');
+  }
+  const thread = customer.thread;
+  const turns = thread.turns.length;
+  return [
+    ...open,
+    '<dl class="kv">',
+    `<dt>turn</dt><dd>${escapeHtml(view.request === null
+      ? `this run answered no turn of ${turns}`
+      : `turn ${view.request.turnNumber} of ${turns}`)}</dd>`,
+    `<dt>opened</dt><dd>${escapeHtml(whenSays(thread.openedAt))}</dd>`,
+    `<dt>state</dt><dd>${escapeHtml(thread.state)}</dd>`,
+    // Whether it is bound to somebody, never who.
+    `<dt>participant</dt><dd>${thread.participantNamed ? 'a participant is named' : 'no participant is named'}</dd>`,
+    '</dl>',
+    '<p class="absent">The ledger holds no name, plan, tenure or account history for this customer.</p>',
+    `<p class="discl">Read <a href="/conversation/${encodeURIComponent(thread.conversationId)}">the whole conversation</a>.</p>`,
+    close,
+  ].join('');
+}
+
+/**
+ * The bar at the foot of the case: the approval, or why there is none.
+ *
+ * The warnings are worded by `actOf`, and say whether the act can be undone.
+ */
+function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
+  const inner = view.state !== 'awaiting_approval'
+    ? `<p class="discl">This run is ${escapeHtml(view.state)}, so there is nothing here to approve.</p>`
+    : act.kind === 'none'
+      ? `<p class="discl">${escapeHtml(act.says)}</p>`
+      : approveForm(view.runId, act.label, act.says, options.rule)
+        + (act.kind === 'reply' ? `<p class="readback">${escapeHtml(readBackSays(options.readBack))}</p>` : '');
+  return `<div class="actionbar">${inner}</div>`;
+}
+
+/** Whether an approval here measures the edit a person made (section 4.10). */
+function readBackSays(readBack: string | null): string {
+  return readBack === null
+    ? 'This console reads no draft back, so an approval here records no edit distance.'
+    : `Approving reads the helpdesk draft back through ${readBack} first, and records how far a person edited it.`;
+}
+
+/** What approving a run performs, and the words the button and warning use. */
+type Act =
+  | { readonly kind: 'none'; readonly says: string }
+  | { readonly kind: 'reply' | 'action'; readonly label: string; readonly says: string };
+
+/**
  * The approval, and what it will do (DEC-11, DEC-34, DEC-40).
  *
- * Three cases, and they were two. A gated write with no customer draft parks
- * in the ledger alone and `approveRun` relays its journalled payload, so it
- * has always been approvable — but this surface drew a button only for a
- * helpdesk handle, and 51 of 161 waiting runs were a dead end on the page
- * built to clear them.
- *
- * A park carrying neither is the third case. `approveRun` refuses it, so a
- * button here would send a person to a failure.
+ * Three cases. A customer reply parks as a helpdesk draft. A gated write with
+ * no customer draft parks in the ledger alone, and `approveRun` relays its
+ * journalled payload. A park carrying neither is refused by `approveRun`, so
+ * no button is offered for it.
  *
  * The warning differs because the act differs, and it says whether the act
- * can be undone.
- *
- * An earlier version of this said an internal write was "reversible by
- * design, because DEC-34 gates the irreversible ones separately". That was
- * false. `coordinator.ts` sets `isIrreversible` from the compensation action
- * class and the policy engine gates on it, and such a run parks in the
- * ledger — this branch. So the irreversible writes are not elsewhere; they
- * are here, and they were the one class this control did not warn about.
- *
- * The relay makes it worse rather than better: a compensation is
- * `at_most_once`, so it never retries, and an unconfirmed send escalates as
- * `delivery_unknown` (DEC-30). A person pressing this on a payment reversal
- * is owed both facts.
+ * can be undone. An irreversible write parks in the ledger, so it is here,
+ * and a compensation is `at_most_once`: it never retries, and an unconfirmed
+ * send escalates as `delivery_unknown` (DEC-30). A person pressing this on a
+ * payment reversal is owed both facts.
  */
-function approveControl(run: ApprovalView, rule: string | null): string {
+function actOf(run: RunDetail): Act {
   if (run.draftExternalId === null && !run.payloadRecorded) {
-    return '<p class="discl">This run parked neither a helpdesk draft nor an action'
-      + ' payload, so there is nothing here to approve. An operator reconciles it by hand.</p>';
+    return {
+      kind: 'none',
+      says: 'This run parked neither a helpdesk draft nor an action'
+        + ' payload, so there is nothing here to approve. An operator reconciles it by hand.',
+    };
   }
   if (run.draftExternalId !== null) {
     // No text box. The draft parks in the helpdesk and is edited there
     // (DEC-11, DEC-40); the relay sends that draft verbatim, so a body typed
     // here would be recorded and never sent.
-    return approveForm(
-      run.runId,
-      'Approve and send',
-      'The reply above is what the system drafted. The helpdesk holds the copy the'
+    return {
+      kind: 'reply',
+      label: 'Approve and send',
+      says: 'The reply above is what the system drafted. The helpdesk holds the copy the'
         + ' relay sends, so edit it there — a person may have changed it since. This sends that'
         + ' copy as it stands, and a sent reply cannot be recalled.',
-      rule,
-    );
+    };
   }
   // Read from the action, not from which rule happened to fire first.
   //
@@ -1433,22 +1600,20 @@ function approveControl(run: ApprovalView, rule: string | null): string {
   // that order, so a compensation on an adapter with no idempotency key stops
   // at `no_idempotency` and never reports `irreversible` — while still being
   // the one action on this console that cannot be taken back.
-  //
-  // The coordinator derives `isIrreversible` from the action class, so this
-  // reads the same field it does rather than a second opinion about it. The
-  // delivery rule is read the same way, and it was selected by the query and
-  // used by nothing.
   const permanent = run.actionClass === COMPENSATION_ACTION_CLASS;
   const atMostOnce = run.delivery === 'at_most_once';
-  const says = 'No reply goes to a customer. This run parked an action in the ledger, and'
-    + ` approving it performs ${run.actionClass ?? 'the action'} through the adapter with the`
-    + ' payload the run journalled.'
-    + (permanent ? ' This action cannot be undone once it runs.' : '')
-    + (atMostOnce
-      ? ' It is sent at most once and never retried, so a send nobody can confirm'
-        + ' escalates rather than repeating.'
-      : '');
-  return payloadBlock(run.payload) + approveForm(run.runId, 'Approve and perform', says, rule);
+  return {
+    kind: 'action',
+    label: 'Approve and perform',
+    says: 'No reply goes to a customer. This run parked an action in the ledger, and'
+      + ` approving it performs ${run.actionClass ?? 'the action'} through the adapter with the`
+      + ' payload the run journalled.'
+      + (permanent ? ' This action cannot be undone once it runs.' : '')
+      + (atMostOnce
+        ? ' It is sent at most once and never retried, so a send nobody can confirm'
+          + ' escalates rather than repeating.'
+        : ''),
+  };
 }
 
 /**
@@ -1522,6 +1687,8 @@ export interface ThreadView {
   readonly conversationId: string;
   readonly primaryTicketId: string;
   readonly state: string;
+  /** When the customer's problem started. Null when the ledger holds none. */
+  readonly openedAt: Date | null;
   readonly participantNamed: boolean;
   readonly turns: readonly TurnView[];
 }
@@ -1854,26 +2021,77 @@ function latencyRow(row: LatencyRow): string {
 /**
  * What the ledger said about the approval just posted, in plain words.
  *
- * Every `ApproveOutcome` variant gets a sentence, and the compiler holds the
- * set closed: a new variant with no sentence fails the build. A queue that
- * reloaded silently told the operator nothing, and `draft_missing` in
- * particular is a refusal that looked exactly like success.
+ * Every outcome gets a sentence, and the compiler holds the set closed: a new
+ * variant with no sentence fails the build. A page that reloaded silently told
+ * the operator nothing, and `draft_missing` in particular is a refusal that
+ * looked exactly like success.
+ *
+ * `read_back_failed` is the console's own. The read-back runs before the
+ * approval opens its transaction, so a failed read committed nothing.
  */
 const OUTCOMES = {
-  approved: 'Approved. The reply is queued for sending.',
+  approved: 'Approved. The relay performs it next.',
   unknown_run: 'That run is not in the ledger.',
   not_awaiting_approval: 'That run is not waiting for approval.',
   superseded: 'Another action already holds this key, so nothing was sent.',
   stale_epoch: 'Another owner took this ticket. Nothing was sent.',
   draft_missing: 'The parked draft is gone, so nothing was sent.',
-} as const satisfies Record<ApproveOutcome['outcome'], string>;
+  read_back_failed: 'The helpdesk draft could not be read back, so nothing was sent. The console log holds the fault.',
+} as const satisfies Record<ConsoleApproveOutcome['outcome'], string>;
 
-export function renderOutcome(outcome: string): string {
+/** What an outcome is checked against: the run's state, and whether it was approved. */
+export interface OutcomeRun {
+  readonly state: string;
+  readonly approved: boolean;
+}
+
+/**
+ * Whether an outcome can be the ledger's answer about `run`, or about no run.
+ *
+ * The outcome arrives on the query string, so a link can carry any of them.
+ * Each one leaves a fact it can be checked against. An approval records an
+ * approver, and nothing else does, so it holds however the relay moved the run
+ * afterwards. A gone or unread draft leaves the run waiting. A run the ledger
+ * does not hold has no state at all. An outcome its run contradicts is a
+ * sentence somebody wrote for the approver.
+ *
+ * A run approved before `db/016` recorded approvers has none, so an old link
+ * to one reads as an outcome this console does not know. Accepting a resolved
+ * run in its place would let a link claim an approval on a run that resolved
+ * on the automatic path, which records no approver either.
+ */
+function outcomeFits(outcome: string, run: OutcomeRun | null): boolean {
+  if (run === null) return outcome === 'unknown_run';
+  const { state } = run;
+  switch (outcome) {
+    case 'approved':
+      return run.approved;
+    case 'draft_missing':
+    case 'read_back_failed':
+      return state === 'awaiting_approval';
+    case 'not_awaiting_approval':
+      return state !== 'awaiting_approval';
+    case 'unknown_run':
+      return false;
+    default:
+      // `superseded` and `stale_epoch` refuse a move the fence decided. They
+      // leave no state of their own to check against.
+      return true;
+  }
+}
+
+/**
+ * The outcome sentence for the approval just posted, on the run it concerns.
+ *
+ * `run` is the run as it stands now, or null on a page that has no run. An
+ * outcome the run contradicts gets the fixed sentence an unknown outcome gets.
+ */
+export function renderOutcome(outcome: string, run: OutcomeRun | null): string {
   // `Object.hasOwn`, never a bare read. A plain object literal inherits from
   // Object.prototype, so `?outcome=toString` resolved a function, `escapeHtml`
   // called `.replace` on it and the approval queue became a 500 page. This is
   // the same defect the policy engine's per-intent map had, in a second place.
-  const said: string | undefined = Object.hasOwn(OUTCOMES, outcome)
+  const said: string | undefined = Object.hasOwn(OUTCOMES, outcome) && outcomeFits(outcome, run)
     ? OUTCOMES[outcome as keyof typeof OUTCOMES]
     : undefined;
   // Anything else still gets a sentence, because a silent fall-through would
@@ -1882,12 +2100,26 @@ export function renderOutcome(outcome: string): string {
   // as the ledger's answer is a sentence an attacker wrote for the approver.
   // Every outcome the approval returns has a sentence above, so only a
   // hand-written link reaches this.
+  //
+  // Only an approval wears the success style. Every other known outcome is a
+  // refusal, and nothing was sent.
+  const style = said === undefined ? '' : outcome === 'approved' ? ' ok' : ' refused';
+  // An approval stands whatever the relay did next. A run the relay escalated
+  // is a person's again, so the page does not promise the relay will perform
+  // it.
+  // The relay's next step is promised only on a resolved run, and no raw
+  // state name reaches the page.
+  const worded = said === undefined || outcome !== 'approved' || run === null || run.state === 'resolved'
+    ? said
+    : run.state === 'escalated'
+      ? 'Approved. The relay escalated the run, so a person has it now.'
+      : 'Approved.';
   return [
     '<div class="wrap" style="padding-bottom:0">',
     said === undefined
       ? '<p class="outcome">'
-      : `<p class="outcome" data-outcome="${escapeHtml(outcome)}">`,
-    escapeHtml(said ?? 'The ledger answered with an outcome this console does not know.'),
+      : `<p class="outcome${style}" data-outcome="${escapeHtml(outcome)}">`,
+    escapeHtml(worded ?? 'The ledger answered with an outcome this console does not know.'),
     '</p></div>',
   ].join('');
 }

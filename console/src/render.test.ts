@@ -94,11 +94,31 @@ describe('the gate display', () => {
   // carries neither gate value, so both render as a dash. The cases above
   // pass values by hand and would keep passing if production never produced
   // one — which it does not. This is the case that says so.
-  it('says the values are not read, rather than not reached', () => {
+  it('says the values were not recorded, rather than not reached', () => {
     const html = renderGates({ agreement: null, coverage: null });
-    expect(html).toContain('not read by the console');
+    expect(html.match(/<span class="m gateabsent">not recorded<\/span>/g) ?? []).toHaveLength(2);
     // Never the other claim: that is a fact about the run, not about us.
     expect(html).not.toContain('not reached');
+  });
+
+  // The reason is text beside the dash, never a tooltip a keyboard or touch
+  // reader cannot open (issue #102).
+  it('draws each absent value with the reason its caller gave', () => {
+    const html = renderGates({
+      agreement: null, coverage: 0.94,
+      agreementAbsent: 'the journal holds no agreement for this run',
+      coverageAbsent: 'never drawn, because the value is here',
+    });
+    expect(html).toContain('<span class="m gateabsent">the journal holds no agreement for this run</span>');
+    expect(html).not.toContain('never drawn, because the value is here');
+    expect(html).not.toContain('title=');
+  });
+
+  it('stacks the two gates when asked, and keeps them two cards', () => {
+    const html = renderGates({ agreement: 0.89, coverage: 0.94, stacked: true });
+    expect(html).toContain('<div class="gates rows">');
+    expect(html.match(/class="gate"/g) ?? []).toHaveLength(2);
+    expect(renderGates({ agreement: 0.89, coverage: 0.94 })).toContain('<div class="gates">');
   });
 });
 

@@ -19,30 +19,11 @@
  */
 import { Pool } from 'pg';
 
-import { FreeScoutEgressAdapter, freeScoutConfigFromEnv } from '../adapters/freescout.js';
-import { HelpdeskAdapter } from '../adapters/helpdesk.js';
-import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.js';
-import type { DraftReadBack } from '../adapters/types.js';
+import { selectReadBackAdapter } from '../adapters/read-back.js';
 import { loadDotEnv } from '../config/env.js';
 import { requireDbUrl } from '../db/config.js';
 import { approveRun } from './approve.js';
 import { runEntry } from '../cli/entry.js';
-
-const READ_BACK_ADAPTERS: Readonly<Record<string, () => DraftReadBack>> = {
-  helpdesk: () => new HelpdeskAdapter(),
-  'imap-smtp': () => new SmtpEgressAdapter(imapSmtpConfigFromEnv()),
-  freescout: () => new FreeScoutEgressAdapter(freeScoutConfigFromEnv()),
-};
-
-function selectReadBackAdapter(name: string): DraftReadBack {
-  const create = READ_BACK_ADAPTERS[name];
-  if (create === undefined) {
-    throw new Error(
-      `unknown APPROVE_ADAPTER '${name}' (known: ${Object.keys(READ_BACK_ADAPTERS).join(', ')})`,
-    );
-  }
-  return create();
-}
 
 function runIdFrom(argv: readonly string[]): string | null {
   const i = argv.indexOf('--run');
@@ -66,7 +47,7 @@ async function main(): Promise<void> {
 
   // The adapter is read only under --read-back; the manual path needs none.
   const readDraft = readBackFrom(argv)
-    ? selectReadBackAdapter(process.env['APPROVE_ADAPTER'] ?? 'helpdesk')
+    ? selectReadBackAdapter(process.env['APPROVE_ADAPTER'] ?? 'helpdesk', process.env)
     : undefined;
 
   const pool = new Pool({ connectionString: requireDbUrl('the approval CLI'), max: 1 });

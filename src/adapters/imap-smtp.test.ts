@@ -1,3 +1,5 @@
+import { createServer, type AddressInfo, type Server, type Socket } from 'node:net';
+
 import { describe, expect, it } from 'vitest';
 import {
   ALTERNATIVE_EMAIL,
@@ -14,6 +16,9 @@ import {
 } from './fixtures.js';
 import {
   ImapSmtpAdapter,
+  IMAP_LOGOUT_GRACE_MS,
+  IMAP_MARK_SEEN_BUDGET_MS,
+  IMAP_OPERATION_TIMEOUT_MS,
   IMAP_SMTP_CAPABILITIES,
   SmtpEgressAdapter,
   buildDraftMessage,
@@ -68,6 +73,325 @@ describe('SmtpEgressAdapter declares what it cannot do (DEC-06)', () => {
 
   it('refuses read-back so the relay escalates instead of guessing (DEC-30)', async () => {
     await expect(egress.readBack({ idemKey: 'key' })).rejects.toThrow(AdapterCapabilityError);
+  });
+});
+
+/** A parked draft as the fake IMAP server holds it. Synthetic (DEC-18). */
+const PARKED_SOURCE = 'From: support@example.invalid\r\nTo: customer@example.invalid\r\n'
+  + 'Message-ID: <draft-7@example.invalid>\r\nSubject: Re: synthetic\r\n\r\nYour refund is on its way.\r\n';
+
+type Reaction = 'answer' | 'reset' | 'stall' | 'nothing';
+
+/**
+ * An IMAP server that speaks just enough of the protocol for ImapFlow, holds
+ * one draft under UID 7, and reacts to the named commands as told: it resets
+ * the connection or stops answering. Synthetic throughout (DEC-18).
+ */
+async function fakeImap(reactions: Readonly<Record<string, Reaction>> = {}): Promise<{
+  server: Server;
+  port: number;
+  opened: () => number;
+  closed: () => number;
+  openedAt: () => readonly number[];
+  logoutAt: () => readonly number[];
+  storeAt: () => readonly number[];
+}> {
+  let opens = 0;
+  let closes = 0;
+  const openedAt: number[] = [];
+  const logoutAt: number[] = [];
+  const storeAt: number[] = [];
+  const server = createServer((sock: Socket) => {
+    opens += 1;
+    openedAt.push(Date.now());
+    sock.on('error', () => undefined);
+    sock.on('close', () => { closes += 1; });
+    sock.write('* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN UIDPLUS] ready\r\n');
+    let buffered = '';
+    sock.on('data', (chunk) => {
+      buffered += chunk.toString();
+      let end: number;
+      while ((end = buffered.indexOf('\r\n')) !== -1) {
+        const [tag, verb, sub] = buffered.slice(0, end).split(' ');
+        buffered = buffered.slice(end + 2);
+        const upper = (verb ?? '').toUpperCase();
+        const command = upper === 'UID' ? `UID ${(sub ?? '').toUpperCase()}` : upper;
+        if (command === 'LOGOUT') logoutAt.push(Date.now());
+        if (command === 'UID STORE') storeAt.push(Date.now());
+        const reaction = reactions[command] ?? 'answer';
+        if (reaction === 'reset') {
+          sock.resetAndDestroy();
+          return;
+        }
+        if (reaction === 'stall') continue;
+        if (reaction === 'nothing') {
+          sock.write(`${tag} OK\r\n`);
+          continue;
+        }
+        if (command === 'CAPABILITY') sock.write(`* CAPABILITY IMAP4rev1 AUTH=PLAIN UIDPLUS\r\n${tag} OK done\r\n`);
+        else if (command === 'SELECT') {
+          sock.write(`* 1 EXISTS\r\n* OK [UIDVALIDITY 1] v\r\n* OK [UIDNEXT 8] n\r\n${tag} OK [READ-WRITE] selected\r\n`);
+        } else if (command === 'UID FETCH') {
+          sock.write(`* 1 FETCH (UID 7 BODY[] {${Buffer.byteLength(PARKED_SOURCE)}}\r\n${PARKED_SOURCE})\r\n${tag} OK fetched\r\n`);
+        } else if (command === 'LOGOUT') {
+          sock.write(`* BYE\r\n${tag} OK\r\n`);
+          sock.end();
+        } else sock.write(`${tag} OK\r\n`);
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    server, port: (server.address() as AddressInfo).port,
+    opened: () => opens, closed: () => closes,
+    openedAt: () => openedAt, logoutAt: () => logoutAt, storeAt: () => storeAt,
+  };
+}
+
+/** An SMTP server that accepts every message and counts them. Synthetic (DEC-18). */
+async function fakeSmtp(): Promise<{ server: Server; port: number; accepted: () => number }> {
+  let accepted = 0;
+  const server = createServer((sock: Socket) => {
+    sock.on('error', () => undefined);
+    sock.write('220 synthetic ESMTP\r\n');
+    let data = false;
+    let buffered = '';
+    sock.on('data', (chunk) => {
+      buffered += chunk.toString();
+      let end: number;
+      while ((end = buffered.indexOf('\r\n')) !== -1) {
+        const line = buffered.slice(0, end);
+        buffered = buffered.slice(end + 2);
+        if (data) {
+          if (line === '.') {
+            data = false;
+            accepted += 1;
+            sock.write('250 queued\r\n');
+          }
+          continue;
+        }
+        const verb = line.slice(0, 4).toUpperCase();
+        if (verb === 'EHLO') sock.write('250-synthetic\r\n250 8BITMIME\r\n');
+        else if (verb === 'DATA') {
+          data = true;
+          sock.write('354 go\r\n');
+        } else if (verb === 'QUIT') {
+          sock.write('221 bye\r\n');
+          sock.end();
+        } else sock.write('250 ok\r\n');
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { server, port: (server.address() as AddressInfo).port, accepted: () => accepted };
+}
+
+function egressOn(port: number, timeoutMs?: number, smtpPort = 1): SmtpEgressAdapter {
+  return new SmtpEgressAdapter({
+    imap: { host: '127.0.0.1', port, secure: false, user: 'synthetic-user', pass: 'synthetic-pass' },
+    smtp: { host: '127.0.0.1', port: smtpPort, secure: false },
+    fromAddress: 'support@example.invalid',
+    draftsMailbox: 'Drafts',
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  });
+}
+
+describe('the IMAP connection a draft read opens (issue #102)', () => {
+  // ImapFlow reports a dropped connection as an 'error' event. With no
+  // listener Node rethrows it outside every promise, and the long-running
+  // console that reads drafts back died with it.
+  it('rejects when the connection resets mid-read, and the process stays up', async () => {
+    const { server, port } = await fakeImap({ SELECT: 'reset' });
+    try {
+      await expect(egressOn(port).readDraft('7')).rejects.toThrow();
+    } finally {
+      server.close();
+    }
+  });
+
+  it('reads the parked body back', async () => {
+    const { server, port } = await fakeImap();
+    try {
+      await expect(egressOn(port, 2_000).readDraft('7')).resolves.toEqual({ body: 'Your refund is on its way.' });
+    } finally {
+      server.close();
+    }
+  });
+
+  // The operation is done once its result is in hand. A connection that
+  // drops while it logs out does not take that result away.
+  it('keeps a read that finished when the connection resets on logout', async () => {
+    const { server, port } = await fakeImap({ LOGOUT: 'reset' });
+    try {
+      await expect(egressOn(port, 2_000).readDraft('7')).resolves.toEqual({ body: 'Your refund is on its way.' });
+    } finally {
+      server.close();
+    }
+  });
+
+  // A server that never answers ends the read at the adapter's own bound,
+  // not at ImapFlow's five-minute socket default.
+  it('gives up on a server that accepts and never greets, within its bound', async () => {
+    const server = createServer((sock) => { sock.on('error', () => undefined); });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    const started = Date.now();
+    try {
+      await expect(egressOn(port, 300).readDraft('7')).rejects.toThrow();
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      server.close();
+    }
+  });
+
+  // A server that greets, logs in and then stops answering holds an idle
+  // socket. The bound covers that wait as well as the greeting.
+  it('gives up on a server that stops answering after login, within its bound', async () => {
+    const { server, port } = await fakeImap({ SELECT: 'stall' });
+    const started = Date.now();
+    try {
+      await expect(egressOn(port, 300).readDraft('7')).rejects.toThrow();
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      server.close();
+    }
+  });
+
+  // A caller that stopped waiting says so, and the connection closes then,
+  // rather than at the adapter's bound. The console gives up long before it.
+  it('closes the connection when the caller aborts the read', async () => {
+    const { server, port, closed } = await fakeImap({ SELECT: 'stall' });
+    const controller = new AbortController();
+    try {
+      const started = Date.now();
+      const read = egressOn(port, 10_000).readDraft('7', { signal: controller.signal });
+      setTimeout(() => controller.abort(new Error('the console gave up')), 200);
+      await expect(read).rejects.toThrow('the console gave up');
+      expect(Date.now() - started).toBeLessThan(5_000);
+      for (let i = 0; i < 50 && closed() === 0; i += 1) await new Promise((r) => setTimeout(r, 20));
+      expect(closed()).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+
+  // A caller that already stopped waiting gets no connection opened for it.
+  it('opens no connection for a read whose caller has already aborted', async () => {
+    const { server, port, opened } = await fakeImap();
+    try {
+      const controller = new AbortController();
+      controller.abort(new Error('the console gave up'));
+      await expect(egressOn(port, 2_000).readDraft('7', { signal: controller.signal }))
+        .rejects.toThrow('the console gave up');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(opened()).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
+  // The body is in hand once it is fetched. Logging out is tidying, so a
+  // server slow to answer LOGOUT does not hold the read.
+  it('waits only a short grace for the logout, whatever the bound', async () => {
+    const { server, port, closed } = await fakeImap({ LOGOUT: 'stall' });
+    const started = Date.now();
+    try {
+      await expect(egressOn(port, 10_000).readDraft('7')).resolves.toEqual({ body: 'Your refund is on its way.' });
+      const took = Date.now() - started;
+      expect(took).toBeGreaterThanOrEqual(IMAP_LOGOUT_GRACE_MS - 50);
+      expect(took).toBeLessThan(IMAP_LOGOUT_GRACE_MS + 1_500);
+      // Closed when the grace ran out, not left for the socket bound.
+      for (let i = 0; i < 50 && closed() === 0; i += 1) await new Promise((r) => setTimeout(r, 20));
+      expect(closed()).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+
+  // Nothing runs behind a finished operation, so the next one opens its
+  // connection at once. A console giving each read four seconds is never kept
+  // waiting by the last read's logout.
+  it('opens the next connection without waiting behind a stalled logout', async () => {
+    const imap = await fakeImap({ LOGOUT: 'stall' });
+    try {
+      const adapter = egressOn(imap.port, 10_000);
+      await expect(adapter.readDraft('7')).resolves.toEqual({ body: 'Your refund is on its way.' });
+      const firstReturned = Date.now();
+      await expect(adapter.readDraft('7')).resolves.toEqual({ body: 'Your refund is on its way.' });
+      // The second connection opens as soon as the first read returns: no
+      // queue holds it back behind anything the first one left running.
+      const [, secondOpened] = imap.openedAt();
+      // Well under the logout grace, which is what a queue would add.
+      expect(secondOpened! - firstReturned).toBeLessThan(IMAP_LOGOUT_GRACE_MS * 0.6);
+    } finally {
+      imap.server.close();
+    }
+  });
+
+  // A draft that is not there, or that names nobody to send to, never sends
+  // on a retry. The FreeScout adapter says the same of a missing draft.
+  it('refuses a missing draft as a permanent failure', async () => {
+    const { server, port } = await fakeImap({ 'UID FETCH': 'nothing' });
+    try {
+      const failure = await egressOn(port, 2_000).sendDraft('7', 'refund:41:v1').catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(PermanentEgressError);
+      expect((failure as Error).message).toContain("no draft with UID '7'");
+    } finally {
+      server.close();
+    }
+  });
+
+  // SMTP has no read-back, so a send reported as failed is escalated as an
+  // unknown delivery. A send that completed stays a send, whatever the IMAP
+  // connection does while the draft is marked seen afterwards. And it returns
+  // at once: the relay records the send only when this returns, and a relay
+  // killed in between would send the reply again.
+  it('reports a completed send as sent at once when marking the draft seen stalls', async () => {
+    const imap = await fakeImap({ 'UID STORE': 'stall' });
+    const smtp = await fakeSmtp();
+    try {
+      const sent = await egressOn(imap.port, 10_000, smtp.port).sendDraft('7', 'refund:41:v1');
+      const returned = Date.now();
+      // Anchored to the server, not to a wall-clock limit: a send that waited
+      // for marking would return a whole budget after the STORE arrived.
+      for (let i = 0; i < 200 && imap.storeAt().length === 0; i += 1) await new Promise((r) => setTimeout(r, 10));
+      const [stored] = imap.storeAt();
+      expect(returned - stored!).toBeLessThan(IMAP_MARK_SEEN_BUDGET_MS / 2);
+      // The mark-seen connection it left still closes within its own budget.
+      for (let i = 0; i < 200 && imap.closed() < 2; i += 1) await new Promise((r) => setTimeout(r, 25));
+      expect(imap.closed()).toBe(2);
+      // The draft's own Message-ID, which the MIME reader strips of its brackets.
+      expect(sent).toEqual({ externalId: 'draft-7@example.invalid' });
+      expect(smtp.accepted()).toBe(1);
+    } finally {
+      imap.server.close();
+      smtp.server.close();
+    }
+  });
+
+  // A draft id this adapter minted is a UID, which is a number. IMAP reads
+  // `42:1007` as a range, so a FreeScout id would fetch an unrelated draft.
+  it('refuses a draft id that is not a UID, before it connects, and never retries it', async () => {
+    const adapter = egressOn(1);
+    for (const id of ['42:1007', '1,2', '*', 'SYN-DRAFT-1', ' 7']) {
+      await expect(adapter.readDraft(id), id).rejects.toThrow(/not a UID/);
+      await expect(adapter.readDraft(id), id).rejects.toBeInstanceOf(PermanentEgressError);
+      await expect(adapter.sendDraft(id, 'k'), id).rejects.toThrow(/not a UID/);
+    }
+  });
+
+  it('bounds each IMAP wait at the fifteen seconds the FreeScout request takes', () => {
+    expect(IMAP_OPERATION_TIMEOUT_MS).toBe(15_000);
+  });
+
+  // The console gives a read-back four seconds (`READ_BACK_GIVE_UP_MS` in
+  // console/src/read-back.ts, pinned by its own suite). The logout grace must
+  // leave most of that for connecting and reading, so a stalled logout cannot
+  // turn a read into a refusal.
+  it('leaves most of the console read-back for the read itself', () => {
+    const consoleReadBackMs = 4_000;
+    expect(IMAP_LOGOUT_GRACE_MS * 2).toBeLessThanOrEqual(consoleReadBackMs / 2);
+    expect(IMAP_MARK_SEEN_BUDGET_MS).toBeLessThan(IMAP_OPERATION_TIMEOUT_MS);
   });
 });
 

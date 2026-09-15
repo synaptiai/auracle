@@ -394,14 +394,45 @@ describe('what reads at every width', () => {
     expect(rule('.imeta').get('overflow-wrap')).toBe('anywhere');
   });
 
-  it('stacks the queue list above its case at a narrow width', () => {
-    expect(rule('.split', '@media (max-width: 720px)').get('grid-template-columns'))
-      .toBe('minmax(0, 1fr)');
-    expect(rule('.list', '@media (max-width: 720px)').get('border-right')).toBe('0');
-    // An uncapped list above the case would put the case below every row.
-    // The list scrolls inside half the screen, so the case stays in reach.
-    expect(rule('.list', '@media (max-width: 720px)').get('max-height')).toBe('50vh');
-    expect(rule('.list', '@media (max-width: 720px)').get('overflow-y')).toBe('auto');
+  // Issue #102. The case's two columns are flex bases that wrap, never fixed
+  // tracks. Side by side they need 460px, 300px and the 24px gap between.
+  it('wraps the case columns below about 800px of case width', () => {
+    const body = rule('.case');
+    expect(body.get('display')).toBe('flex');
+    expect(body.get('flex-wrap')).toBe('wrap');
+    expect(body.get('gap')).toBe('24px');
+    expect(body.has('grid-template-columns')).toBe(false);
+    expect(rule('.casemain').get('flex')).toBe('1 1 460px');
+    expect(rule('.casemain').get('min-width')).toBe('0');
+    const side = rule('.caseside');
+    expect(side.get('flex')).toBe('1 1 300px');
+    expect(side.get('max-width')).toBe('360px');
+    // 460 + 300 + 24. Below that the side column wraps, and takes the width.
+    expect(body.get('container-type')).toBe('inline-size');
+    expect(rule('.caseside', '@container (max-width: 783px)').get('max-width')).toBe('none');
+  });
+
+  it('keeps the approval in reach at the foot of the case', () => {
+    const bar = rule('.actionbar');
+    expect(bar.get('position')).toBe('sticky');
+    expect(bar.get('bottom')).toBe('0');
+    expect(bar.get('background')).toBe('var(--panel)');
+    // The warning beside the button, wrapping below it when the bar is narrow.
+    expect(bar.get('flex-wrap')).toBe('wrap');
+    expect(rule('.actionbar .warnbar').get('flex')).toBe('1 1 420px');
+    expect(rule('.actionbar form').get('flex')).toBe('none');
+  });
+
+  // The queue no longer draws a case beside itself, so nothing lays one out.
+  it('carries no rule for the pane the queue used to draw', () => {
+    for (const gone of ['.split', '.pane', '.item.on']) {
+      expect(RULES.filter((r) => r.selector === gone), gone).toHaveLength(0);
+    }
+  });
+
+  it('draws a refusal in another colour from an approval', () => {
+    expect(rule('.outcome.ok').get('border-left-color')).toBe('var(--ok)');
+    expect(rule('.outcome.refused').get('border-left-color')).toBe('var(--hot)');
   });
 
   // 11px text needs 4.5:1. Near-black on the light accent reads 3.5:1.

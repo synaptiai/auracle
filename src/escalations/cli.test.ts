@@ -24,6 +24,7 @@ function item(over: Partial<EscalationItem> = {}): EscalationItem {
     agreementThreshold: 0.8,
     coverageReviewThreshold: 0.8,
     riskTier: 'low',
+    approved: false,
     createdAt: new Date('2026-09-07T09:00:00.000Z'),
     promptVer: 'seed',
     outboxStatus: null,

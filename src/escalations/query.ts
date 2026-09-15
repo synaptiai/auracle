@@ -130,6 +130,15 @@ export interface EscalationItem {
   readonly payload: Readonly<Record<string, unknown>> | null;
   readonly actionClass: string | null;
   readonly delivery: string | null;
+  /**
+   * Whether an approval recorded this run's approver (DEC-42).
+   *
+   * Every approval records one, `unattributed` included, and nothing else
+   * writes the column. So a surface can tell an approved run from one that
+   * never was, whatever the relay did with its send afterwards. The name is
+   * not carried: this read feeds an unauthenticated page.
+   */
+  readonly approved: boolean;
   readonly costMicros: number;
   readonly stepsUsed: number;
 }
@@ -214,6 +223,7 @@ const RUN_SELECT_BODY = `
          park.result ->> 'draftExternalId' AS draft_external_id,
          park.result ->> 'actionClass'     AS action_class,
          park.result ->> 'delivery'        AS delivery,
+         (r.approved_by IS NOT NULL)       AS approved,
          o.status             AS outbox_status
     FROM run r
     LEFT JOIN step_journal esc
@@ -284,6 +294,7 @@ const OUTBOX_SELECT = `
          park.result ->> 'draftExternalId' AS draft_external_id,
          park.result ->> 'actionClass'     AS action_class,
          park.result ->> 'delivery'        AS delivery,
+         (r.approved_by IS NOT NULL)       AS approved,
          o.status             AS outbox_status
     FROM outbox o
     JOIN run r ON r.run_id = o.run_id
@@ -351,6 +362,7 @@ function toItem(row: Record<string, unknown>): EscalationItem {
         : null,
     actionClass: (row['action_class'] as string | null) ?? null,
     delivery: (row['delivery'] as string | null) ?? null,
+    approved: row['approved'] === true,
     costMicros: row['cost_micros'] as number,
     stepsUsed: row['steps_used'] as number,
   };

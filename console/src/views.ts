@@ -56,6 +56,7 @@ export function toDetail(
     payload: Readonly<Record<string, unknown>> | null;
     agreement: number | null; agreementThreshold: number | null;
     coverageReviewThreshold: number | null; riskTier: string | null;
+    approved: boolean;
   },
 ): RunDetail {
   return {
@@ -70,6 +71,7 @@ export function toDetail(
     actionClass: item.actionClass,
     delivery: item.delivery,
     payload: item.payload,
+    approved: item.approved,
   };
 }
 
@@ -200,7 +202,7 @@ export function latencyCaveats(p: PartitionLatency): string[] {
 /**
  * The draft, its claims and the documents behind them.
  *
- * Assembled here so one builder decides it. The approval pane and the run
+ * Assembled here so one builder decides it. The case and the run
  * detail both draw this, and two assemblies of the same evidence would
  * eventually disagree about a run.
  *

@@ -33,4 +33,9 @@ export type { PartitionLatency } from '../latency/query.js';
 export { readDays } from '../bands/query.js';
 
 export { approveRun } from '../approval/approve.js';
+
+// The adapters an approval reads a parked draft back from. A read of the
+// helpdesk, not a write: the approval above is still the one write here.
+export { READ_BACK_ADAPTER_NAMES, selectReadBackAdapter } from '../adapters/read-back.js';
+export type { DraftReadBack } from '../adapters/types.js';
 export type { ApproveOptions, ApproveOutcome } from '../approval/approve.js';

@@ -61,10 +61,9 @@ export const CONSOLE_SCRIPT = `
   // operator is typing into something.
   var rows = document.querySelectorAll('.list .item');
   if (rows.length === 0) return;
+  // No row is open on the queue, since each case has a page of its own. So
+  // the first j reaches the first row.
   var at = -1;
-  for (var i = 0; i < rows.length; i += 1) {
-    if (rows[i].classList.contains('on')) at = i;
-  }
   // Where the operator is. Tab moves focus without j or k, and a stale
   // position would send the next j back to wherever the keys last were.
   for (var r = 0; r < rows.length; r += 1) {

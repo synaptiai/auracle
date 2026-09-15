@@ -434,7 +434,8 @@ This value shows how much the person changed the draft before sending it.
 Add `--read-back` to measure the real edit.
 The CLI then fetches the current draft body from the adapter before the approval commits.
 It reads the adapter named by `APPROVE_ADAPTER`.
-Known values are `helpdesk` and `imap-smtp`.
+Known values are `helpdesk`, `imap-smtp` and `freescout`.
+The console reads the same variable, as section 7.0 says.
 The default is `helpdesk`.
 
 Read-back refuses the approval when the adapter holds no draft.
@@ -1180,17 +1181,21 @@ The console authenticates nobody. Anyone who reaches it can approve a
 reply. So treat reaching it as the whole access control, and place it
 accordingly.
 
-Seven surfaces read live data. The queue, the runs and one run in detail. One
-conversation and one document. The control bands and the partition latency.
+Eight surfaces read live data. The queue, one case, the runs and one run in
+detail. One conversation and one document. The control bands and the partition
+latency.
 
 The rail holds four of them, in two groups. Work holds the queue, named Needs a
 person, which a reviewer comes to clear. Admin holds the runs, the bands and
 the latency, which an engineer audits. The rail draws no group that has no
 surface.
 
-The console opens on the queue, at `/`. The runs list is at `/runs`.
-`/approvals` redirects to `/`, and `/?state=` redirects to `/runs`. Each keeps
-its query. A bare `/` opens the queue.
+The console opens on the queue, at `/`. The runs list is at `/runs`. Each case
+has its own page, at `/case/<run>`. `/?state=` redirects to `/runs` and keeps
+its query. `/approvals` redirects to `/` and keeps the queue filter.
+
+A queue link that names a run, `/?run=<run>` or `/approvals?run=<run>`, opens
+that case in one redirect. A value that is not a run id opens the queue.
 
 A reviewer is an operator who approves a reply. The foot of the rail names the
 reviewer. The name is the one a trusted proxy supplies, bounded the way the
@@ -1203,9 +1208,10 @@ that decode as UTF-8 as UTF-8, and any other bytes as Latin-1. A Latin-1 name
 whose bytes also form valid UTF-8 therefore reads as UTF-8. Such a name is
 rare.
 
-A conversation and a document are reached from the run that names them. The
-ledger orders conversations by when a problem opened. That is not when one
-last needed attention, so a listing would sort by the wrong thing.
+A case opens from its row on the queue. A conversation and a document open from
+the run that names them. The ledger orders conversations by when a problem
+opened. That is not when one last needed attention, so a listing would sort by
+the wrong thing.
 
 The console ships one script, and no more. It lights the document a claim
 cites, and it moves through the queue on the j and k keys. Every surface works
@@ -1226,12 +1232,14 @@ the newest 200 runs and call them the gated ones. A state the ledger has no
 such thing as answers 404.
 
 The rail carries a theme toggle. It sets a cookie and returns to the surface
-you were reading. The console answers dark until the cookie says otherwise.
+you were reading, with the queue filter you chose. The console answers dark
+until the cookie says otherwise.
 
-The queue lists every run that waits for approval and draws one of them. The
-list holds every one, because a cap drops the oldest waiting replies off the
-end. A card for each row makes the page as long as the backlog. A queue of 476
-runs renders 8 MB. The list selects, and the pane draws the selection.
+The queue lists every run that waits for approval, and each row opens its case.
+The list holds every one, because a cap drops the oldest waiting replies off
+the end. The queue draws no case beside the list, so its page stays small
+however long the backlog grows. A chosen filter stays on each row's link, so
+returning from a case keeps it.
 
 An escalated run also waits for a person, but it has nothing to approve. So
 the queue does not list it. A line under the header links to the escalated
@@ -1287,8 +1295,39 @@ The run detail surface reads one run's journal. It shows the steps the run
 journals and the documents the retriever returns. It shows the two gate values
 beside the thresholds that judged them.
 
-The queue shows the reply before the button that sends it. An approver who
-cannot read a reply cannot approve it (DEC-40).
+A case shows the reply before the button that sends it. An approver who cannot
+read a reply cannot approve it (DEC-40).
+
+The case has two columns. The main column holds the customer's message, the
+reply sentence by sentence and the documents the reply cites. The context
+column holds why the case reached a person, the two gates, the customer and
+the run's steps. The columns sit side by side when the case is at least about
+800px wide. Below that width the context column drops under the main column.
+While a case is open, the rail marks Needs a person.
+
+"Why this is yours" names the policy rule the journal recorded, and says what
+that rule means. It never assumes a rule. On a FreeScout ledger every reply
+stops on `no_idempotency` before `customer_visible`, and the case says so.
+While the case waits, the card also says what approving does. It states the
+delivery rule the park recorded in words.
+
+The two gates are two rows, each against its own lines (DEC-05). A gate with no
+value shows a dash, and the reason stands beside it as text.
+
+"This customer" shows what the ledger holds. That is the turn, when the
+conversation opened, its state and whether the ledger names a participant. The
+ledger holds no name, plan, tenure or account history, and the card says so.
+It shows no address.
+
+A fault reading the customer names a log tag, and the case still draws. A
+fault reading the run names a log tag too, and shows no outcome. The
+approval's answer is then on its `console_approved` or `console_approve_failed`
+log line.
+
+The steps are a timeline with no durations. The approval sits in a bar at the
+foot of the window. Its warning says whether the act can be undone. A run that
+is not waiting opens too. Its header says when the run opened, and its bar says
+there is nothing to approve.
 
 Each row names what the ticket is about and which policy rule sent it to a
 person. It names how long the run has waited.
@@ -1299,7 +1338,7 @@ anything.
 The gate row records both values on every run. A customer reply is gated before
 the engine reads either threshold (DEC-12). So most of a queue carries numbers
 that judged nothing, and the row marks each such number `not read`. The
-gate panel says the same, so the row and the panel agree.
+case's gate panel says the same, so the row and the case agree.
 The rule comes from the gate row, not the escalate row. A run awaiting a
 person has not escalated, so the escalate row is empty for every one of them.
 
@@ -1308,7 +1347,7 @@ whole queue, so a filter never reports a queue that has emptied.
 
 A run parks a helpdesk draft, or an action payload in the ledger (DEC-34).
 Both are approvable, and the button says which one it does. A run that parked
-neither is one the approval path refuses, and the queue says so instead.
+neither is one the approval path refuses, and the case says so instead.
 
 A run that parked an action shows that action's payload, field by field. An
 approver reads what they approve (DEC-40), and such a run has no drafted reply
@@ -1326,13 +1365,21 @@ The warning reads the action, not the rule that stopped the run. The engine
 tests five rules in order and reports the first that fired. So a compensation
 can stop on a rule that says nothing about permanence.
 
-It reads one journal, for the run it draws. Reading one for every waiting run
-would be a statement for each row of an uncapped list.
+A case reads one journal, for its own run. The queue reads none. Reading one
+for every waiting run would be a statement for each row of an uncapped list.
 
 The reply is drawn sentence by sentence, because those sentences joined are the
 draft. Each claim carries the document it cites. A claim the judge did not
 support is marked, and a claim nobody judged is marked apart from it. Those are
 different facts, and only the first is a warning.
+
+Each sentence also carries a word: accepted, refused, not judged or courtesy.
+Colour marks the verdict as well, but a reader who cannot see the colour reads
+the word.
+
+Each cited document carries one of three flags: unchanged, changed since this
+run read it, or not compared. The console compares nothing for a document with
+no digest, and that includes a document the run did not retrieve.
 
 A reply may open and close with a courtesy sentence (DEC-43). Such a sentence
 cites nothing, and the console draws it quieter than the claims around it. The
@@ -1379,7 +1426,7 @@ The console shows the parked draft. A console may approve a reply, and an
 approver has to read one first (DEC-40).
 
 Edit the draft in the helpdesk, which is where DEC-11 keeps it. This console
-captures no reply text, so it measures no approval-edit distance.
+captures no reply text. It measures an edit only by reading the draft back.
 
 The console records the approval it makes. The line names the run, the
 outcome, the `Host` and the address it came from. The ledger records that a
@@ -1492,14 +1539,60 @@ Approving in the console calls the same function `pnpm run approve` calls.
 So the transaction and the fencing epoch are the same whichever path an
 operator used. The command line keeps working.
 
-The console captures no reply text, so it records no approval-edit distance.
 Edit the draft in the helpdesk, then approve. The relay sends the parked draft
 exactly as the helpdesk holds it. So text typed anywhere else is recorded and
-never sent. `pnpm run approve --read-back` is the path that measures an edit.
-It reads the draft back from the target system after the person changed it.
+never sent.
 
-A run whose parked draft is gone offers no approve button. The command
-line reports the same `draft_missing` for it.
+The console reads the draft back when `APPROVE_ADAPTER` names `imap-smtp` or
+`freescout`. That is the path `pnpm run approve --read-back` takes. The approval
+reads the draft the helpdesk holds and records the approval-edit distance
+against it. Export the adapter's own variables too, because the console reads no
+`.env`. Name the adapter the consumer parks through. The console cannot read a
+draft id another adapter minted, so every approval would refuse.
+
+An unset `APPROVE_ADAPTER` reads nothing back, and so does the reference
+adapter `helpdesk`. That adapter keeps its drafts in the memory of the process
+that parked them. From the console every read would find nothing, so every
+approval would refuse. The case says whether an approval reads the draft back.
+
+The console builds the adapter at startup. An unknown name stops the console
+before it serves a page. So does a missing adapter variable, and a
+`FREESCOUT_BASE_URL` that carries a user name or password.
+
+An approval whose draft is gone refuses as `draft_missing`, and nothing
+commits. The case says the parked draft is gone, as the command line does. The
+FreeScout adapter reads any 404 as a gone draft. So a `FREESCOUT_BASE_URL` that
+points at no API refuses every approval that way.
+
+A read that fails, or that has not answered after four seconds, is not a
+missing draft. The case says the console could not read the draft back, and
+nothing commits. The log line `console_read_back_failed` names the run, the
+draft and the fault. When the console gives up, it tells the adapter to stop,
+and the adapter closes the connection it holds. A fault that arrives later
+gets its own line, `console_read_back_late_fault`, with the same draft.
+
+Four seconds sits inside the console's five-second shutdown grace. The rest of
+the grace is for the approval's own statements. A transaction that asks for
+a connection after the pool closed is refused, and commits nothing.
+
+The FreeScout adapter refuses a redirect. Its API key is a header of its own.
+Fetch keeps such a header on a redirect to another host. The refusal names the
+status and `FREESCOUT_BASE_URL`, and a retry does not repeat it. Set the
+variable to the address the helpdesk redirects to.
+
+After an approval the console returns to the case, with the ledger's answer
+above it. Only an approval draws in the success colour. Every refusal draws in
+another, and says nothing was sent.
+
+A link can carry any outcome, so the case checks each against the run. It shows
+an approval only on a run that records an approver. It shows a gone draft only
+on a run that still waits. When the relay escalated an approved run, the
+approval says a person has the run now.
+
+A fault during the approval can come after the commit. Its page says the
+approval may or may not have committed, and links the case. The log line
+`console_approve_failed` names the run, the claimed approver and where the
+request came from.
 
 The console never parks a draft. A draft parks in the helpdesk and nowhere
 else (DEC-11, DEC-40).

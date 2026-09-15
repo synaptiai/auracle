@@ -26,6 +26,7 @@ import { COMPENSATION_ACTION_CLASS, CUSTOMER_REPLY_ACTION_CLASS } from '../adapt
 import { relayPending } from '../relay/relay.js';
 import { indexDocument } from '../retriever/retriever.js';
 
+import { readRun } from '../escalations/query.js';
 import { approveRun } from './approve.js';
 import { approvalEditDistance } from './edit_distance.js';
 
@@ -345,6 +346,35 @@ describe('approval completion path (DEC-12 end to end)', () => {
     // The refusal blocks nothing: the operator reconciles by hand and the
     // manual approval path still works.
     expect(await approveRun(pool, runId)).toMatchObject({ outcome: 'approved' });
+  });
+
+  // A read that fails is not a missing draft, and the console reports it as
+  // its own outcome. That rests on the read running before the transaction:
+  // the fault reaches the caller unchanged, and nothing commits.
+  // The console checks an approval's outcome against this flag: an approval
+  // records an approver on every path, and nothing else does (DEC-42).
+  it('reads a run as approved once an approval records its approver, and not before', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const { runId } = await parkReply(ticketId);
+    expect((await readRun(pool, runId))?.approved).toBe(false);
+    expect(await approveRun(pool, runId)).toMatchObject({ outcome: 'approved' });
+    expect((await readRun(pool, runId))?.approved).toBe(true);
+  });
+
+  it('lets a read-back fault through unchanged, and nothing commits', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const { runId } = await parkReply(ticketId);
+    const fault = new Error('the helpdesk did not answer');
+    await expect(approveRun(pool, runId, {
+      readDraft: { readDraft: async () => { throw fault; } },
+    })).rejects.toBe(fault);
+    expect(await runState(runId)).toBe('awaiting_approval');
+    expect(await outboxRows(runId)).toEqual([]);
+    const rows = await pool.query(
+      'SELECT approval_edit_distance, approved_by FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(rows.rows[0]).toEqual({ approval_edit_distance: null, approved_by: null });
   });
 
   it('lets an explicit final body win over read-back', async () => {

@@ -36,12 +36,27 @@ describe('the console as a long-running process', () => {
   // the refusal printed and the process then ran forever. A supervisor saw a
   // live console serving nothing.
   it('reads and refuses its configuration before it opens the pool', () => {
+    // The read-back adapter too (issue #102). A FreeScout adapter missing its
+    // key refuses where it is built, and built after the pool that refusal
+    // would hang the same way.
+    expect(MAIN.indexOf('readBackFor(')).toBeGreaterThan(-1);
     const config = Math.max(
       MAIN.indexOf('requirePort('),
       MAIN.indexOf('allowedHosts(host, port)'),
+      MAIN.indexOf('readBackFor('),
     );
     expect(config).toBeGreaterThan(-1);
     expect(config).toBeLessThan(MAIN.indexOf('new Pool('));
+  });
+
+  // A failed read-back reaches the page as a sentence with no fault in it, so
+  // the fault must reach the log. `approvalFor` and `readBackFor` log it, and
+  // their suites prove the lines; this holds the entry point to using them
+  // with the console's own log, rather than wiring the adapter by hand.
+  it('builds the approval and the read-back through the functions that log them', () => {
+    expect(MAIN).toMatch(/readBackFor\(process\.env, selectReadBackAdapter, log\)/);
+    expect(MAIN).toMatch(/approve: approvalFor\(\{ pool, approveRun, readBack, log \}\)/);
+    expect(MAIN).not.toContain('approveFromConsole');
   });
 
   // Two paths close the pool, and `pool.end()` rejects on the second call.

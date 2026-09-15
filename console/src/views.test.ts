@@ -123,7 +123,7 @@ describe('what a run row carries onto a page', () => {
     coverage: 0.94, createdAt: new Date('2026-09-07T09:00:00.000Z'),
     costMicros: 1234, stepsUsed: 6,
     agreement: 0.89, agreementThreshold: 0.8, coverageReviewThreshold: 0.75,
-    riskTier: 'high' as const,
+    riskTier: 'high' as const, approved: false,
   };
 
   it('keeps a null reason a null, rather than an empty string', () => {
@@ -204,6 +204,8 @@ describe('what a run row carries onto a page', () => {
     expect(detail.coverageReviewThreshold).toBe(0.75);
     expect(detail.riskTier).toBe('high');
     expect(toDetail({ ...base, riskTier: null }).riskTier).toBeNull();
+    expect(detail.approved).toBe(false);
+    expect(toDetail({ ...base, approved: true }).approved).toBe(true);
     const unread = toDetail({
       ...base, agreement: null, agreementThreshold: null, coverage: null, coverageReviewThreshold: null,
     });

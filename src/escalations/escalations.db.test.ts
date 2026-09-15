@@ -110,6 +110,8 @@ describe('escalations CLI queries', () => {
       coverageReviewThreshold: null,
       riskTier: null,
       intentId: null,
+      // Nobody approved an escalated run, so the run records no approver.
+      approved: false,
       outboxStatus: null,
       draftExternalId: null,
       payloadRecorded: false,

@@ -22,11 +22,12 @@ import { isRunId } from './approve.js';
 import { escapeHtml } from './render.js';
 import { CONSOLE_SCRIPT } from './script.js';
 import {
+  caseHref,
   narrowToRule,
   page,
-  queueOrder,
   renderApprovals,
   renderBands,
+  renderCase,
   renderLatency,
   renderConversation,
   renderDocument,
@@ -34,10 +35,10 @@ import {
   renderOutcome,
   renderRuns,
 } from './surfaces.js';
-import type { ApproveOutcome } from 'auracle/ledger-read';
+import type { ConsoleApproveOutcome } from './approve.js';
 import type {
-  BandRow, DocumentPage, EvidenceView, GateReading, LatencyRow, QueueTodayRead, QueueTodayView,
-  RequestView, RunDetail, RunRow, RunView, Shell,
+  BandRow, CustomerRead, DocumentPage, LatencyRow, QueueTodayRead, QueueTodayView,
+  RunDetail, RunRow, RunView, Shell,
   ThreadView, Theme,
 } from './surfaces.js';
 import { describeFault } from 'auracle/cli';
@@ -79,26 +80,13 @@ export interface ConsoleDeps {
   readonly readConversation: (conversationId: string) => Promise<ThreadView | null>;
   readonly readDocument: (docId: string) => Promise<DocumentPage | null>;
   /**
-   * The evidence for one waiting run, read for the drawn selection alone.
-   *
-   * The approval queue is uncapped by design, so reading a journal per row
-   * would be one statement for every run of a list that has been 476 long.
-   */
-  readonly readApprovalEvidence: (
-    runId: string,
-  ) => Promise<{
-    readonly evidence: EvidenceView;
-    readonly gates: GateReading;
-    readonly request: RequestView | null;
-  } | null>;
-  /**
    * The approval, with the approver a trusted proxy named (DEC-42).
    *
    * A claim rather than an authentication, and the caller decides whether one
    * was supplied: `approveRun` bounds what it keeps and records
    * `unattributed` for anything else.
    */
-  readonly approve: (runId: string, approvedBy: string | undefined) => Promise<ApproveOutcome['outcome']>;
+  readonly approve: (runId: string, approvedBy: string | undefined) => Promise<ConsoleApproveOutcome['outcome']>;
 }
 
 const CSS_PATH = '/console.css';
@@ -240,7 +228,12 @@ function send(res: ServerResponse, status: number, body: string, type = 'text/ht
  * is bound to and the reviewer, and a refused request is exactly the one that
  * should not be told.
  */
-function bare(title: string, says: string, theme: Theme): string {
+function bare(
+  title: string,
+  says: string,
+  theme: Theme,
+  link?: { readonly href: string; readonly text: string },
+): string {
   return [
     '<!doctype html><html><head><meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -249,6 +242,7 @@ function bare(title: string, says: string, theme: Theme): string {
     `</head><body><div class="root" data-theme="${theme}"><div class="wrap">`,
     `<div class="hdt">${escapeHtml(title)}</div>`,
     `<p class="mut">${escapeHtml(says)}</p>`,
+    link === undefined ? '' : `<p><a href="${escapeHtml(link.href)}">${escapeHtml(link.text)}</a></p>`,
     '</div></div></body></html>',
   ].join('');
 }
@@ -319,10 +313,22 @@ export function readTheme(cookieHeader: string | undefined): Theme {
 function safeReturn(back: string | null, surfaces: readonly string[]): string {
   if (back === null) return '/';
   if (surfaces.includes(back)) return back;
-  // The run detail is the one path that is not a fixed string.
-  // Three paths are not fixed strings. Each is rebuilt from a value this
+  // The queue and a case may carry the rule a person chose. Only that one
+  // parameter survives, re-encoded, so nothing else in the value returns.
+  const query = back.indexOf('?');
+  if (query !== -1) {
+    const rule = new URLSearchParams(back.slice(query + 1)).get('rule');
+    const at = back.slice(0, query);
+    if (at === '/') return rule === null ? '/' : `/?rule=${encodeURIComponent(rule)}`;
+    if (at.startsWith('/case/')) {
+      const id = decodeRunPath(at.slice('/case/'.length));
+      return id !== null && isRunId(id) ? caseHref(id, rule) : '/';
+    }
+    return '/';
+  }
+  // Four paths are not fixed strings. Each is rebuilt from a value this
   // console has checked, so the redirect target is never the caller's text.
-  for (const prefix of ['/run/', '/conversation/'] as const) {
+  for (const prefix of ['/run/', '/case/', '/conversation/'] as const) {
     if (back.startsWith(prefix)) {
       const id = decodeRunPath(back.slice(prefix.length));
       if (id !== null && isRunId(id)) return `${prefix}${encodeURIComponent(id)}`;
@@ -435,6 +441,11 @@ export interface ConsoleOptions {
   readonly states: readonly string[];
   /** Which ledger this console is bound to, for the rail. No credentials. */
   readonly ledger: string;
+  /**
+   * The adapter an approval reads the draft back through, or null when the
+   * console reads none (section 4.10). A case says which.
+   */
+  readonly readBack: string | null;
 }
 
 export function createConsole(
@@ -570,8 +581,10 @@ async function route(
     res.end();
     return;
   }
+  // The old queue's link to one run named it in the query string. It now
+  // names that run's case, in one hop rather than through the queue.
   if (req.method === 'GET' && path === '/approvals') {
-    res.writeHead(303, { ...SAFETY_HEADERS, location: `/${url.search}` });
+    res.writeHead(303, { ...SAFETY_HEADERS, location: queueRedirect(url.searchParams) ?? `/${url.search}` });
     res.end();
     return;
   }
@@ -615,31 +628,21 @@ async function route(
   }
 
   if (req.method === 'GET' && path === '/') {
-    // The outcome of the approval just posted. Without it an operator sees a
-    // reloaded queue and cannot tell an approval that landed from one that
-    // did not — `draft_missing` and every other refusal read as success.
-    const outcome = url.searchParams.get('outcome');
+    // A link that named a run on the queue, from before each case had a page
+    // of its own. It opens that case. A value that is not a run id is never
+    // rebuilt into a path, and the queue draws as if none were named.
+    const toCase = queueRedirect(url.searchParams);
+    if (toCase !== null) {
+      res.writeHead(303, { ...SAFETY_HEADERS, location: toCase });
+      res.end();
+      return;
+    }
     const waiting = await deps.listApprovals();
-    // The run the pane shows. Checked for shape before it is compared, so a
-    // query string cannot put arbitrary text through the comparison; a value
-    // that matches nothing waiting falls back to the head of the queue rather
-    // than to an empty pane, because an operator following a stale link has
-    // still come here to work the queue.
-    const wanted = url.searchParams.get('run');
-    const selected = wanted !== null && isRunId(wanted) ? wanted : null;
     // Which gate rule the queue is narrowed to. Compared against what is
     // actually waiting rather than validated against a list: a value nothing
     // carries narrows to an empty queue, which is what it asked for and says
     // so, and it never reaches a statement in any case.
     const rule = url.searchParams.get('rule');
-    const narrowed = narrowToRule(waiting, rule);
-    // The evidence for the one run drawn, and no others. An approver reads
-    // the reply before the button that sends it (DEC-40).
-    // Otherwise the first in working order, which is the run the list draws
-    // at its head.
-    const drawn = narrowed.find((run) => run.runId === selected)?.runId
-      ?? queueOrder(narrowed)[0]?.runId ?? null;
-    const read = drawn === null ? null : await deps.readApprovalEvidence(drawn);
     // The counts are a header over the work, so a fault reading them does not
     // take the queue away. It is logged under a tag the page names, the way
     // a page fault is, and the text stays in the log.
@@ -653,21 +656,79 @@ async function route(
     }
     send(res, 200, page(
       'Needs a person',
-      renderApprovals(
-        waiting,
-        outcome === null || outcome === '' ? '' : renderOutcome(outcome),
-        // The run the evidence was read for, so the pane draws that run and
-        // no other (DEC-40).
-        drawn,
-        read?.evidence ?? null,
-        read?.gates ?? null,
-        read?.request ?? null,
-        rule,
-        today,
-      ),
+      renderApprovals(waiting, rule, today),
       // Everything waiting, never the narrowed view. A rail badge that fell
       // because a filter was on would report a queue that had emptied.
-      shell('/', waiting.length),
+      // The theme returns with the rule only when something waiting carries
+      // it. A rule the query string invented is never written back out.
+      {
+        ...shell('/', waiting.length),
+        back: rule === null || narrowToRule(waiting, rule).length === 0 ? '/' : `/?rule=${encodeURIComponent(rule)}`,
+      },
+    ));
+    return;
+  }
+
+  if (req.method === 'GET' && path.startsWith('/case/')) {
+    const runId = decodeRunPath(path.slice('/case/'.length));
+    // Shape first, as the run route does: `run_id` is a `uuid` column, and an
+    // id of another shape would make Postgres raise rather than match nothing.
+    const outcome = url.searchParams.get('outcome') ?? '';
+    const rule = url.searchParams.get('rule');
+    if (runId === null || !isRunId(runId)) {
+      send(res, 404, page('Case', nothingFound(), shell(NOT_A_SURFACE)));
+      return;
+    }
+    // Any state, not only a waiting one. The approval comes back here with
+    // its outcome, and by then the run has left the queue.
+    let run;
+    try {
+      run = await deps.readRun(runId);
+    } catch (error) {
+      // The approval redirects here, and the catch-all would answer that the
+      // console failed while reading, with no word on the approval. With no
+      // state to check the outcome against, the page shows none. It says the
+      // approval's answer is on the log line the approval wrote.
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({ event: 'console_case_unread', tag, runId, error: describeFault(error) }));
+      send(res, 500, bare(
+        'Error',
+        `The run was not read. The console log names the fault ${tag}. An approval posted just before`
+          + ' this is recorded on its console_approved or console_approve_failed log line.',
+        theme,
+      ));
+      return;
+    }
+    if (run === null) {
+      // An approval of a run the ledger does not hold lands here, and its
+      // answer is still the ledger's to give.
+      send(res, 404, page(
+        'Case',
+        (outcome === '' ? '' : renderOutcome(outcome, null)) + nothingFound(),
+        shell(NOT_A_SURFACE),
+      ));
+      return;
+    }
+    const conversationId = run.request?.conversationId ?? run.conversationId;
+    let customer: CustomerRead;
+    if (conversationId === null) {
+      customer = { kind: 'none' };
+    } else {
+      // A fault reading the customer does not take the case away. The
+      // approval lands here, and a 500 would hide whether it committed.
+      try {
+        const thread = await deps.readConversation(conversationId);
+        customer = thread === null ? { kind: 'missing' } : { kind: 'thread', thread };
+      } catch (error) {
+        const tag = randomUUID().slice(0, 8);
+        console.error(logLine({ event: 'console_customer_unread', tag, runId, error: describeFault(error) }));
+        customer = { kind: 'unread', tag };
+      }
+    }
+    send(res, 200, page(
+      `Case ${run.ticketId}`,
+      renderCase({ ...run, customer }, { outcome, rule, readBack: options.readBack }),
+      { ...shell(`/case/${runId}`), back: caseHref(runId, rule) },
     ));
     return;
   }
@@ -710,7 +771,9 @@ async function route(
       send(res, 404, page('Evidence base', nothingFound(), shell(path)));
       return;
     }
-    send(res, 200, page('Evidence base', renderDocument(doc), shell(`/document/${docId}`)));
+    // Encoded, as the theme toggle rebuilds it. A corpus id can carry a `?` or
+    // a `%`, and a raw one turned the way back into the queue.
+    send(res, 200, page('Evidence base', renderDocument(doc), shell(`/document/${encodeURIComponent(docId)}`)));
     return;
   }
 
@@ -787,7 +850,34 @@ async function route(
     // sends nothing and the approval records `unattributed` — a forgeable
     // audit trail is worse than none.
     const claimed = claimedApprover(req, options);
-    const outcome = await deps.approve(runId, claimed);
+    let outcome;
+    try {
+      outcome = await deps.approve(runId, claimed);
+    } catch (error) {
+      // The one request that writes. A fault here can come after the
+      // transaction committed, so the page does not say the console was only
+      // reading. It sends the operator to the case, whose state answers it.
+      const tag = randomUUID().slice(0, 8);
+      // The line an incident reader needs, because the approved line below is
+      // never written: which run, who was claimed, and where it came from.
+      console.error(logLine({
+        event: 'console_approve_failed',
+        tag,
+        runId,
+        claimedBy: claimed === undefined ? null : logged(claimed),
+        claimedLength: claimed === undefined ? null : loggedLength(claimed),
+        host: req.headers.host ?? null,
+        from,
+        error: describeFault(error),
+      }));
+      send(res, 500, bare(
+        'Error',
+        `Something failed during the approval, and it may or may not have committed. The console log names it ${tag}.`,
+        theme,
+        { href: caseHref(runId, url.searchParams.get('rule')), text: 'Open the case to see its state.' },
+      ));
+      return;
+    }
     // The one write this console makes, and until now the only request it did
     // not record. The ledger journals that a run was approved; it does not
     // journal which client asked, and this console authenticates nobody, so
@@ -807,7 +897,8 @@ async function route(
       host: req.headers.host ?? null,
       from,
     }));
-    // See other, so a refresh cannot post the approval twice.
+    // See other, so a refresh cannot post the approval twice. It lands on the
+    // case it approved, where the outcome is read beside the reply it concerns.
     //
     // The filter comes back with it. An operator working one gate rule lost
     // the filter on every approval and had to reapply it, which on a queue of
@@ -819,7 +910,7 @@ async function route(
     const keptRule = url.searchParams.get('rule');
     res.writeHead(303, {
       ...SAFETY_HEADERS,
-      location: `/?outcome=${encodeURIComponent(outcome)}`
+      location: `/case/${encodeURIComponent(runId)}?outcome=${encodeURIComponent(outcome)}`
         + (keptRule === null || keptRule === '' ? '' : `&rule=${encodeURIComponent(keptRule)}`),
     });
     res.end();
@@ -830,6 +921,18 @@ async function route(
   // surface's own path, such as a POST to `/`, is not that surface, and the
   // rail must not mark it as the page being read.
   send(res, 404, page('Not found', nothingFound(), shell(NOT_A_SURFACE)));
+}
+
+/**
+ * Where a queue link naming a run now goes, or null when it names none.
+ *
+ * The id is checked for shape and rebuilt, so the redirect target is never
+ * the caller's text. The chosen rule rides along for the way back.
+ */
+function queueRedirect(params: URLSearchParams): string | null {
+  const run = params.get('run');
+  if (run === null || !isRunId(run)) return null;
+  return caseHref(run, params.get('rule'));
 }
 
 /**

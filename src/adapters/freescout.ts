@@ -119,7 +119,7 @@ export interface FreeScoutConfig {
  * process post a customer reply into whatever answers on that address.
  */
 export function freeScoutConfigFromEnv(env: NodeJS.ProcessEnv = process.env): FreeScoutConfig {
-  const baseUrl = requireEnv(env, 'FREESCOUT_BASE_URL');
+  const baseUrl = requireBaseUrl(requireEnv(env, 'FREESCOUT_BASE_URL'));
   const apiKey = requireEnv(env, 'FREESCOUT_API_KEY');
   const rawUser = requireEnv(env, 'FREESCOUT_USER_ID');
   const userId = Number(rawUser);
@@ -127,6 +127,31 @@ export function freeScoutConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Fr
     throw new Error(`FREESCOUT_USER_ID must be a positive integer, got '${rawUser}'`);
   }
   return { baseUrl: baseUrl.replace(/\/+$/, ''), apiKey, userId };
+}
+
+/**
+ * Refuses a base URL this adapter cannot use safely, or returns it.
+ *
+ * Neither refusal quotes the value. `fetch` refuses a URL that carries a user
+ * name or password, and its error text quotes the whole URL, so the
+ * credential would reach every log line a failed request writes.
+ */
+function requireBaseUrl(raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error('FREESCOUT_BASE_URL is not an http or https URL');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('FREESCOUT_BASE_URL is not an http or https URL');
+  }
+  if (url.username !== '' || url.password !== '') {
+    throw new Error(
+      'FREESCOUT_BASE_URL carries a user name or password; the API key goes in FREESCOUT_API_KEY',
+    );
+  }
+  return raw;
 }
 
 function requireEnv(env: NodeJS.ProcessEnv, name: string): string {
@@ -292,9 +317,12 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
    * Its body is then a sent message, and calling that a draft would let an
    * approval measure the distance to text the customer already has.
    */
-  async readDraft(draftExternalId: string): Promise<{ readonly body: string } | null> {
+  async readDraft(
+    draftExternalId: string,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<{ readonly body: string } | null> {
     requireNonEmpty('draftExternalId', draftExternalId);
-    const raw = await this.readRawDraftBody(draftExternalId);
+    const raw = await this.readRawDraftBody(draftExternalId, options?.signal);
     return raw === null ? null : { body: replyPartOf(raw) };
   }
 
@@ -428,9 +456,9 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
   }
 
   /** The parked draft's body exactly as FreeScout holds it, or null. */
-  private async readRawDraftBody(draftExternalId: string): Promise<string | null> {
+  private async readRawDraftBody(draftExternalId: string, signal?: AbortSignal): Promise<string | null> {
     const { conversationId, threadId } = parseDraftId(draftExternalId);
-    const conversation = await this.getConversation(conversationId);
+    const conversation = await this.getConversation(conversationId, signal);
     if (conversation === null) return null;
     const thread = (conversation._embedded?.threads ?? []).find(
       (candidate) => String(candidate.id) === threadId,
@@ -452,6 +480,7 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
     );
 
     if (response.status === 404) {
+      await discardBody(response);
       throw new PermanentEgressError(
         `freescout has no conversation '${conversationId}'; a retry would find the same absence`,
       );
@@ -464,6 +493,7 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
     // and named nothing would leave a thread in front of a person that no
     // later call can read or send, so this is a failure and not a default.
     const threadId = response.headers.get('resource-id');
+    await discardBody(response);
     if (threadId === null || threadId.trim().length === 0) {
       throw new Error(
         `freescout created a ${state} thread on '${conversationId}' and returned no Resource-ID header`,
@@ -473,28 +503,59 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
   }
 
   /** Reads one conversation with its threads, or null when it is gone. */
-  private async getConversation(conversationId: string): Promise<FreeScoutConversation | null> {
+  private async getConversation(
+    conversationId: string,
+    signal?: AbortSignal,
+  ): Promise<FreeScoutConversation | null> {
     const response = await this.request(
       'GET',
       `/api/conversations/${encodeURIComponent(conversationId)}?embed=threads`,
+      undefined,
+      signal,
     );
-    if (response.status === 404) return null;
-    if (!response.ok) {
-      throw await egressError(response, `read conversation '${conversationId}'`);
+    if (response.status === 404) {
+      await discardBody(response);
+      return null;
     }
-    return (await response.json()) as FreeScoutConversation;
+    if (!response.ok) {
+      // The status alone. A helpdesk error page can quote request details or
+      // a customer, and this message reaches the console's read-back log.
+      throw await egressError(response, `read conversation '${conversationId}'`, { withBody: false });
+    }
+    // Parsed here rather than by `response.json()`, whose error quotes the
+    // start of a body that is not JSON: a proxy page can name a customer.
+    const text = await response.text();
+    try {
+      return JSON.parse(text) as FreeScoutConversation;
+    } catch {
+      throw new Error(
+        `freescout answered HTTP ${response.status} to read conversation '${conversationId}' with a body that is not JSON`,
+      );
+    }
   }
 
-  /** One request, one connection. Nothing is kept between calls. */
+  /**
+   * One request, one connection. Nothing is kept between calls.
+   *
+   * A redirect is refused. The API key is a header of its own, and fetch keeps
+   * such a header when it follows a redirect to another origin, so following
+   * one would hand the key to whatever host the redirect named.
+   */
   private async request(
     method: 'GET' | 'POST',
     path: string,
     body?: unknown,
+    caller?: AbortSignal,
   ): Promise<Response> {
-    const signal = AbortSignal.timeout(this.config.timeoutMs ?? 15_000);
-    return fetch(`${this.config.baseUrl}${path}`, {
+    const bound = AbortSignal.timeout(this.config.timeoutMs ?? 15_000);
+    const signal = caller === undefined ? bound : AbortSignal.any([bound, caller]);
+    const response = await fetch(`${this.config.baseUrl}${path}`, {
       method,
       signal,
+      // Manual, so the redirect arrives as a response this adapter can name.
+      // An error redirect surfaced only as "fetch failed", with the reason
+      // hidden in a cause no log line reads.
+      redirect: 'manual',
       headers: {
         'X-FreeScout-API-Key': this.config.apiKey,
         Accept: 'application/json',
@@ -502,7 +563,25 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
+    if (response.status >= 300 && response.status < 400) {
+      await discardBody(response);
+      // Permanent: a base URL that redirects answers the same on a retry. The
+      // target is not quoted, because it is the host the key would have met.
+      throw new PermanentEgressError(
+        `freescout answered HTTP ${response.status} with a redirect, which this adapter refuses so the `
+          + 'API key stays on FREESCOUT_BASE_URL; set it to the address the helpdesk redirects to',
+      );
+    }
+    return response;
   }
+}
+
+/**
+ * Releases a response body nothing reads. An unread body holds its
+ * connection until the response is collected.
+ */
+async function discardBody(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
 }
 
 /**
@@ -512,8 +591,16 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
  * attempt ceiling is sized for transient faults, so those escalate on the
  * first occurrence. A 5xx is transient and stays an ordinary error.
  */
-async function egressError(response: Response, what: string): Promise<Error> {
-  const detail = (await response.text().catch(() => '')).slice(0, 500);
+async function egressError(
+  response: Response,
+  what: string,
+  options: { readonly withBody: boolean } = { withBody: true },
+): Promise<Error> {
+  // A body that is not quoted is released rather than left holding its
+  // connection.
+  let detail = '';
+  if (options.withBody) detail = (await response.text().catch(() => '')).slice(0, 500);
+  else await discardBody(response);
   const message = `freescout refused to ${what}: HTTP ${response.status} ${detail}`.trim();
   return response.status >= 400 && response.status < 500
     ? new PermanentEgressError(message)

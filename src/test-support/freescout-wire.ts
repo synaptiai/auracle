@@ -51,6 +51,12 @@ export class FakeFreeScout {
   /** Set to a status to make the next thread create answer with it. */
   createStatus: number | null = null;
 
+  /** Set to a status to make every conversation read answer with it. */
+  readStatus: number | null = null;
+
+  /** The body a refused conversation read carries. */
+  readBody = 'refused';
+
   /** Set true to answer a thread create with 201 and no Resource-ID header. */
   omitResourceId = false;
 
@@ -157,6 +163,11 @@ export class FakeFreeScout {
   }
 
   private readConversation(response: ServerResponse, id: string): void {
+    if (this.readStatus !== null) {
+      response.statusCode = this.readStatus;
+      response.end(this.readBody);
+      return;
+    }
     const threads = this.conversations.get(id);
     if (threads === undefined) {
       json(response, 404, { message: 'Not found' });
