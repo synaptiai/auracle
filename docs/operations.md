@@ -862,6 +862,12 @@ gives one consumer a new fit while another still holds the old one. So two
 identical tickets can decide differently for a legitimate reason. The journal
 row says which numbers each run applied.
 
+The gate row also records the risk tier it judged the intent at (DEC-13). A
+customer reply stops on its own rule before the high-risk rule runs. So the
+rule alone never marks a waiting reply as high risk, and the tier does. A gate
+row written before the gate recorded a tier has none. Its rule alone places
+that reply in the queue.
+
 `pnpm run gold-report` reads the calibration artifact. A clean checkout carries none,
 so it scores through the seeds and the artifact says `gate_source: seed`. A
 machine that holds a fit publishes different rates. Its artifact names the
@@ -1174,13 +1180,17 @@ The console authenticates nobody. Anyone who reaches it can approve a
 reply. So treat reaching it as the whole access control, and place it
 accordingly.
 
-Seven surfaces read live data. Runs, one run in detail, and the approval
-queue. One conversation and one document. The control bands and the partition
-latency.
+Seven surfaces read live data. The queue, the runs and one run in detail. One
+conversation and one document. The control bands and the partition latency.
 
-The rail holds four of them, in two groups. Work holds the queue, which is
-what a reviewer comes to do. Admin holds the runs, the bands and the latency,
-which an engineer audits. The rail draws no group that has no surface.
+The rail holds four of them, in two groups. Work holds the queue, named Needs a
+person, which a reviewer comes to clear. Admin holds the runs, the bands and
+the latency, which an engineer audits. The rail draws no group that has no
+surface.
+
+The console opens on the queue, at `/`. The runs list is at `/runs`.
+`/approvals` redirects to `/`, and `/?state=` redirects to `/runs`. Each keeps
+its query. A bare `/` opens the queue.
 
 A reviewer is an operator who approves a reply. The foot of the rail names the
 reviewer. The name is the one a trusted proxy supplies, bounded the way the
@@ -1218,10 +1228,56 @@ such thing as answers 404.
 The rail carries a theme toggle. It sets a cookie and returns to the surface
 you were reading. The console answers dark until the cookie says otherwise.
 
-The approval queue lists every waiting run and draws one of them. The list
-holds every one, because a cap drops the oldest waiting replies off the end. A
-card for each row makes the page as long as the backlog. A queue of 476 runs
-renders 8 MB. The list selects, and the pane draws the selection.
+The queue lists every run that waits for approval and draws one of them. The
+list holds every one, because a cap drops the oldest waiting replies off the
+end. A card for each row makes the page as long as the backlog. A queue of 476
+runs renders 8 MB. The list selects, and the pane draws the selection.
+
+An escalated run also waits for a person, but it has nothing to approve. So
+the queue does not list it. A line under the header links to the escalated
+runs on the runs list, which shows the newest 200. `pnpm run escalations`
+lists every one.
+
+The queue draws three groups, in the order a reviewer works them. The first
+holds a case that the rule `irreversible` or `high_risk` stopped. It also holds
+a case whose gate row records a high-risk intent, and a parked compensation.
+The second, Both gates clean, holds a case whose agreement and coverage each
+cleared their own line. The third holds every other waiting case. The oldest
+case comes first in each group.
+
+Clean compares each gate with its own line and never combines the two
+(DEC-05). A gate the ledger did not measure clears nothing, so its case is not
+clean. A recorded value outside [0, 1] clears no line either. A case whose rule
+is missing or unknown is not clean. A note under the clean group says that
+neither gate decided those cases.
+
+Delivery does not move a case to the first group. Every action sends at most
+once unless `ACTION_DELIVERY` says otherwise. So that rule would move the whole
+queue.
+
+The header states two counts for the UTC day. One is the messages that
+arrived. The other is how many of those messages a run parked for a person.
+A message counts once, on the day it arrived, however many runs retried it.
+A run that recorded no message counts on the day it started. Such a run is not
+among the arrivals, so the second count can exceed the first.
+
+The header states no share of one count in the other. The published
+containment comes from the gold report, and a live share would read as that
+figure.
+
+The count statement has a two-second timeout, and each of its queries has a
+three-second bound on the client. The console closes a connection that outlasts
+the client bound, and never returns it to the pool. A request waits at most
+three seconds for a pool connection. The console gives up on a count read after
+six seconds.
+
+The console holds a successful count for 30 seconds, and never past the end of
+the UTC day. When the console cannot read the counts, the header says so and
+names a log tag. The queue still draws.
+
+A run whose park finished counts as reaching the queue. The fence can still
+refuse its move to waiting, which is rare. Such a run counts, although nobody
+saw it.
 
 The rail also names the ledger the console is bound to. It names the host and
 the database, never the credentials. A refused request gets no rail at all, so
@@ -1231,17 +1287,18 @@ The run detail surface reads one run's journal. It shows the steps the run
 journals and the documents the retriever returns. It shows the two gate values
 beside the thresholds that judged them.
 
-The approval queue shows the reply before the button that sends it. An
-approver who cannot read a reply cannot approve it (DEC-40).
+The queue shows the reply before the button that sends it. An approver who
+cannot read a reply cannot approve it (DEC-40).
 
 Each row names what the ticket is about and which policy rule sent it to a
 person. It names how long the run has waited.
 
-It names the coverage as well, and whether the coverage decided anything.
+It names the agreement and the coverage as well, and whether each one decided
+anything.
 
-The gate row records a coverage on every run. A customer reply is gated before
-the engine reads either threshold (DEC-12). So most of a queue carries a
-number that judged nothing, and the row marks such a number `not read`. The
+The gate row records both values on every run. A customer reply is gated before
+the engine reads either threshold (DEC-12). So most of a queue carries numbers
+that judged nothing, and the row marks each such number `not read`. The
 gate panel says the same, so the row and the panel agree.
 The rule comes from the gate row, not the escalate row. A run awaiting a
 person has not escalated, so the escalate row is empty for every one of them.

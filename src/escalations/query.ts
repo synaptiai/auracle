@@ -15,6 +15,10 @@ import { RUN_STATES } from '../coordinator/coordinator.js';
 import type { TerminalRunState } from '../coordinator/coordinator.js';
 import type { Pool, PoolClient } from 'pg';
 
+import { agreementThresholdFromJournal, readGateThresholds } from '../journal/query.js';
+import { RISK_TIERS } from '../domain/capabilities.js';
+import type { RiskTier } from '../domain/capabilities.js';
+
 /** One item that needs a person. */
 export interface EscalationItem {
   readonly runId: string;
@@ -58,6 +62,30 @@ export interface EscalationItem {
   readonly intentId: string | null;
   /** Groundedness coverage the gate read, or null when it never gated. */
   readonly coverage: number | null;
+  /**
+   * Sample agreement the classifier measured, or null when it journalled no
+   * number.
+   *
+   * Carried apart from coverage and never combined with it (DEC-05). The
+   * queue sets apart a case whose two gates each cleared their own line, and
+   * that needs each value beside its own threshold.
+   */
+  readonly agreement: number | null;
+  /**
+   * The agreement line the gate judged this run against: the per-intent value
+   * when the gate held one for this intent, otherwise the global value. Null
+   * when the gate row holds no threshold set it can read.
+   */
+  readonly agreementThreshold: number | null;
+  /** The coverage review line from the same gate row, or null. */
+  readonly coverageReviewThreshold: number | null;
+  /**
+   * The risk tier the gate judged the intent at (DEC-13), or null.
+   *
+   * Null for a gate row written before the gate recorded one, and for a value
+   * outside the taxonomy's closed set.
+   */
+  readonly riskTier: RiskTier | null;
   /**
    * When the ledger opened the run.
    *
@@ -137,13 +165,25 @@ export const LEDGER_STATES = [
 export const RUN_STATES_ESCALATION = ['escalated', 'awaiting_approval'] as const;
 
 /**
- * Guarded casts, both of them.
+ * Guarded reads: no cast that a row can make raise, and a payload tested for
+ * an object.
  *
  * `(x ->> 'k')::float8` raises `22P02` on a value that is not a number, and
  * that kills the whole statement rather than one row — the queue an operator
  * came to work goes blank. The `gate_unreadable` path already writes a gate
  * row with a different result shape, so this is a shape the ledger can hold.
  * The same failure once took the run detail down through a `::bytea` cast.
+ *
+ * A number is not enough either. A jsonb number is arbitrary precision, so
+ * `1e400` passes the type test and a float cast raises out of range, as
+ * `1e-400` does from the other side. So the statement casts no gate value.
+ * It returns a number's text, and `finiteNumber` parses that text the way the
+ * run journal parses the same row: as a JavaScript double, kept when it is
+ * finite. The queue and the pane beside it read one number from one text, and
+ * no row can make the statement raise. A value outside [0, 1] is carried as
+ * the ledger holds it, and the queue's grouping refuses to count it. A value
+ * too small for a double, such as `1e-400`, reads as zero on both surfaces:
+ * it clears no line, because every line is above zero.
  *
  * `payload` is tested for an object rather than for presence. `approveRun`
  * refuses anything else, so a key-exists test would offer a button for a
@@ -162,7 +202,11 @@ const RUN_SELECT_BODY = `
          esc.result ->> 'fault'           AS fault,
          gate.result ->> 'reason'          AS gate_reason,
          CASE WHEN jsonb_typeof(gate.result -> 'groundedness') = 'number'
-              THEN (gate.result ->> 'groundedness')::float8 END AS coverage,
+              THEN gate.result ->> 'groundedness' END AS coverage,
+         CASE WHEN jsonb_typeof(cls.result -> 'agreement') = 'number'
+              THEN cls.result ->> 'agreement' END AS agreement,
+         gate.result -> 'thresholds'       AS gate_thresholds,
+         gate.result ->> 'riskTier'        AS risk_tier,
          cls.result ->> 'intentId'         AS intent_id,
          (jsonb_typeof(park.result -> 'payload') = 'object') AS payload_recorded,
          CASE WHEN jsonb_typeof(park.result -> 'payload') = 'object'
@@ -228,7 +272,11 @@ const OUTBOX_SELECT = `
          esc.result ->> 'fault'            AS fault,
          gate.result ->> 'reason'           AS gate_reason,
          CASE WHEN jsonb_typeof(gate.result -> 'groundedness') = 'number'
-              THEN (gate.result ->> 'groundedness')::float8 END AS coverage,
+              THEN gate.result ->> 'groundedness' END AS coverage,
+         CASE WHEN jsonb_typeof(cls.result -> 'agreement') = 'number'
+              THEN cls.result ->> 'agreement' END AS agreement,
+         gate.result -> 'thresholds'       AS gate_thresholds,
+         gate.result ->> 'riskTier'        AS risk_tier,
          cls.result ->> 'intentId'          AS intent_id,
          (jsonb_typeof(park.result -> 'payload') = 'object') AS payload_recorded,
          CASE WHEN jsonb_typeof(park.result -> 'payload') = 'object'
@@ -249,7 +297,26 @@ const OUTBOX_SELECT = `
       ON cls.run_id = r.run_id AND cls.step_id = 'classify'
    WHERE o.status IN ('delivery_unknown', 'malformed')`;
 
+/**
+ * A gate value from the text of a jsonb number: the double JavaScript reads
+ * from it, or null when that is not finite.
+ *
+ * The run journal receives the same row through `JSON.parse` and keeps a
+ * finite number. Parsing the same text here gives the same double, so a queue
+ * row and the pane beside it never disagree about one value.
+ */
+function finiteNumber(text: unknown): number | null {
+  if (typeof text !== 'string') return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : null;
+}
+
 function toItem(row: Record<string, unknown>): EscalationItem {
+  const intentId = (row['intent_id'] as string | null) ?? null;
+  // The same guard the run journal reads through: a threshold set that is
+  // not a set of fractions names no line at all.
+  const thresholds = readGateThresholds(row['gate_thresholds']);
+  const agreement = row['agreement'];
   return {
     runId: row['run_id'] as string,
     ticketId: row['ticket_id'] as string,
@@ -257,10 +324,19 @@ function toItem(row: Record<string, unknown>): EscalationItem {
     reason: (row['reason'] as string | null) ?? null,
     fault: (row['fault'] as string | null) ?? null,
     gateReason: (row['gate_reason'] as string | null) ?? null,
-    intentId: (row['intent_id'] as string | null) ?? null,
+    intentId,
     // Null, never zero. A run that never gated has no coverage, and zero is
     // a real reading meaning the judge supported nothing.
-    coverage: typeof row['coverage'] === 'number' ? row['coverage'] : null,
+    coverage: finiteNumber(row['coverage']),
+    // Null, never zero, as for coverage above. A number outside [0, 1] is
+    // carried as recorded, as the run journal carries it; a reader that
+    // compares it with a line checks the range itself.
+    agreement: finiteNumber(agreement),
+    agreementThreshold: agreementThresholdFromJournal(intentId, thresholds),
+    coverageReviewThreshold: thresholds?.groundednessReview ?? null,
+    riskTier: (RISK_TIERS as readonly unknown[]).includes(row['risk_tier'])
+      ? row['risk_tier'] as RiskTier
+      : null,
     createdAt: row['created_at'] instanceof Date ? row['created_at'] : null,
     promptVer: String(row['prompt_ver'] ?? ''),
     outboxStatus: (row['outbox_status'] as string | null) ?? null,

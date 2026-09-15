@@ -135,6 +135,12 @@ export async function gate(ctx: RunContext): Promise<StepResult> {
     // customer reply as a gate failure, and the rate would then track
     // traffic mix instead of the classifier (DEC-05, DEC-12).
     reason: outcome.reason,
+    // The tier the engine judged this intent at (DEC-13). A rule tested
+    // earlier, such as a customer reply, returns before the high-risk rule,
+    // so `reason` alone never says a waiting reply is high risk. The queue
+    // reads this to put that reply first. Recorded rather than looked up
+    // later, because the taxonomy can change after the run.
+    riskTier: intent.risk_tier,
     // Section 6 documents a rebalance window where two consumers overlap, and
     // each resolves its thresholds once at startup. During a rolling restart
     // one consumer can run a fitted number and the other the seed, and

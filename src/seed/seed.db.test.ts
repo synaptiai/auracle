@@ -21,6 +21,7 @@ import { approveRun } from '../approval/approve.js';
 import { listEscalations } from '../escalations/query.js';
 import { evaluatePolicyDetailed, SEED_THRESHOLDS } from '../policy/policy.js';
 import {
+  SEED_INTENTS,
   SEED_DOCUMENTS, followUpFor, inboundMessageFor, planHistory, policyInputFor,
   type PlannedRun,
 } from './plan.js';
@@ -489,6 +490,9 @@ describe('the journal a seeded run leaves', () => {
           groundedness: run.gate.groundedness,
           decision: run.gate.decision,
           reason: run.reason,
+          // DEC-13: the tier the gate judged the intent at, as the coordinator
+          // records it.
+          riskTier: SEED_INTENTS.find((intent) => intent.id === run.classification.intentId)!.riskTier,
           // Coverage detail beside the fraction, never instead of it, and
           // never joined to agreement (DEC-05).
           claimVerdicts: run.claims.map((claim, index) => ({
@@ -589,6 +593,24 @@ describe('the journal a seeded run leaves', () => {
       [['composer_abstained', 'policy_escalated', 'relay_delivery_unknown']],
     );
     expect((crossed.rows[0] as { n: number }).n).toBe(0);
+  });
+
+  // The coordinator's gate row records the tier it judged the intent at
+  // (DEC-13), and the queue reads it. A seeded row without it would group a
+  // high-risk reply as clean.
+  it('records on each gate row the risk tier of the intent it classified', async () => {
+    const { rows } = await pool.query(
+      `SELECT c.result->>'intentId' AS intent, g.result->>'riskTier' AS tier
+         FROM step_journal g
+         JOIN step_journal c ON c.run_id = g.run_id AND c.step_id = 'classify'
+        WHERE g.step_id = 'gate'`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    const tiers = new Map(SEED_INTENTS.map((intent) => [intent.id, intent.riskTier]));
+    for (const row of rows as { intent: string; tier: string | null }[]) {
+      expect(row.tier, row.intent).toBe(tiers.get(row.intent));
+    }
+    expect((rows as { tier: string }[]).some((row) => row.tier === 'high')).toBe(true);
   });
 
   // A run names a conversation on its own row, so something has to hold one.

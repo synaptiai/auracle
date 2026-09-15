@@ -20,17 +20,17 @@
 import { Pool } from 'pg';
 
 import { approveRun } from 'auracle/ledger-read';
+import type { ApproveOutcome } from 'auracle/ledger-read';
 import { readDays } from 'auracle/ledger-read';
 import { evaluateMetric } from 'auracle/domain';
 import { lastCompleteDay } from 'auracle/format';
 import { LOOKBACK_DAYS, METRICS } from 'auracle/domain';
 import { humanValue } from 'auracle/format';
 import { probeLedger, requireDbUrl } from 'auracle/ledger-read';
-import { LEDGER_STATES, listEscalations, listRuns, readRun } from 'auracle/ledger-read';
+import { LEDGER_STATES, listEscalations, listRuns, readQueueToday, readRun } from 'auracle/ledger-read';
 import { readRunJournal } from 'auracle/ledger-read';
 import { conversationOfRun, readConversation, turnAnsweredBy } from 'auracle/ledger-read';
 import { readDocument } from 'auracle/ledger-read';
-import { CLASSIFIER_K } from 'auracle/domain';
 import { readLatency } from 'auracle/ledger-read';
 import { humanMs } from 'auracle/format';
 // Every log line this process writes, so a value from a request cannot break
@@ -41,7 +41,9 @@ import { approveFromConsole } from './approve.js';
 import { CONSOLE_CSS } from './css.js';
 import { allowedHosts, identityHeader } from './hosts.js';
 import { ledgerName } from './ledger-name.js';
-import { evidenceOf, latencyCaveats, stepSays, toDetail, toRow } from './views.js';
+import { agreementDetail, evidenceOf, latencyCaveats, stepSays, toDetail, toRow } from './views.js';
+import { cachedDaily } from './daily-cache.js';
+import { consolePoolConfig } from './pool.js';
 import { createConsole, RUNS_PAGE } from './server.js';
 import type {
   BandRow, LatencyRow, Percentile, RequestView, RunDetail, RunRow, RunView,
@@ -117,9 +119,7 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
     agreement: agreement?.agreement ?? null,
     coverage: journal.coverage?.groundedness ?? null,
     agreementThreshold: agreement?.threshold ?? null,
-    agreementDetail: agreement === null
-      ? null
-      : `${Math.round(agreement.agreement * CLASSIFIER_K)} of ${CLASSIFIER_K} samples`,
+    agreementDetail: agreement === null ? null : agreementDetail(agreement.agreement),
     coverageBlock: journal.coverage?.blockThreshold ?? null,
     coverageReview: journal.coverage?.reviewThreshold ?? null,
     intentId: agreement?.intentId ?? null,
@@ -154,6 +154,21 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
  * ends before SIGKILL rather than after it.
  */
 const SHUTDOWN_GRACE_MS = 5_000;
+
+/**
+ * How long the queue header's counts are held (issue #101). A figure for the
+ * day stays true enough for this long, and a reloaded page costs no count.
+ */
+const QUEUE_TODAY_HOLD_MS = 30_000;
+
+/**
+ * The outer limit on the page's wait for one count read. The core bounds each
+ * query itself and closes a connection that outlasts that bound, and the pool
+ * bounds the wait for one. This limit ends the page's wait on whatever those
+ * leave, so no page waits on the count past it. The read itself runs on until
+ * its own bounds end it.
+ */
+const QUEUE_TODAY_GIVE_UP_MS = 6_000;
 
 function requirePort(raw: string | undefined): number {
   if (raw === undefined) return 8787;
@@ -195,7 +210,7 @@ async function main(): Promise<void> {
   const identity = identityHeader();
   const connectionString = requireDbUrl('the operator console');
 
-  const pool = new Pool({ connectionString, max: 4 });
+  const pool = new Pool(consolePoolConfig(connectionString));
 
   // `pool.end()` rejects when it is called twice, and two paths call it: the
   // bind-failure handler and the signal shutdown. A bind failure followed by
@@ -263,6 +278,15 @@ async function main(): Promise<void> {
     // the same two statements `pnpm run escalations` runs.
     listApprovals: async (): Promise<RunDetail[]> =>
       (await listEscalations(pool, { state: 'awaiting_approval' })).map(toDetail),
+
+    // Two counts for the queue header, for the UTC day the request lands in.
+    // Held for a short window, because the landing page asks on every load.
+    readQueueToday: cachedDaily(
+      async () => readQueueToday(pool),
+      QUEUE_TODAY_HOLD_MS,
+      Date.now,
+      QUEUE_TODAY_GIVE_UP_MS,
+    ),
 
     readBands: async (): Promise<BandRow[]> => {
       // The job's own judgement, on the job's own day, over the job's own
@@ -451,16 +475,14 @@ async function main(): Promise<void> {
           agreement: agreement?.agreement ?? null,
           coverage: journal.coverage?.groundedness ?? null,
           agreementThreshold: agreement?.threshold ?? null,
-          agreementDetail: agreement === null
-            ? null
-            : `${Math.round(agreement.agreement * CLASSIFIER_K)} of ${CLASSIFIER_K} samples`,
+          agreementDetail: agreement === null ? null : agreementDetail(agreement.agreement),
           coverageBlock: journal.coverage?.blockThreshold ?? null,
           coverageReview: journal.coverage?.reviewThreshold ?? null,
         },
       };
     },
 
-    approve: async (runId, approvedBy): Promise<string> => {
+    approve: async (runId, approvedBy): Promise<ApproveOutcome['outcome']> => {
       const outcome = await approveFromConsole(
         { pool, approveRun },
         approvedBy === undefined ? { runId } : { runId, approvedBy },

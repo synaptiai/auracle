@@ -33,6 +33,10 @@ On a large ledger that stalls production even when the build is quick.
 So `db/014_run_created_at_index.sql` sets `lock_timeout`. It fails rather than
 hold an outage open.
 
+A lock timeout bounds only the wait for the lock. So
+`db/017_turn_created_at.sql` also sets `statement_timeout`. A build too large
+for it rolls back, and writes resume.
+
 `CREATE INDEX CONCURRENTLY` takes no blocking lock, and it **cannot run
 inside a transaction**. The runner wraps every file in one, so it cannot run
 here. An adopter with a large table builds the index by hand:

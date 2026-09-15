@@ -26,7 +26,10 @@ import {
 // which action is the permanent one.
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
 import type { PolicyReason } from 'auracle/policy';
+import type { ApproveOutcome } from 'auracle/ledger-read';
 import { CONSOLE_SCRIPT } from './script.js';
+import { groupQueue } from './queue.js';
+import type { QueueGroup } from './queue.js';
 import type { MetricValue } from './render.js';
 
 export interface RunRow {
@@ -49,10 +52,9 @@ export interface RunRow {
   /**
    * Coverage the gate read, from the gate journal row.
    *
-   * Named apart from `RunDetail.coverage`, which is the value the detail
-   * surface reads for one run. `GATES_NOT_READ` sets that one to null on the
-   * queue, and one name for both would have the queue erase what it just
-   * read.
+   * Named apart from `RunDetail.coverage`, which the run detail replaces
+   * with the value its own journal read returns. One name for both would let
+   * that replacement erase the value this row was listed with.
    */
   readonly gateCoverage: number | null;
   /** When the ledger opened the run, so a surface ordered by time shows it. */
@@ -97,7 +99,8 @@ export interface Shell {
  *
  * A reviewer clears a queue, and an engineer audits a run or reads a band.
  * The work group comes first because it is the one with a deadline on it;
- * the surfaces an engineer audits sit under Admin, out of that path.
+ * the surfaces an engineer audits sit under Admin, out of that path. The
+ * queue is also the page the console opens on, at `/`.
  *
  * A group with no surface behind it is left out rather than drawn as a
  * heading over nothing, so the knowledge group appears with its first screen.
@@ -113,7 +116,7 @@ const GROUPS: readonly {
 }[] = [
   {
     title: 'Work',
-    surfaces: [{ href: '/approvals', title: 'Approval queue' }],
+    surfaces: [{ href: '/', title: 'Needs a person' }],
   },
   // Declared with no surface, so its place between the work and the admin
   // surfaces is fixed before its first screen exists. It draws nothing yet.
@@ -121,7 +124,7 @@ const GROUPS: readonly {
   {
     title: 'Admin',
     surfaces: [
-      { href: '/', title: 'Runs' },
+      { href: '/runs', title: 'Runs' },
       { href: '/bands', title: 'Control bands' },
       { href: '/latency', title: 'Partition latency' },
     ],
@@ -170,7 +173,7 @@ function rail(shell: Shell): string {
     const links = group.surfaces.map((surface) => {
       const on = surface.href === shell.path ? ' class="on"' : '';
       // The badge counts only what this page actually counted.
-      const badge = surface.href === '/approvals' && shell.approvals !== null
+      const badge = surface.href === '/' && shell.approvals !== null
         ? `<span class="badge">${escapeHtml(String(shell.approvals))}</span>`
         : '';
       // The label and the badge are siblings. The label may shrink and
@@ -312,9 +315,9 @@ function filters(filter: StateFilter): string {
     '<div class="filters">',
     '<span class="lbl">state</span>',
     '<div class="seg">',
-    one('/', 'all', filter.active === null),
+    one('/runs', 'all', filter.active === null),
     ...filter.states.map((state) =>
-      one(`/?state=${encodeURIComponent(state)}`, state, filter.active === state)),
+      one(`/runs?state=${encodeURIComponent(state)}`, state, filter.active === state)),
     '</div>',
     '</div>',
   ].join('');
@@ -389,6 +392,17 @@ export function renderRuns(view: RunsPage): string {
 export interface RunDetail extends RunRow {
   readonly agreement: number | null;
   readonly coverage: number | null;
+  /**
+   * The agreement line the gate journalled for this run's intent, or null.
+   *
+   * Beside the value rather than inside it, so a surface can say whether each
+   * gate cleared its own line without combining the two (DEC-05).
+   */
+  readonly agreementThreshold: number | null;
+  /** The coverage review line the gate journalled, or null (DEC-07). */
+  readonly coverageReviewThreshold: number | null;
+  /** The risk tier the gate recorded for the intent, or null (DEC-13). */
+  readonly riskTier: string | null;
   readonly draftExternalId: string | null;
   /**
    * Whether the park journalled an action payload (DEC-34).
@@ -1043,9 +1057,9 @@ function gateFilters(runs: readonly RunDetail[], active: string | null): string 
     '<div class="filters">',
     '<span class="lbl">needs a person</span>',
     '<div class="seg">',
-    one('/approvals', 'all', active === null, runs.length),
+    one('/', 'all', active === null, runs.length),
     ...rules.map((rule) => one(
-      `/approvals?rule=${encodeURIComponent(rule)}`,
+      `/?rule=${encodeURIComponent(rule)}`,
       rule === UNRULED ? 'no gate rule' : gateRuleSays(rule),
       active === rule,
       runs.filter((run) => (run.gateReason ?? UNRULED) === rule).length,
@@ -1142,33 +1156,151 @@ export function narrowToRule(
   return runs.filter((run) => (run.gateReason ?? UNRULED) === rule);
 }
 
+/** Today's counts, as the queue header states them. */
+export interface QueueTodayView {
+  readonly arrived: number;
+  readonly reachedQueue: number;
+}
+
+/** The counts, or the tag of the fault that stopped the console reading them. */
+export type QueueTodayRead =
+  | { readonly counts: QueueTodayView }
+  | { readonly unreadTag: string };
+
+/**
+ * Each group's label, and the note that stands under it.
+ *
+ * The clean note is the design's standing sentence, and it is always drawn.
+ * "Clean" invites a reader to add the two gates into one confidence, and
+ * DEC-05 says they are never blended. Neither gate sent these cases to a
+ * person, so the note says what did.
+ */
+const GROUP_LABELS: Readonly<Record<QueueGroup, { readonly label: string; readonly note: string | null }>> = {
+  first: { label: 'Irreversible or high risk', note: null },
+  clean: {
+    label: 'Both gates clean',
+    note: 'Agreement and coverage are two independent gates, and this console never blends'
+      + ' them into one score. Clean means each recorded value clears its own line.'
+      + ' Neither gate decided these cases, so each row marks both values not read.'
+      + ' Another rule sent each one to a person, and its row names the rule.',
+  },
+  rest: { label: 'Everything else waiting', note: null },
+};
+
+/**
+ * The header's two counts, for the UTC day.
+ *
+ * Two counts and no share of one in the other. The published containment
+ * figure comes from the gold report, and a live percentage beside it would
+ * read as the same number.
+ */
+function todaySays(today: QueueTodayRead): string {
+  if ('unreadTag' in today) {
+    return `Today's counts were not read. The console log names the fault ${today.unreadTag}.`;
+  }
+  const { arrived, reachedQueue } = today.counts;
+  const came = arrived === 1 ? '1 message arrived' : `${arrived} messages arrived`;
+  return `${came} today (UTC) · ${reachedQueue} reached this queue.`;
+}
+
+/**
+ * Where the other runs a person owes are.
+ *
+ * This page lists the runs waiting for approval. An escalated run stops for a
+ * person too, and has nothing to approve, so it is not here. A page titled
+ * Needs a person that said nothing of those runs would read as all of them.
+ */
+const ESCALATED_ELSEWHERE = '<p class="qaside">An escalated run waits for a person as well, and has'
+  + ' nothing to approve. The runs list shows the newest 200'
+  + ' <a href="/runs?state=escalated">escalated runs</a>, and'
+  + ' <span class="m">pnpm run escalations</span> lists every one.</p>';
+
+/** What a row says about agreement, given the rule that decided the run. */
+function agreementSays(agreement: number | null, gateReason: string | null): string {
+  if (agreement === null) return '';
+  const read = isPolicyReason(gateReason) && reachedAgreementGate(gateReason);
+  return read
+    ? ` · agreement ${escapeHtml(agreement.toFixed(2))}`
+    : ` · agreement ${escapeHtml(agreement.toFixed(2))} (not read)`;
+}
+
+/** The waiting runs in working order: the groups in turn, oldest first in each. */
+export function queueOrder(runs: readonly RunDetail[]): readonly RunDetail[] {
+  return groupQueue(runs).flatMap((section) => section.runs);
+}
+
 export function renderApprovals(
   runs: readonly RunDetail[],
   outcome: string,
   selected: string | null,
-  evidence: EvidenceView | null = null,
-  gates: GateReading | null = null,
-  request: RequestView | null = null,
-  rule: string | null = null,
+  evidence: EvidenceView | null,
+  gates: GateReading | null,
+  request: RequestView | null,
+  rule: string | null,
+  today: QueueTodayRead,
 ): string {
   // `runs` is everything waiting. The chips and the count are read from it
   // rather than from the narrowed view, so a filter cannot make the queue
   // report that it has emptied — and so each chip can say how many it holds.
   const shownRuns = narrowToRule(runs, rule);
   const header = head(
-    'Approval queue',
-    'Every customer reply waits for a person. This list is not capped, so the oldest is on it.',
+    'Needs a person',
+    `${todaySays(today)} This list is not capped, so the oldest is on it.`,
     [chip(`${runs.length} waiting`)],
-  ) + gateFilters(runs, rule);
+  ) + gateFilters(runs, rule) + ESCALATED_ELSEWHERE;
   if (shownRuns.length === 0) {
+    // For approval, not for a person. An escalated run waits for a person as
+    // well, and the line above says where it is.
     return header + outcome + nothing(
       rule === null
-        ? 'Nothing is waiting for a person.'
+        ? 'Nothing is waiting for approval.'
         : 'Nothing waiting carries that rule.',
     );
   }
-  const shown = shownRuns.find((run) => run.runId === selected) ?? shownRuns[0]!;
+  const sections = groupQueue(shownRuns);
+  // The first run in working order, when the link names none that is shown.
+  const shown = shownRuns.find((run) => run.runId === selected) ?? sections[0]!.runs[0]!;
   const drawn: ApprovalView = { ...shown, evidence, gates, request };
+  const row = (run: RunDetail): string => [
+    `<a class="item${run.runId === shown.runId ? ' on' : ''}"`,
+    // `&amp;`, not `&`. A bare ampersand in an attribute is a character
+    // reference the parser has to guess at, and every other attribute on
+    // this console is escaped.
+    ` href="/?run=${encodeURIComponent(run.runId)}`
+    + `${rule === null ? '' : `&amp;rule=${encodeURIComponent(rule)}`}">`,
+    '<div class="itop">',
+    `<span class="m isubj">${escapeHtml(run.ticketId)}</span>`,
+    // How long it has waited, on the row. The header says the oldest is on
+    // this list and nothing on it said how old anything was.
+    `<span class="age">${escapeHtml(ageSays(run.createdAt))}</span>`,
+    '</div>',
+    // Why this run is a person's, in the gate's own vocabulary. The
+    // escalation reason sat here and is null for every waiting run by
+    // construction, so the queue read "no reason journalled" 161 times.
+    `<div class="m imeta">`,
+    `${escapeHtml(run.intentId ?? 'intent unrecorded')}`,
+    ` · ${escapeHtml(gateRuleSays(run.gateReason))}`,
+    // Why a case sits where its rule does not put it. A compensation cannot be
+    // undone, and the `irreversible` rule already says so.
+    `${run.actionClass === COMPENSATION_ACTION_CLASS && run.gateReason !== 'irreversible' ? ' · compensation' : ''}`,
+    // A high tier puts a case first, and a rule that already says it is not
+    // repeated. A gate row from before the tier was recorded says so, because
+    // its rule alone placed the case.
+    `${run.riskTier === 'high' && run.gateReason !== 'high_risk' ? ' · high-risk intent' : ''}`,
+    `${run.riskTier === null ? ' · tier unrecorded' : ''}`,
+    // Each gate on its own, and whether it decided anything (DEC-05,
+    // section 4.8). Two values, never one made of both.
+    //
+    // The gate row records both whether or not the engine read them. A
+    // customer reply is gated by DEC-12 before either threshold, so printing
+    // "coverage 0.40" beside `customer_visible` says a run failed
+    // groundedness when it was never judged on it — and it says so on most
+    // of the queue, because most of the queue is customer replies.
+    `${agreementSays(run.agreement, run.gateReason)}`,
+    `${coverageSays(run.gateCoverage, run.gateReason)}`,
+    '</div>',
+    '</a>',
+  ].join('');
   return [
     header,
     outcome,
@@ -1177,36 +1309,16 @@ export function renderApprovals(
     `<div class="lhd"><span class="lbl">Waiting · ${escapeHtml(String(shownRuns.length))}`
       + `${rule === null ? '' : escapeHtml(` · ${rule === UNRULED ? 'no gate rule' : gateRuleSays(rule)}`)}`
       + '</span></div>',
-    ...shownRuns.map((run) => [
-      `<a class="item${run.runId === shown.runId ? ' on' : ''}"`,
-      // `&amp;`, not `&`. A bare ampersand in an attribute is a character
-      // reference the parser has to guess at, and every other attribute on
-      // this console is escaped.
-      ` href="/approvals?run=${encodeURIComponent(run.runId)}`
-      + `${rule === null ? '' : `&amp;rule=${encodeURIComponent(rule)}`}">`,
-      '<div class="itop">',
-      `<span class="m" style="font-size:12.5px">${escapeHtml(run.ticketId)}</span>`,
-      // How long it has waited, on the row. The header says the oldest is on
-      // this list and nothing on it said how old anything was.
-      `<span class="age">${escapeHtml(ageSays(run.createdAt))}</span>`,
-      '</div>',
-      // Why this run is a person's, in the gate's own vocabulary. The
-      // escalation reason sat here and is null for every waiting run by
-      // construction, so the queue read "no reason journalled" 161 times.
-      `<div class="m" style="font-size:10.5px; color:var(--dim)">`,
-      `${escapeHtml(run.intentId ?? 'intent unrecorded')}`,
-      ` · ${escapeHtml(gateRuleSays(run.gateReason))}`,
-      // Coverage, and whether it decided anything (DEC-05, section 4.8).
-      //
-      // The gate row records `groundedness` whether or not the engine read
-      // it. A customer reply is gated by DEC-12 before either threshold, so
-      // printing "coverage 0.40" beside `customer_visible` says a run failed
-      // groundedness when it was never judged on it — and it says so on most
-      // of the queue, because most of the queue is customer replies.
-      `${coverageSays(run.gateCoverage, run.gateReason)}`,
-      '</div>',
-      '</a>',
-    ].join('')),
+    ...sections.map((section) => {
+      const { label, note } = GROUP_LABELS[section.group];
+      return [
+        `<div class="qgroup"><span class="lbl">${escapeHtml(label)}`
+          + `<span class="dim"> ${escapeHtml(String(section.runs.length))}</span></span>`,
+        note === null ? '' : `<p class="qnote">${escapeHtml(note)}</p>`,
+        '</div>',
+        ...section.runs.map(row),
+      ].join('');
+    }),
     '</div>',
     `<div class="pane">${approvalCard(drawn, rule)}</div>`,
     '</div>',
@@ -1242,7 +1354,12 @@ function approvalCard(run: ApprovalView, rule: string | null): string {
     `<dt>draft</dt><dd>${escapeHtml(run.draftExternalId ?? '—')}</dd>`,
     '</dl>',
     renderGates(run.gates === null
-      ? { agreement: run.agreement, coverage: run.coverage }
+      ? {
+        agreement: run.agreement,
+        coverage: run.coverage,
+        agreementThreshold: run.agreementThreshold,
+        coverageReview: run.coverageReviewThreshold,
+      }
       : {
         agreement: run.gates.agreement,
         coverage: run.gates.coverage,
@@ -1737,31 +1854,40 @@ function latencyRow(row: LatencyRow): string {
 /**
  * What the ledger said about the approval just posted, in plain words.
  *
- * Every `ApproveOutcome` variant gets a sentence. A queue that reloaded
- * silently told the operator nothing, and `draft_missing` in particular is a
- * refusal that looked exactly like success.
+ * Every `ApproveOutcome` variant gets a sentence, and the compiler holds the
+ * set closed: a new variant with no sentence fails the build. A queue that
+ * reloaded silently told the operator nothing, and `draft_missing` in
+ * particular is a refusal that looked exactly like success.
  */
-const OUTCOMES: Readonly<Record<string, string>> = {
+const OUTCOMES = {
   approved: 'Approved. The reply is queued for sending.',
   unknown_run: 'That run is not in the ledger.',
   not_awaiting_approval: 'That run is not waiting for approval.',
   superseded: 'Another action already holds this key, so nothing was sent.',
   stale_epoch: 'Another owner took this ticket. Nothing was sent.',
   draft_missing: 'The parked draft is gone, so nothing was sent.',
-};
+} as const satisfies Record<ApproveOutcome['outcome'], string>;
 
 export function renderOutcome(outcome: string): string {
   // `Object.hasOwn`, never a bare read. A plain object literal inherits from
   // Object.prototype, so `?outcome=toString` resolved a function, `escapeHtml`
   // called `.replace` on it and the approval queue became a 500 page. This is
   // the same defect the policy engine's per-intent map had, in a second place.
-  const said = Object.hasOwn(OUTCOMES, outcome) ? OUTCOMES[outcome] : undefined;
+  const said: string | undefined = Object.hasOwn(OUTCOMES, outcome)
+    ? OUTCOMES[outcome as keyof typeof OUTCOMES]
+    : undefined;
+  // Anything else still gets a sentence, because a silent fall-through would
+  // be the defect this function exists to fix. It is never echoed. The outcome
+  // arrives on the query string, so a link can carry any text, and text shown
+  // as the ledger's answer is a sentence an attacker wrote for the approver.
+  // Every outcome the approval returns has a sentence above, so only a
+  // hand-written link reaches this.
   return [
     '<div class="wrap" style="padding-bottom:0">',
-    `<p class="outcome" data-outcome="${escapeHtml(outcome)}">`,
-    // An outcome this console does not know is still shown, by name. A
-    // silent fall-through would be the defect this function exists to fix.
-    escapeHtml(said ?? `The ledger answered: ${outcome}`),
+    said === undefined
+      ? '<p class="outcome">'
+      : `<p class="outcome" data-outcome="${escapeHtml(outcome)}">`,
+    escapeHtml(said ?? 'The ledger answered with an outcome this console does not know.'),
     '</p></div>',
   ].join('');
 }

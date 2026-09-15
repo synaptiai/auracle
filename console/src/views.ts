@@ -42,29 +42,29 @@ export function toRow(item: {
 }
 
 /**
- * A run's two gate values, on a surface that does not read them.
+ * A waiting run as the queue and the run detail read it.
  *
- * The approval queue reads the escalation module, which reports what a person
- * needs to work the queue and carries neither gate number. Reading the
- * journal for every waiting run would be one statement per row on an uncapped
- * list, so the queue shows a dash and links to the run detail, which reads
- * them for one run.
- *
- * A dash, never a zero. Zero agreement says the samples disagreed completely,
- * which is a measurement rather than its absence.
+ * Both gate values come from the same statement as the row, each beside its
+ * own line, so the queue can group on them without a journal read per row
+ * (issue #101). Null stays null: zero agreement says the samples disagreed
+ * completely, which is a measurement rather than its absence.
  */
-const GATES_NOT_READ = { agreement: null, coverage: null } as const;
-
 export function toDetail(
   item: Parameters<typeof toRow>[0] & {
     draftExternalId: string | null; payloadRecorded: boolean;
     actionClass: string | null; delivery: string | null;
     payload: Readonly<Record<string, unknown>> | null;
+    agreement: number | null; agreementThreshold: number | null;
+    coverageReviewThreshold: number | null; riskTier: string | null;
   },
 ): RunDetail {
   return {
     ...toRow(item),
-    ...GATES_NOT_READ,
+    agreement: item.agreement,
+    coverage: item.coverage,
+    agreementThreshold: item.agreementThreshold,
+    coverageReviewThreshold: item.coverageReviewThreshold,
+    riskTier: item.riskTier,
     draftExternalId: item.draftExternalId,
     payloadRecorded: item.payloadRecorded,
     actionClass: item.actionClass,
@@ -80,14 +80,43 @@ export function toDetail(
  * of the query module's shapes and it changes when those change. No line
  * carries a duration: `step_journal` has no timestamp, so no step has one.
  */
+/**
+ * What an agreement says about the classifier's samples.
+ *
+ * Agreement is a share of `CLASSIFIER_K` samples, so the count is derived from
+ * it: `k / 9` for a whole `k` from 0 to 9. The journal carries any other value
+ * as recorded, and a count rounded from one would state a sample count the
+ * ledger does not hold. Such a value is stated in full, as the shortest text
+ * that reads back as the same number.
+ */
+export function agreementDetail(agreement: number): string {
+  const count = sampleCountOf(agreement);
+  return count === null
+    ? `recorded ${String(agreement)}, not a share of samples`
+    : `${count} of ${CLASSIFIER_K} samples`;
+}
+
+/**
+ * The samples that agreed, when the agreement is exactly `k / CLASSIFIER_K`.
+ *
+ * Exact, not near. The classifier writes that division, and the ledger's
+ * round trip keeps the double, so the same division finds it again.
+ */
+function sampleCountOf(agreement: number): number | null {
+  const whole = Math.round(agreement * CLASSIFIER_K);
+  return whole >= 0 && whole <= CLASSIFIER_K && whole / CLASSIFIER_K === agreement ? whole : null;
+}
+
 export function stepSays(step: JournalStep, journal: RunJournal): string | null {
   if (step.faultShape !== null) return `failed on a ${step.faultShape} answer`;
   switch (step.stepId) {
     case 'classify': {
       const read = journal.agreement;
       if (read === null) return null;
-      const samples = Math.round(read.agreement * CLASSIFIER_K);
-      return `intent ${read.intentId} · ${samples} of ${CLASSIFIER_K} samples agreed`;
+      const detail = agreementDetail(read.agreement);
+      return sampleCountOf(read.agreement) === null
+        ? `intent ${read.intentId} · agreement ${detail}`
+        : `intent ${read.intentId} · ${detail} agreed`;
     }
     case 'retrieve': {
       const count = journal.documents?.length ?? null;

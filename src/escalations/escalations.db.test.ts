@@ -12,7 +12,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
 import { fencedInsert, type FencedRunInput } from '../ledger/insert.js';
-import { listEscalations, parseSince } from './query.js';
+import { listEscalations, parseSince, listRuns } from './query.js';
+import { readRunJournal } from '../journal/query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
@@ -103,6 +104,11 @@ describe('escalations CLI queries', () => {
       // would be reading an invention.
       gateReason: null,
       coverage: null,
+      // No classify or gate row, so no agreement and no line to judge it by.
+      agreement: null,
+      agreementThreshold: null,
+      coverageReviewThreshold: null,
+      riskTier: null,
       intentId: null,
       outboxStatus: null,
       draftExternalId: null,
@@ -143,6 +149,136 @@ describe('escalations CLI queries', () => {
       gateReason: 'customer_visible',
       intentId: 'refund_request',
       coverage: 0.75,
+    });
+  });
+
+  // Issue #101: the queue sets apart a case whose two gates each cleared their
+  // own line. That needs both measured values and the lines the gate judged
+  // them against, read from the journal the run wrote, never blended (DEC-05).
+  it('carries the agreement and the thresholds the gate judged a waiting run against', async () => {
+    const run = await seedRun('awaiting_approval');
+    await journalStep(run.runId, 'classify', { intentId: 'refund_request', agreement: 0.91 });
+    await journalStep(run.runId, 'gate', {
+      groundedness: 0.84, decision: 'gated', reason: 'customer_visible',
+      // A per-intent line that differs from the global one, so a reader that
+      // ignored it would report 0.85 where the gate used 0.8.
+      thresholds: {
+        agreement: 0.85, perIntent: { refund_request: 0.8 },
+        groundednessBlock: 0.7, groundednessReview: 0.82,
+      },
+    });
+    await journalStep(run.runId, 'park', {
+      draftExternalId: randomUUID(), actionClass: 'customer_reply',
+      delivery: 'at_most_once', body: 'a draft body',
+    });
+
+    const items = await listEscalations(pool);
+
+    expect(items[0]).toMatchObject({
+      agreement: 0.91,
+      agreementThreshold: 0.8,
+      coverage: 0.84,
+      coverageReviewThreshold: 0.82,
+    });
+  });
+
+  // A jsonb number is arbitrary precision, and float8 is not. A hand-written
+  // row holding 1e400 made a cast raise, and one row took the whole queue to
+  // a 500. The queue now reads each value as the run journal does, from the
+  // same text, so the pane beside a row shows the same number. The texts sit
+  // on and around both edges of the float's range, including the exact
+  // rounding points and long cuts of them that fall either side.
+  it('reads every gate value as the run journal reads it, at the edges of a float', async () => {
+    const texts = [
+      '1.7976931348623157e308', '1.797693134862315807937289714053e308', '1.797693134862316e308',
+      '1.5e308', '1e400', '1e-308', '-1e-308', '5e-324', '3e-324', '2.4e-324', '1e-400', '0.8', '1.5',
+      '2.47032822920623272088284396434e-324', '-2.47032822920623272088284396434e-324',
+      '1.79769313486231580793728971405303e308',
+      // The exact rounding points: half the smallest subnormal, and halfway
+      // between the largest float and the next power of two.
+      `${5n ** 1075n}e-1075`, (2n ** 1024n - 2n ** 970n).toString(), (2n ** 1024n - 2n ** 970n - 1n).toString(),
+    ];
+    const runs: string[] = [];
+    for (const text of texts) {
+      const run = await seedRun('awaiting_approval');
+      runs.push(run.runId);
+      await pool.query(
+        `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
+         VALUES ($1, 'classify', 'done', $2::jsonb, 'p', 'm', 0),
+                ($1, 'gate', 'done', $3::jsonb, 'p', 'm', 0)`,
+        [
+          run.runId,
+          `{"intentId": "refund_request", "agreement": ${text}}`,
+          `{"groundedness": ${text}, "decision": "gated", "reason": "customer_visible"}`,
+        ],
+      );
+    }
+
+    const byRun = new Map((await listEscalations(pool)).map((item) => [item.runId, item]));
+    for (const [index, runId] of runs.entries()) {
+      const journal = await readRunJournal(pool, runId);
+      const queued = byRun.get(runId)!;
+      expect(queued.agreement, texts[index]).toBe(journal?.agreement?.agreement ?? null);
+      expect(queued.coverage, texts[index]).toBe(journal?.coverage?.groundedness ?? null);
+    }
+    // And the values themselves, so the parity is not two readers agreeing on
+    // nothing: a float the ledger can hold is read as held, a value past the
+    // largest float is none, and one below the smallest is zero.
+    expect(byRun.get(runs[0]!)!.coverage).toBe(Number.MAX_VALUE);
+    expect(byRun.get(runs[2]!)!.coverage).toBeNull();
+    expect(byRun.get(runs[6]!)!.coverage).toBe(-1e-308);
+    expect(byRun.get(runs[9]!)!.coverage).toBe(0);
+    expect(byRun.get(runs[12]!)!.agreement).toBe(1.5);
+    // The rounding points, as round-half-to-even fixes them.
+    expect(byRun.get(runs[13]!)!.coverage).toBe(0);
+    expect(byRun.get(runs[14]!)!.coverage).toBe(-0);
+    expect(byRun.get(runs[15]!)!.coverage).toBe(Number.MAX_VALUE);
+    expect(byRun.get(runs[16]!)!.coverage).toBe(0);
+    expect(byRun.get(runs[17]!)!.coverage).toBeNull();
+    expect(byRun.get(runs[18]!)!.coverage).toBe(Number.MAX_VALUE);
+    expect((await listRuns(pool, ['awaiting_approval'], 50))).toHaveLength(texts.length);
+  });
+
+  // The tier the gate judged the intent at (DEC-13). Only a tier from the
+  // taxonomy's closed set is carried; a row from before the gate recorded one
+  // carries none, and neither does a value outside the set.
+  it('carries the risk tier the gate recorded, and none it cannot read', async () => {
+    const recorded = await seedRun('awaiting_approval');
+    await journalStep(recorded.runId, 'gate', {
+      groundedness: 0.84, decision: 'gated', reason: 'customer_visible', riskTier: 'high',
+    });
+    const older = await seedRun('awaiting_approval');
+    await journalStep(older.runId, 'gate', {
+      groundedness: 0.84, decision: 'gated', reason: 'customer_visible',
+    });
+    const foreign = await seedRun('awaiting_approval');
+    await journalStep(foreign.runId, 'gate', {
+      groundedness: 0.84, decision: 'gated', reason: 'customer_visible', riskTier: 'severe',
+    });
+
+    const byRun = new Map((await listEscalations(pool)).map((item) => [item.runId, item.riskTier]));
+
+    expect(byRun.get(recorded.runId)).toBe('high');
+    expect(byRun.get(older.runId)).toBeNull();
+    expect(byRun.get(foreign.runId)).toBeNull();
+  });
+
+  // A threshold set that is not a set of fractions names no line, and a gate
+  // row the reader cannot use must not take the queue down with it.
+  it('names no threshold when the gate row holds none it can read', async () => {
+    const run = await seedRun('awaiting_approval');
+    await journalStep(run.runId, 'classify', { intentId: 'refund_request', agreement: 'high' });
+    await journalStep(run.runId, 'gate', {
+      groundedness: 0.84, decision: 'gated', reason: 'customer_visible',
+      thresholds: { agreement: 'strict', groundednessBlock: 0.7, groundednessReview: 0.82 },
+    });
+
+    const items = await listEscalations(pool);
+
+    expect(items[0]).toMatchObject({
+      agreement: null,
+      agreementThreshold: null,
+      coverageReviewThreshold: null,
     });
   });
 
@@ -300,6 +436,7 @@ describe('escalations CLI queries', () => {
       coverage: 0.6,
       payloadRecorded: true,
       actionClass: 'apply_credit',
+      agreement: 0.9,
     });
     expect(items[0]?.createdAt).toBeInstanceOf(Date);
   });

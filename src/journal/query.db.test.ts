@@ -834,6 +834,18 @@ describe('a result the database did not constrain', () => {
     expect(result?.coverage?.decision).toBe('gated');
   });
 
+  // The journal carries a gate value as recorded, inside [0, 1] or not. A
+  // reader that compares it with a line checks the range itself.
+  it('carries a gate value outside [0, 1] as recorded, with its reading', async () => {
+    const runId = await journal([
+      { stepId: 'classify', status: 'done', result: { intentId: 'x', agreement: 1.4 } },
+      { stepId: 'gate', status: 'done', result: { groundedness: 1.5, decision: 'gated', reason: 'customer_visible' } },
+    ]);
+    const result = await readRunJournal(pool, runId);
+    expect(result?.agreement).toMatchObject({ intentId: 'x', agreement: 1.4 });
+    expect(result?.coverage).toMatchObject({ decision: 'gated', reason: 'customer_visible', groundedness: 1.5 });
+  });
+
   it('reports a gate row written before the reason key as unrecorded', async () => {
     const runId = await journal([
       { stepId: 'gate', status: 'done', result: { groundedness: 0.9, decision: 'auto' } },

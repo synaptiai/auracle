@@ -13,6 +13,9 @@ export { probeLedger, requireDbUrl } from '../db/config.js';
 export { LEDGER_STATES, listEscalations, listRuns, readRun } from '../escalations/query.js';
 export type { EscalationItem, EscalationFilters } from '../escalations/query.js';
 
+export { readQueueToday } from '../escalations/today.js';
+export type { QueueToday } from '../escalations/today.js';
+
 export { readRunJournal } from '../journal/query.js';
 export type { JournalStep, RunJournal } from '../journal/query.js';
 

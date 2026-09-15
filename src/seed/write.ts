@@ -311,6 +311,9 @@ async function writeJournal(client: PoolClient, run: PlannedRun): Promise<void> 
       })),
       decision: run.gate.decision,
       reason: run.reason,
+      // The tier the gate judged the intent at, as the coordinator records it:
+      // the one the planned verdict was reached under.
+      riskTier: run.classification.riskTier,
       // The numbers this verdict was reached under, from the policy engine's
       // own exported set rather than a pair written out here. Section 6
       // describes a rolling restart in which one consumer holds a fitted pair

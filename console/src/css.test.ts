@@ -380,6 +380,30 @@ describe('what reads at every width', () => {
     expect(rule('.railfoot .chip').get('white-space')).toBe('normal');
   });
 
+  // Issue #101. A queue row's ticket keeps room of its own, and the age
+  // beside it drops to the next line rather than squeezing it.
+  it('wraps a queue row without starving its subject', () => {
+    const top = rule('.itop');
+    expect(top.get('display')).toBe('flex');
+    expect(top.get('flex-wrap')).toBe('wrap');
+    const subject = rule('.isubj');
+    expect(subject.get('flex')).toBe('1 1 160px');
+    expect(subject.get('min-width')).toBe('0');
+    expect(subject.get('overflow-wrap')).toBe('anywhere');
+    expect(rule('.age').get('flex')).toBe('none');
+    expect(rule('.imeta').get('overflow-wrap')).toBe('anywhere');
+  });
+
+  it('stacks the queue list above its case at a narrow width', () => {
+    expect(rule('.split', '@media (max-width: 720px)').get('grid-template-columns'))
+      .toBe('minmax(0, 1fr)');
+    expect(rule('.list', '@media (max-width: 720px)').get('border-right')).toBe('0');
+    // An uncapped list above the case would put the case below every row.
+    // The list scrolls inside half the screen, so the case stays in reach.
+    expect(rule('.list', '@media (max-width: 720px)').get('max-height')).toBe('50vh');
+    expect(rule('.list', '@media (max-width: 720px)').get('overflow-y')).toBe('auto');
+  });
+
   // 11px text needs 4.5:1. Near-black on the light accent reads 3.5:1.
   it('draws the chosen segment in light text on the light theme', () => {
     expect(rule('.root[data-theme="light"] .seg a.on').get('color')).toBe('#ffffff');

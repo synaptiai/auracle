@@ -258,12 +258,28 @@ tbody tr:hover { background:var(--panel); }
 }
 .prose + .discl { margin-top: 12px; }
 
-/* A queue row's top line: the ticket, and how long it has waited. */
-.itop { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+/* A queue row's top line: the ticket, and how long it has waited.
+ *
+ * The line wraps rather than starving its subject. The ticket keeps a basis
+ * of its own and may break inside a long id; the age never shrinks, so on a
+ * narrow row it drops below the ticket instead of squeezing it. */
+.itop {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+  gap: 2px 8px;
+}
+.isubj { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; font-size: 12.5px; }
 .age {
+  flex: none;
   font-family: var(--mono);
   font-size: 10.5px; color: var(--dim); white-space: nowrap;
 }
+.imeta { font-size: 10.5px; color: var(--dim); overflow-wrap: anywhere; }
+
+/* A queue group's label, and the note that stands under the clean group. The
+ * aside says where the escalated runs are. */
+.qaside { margin: 0; padding: 10px 26px; border-bottom: 1px solid var(--rule); font-size: 12px; color: var(--mut); }
+.qgroup { padding: 12px 16px 8px; border-bottom: 1px solid var(--rule); }
+.qnote { margin: 6px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--mut); }
 
 /* One claim of a draft. The mark is the point: an unsupported claim is the
  * sentence an approver came to find. */
@@ -336,6 +352,11 @@ td a, dd a { display: inline-block; }
 @media (max-width: 720px) {
   .turn { grid-template-columns: minmax(0, 1fr); }
   .said { grid-column: 1; }
+  /* The queue stacks: the waiting list above the case it draws. A 300px list
+   * beside a pane leaves the pane too little room at this width. The list is
+   * uncapped, so it scrolls inside half the screen and the case stays near. */
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .list { border-right: 0; border-bottom: 1px solid var(--rule); max-height: 50vh; overflow-y: auto; }
 }
 
 /* The rail's groups. The label is what separates them; a rule would read as

@@ -1131,5 +1131,40 @@ describe('section 4.3 run coordinator', () => {
       expect(gate.claimVerdicts.map((verdict) => verdict.claimIndex)).toEqual([0, 1]);
       expect(gate.groundedness).toBe(1);
     });
+
+    // DEC-13 sets risk per intent, and a customer reply is gated before the
+    // high-risk rule is read. So the reason alone never says a waiting reply
+    // is high risk. The gate row records the tier it judged the intent at, so
+    // the queue can put that reply first (issue #101).
+    it('records the risk tier of the intent it judged, beside the rule that decided', async () => {
+      await indexFixtureDoc();
+      const ticketId = 'T-' + randomUUID().slice(0, 8);
+      const deps = makeDeps(courteousScript(), undefined, helpdeskWith(ticketId));
+      const result = await coordinateTicket(
+        {
+          ...deps,
+          taxonomy: {
+            intents: deps.taxonomy.intents.map((intent) =>
+              intent.id === 'password_reset' ? { ...intent, risk_tier: 'high' as const } : intent),
+          },
+        },
+        replyInput(ticketId, 1n),
+      );
+
+      const steps = await journalRows(result.runId);
+      const gate = steps.find((s) => s.step_id === 'gate')?.result as { reason: string; riskTier: string };
+      expect(gate.reason).toBe('customer_visible');
+      expect(gate.riskTier).toBe('high');
+
+      // The taxonomy as it stands records its own tier, so the row carries the
+      // tier the gate judged rather than a fixed value.
+      const lowTicket = 'T-' + randomUUID().slice(0, 8);
+      const low = await coordinateTicket(
+        makeDeps(courteousScript(), undefined, helpdeskWith(lowTicket)),
+        replyInput(lowTicket, 1n),
+      );
+      const lowGate = (await journalRows(low.runId)).find((s) => s.step_id === 'gate')?.result as { riskTier: string };
+      expect(lowGate.riskTier).toBe('low');
+    });
   });
 });

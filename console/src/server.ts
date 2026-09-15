@@ -24,6 +24,7 @@ import { CONSOLE_SCRIPT } from './script.js';
 import {
   narrowToRule,
   page,
+  queueOrder,
   renderApprovals,
   renderBands,
   renderLatency,
@@ -33,9 +34,10 @@ import {
   renderOutcome,
   renderRuns,
 } from './surfaces.js';
+import type { ApproveOutcome } from 'auracle/ledger-read';
 import type {
-  BandRow, DocumentPage, EvidenceView, GateReading, LatencyRow, RequestView, RunDetail, RunRow,
-  RunView, Shell,
+  BandRow, DocumentPage, EvidenceView, GateReading, LatencyRow, QueueTodayRead, QueueTodayView,
+  RequestView, RunDetail, RunRow, RunView, Shell,
   ThreadView, Theme,
 } from './surfaces.js';
 import { describeFault } from 'auracle/cli';
@@ -65,6 +67,13 @@ export interface ConsoleDeps {
   readonly listRuns: (states: readonly string[]) => Promise<RunRow[]>;
   readonly readRun: (runId: string) => Promise<RunView | null>;
   readonly listApprovals: () => Promise<RunDetail[]>;
+  /**
+   * Today's arrivals and how many reached the queue, for the UTC day.
+   *
+   * Two counts from the ledger, stated in the queue header. The console
+   * derives no share from them (issue #101).
+   */
+  readonly readQueueToday: () => Promise<QueueTodayView>;
   readonly readBands: () => Promise<BandRow[]>;
   readonly readLatency: () => Promise<LatencyRow[]>;
   readonly readConversation: (conversationId: string) => Promise<ThreadView | null>;
@@ -89,7 +98,7 @@ export interface ConsoleDeps {
    * was supplied: `approveRun` bounds what it keeps and records
    * `unattributed` for anything else.
    */
-  readonly approve: (runId: string, approvedBy: string | undefined) => Promise<string>;
+  readonly approve: (runId: string, approvedBy: string | undefined) => Promise<ApproveOutcome['outcome']>;
 }
 
 const CSS_PATH = '/console.css';
@@ -519,7 +528,7 @@ async function route(
     return;
   }
   const path = url.pathname;
-  const surfaces = ['/', '/approvals', '/bands', '/latency'];
+  const surfaces = ['/', '/runs', '/bands', '/latency'];
   const reviewer = reviewerFor(req, options);
   const shell = (at: string, approvals: number | null = null): Shell =>
     shellFor(options, theme, at, approvals, reviewer);
@@ -532,7 +541,7 @@ async function route(
   if (req.method === 'GET' && path === '/theme') {
     const to = url.searchParams.get('to');
     if (to === null || !(THEMES as readonly string[]).includes(to)) {
-      send(res, 404, page('Not found', nothingFound(), shell('/')));
+      send(res, 404, page('Not found', nothingFound(), shell(path)));
       return;
     }
     // `SameSite=Strict` and `HttpOnly`: nothing on this console reads the
@@ -553,13 +562,27 @@ async function route(
     return;
   }
 
-  if (req.method === 'GET' && path === '/') {
+  // Where the runs list and the queue lived before the queue became the
+  // landing page. A bookmark or a pasted link still reaches the page it meant,
+  // with its query intact, rather than a different surface under its old path.
+  if (req.method === 'GET' && path === '/' && url.searchParams.has('state')) {
+    res.writeHead(303, { ...SAFETY_HEADERS, location: `/runs${url.search}` });
+    res.end();
+    return;
+  }
+  if (req.method === 'GET' && path === '/approvals') {
+    res.writeHead(303, { ...SAFETY_HEADERS, location: `/${url.search}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'GET' && path === '/runs') {
     const wanted = url.searchParams.get('state');
     // A state outside the ledger's own vocabulary is a page nobody has. It
     // is not silently widened to every state: that would answer a question
     // the operator did not ask, under a heading saying they did.
     if (wanted !== null && !options.states.includes(wanted)) {
-      send(res, 404, page('Not found', nothingFound(), shell('/')));
+      send(res, 404, page('Not found', nothingFound(), shell('/runs')));
       return;
     }
     const states = wanted === null ? options.states : [wanted];
@@ -568,7 +591,7 @@ async function route(
       runs,
       filter: { states: options.states, active: wanted },
       limit: RUNS_PAGE,
-    }), shell('/')));
+    }), shell('/runs')));
     return;
   }
 
@@ -579,19 +602,19 @@ async function route(
     // `/run/abc` answered 500 where this route promises 404, and spent a pool
     // connection to do it.
     if (runId === null || !isRunId(runId)) {
-      send(res, 404, page('Run', nothingFound(), shell('/')));
+      send(res, 404, page('Run', nothingFound(), shell(path)));
       return;
     }
     const run = await deps.readRun(runId);
     if (run === null) {
-      send(res, 404, page('Run', nothingFound(), shell('/')));
+      send(res, 404, page('Run', nothingFound(), shell(path)));
       return;
     }
     send(res, 200, page('Run detail', renderRunDetail(run), shell(`/run/${runId}`)));
     return;
   }
 
-  if (req.method === 'GET' && path === '/approvals') {
+  if (req.method === 'GET' && path === '/') {
     // The outcome of the approval just posted. Without it an operator sees a
     // reloaded queue and cannot tell an approval that landed from one that
     // did not — `draft_missing` and every other refusal read as success.
@@ -612,23 +635,39 @@ async function route(
     const narrowed = narrowToRule(waiting, rule);
     // The evidence for the one run drawn, and no others. An approver reads
     // the reply before the button that sends it (DEC-40).
+    // Otherwise the first in working order, which is the run the list draws
+    // at its head.
     const drawn = narrowed.find((run) => run.runId === selected)?.runId
-      ?? narrowed[0]?.runId ?? null;
+      ?? queueOrder(narrowed)[0]?.runId ?? null;
     const read = drawn === null ? null : await deps.readApprovalEvidence(drawn);
+    // The counts are a header over the work, so a fault reading them does not
+    // take the queue away. It is logged under a tag the page names, the way
+    // a page fault is, and the text stays in the log.
+    let today: QueueTodayRead;
+    try {
+      today = { counts: await deps.readQueueToday() };
+    } catch (error) {
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({ event: 'console_counts_unread', tag, error: describeFault(error) }));
+      today = { unreadTag: tag };
+    }
     send(res, 200, page(
-      'Approval queue',
+      'Needs a person',
       renderApprovals(
         waiting,
-        outcome === null ? '' : renderOutcome(outcome),
-        selected,
+        outcome === null || outcome === '' ? '' : renderOutcome(outcome),
+        // The run the evidence was read for, so the pane draws that run and
+        // no other (DEC-40).
+        drawn,
         read?.evidence ?? null,
         read?.gates ?? null,
         read?.request ?? null,
         rule,
+        today,
       ),
       // Everything waiting, never the narrowed view. A rail badge that fell
       // because a filter was on would report a queue that had emptied.
-      shell('/approvals', waiting.length),
+      shell('/', waiting.length),
     ));
     return;
   }
@@ -638,12 +677,12 @@ async function route(
     // Shape first, as the run route does: the column is uuid, and a driver
     // exception is not an answer a surface can render.
     if (id === null || !isRunId(id)) {
-      send(res, 404, page('Conversation', nothingFound(), shell('/')));
+      send(res, 404, page('Conversation', nothingFound(), shell(path)));
       return;
     }
     const thread = await deps.readConversation(id);
     if (thread === null) {
-      send(res, 404, page('Conversation', nothingFound(), shell('/')));
+      send(res, 404, page('Conversation', nothingFound(), shell(path)));
       return;
     }
     send(res, 200, page(
@@ -660,7 +699,7 @@ async function route(
     // and the query parameterises it. The length bound is this route's own,
     // because a path is not a place to accept an unbounded string.
     if (docId === null || docId.length === 0 || docId.length > 200) {
-      send(res, 404, page('Evidence base', nothingFound(), shell('/')));
+      send(res, 404, page('Evidence base', nothingFound(), shell(path)));
       return;
     }
     const doc = await deps.readDocument(docId);
@@ -668,7 +707,7 @@ async function route(
       // A run journals the ids it retrieved, and a document can leave the
       // index afterwards. So this is the document being gone, not the run
       // having been wrong, and the page says which.
-      send(res, 404, page('Evidence base', nothingFound(), shell('/')));
+      send(res, 404, page('Evidence base', nothingFound(), shell(path)));
       return;
     }
     send(res, 200, page('Evidence base', renderDocument(doc), shell(`/document/${docId}`)));
@@ -780,15 +819,24 @@ async function route(
     const keptRule = url.searchParams.get('rule');
     res.writeHead(303, {
       ...SAFETY_HEADERS,
-      location: `/approvals?outcome=${encodeURIComponent(outcome)}`
+      location: `/?outcome=${encodeURIComponent(outcome)}`
         + (keptRule === null || keptRule === '' ? '' : `&rule=${encodeURIComponent(keptRule)}`),
     });
     res.end();
     return;
   }
 
-  send(res, 404, page('Not found', nothingFound(), shell('/')));
+  // A path no rail link names. A method this console does not serve on a
+  // surface's own path, such as a POST to `/`, is not that surface, and the
+  // rail must not mark it as the page being read.
+  send(res, 404, page('Not found', nothingFound(), shell(NOT_A_SURFACE)));
 }
+
+/**
+ * The rail path of a page that is no surface. The theme toggle's return
+ * refuses it and falls back to `/`, as it does any path it does not know.
+ */
+const NOT_A_SURFACE = '/not-found';
 
 /**
  * The cap the runs statement applies.

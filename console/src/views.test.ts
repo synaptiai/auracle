@@ -4,7 +4,7 @@
 // nothing asserted them. The park branch is why that mattered.
 import { describe, expect, it } from 'vitest';
 
-import { evidenceOf, latencyCaveats, stepSays, toDetail, toRow } from './views.js';
+import { agreementDetail, evidenceOf, latencyCaveats, stepSays, toDetail, toRow } from './views.js';
 import { ageSays, whenSays } from './surfaces.js';
 import type { JournalStep, RunJournal } from 'auracle/ledger-read';
 
@@ -37,6 +37,43 @@ function park(fields: Record<string, unknown>): { step: JournalStep; journal: Ru
     },
   } as Partial<JournalStep>);
 }
+
+// Agreement is a share of nine samples, so a count is derived from it. A
+// hand-written 1.4 is carried as recorded, and a count derived from it would
+// state "13 of 9 samples", which the ledger does not hold.
+describe('what an agreement says about its samples', () => {
+  it('states the samples that agreed for a share of nine', () => {
+    expect(agreementDetail(8 / 9)).toBe('8 of 9 samples');
+    expect(agreementDetail(0)).toBe('0 of 9 samples');
+    expect(agreementDetail(1)).toBe('9 of 9 samples');
+  });
+
+  it('states a value outside [0, 1] as recorded, and derives no count', () => {
+    expect(agreementDetail(1.4)).toBe('recorded 1.4, not a share of samples');
+    expect(agreementDetail(-0.5)).toBe('recorded -0.5, not a share of samples');
+    expect(agreementDetail(1e21)).toBe('recorded 1e+21, not a share of samples');
+  });
+
+  // Nine samples make ten possible shares. 0.5 is none of them, so it has no
+  // count the classifier could have recorded.
+  it('derives no count from a value no count of nine gives', () => {
+    expect(agreementDetail(0.5)).toBe('recorded 0.5, not a share of samples');
+    expect(agreementDetail(-1e-308)).toBe('recorded -1e-308, not a share of samples');
+    expect(agreementDetail(7 / 9)).toBe('7 of 9 samples');
+    // Near a share is not a share, and the full value shows why.
+    expect(agreementDetail(0.1111111111)).toBe('recorded 0.1111111111, not a share of samples');
+    expect(agreementDetail(0.7777)).toBe('recorded 0.7777, not a share of samples');
+    for (let k = 0; k <= 9; k += 1) expect(agreementDetail(k / 9)).toBe(`${k} of 9 samples`);
+  });
+
+  it('says the same on the classify step', () => {
+    const { step, journal: j } = journal({ stepId: 'classify' } as Partial<JournalStep>);
+    const read = { ...j, agreement: { intentId: 'x', agreement: 1.4, unreadableSamples: null, threshold: null } } as RunJournal;
+    expect(stepSays(step, read)).toBe('intent x · agreement recorded 1.4, not a share of samples');
+    const share = { ...j, agreement: { intentId: 'x', agreement: 8 / 9, unreadableSamples: null, threshold: null } } as RunJournal;
+    expect(stepSays(step, share)).toBe('intent x · 8 of 9 samples agreed');
+  });
+});
 
 describe('what a park step says', () => {
   it('names a draft the helpdesk holds', () => {
@@ -85,6 +122,8 @@ describe('what a run row carries onto a page', () => {
     reason: null, gateReason: 'customer_visible', intentId: 'refund-request',
     coverage: 0.94, createdAt: new Date('2026-09-07T09:00:00.000Z'),
     costMicros: 1234, stepsUsed: 6,
+    agreement: 0.89, agreementThreshold: 0.8, coverageReviewThreshold: 0.75,
+    riskTier: 'high' as const,
   };
 
   it('keeps a null reason a null, rather than an empty string', () => {
@@ -148,6 +187,28 @@ describe('what a run row carries onto a page', () => {
   it('carries the coverage the gate read, and a null when it never gated', () => {
     expect(toRow(item).gateCoverage).toBe(0.94);
     expect(toRow({ ...item, coverage: null }).gateCoverage).toBeNull();
+  });
+
+  // Issue #101. The queue groups on each gate against its own line, so the
+  // detail carries all four values the reader returned, and null as null.
+  it('carries each gate value and its own line onto a detail', () => {
+    const base = {
+      ...item, draftExternalId: null, payloadRecorded: false, actionClass: 'customer_reply',
+      delivery: 'at_most_once', payload: null,
+    };
+    const detail = toDetail(base);
+    expect(detail.agreement).toBe(0.89);
+    expect(detail.agreementThreshold).toBe(0.8);
+    expect(detail.gateCoverage).toBe(0.94);
+    expect(detail.coverage).toBe(0.94);
+    expect(detail.coverageReviewThreshold).toBe(0.75);
+    expect(detail.riskTier).toBe('high');
+    expect(toDetail({ ...base, riskTier: null }).riskTier).toBeNull();
+    const unread = toDetail({
+      ...base, agreement: null, agreementThreshold: null, coverage: null, coverageReviewThreshold: null,
+    });
+    expect([unread.agreement, unread.agreementThreshold, unread.coverage, unread.coverageReviewThreshold])
+      .toEqual([null, null, null, null]);
   });
 
   // DEC-34. A ledger-only park is approvable, and the detail has to say so.
