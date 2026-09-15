@@ -385,6 +385,13 @@ describe('the age a queue row states', () => {
     expect(ageSays(null, now)).toBe('age unrecorded');
   });
 
+  // The driver reads an infinite timestamp as a number and an out-of-range
+  // one as an invalid Date. Neither has an age, and neither may throw.
+  it('says an unreadable time has an unreadable age', () => {
+    expect(ageSays(new Date(Number.NaN), now)).toBe('age unreadable');
+    expect(ageSays(Number.POSITIVE_INFINITY as unknown as Date, now)).toBe('age unreadable');
+  });
+
   // Two machines' clocks, or a backdated history. Either way nothing has
   // waited a negative time, and a minus sign in a queue reads as a defect.
   it('refuses to report a negative age', () => {
@@ -402,5 +409,10 @@ describe('the timestamp a run list states', () => {
 
   it('says a time it does not have is not recorded', () => {
     expect(whenSays(null)).toBe('not recorded');
+    // The driver answers infinity with a number and an out-of-range year
+    // with an invalid Date. Neither can be printed, and neither may take the
+    // page down with it.
+    expect(whenSays(new Date(Number.NaN))).toBe('not a readable time');
+    expect(whenSays(Number.POSITIVE_INFINITY as unknown as Date)).toBe('not a readable time');
   });
 });

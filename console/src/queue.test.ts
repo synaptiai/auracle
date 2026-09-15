@@ -119,6 +119,20 @@ describe('the queue in groups', () => {
     ]);
   });
 
+  // An unreadable time is no more a date than a missing one, so it sorts with
+  // the undated rather than throwing or scattering the order.
+  it('sorts a case whose time is unreadable after every dated one', () => {
+    const groups = groupQueue([
+      run('infinite', { createdAt: Number.POSITIVE_INFINITY as unknown as Date }),
+      run('missing', { createdAt: null }),
+      run('invalid', { createdAt: new Date(Number.NaN) }),
+      run('new', { createdAt: at('2026-09-14T11:00:00Z') }),
+      run('old', { createdAt: at('2026-09-14T08:00:00Z') }),
+    ]);
+    // A missing time and an unreadable one rank alike, in the order they came.
+    expect(groups[0]!.runs.map((r) => r.runId)).toEqual(['old', 'new', 'infinite', 'missing', 'invalid']);
+  });
+
   it('leaves out a group with nothing in it', () => {
     const groups = groupQueue([run('only', {})]);
     expect(groups.map((g) => g.group)).toEqual(['clean']);

@@ -6,6 +6,8 @@
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
 import { POLICY_REASONS } from 'auracle/policy';
 
+import { isReadableTime } from './render.js';
+
 /**
  * The three groups, in the order a reviewer works them.
  *
@@ -84,16 +86,20 @@ export interface QueueSection<T> {
  * The waiting runs in their groups, in working order.
  *
  * Oldest first inside each group, because the longest wait is the one owed
- * first. A run with no recorded time sorts after every dated one, so a missing
+ * first. A run with no readable time sorts after every dated one, so a missing
  * value never jumps the line. A group with nothing in it is left out.
  */
 export function groupQueue<T extends Groupable & { readonly createdAt: Date | null }>(
   runs: readonly T[],
 ): QueueSection<T>[] {
+  // An unreadable time is no more a date than a missing one, and sorts with
+  // the undated rather than throwing or scattering the order.
   const byAge = (a: T, b: T): number => {
-    if (a.createdAt === null) return b.createdAt === null ? 0 : 1;
-    if (b.createdAt === null) return -1;
-    return a.createdAt.getTime() - b.createdAt.getTime();
+    const left = isReadableTime(a.createdAt) ? a.createdAt.getTime() : null;
+    const right = isReadableTime(b.createdAt) ? b.createdAt.getTime() : null;
+    if (left === null) return right === null ? 0 : 1;
+    if (right === null) return -1;
+    return left - right;
   };
   return QUEUE_GROUPS
     .map((group) => ({

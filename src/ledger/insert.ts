@@ -70,6 +70,14 @@ export const TERMINAL_RUN_STATES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Every status the relay writes on an outbox row, as the db/006 CHECK allows.
+ * A reader narrows the column to these, so a status a later migration adds
+ * fails where it is read rather than drawing as an unknown word.
+ */
+export const OUTBOX_STATUSES = ['pending', 'sent', 'fenced', 'delivery_unknown', 'malformed'] as const;
+export type OutboxStatus = (typeof OUTBOX_STATUSES)[number];
+
+/**
  * The three outcomes of the atomic fenced write (section 4.2):
  * - accepted    — run and outbox row committed together
  * - stale_epoch — DEC-28 refused the write before anything was touched

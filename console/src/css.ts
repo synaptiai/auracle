@@ -327,34 +327,56 @@ td a, dd a { display: inline-block; }
 }
 .src:last-child { border-bottom: 0; }
 
-/* --- the conversation ---------------------------------------------------- */
+/* --- the conversation ----------------------------------------------------
+ *
+ * A turn's number, time and outcome sit beside what was said while there is
+ * room, and on a line above it when there is not. Flex bases rather than a
+ * grid track, for the reason the case gives: a fixed track cannot give way. */
+/* The handoff's thread width. A turn's rule across a wide page detaches the
+ * chip from the text it describes. */
+.turns { container-type:inline-size; max-width:1100px; }
 .turn {
-  display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-  gap: 4px 20px;
-  padding: 16px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  padding: 18px 0;
   border-bottom: 1px solid var(--rule);
 }
 .turn:last-child { border-bottom: 0; }
 .turnmeta {
-  display: flex; flex-direction: column; gap: 4px;
+  flex: 0 0 150px;
+  display: flex; flex-direction: column; gap: 5px;
   align-items: flex-start;
 }
-.said { grid-column: 2; padding-bottom: 10px; }
+/* The ledger's facts about a turn: its time, ticket, run and attempts. */
+.turnfact { font-size:10.5px; color:var(--dim); overflow-wrap:anywhere; }
+/* More than one run worked the turn, which a reader should notice. */
+.turnfact.warn { color:var(--warn); }
+.turnbody { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+/* 150 + 22 + 320. Below that the meta takes its own line, laid out as one.
+ * A range rather than max-width, which leaves a fractional width between
+ * 491px and 492px where the row wraps and the meta keeps its column. */
+@container (width < 492px) {
+  .turnmeta { flex-basis: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; }
+}
 .who {
   font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
-  color: var(--dim); font-weight: 500; margin-bottom: 5px;
+  color: var(--dim); font-weight: 500; margin-bottom: 6px;
 }
-/* An absence is a sentence, never a blank. Six of them exist and each one
- * sends a reader somewhere different. */
+/* An absence is a sentence, never a blank. Each one sends a reader somewhere
+ * different. */
 .absent {
   margin: 0; font-size: 12.5px; color: var(--mut); font-style: italic;
 }
-
-@media (max-width: 720px) {
-  .turn { grid-template-columns: minmax(0, 1fr); }
-  .said { grid-column: 1; }
+/* In a turn the absence takes the place of the text, so it reads in the
+ * text's own register. */
+.said .absent {
+  font-family: Charter, 'Bitstream Charter', 'Sitka Text', Cambria, Georgia, serif;
+  font-size: 15px; line-height: 1.62; max-width: 68ch;
+  color: var(--mut); font-style: italic;
 }
+/* A reply that is drafted and waits for a person. */
+.said .absent.waiting { color: var(--warn); }
 
 /* The rail's groups. The label is what separates them; a rule would read as
  * a divider between peers rather than different kinds of work. */
@@ -380,7 +402,9 @@ td a, dd a { display: inline-block; }
   container-type:inline-size; }
 .casemain { flex:1 1 460px; min-width:0; display:flex; flex-direction:column; gap:16px; }
 .caseside { flex:1 1 300px; max-width:360px; min-width:0; display:flex; flex-direction:column; gap:16px; }
-@container (max-width: 783px) {
+/* 460 + 24 + 300: the width at which the columns wrap, as a range for the
+ * reason the conversation gives. */
+@container (width < 784px) {
   .caseside { max-width:none; }
 }
 /* The rule the journal recorded is the reason a person has this case. */

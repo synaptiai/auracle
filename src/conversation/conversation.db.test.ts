@@ -10,6 +10,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
+import { OUTBOX_STATUSES } from '../ledger/insert.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { conversationOfRun, readConversation, turnAnsweredBy } from './query.js';
 
@@ -63,6 +64,27 @@ async function run(
   return id;
 }
 
+/**
+ * An outbox row as the writers leave one. The approval of a reply writes a
+ * `customer_reply` row whose payload names the parked draft; the automatic
+ * path writes an internal action with its own payload.
+ */
+async function outbox(
+  runId: string,
+  stepId: string,
+  status: string,
+  options: { actionClass?: string; draft?: boolean } = {},
+): Promise<void> {
+  const draft = options.draft ?? stepId === 'approve';
+  const actionClass = options.actionClass ?? (draft ? 'customer_reply' : 'tag_ticket');
+  const payload = draft ? { draftExternalId: `draft-${runId}` } : { queue: 'triaged' };
+  await pool.query(
+    `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class, delivery, payload, status)
+     VALUES ($1, $2, $3, 1, $5, 'at_most_once', $6::jsonb, $4)`,
+    [runId, stepId, `idem-${runId}-${stepId}`, status, actionClass, JSON.stringify(payload)],
+  );
+}
+
 describe('a conversation the ledger holds', () => {
   it('answers null for one it does not hold, and for a malformed id', async () => {
     expect(await readConversation(pool, randomUUID())).toBeNull();
@@ -89,13 +111,209 @@ describe('a conversation the ledger holds', () => {
     expect(unnamed?.participantNamed).toBe(false);
   });
 
-  it('joins each turn to the run that answered it', async () => {
+  it('joins each turn to the newest run of this turn', async () => {
     const id = await conversation();
     await turn(id, 1, { body: 'hello', reply: 'hi' });
     const runId = await run(id, 1, 'resolved');
     const thread = await readConversation(pool, id);
     expect(thread?.turns[0]?.runId).toBe(runId);
     expect(thread?.turns[0]?.runState).toBe('resolved');
+  });
+
+  // A resolved run commits its outbox row and does not deliver it. The relay
+  // records what became of the send on that row, and a surface that inferred
+  // delivery from the run state alone would call a pending reply sent.
+  it('returns the outbox status of each turn', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'one', reply: 'answer one' });
+    await turn(id, 2, { body: 'two', reply: 'answer two' });
+    await turn(id, 3, { body: 'three' });
+    await turn(id, 4, { body: 'four' });
+    const sent = await run(id, 1, 'resolved', 'reviewer-synthetic');
+    const pending = await run(id, 2, 'resolved', 'reviewer-synthetic');
+    await run(id, 3, 'awaiting_approval');
+    await outbox(sent, 'approve', 'sent');
+    await outbox(pending, 'approve', 'pending');
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns.map((t) => t.outboxStatus)).toEqual(['sent', 'pending', null, null]);
+  });
+
+  // A retry of the automatic path derives the same key, loses the outbox
+  // insert and stops superseded with no row (section 4.2, rule 2). The turn
+  // still shows that retry, and reads the row the earlier run holds.
+  it('reads the outbox row an earlier run holds when the newest was superseded', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'retried' });
+    const earlier = await run(id, 1, 'resolved');
+    await outbox(earlier, 'execute', 'sent');
+    await pool.query("UPDATE run SET created_at = now() - interval '1 hour' WHERE run_id = $1", [earlier]);
+    const retry = await run(id, 1, 'superseded');
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.runId).toBe(retry);
+    expect(thread?.turns[0]?.runState).toBe('superseded');
+    // The absence is the retry's own: it sent nothing. The row says the rest.
+    expect(thread?.turns[0]?.replyAbsence).toBe('no_reply_sent');
+    expect(thread?.turns[0]?.outboxStatus).toBe('sent');
+    expect(thread?.turns[0]?.runAttempts).toBe(2);
+  });
+
+  // A redelivered message can park a second run on a turn whose first reply
+  // went out. That run waits in the approval queue, so the turn shows it, and
+  // the row still says the first reply was sent.
+  it('shows a newer run waiting for a person, and the row an earlier run sent', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'redelivered', reply: 'answered once' });
+    const earlier = await run(id, 1, 'resolved', 'reviewer-synthetic');
+    await outbox(earlier, 'approve', 'sent');
+    await pool.query("UPDATE run SET created_at = now() - interval '1 hour' WHERE run_id = $1", [earlier]);
+    const parked = await run(id, 1, 'awaiting_approval');
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.runId).toBe(parked);
+    expect(thread?.turns[0]?.runState).toBe('awaiting_approval');
+    expect(thread?.turns[0]?.outboxStatus).toBe('sent');
+  });
+
+  // The key comes from the action (DEC-24), so a later run on the turn that
+  // took another action holds a row of its own. Its status says nothing about
+  // the reply: here the reply's send is unknown, and the later write was sent.
+  it('reads the reply row on a turn with reply text, not a later action', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'answered', reply: 'the approved reply' });
+    const replied = await run(id, 1, 'escalated', 'reviewer-synthetic');
+    await outbox(replied, 'approve', 'delivery_unknown');
+    await pool.query("UPDATE run SET created_at = now() - interval '1 hour' WHERE run_id = $1", [replied]);
+    const later = await run(id, 1, 'resolved', 'reviewer-synthetic');
+    // An approved internal write: step approve, and no draft (DEC-34).
+    await outbox(later, 'approve', 'sent', { actionClass: 'tag_ticket', draft: false });
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.runId).toBe(later);
+    expect(thread?.turns[0]?.outboxStatus).toBe('delivery_unknown');
+  });
+
+  // A profile can mark another class customer-visible, and the approval then
+  // writes the reply's row under that class. The draft on the row, not the
+  // class, marks it as the reply's, so a later write still cannot speak for it.
+  it('reads the reply row by its draft, whatever its action class', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'routed', reply: 'the approved reply' });
+    const approved = await run(id, 1, 'escalated', 'reviewer-synthetic');
+    await outbox(approved, 'approve', 'delivery_unknown', { actionClass: 'route_ticket' });
+    await pool.query("UPDATE run SET created_at = now() - interval '1 hour' WHERE run_id = $1", [approved]);
+    const later = await run(id, 1, 'resolved');
+    await outbox(later, 'execute', 'sent');
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.runId).toBe(later);
+    expect(thread?.turns[0]?.outboxStatus).toBe('delivery_unknown');
+  });
+
+  // Another action's row says nothing about the reply, so a reply turn whose
+  // draft row is absent reads no row rather than that one.
+  it('reads no row on a reply turn whose only row names no draft', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'answered', reply: 'the approved reply' });
+    const other = await run(id, 1, 'resolved');
+    await outbox(other, 'execute', 'sent');
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.outboxStatus).toBeNull();
+  });
+
+  // Only the approval writes the reply's row. No writer puts a draft on an
+  // execute row, so this second row is hand-written: it proves the step, and
+  // not the draft alone, decides which row counts.
+  it('reads the approval row, not a later row of another step naming a draft', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'answered', reply: 'the approved reply' });
+    const approved = await run(id, 1, 'escalated', 'reviewer-synthetic');
+    await outbox(approved, 'approve', 'delivery_unknown');
+    await pool.query("UPDATE run SET created_at = now() - interval '1 hour' WHERE run_id = $1", [approved]);
+    const later = await run(id, 1, 'resolved');
+    await outbox(later, 'execute', 'sent', { draft: true, actionClass: 'tag_ticket' });
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.outboxStatus).toBe('delivery_unknown');
+  });
+
+  // A reply turn whose approval row is the only row reads it, so a send the
+  // relay still retries stays on the page.
+  it('reads the only row a reply turn holds', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'routed', reply: 'the approved reply' });
+    const approved = await run(id, 1, 'resolved', 'reviewer-synthetic');
+    await outbox(approved, 'approve', 'pending', { actionClass: 'route_ticket' });
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.outboxStatus).toBe('pending');
+  });
+
+  // The filter applies only on a turn with reply text. A turn without it
+  // says what became of its newest action, whatever an earlier draft row says.
+  it('reads the newest row on a turn with no reply text, over an older draft row', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'no reply text' });
+    const earlier = await run(id, 1, 'resolved', 'reviewer-synthetic');
+    await outbox(earlier, 'approve', 'fenced');
+    await pool.query("UPDATE run SET created_at = now() - interval '1 hour' WHERE run_id = $1", [earlier]);
+    const later = await run(id, 1, 'resolved');
+    await outbox(later, 'execute', 'sent');
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.outboxStatus).toBe('sent');
+  });
+
+  // Between two runs that each hold a row, the newest still decides.
+  it('reads the newest of the runs that hold an outbox row', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'twice' });
+    const earlier = await run(id, 1, 'resolved');
+    await outbox(earlier, 'execute', 'sent');
+    await pool.query("UPDATE run SET created_at = now() - interval '1 hour' WHERE run_id = $1", [earlier]);
+    const newest = await run(id, 1, 'escalated');
+    await outbox(newest, 'execute', 'delivery_unknown');
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.runId).toBe(newest);
+    expect(thread?.turns[0]?.outboxStatus).toBe('delivery_unknown');
+  });
+
+  // Each path writes one step, so a run holds one row. A hand-written second
+  // row must still give one answer. `ORDER BY step_id` fixes which: `approve`
+  // sorts before `execute`.
+  it('reads the approve row when one run holds two', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'two rows' });
+    const runId = await run(id, 1, 'resolved', 'reviewer-synthetic');
+    await outbox(runId, 'execute', 'fenced');
+    await outbox(runId, 'approve', 'sent');
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.outboxStatus).toBe('sent');
+  });
+
+  // The reader narrows the column to the statuses the relay writes. The set is
+  // read from the migrated ledger, so a migration that widens the CHECK fails
+  // here and not on a page that cannot say what the new status means.
+  it('knows every status the ledger allows on an outbox row, and no other', async () => {
+    const { rows } = await pool.query(
+      `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'outbox_status_check'`,
+    );
+    const def = String((rows[0] as { def: string }).def);
+    const allowed = [...def.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    expect(allowed.length).toBeGreaterThan(0);
+    expect([...allowed].sort()).toEqual([...OUTBOX_STATUSES].sort());
+  });
+
+  it('refuses a status outside that set rather than drawing it', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'widened' });
+    const runId = await run(id, 1, 'resolved');
+    const { rows } = await pool.query(
+      `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'outbox_status_check'`,
+    );
+    const def = String((rows[0] as { def: string }).def);
+    await pool.query('ALTER TABLE outbox DROP CONSTRAINT outbox_status_check');
+    try {
+      await outbox(runId, 'execute', 'bounced');
+      await expect(readConversation(pool, id)).rejects.toThrow(/outbox status bounced/);
+    } finally {
+      await pool.query('DELETE FROM outbox WHERE run_id = $1', [runId]);
+      // Put back as the ledger held it, so no later case runs without it.
+      await pool.query(`ALTER TABLE outbox ADD CONSTRAINT outbox_status_check ${def}`);
+    }
   });
 
   it('joins no run to a turn whose run recorded no turn number', async () => {
@@ -118,7 +336,7 @@ describe('the three reasons a turn shows no reply', () => {
     expect(thread?.turns[0]?.replyAbsence).toBe('handled_automatically');
   });
 
-  it('names a draft still waiting for a person', async () => {
+  it('names a run still waiting for a person', async () => {
     const id = await conversation();
     await turn(id, 1, { body: 'where is my refund' });
     await run(id, 1, 'awaiting_approval');

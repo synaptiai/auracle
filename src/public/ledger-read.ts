@@ -27,6 +27,11 @@ export {
 
 export { readDocument } from '../documents/query.js';
 
+// The relay's statuses on an outbox row, so a surface can say what each means
+// about the customer without repeating the db/006 CHECK.
+export { OUTBOX_STATUSES } from '../ledger/insert.js';
+export type { OutboxStatus } from '../ledger/insert.js';
+
 export { readLatency } from '../latency/query.js';
 export type { PartitionLatency } from '../latency/query.js';
 

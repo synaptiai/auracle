@@ -119,7 +119,7 @@ export interface RelayResult {
     | 'delivery_unknown_escalated' // DEC-30: no retry, approval path
     | 'malformed_escalated' // payload matches no known shape; no send attempted
     | 'left_pending_retry' // safe to retry on a later scan
-    | 'fenced'; // DEC-28: epoch stale at send time; never sent
+    | 'fenced'; // DEC-28: epoch stale at send time; this scan sends nothing
 }
 
 /** One pending outbox row as a scan reads it from the ledger. */

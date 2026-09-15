@@ -1390,15 +1390,55 @@ The heading says the system drafted this reply. It does not say the reply will
 be sent. The relay sends the helpdesk copy, and a person may have edited it
 since (DEC-11).
 
-The conversation surface reads a thread by turn. It names why a turn shows no
-reply, and six reasons exist.
+The conversation surface reads a thread by turn. Each turn shows its number,
+the time its message arrived and a chip for what became of it. The chip says
+`auto-answered` for a resolved run with no approver and no reply text. A run
+approved before `db/016` with no reply text reads the same way. A reply with
+text says `approved`, because every customer reply waits for a person (DEC-12).
+A turn no run joins says `no run`, and a waiting turn says `waiting for you`.
 
-An internal write sent nothing. A person approved an action and no reply text
-was recorded. A draft still waits for a person. A run stopped. A run is still
-running. No run joins the turn at all.
+A resolved run commits its outbox row and does not send it. So only the relay's
+`sent` status draws a chip in the success colour. Any other status joins the
+chip, as in `approved · pending`.
 
-Two more reasons say why a turn shows no message. Nobody kept it, or the
-customer wrote nothing. None of the eight draws a blank.
+A turn shows its newest run and reads the newest outbox row of any of its runs.
+On a turn with reply text, only the approval row that names the reply's draft
+counts. So another action on the turn never speaks for the reply. The run and
+the row can differ. A retry of the same action writes no row and stops
+`superseded`, so its row belongs to an earlier run.
+
+A settled run is a resolved or superseded run, or no run at all. On a turn with
+reply text, a settled run reads as the row says. Any other run shows its state
+beside the row, as in `approved · escalated · pending`. A turn with no reply
+text shows a stopped or running run the same way, as in `superseded · sent`.
+
+A newest run that waits for a person says `waiting for you` and opens its case.
+This holds even when an earlier run of the turn sent a reply. The approval queue
+lists that run, so the page agrees with it.
+
+The heading over reply text says what the customer has, and reads the row alone.
+"The system replied" needs approved text and a sent row. A pending row says the
+send is pending. A malformed row says the relay never sent the reply, because
+the relay refuses that row before any send. A turn with no row says only that a
+person approved the reply.
+
+A fenced row or an unknown row says nobody can confirm the delivery. The relay
+can fence a row after a send that timed out (DEC-28). That send may have
+reached the customer.
+
+The surface also names why a turn shows no reply, and six reasons exist.
+
+An internal write answered, and no reply went to the customer. A person approved
+an action and no reply text was recorded. A parked run still waits for a person.
+A run stopped. A run is still running. No run joins the turn at all.
+
+A stopped run beside a row the relay did not refuse says what became of the
+action on that row. The row can belong to an earlier run. So a run that sent
+nothing does not show that nothing went out.
+
+A reply a person approved with no text gets a sentence too. Two more reasons
+say why a turn shows no message. Nobody kept it, or the customer wrote nothing.
+None of these draws a blank.
 
 The document surface shows one document of the index. A citation is worth
 showing only if a person can check it. The text is today's, because the index is rewritten in

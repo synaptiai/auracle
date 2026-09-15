@@ -160,17 +160,19 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
       turns: [
         {
           turnNumber: 1, ticketId: 'SYN-1',
+          createdAt: new Date('2026-09-06T08:00:00.000Z'),
           bodyText: 'There are two charges for the same month.',
           messageAbsence: null,
           replyText: 'We refunded the duplicate charge.',
           replyAbsence: null,
-          runId: RUN, runState: 'resolved', runAttempts: 1,
+          runId: RUN, runState: 'resolved', runAttempts: 1, outboxStatus: 'sent',
         },
         {
           turnNumber: 2, ticketId: 'SYN-1',
+          createdAt: new Date('2026-09-07T14:32:00.000Z'),
           bodyText: null, messageAbsence: 'not_retained',
           replyText: null, replyAbsence: 'awaiting_approval',
-          runId: null, runState: null, runAttempts: 0,
+          runId: RUN, runState: 'awaiting_approval', runAttempts: 1, outboxStatus: null,
         },
       ],
     }),
@@ -692,6 +694,30 @@ describe('what a fault and a refusal tell the operator', () => {
       expect(html).not.toContain('ada@customer.example');
       expect(html).toMatch(/console log names it [0-9a-f]{8}/);
       // The operator can still find it, because they read the log already.
+      expect(logged.join('\n')).toContain(secret);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // A conversation holds no approval, so a fault reading it fails the page
+  // rather than drawing a thread the ledger could not answer for. The reader
+  // throws on an outbox status outside its set, and this is where that lands.
+  it('fails a conversation the reader cannot read, with a tag and no fault text', async () => {
+    const secret = 'outbox status bounced is not one of pending, sent';
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({
+        readConversation: async () => { throw new Error(secret); },
+      }));
+      const res = await fetch(`${base}/conversation/${CONVERSATION}`);
+      const html = await res.text();
+      expect(res.status).toBe(500);
+      expect(html).not.toContain('bounced');
+      expect(html).toMatch(/console log names it [0-9a-f]{8}/);
       expect(logged.join('\n')).toContain(secret);
     } finally {
       spy.mockRestore();
@@ -1612,17 +1638,453 @@ describe('the conversation a responder reads', () => {
     const base = await startGuarded(deps());
     const html = await (await fetch(`${base}/conversation/${CONVERSATION}`)).text();
     expect(html).toContain('the text of this message was not kept');
-    expect(html).toContain('a reply is drafted and waiting for a person');
+    expect(html).toContain('this turn waits for a person to approve it');
   });
 
   it('says a participant is named without naming them', async () => {
     const base = await startGuarded(deps());
     const html = await (await fetch(`${base}/conversation/${CONVERSATION}`)).text();
     expect(html).toContain('participant named');
+    expect(html).not.toContain('no participant named');
     // Not an escaping claim: `ThreadView` carries no address at all, so no
     // input to this surface could produce one. The guard belongs where the
     // address is actually dropped, which is `readConversation`'s own mapping
     // in `main.ts`, and `conversation.db.test.ts` holds it there.
+  });
+
+  /** A turn of the thread below, with the fields each case changes. */
+  function turnOf(n: number, over: Record<string, unknown>): Record<string, unknown> {
+    return {
+      turnNumber: n, ticketId: 'SYN-1',
+      // A day and an hour apart per turn, so no two turns share a stamp and
+      // none shares the conversation's own opening time.
+      createdAt: new Date(Date.UTC(2026, 8, 1 + n, 8 + n, 10 + n)),
+      bodyText: `Message ${n}.`, messageAbsence: null,
+      replyText: null, replyAbsence: null,
+      // Sent, so a resolved turn reads as delivered unless a case says not.
+      runId: RUN, runState: 'resolved', runAttempts: 1, outboxStatus: 'sent',
+      ...over,
+    };
+  }
+
+  /** Each turn block of a page, keyed by the number it draws. */
+  function turnBlocks(html: string): Map<number, string> {
+    const blocks = new Map<number, string>();
+    for (const part of html.split('<div class="turn">').slice(1)) {
+      const n = /turn (\d+)</.exec(part);
+      expect(n, 'a turn block names its number').not.toBeNull();
+      blocks.set(Number(n![1]), part);
+    }
+    return blocks;
+  }
+
+  const THREAD = {
+    conversationId: CONVERSATION,
+    primaryTicketId: 'SYN-1',
+    state: 'open',
+    openedAt: new Date('2026-08-30T06:00:00.000Z'),
+    participantNamed: false,
+    turns: [
+      turnOf(1, { replyAbsence: 'handled_automatically' }),
+      turnOf(2, { replyText: 'We refunded the duplicate charge.' }),
+      turnOf(3, { replyAbsence: 'approved_without_reply' }),
+      // No outbox row on a run still working, a run with no turn joined or a
+      // parked draft. An escalated run stopped before its send was known.
+      turnOf(4, { replyAbsence: 'in_flight', runState: 'composed', outboxStatus: null }),
+      turnOf(5, { replyAbsence: 'no_reply_sent', runState: 'escalated', outboxStatus: 'delivery_unknown' }),
+      turnOf(6, { replyAbsence: 'not_retained', runId: null, runState: null, runAttempts: 0, outboxStatus: null }),
+      turnOf(7, { replyAbsence: 'awaiting_approval', runState: 'awaiting_approval', outboxStatus: null }),
+    ],
+  };
+
+  // The chip is read from what the ledger holds about the turn. A resolved
+  // run a person approved is not an automatic answer, and a turn no run
+  // joins is not either: calling them that would claim the system answered
+  // alone where it did not.
+  it('gives each turn an outcome chip read from what the ledger holds', async () => {
+    const base = await startGuarded(deps({ readConversation: async () => THREAD as never }));
+    const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
+    expect([...blocks.keys()]).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    const says = (n: number): string => /<span class="chip[^"]*"[^>]*>([^<]*)<\/span>/.exec(blocks.get(n)!)![1]!;
+    expect(says(1)).toBe('auto-answered');
+    expect(says(2)).toBe('approved');
+    expect(says(3)).toBe('approved');
+    expect(says(4)).toBe('in flight');
+    // The relay's row joins a stopped run's state, so neither hides the other.
+    expect(says(5)).toBe('escalated · delivery_unknown');
+    expect(says(6)).toBe('no run');
+    expect(says(7)).toBe('waiting for you');
+    // Only the automatic turn is called automatic.
+    for (const n of [2, 3, 4, 5, 6, 7]) expect(blocks.get(n)).not.toContain('auto-answered');
+    expect(blocks.get(1)).toContain('color:var(--ok)');
+    expect(blocks.get(4)).toContain('<span class="chip" style="color:var(--dim)">in flight</span>');
+    expect(blocks.get(5)).toContain('<span class="chip" style="color:var(--hot)">escalated · delivery_unknown</span>');
+    expect(blocks.get(7)).toContain('color:var(--warn)');
+  });
+
+  // A stopped run names its state. Only an escalation, or a row that confirms
+  // nothing, asks a person to look, so only those draw hot.
+  // `abandoned` is in the ledger's terminal set, though no writer sets it
+  // today: the consumer files an abandonment as `escalated`. It stands here for
+  // any stopped state that is not an escalation.
+  it('draws a stopped run hot only when it escalated or its row confirms nothing', async () => {
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        ...THREAD,
+        turns: [
+          turnOf(1, { replyAbsence: 'no_reply_sent', runState: 'abandoned', outboxStatus: null }),
+          turnOf(2, { replyAbsence: 'no_reply_sent', runState: 'abandoned', outboxStatus: 'fenced' }),
+          turnOf(3, { replyAbsence: 'in_flight', runState: 'composed', outboxStatus: 'sent' }),
+          turnOf(4, { replyText: 'We refunded the duplicate charge.', runState: 'abandoned', outboxStatus: null }),
+          // With reply text the row still joins the state, and still draws hot.
+          turnOf(5, { replyText: 'We refunded the duplicate charge.', runState: 'abandoned', outboxStatus: 'fenced' }),
+          turnOf(6, { replyText: 'We refunded the duplicate charge.', runState: 'classified', outboxStatus: 'delivery_unknown' }),
+        ],
+      }) as never,
+    }));
+    const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
+    expect(blocks.get(1)).toContain('<span class="chip" style="color:var(--dim)">abandoned</span>');
+    expect(blocks.get(2)).toContain('<span class="chip" style="color:var(--hot)">abandoned · fenced</span>');
+    // A retry still running, on a turn an earlier run already answered.
+    expect(blocks.get(3)).toContain('<span class="chip" style="color:var(--dim)">in flight · sent</span>');
+    expect(blocks.get(4)).toContain('<span class="chip" style="color:var(--dim)">approved · abandoned</span>');
+    expect(blocks.get(4)).toContain('<div class="who">a person approved this reply</div>');
+    expect(blocks.get(5)).toContain('<span class="chip" style="color:var(--hot)">approved · abandoned · fenced</span>');
+    expect(blocks.get(6)).toContain('<span class="chip" style="color:var(--hot)">approved · classified · delivery_unknown</span>');
+    expect(blocks.get(6)).toContain('<div class="who">approved, delivery not confirmed</div>');
+  });
+
+  // A retry of the same action loses the insert and stops superseded with no
+  // row (section 4.2, rule 2). The row an earlier run holds is its outcome, so
+  // the turn reads as that row says and not as a run that sent nothing.
+  it('reads a superseded retry by the row an earlier run holds', async () => {
+    const reply = 'We refunded the duplicate charge.';
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        ...THREAD,
+        turns: [
+          turnOf(1, { replyAbsence: 'no_reply_sent', runState: 'superseded', outboxStatus: 'sent' }),
+          // A repeat approval supersedes before it writes, so the text is the
+          // earlier approval's, and so is the row.
+          turnOf(2, { replyText: reply, runState: 'superseded', outboxStatus: 'sent' }),
+          // The relay refused this row before any send, so nothing went out.
+          turnOf(3, { replyAbsence: 'no_reply_sent', runState: 'escalated', outboxStatus: 'malformed' }),
+          // A retry that stopped, beside an earlier run's row the relay still holds.
+          turnOf(4, { replyAbsence: 'no_reply_sent', runState: 'escalated', outboxStatus: 'pending' }),
+          // The relay escalated this run's own send, which may have landed.
+          turnOf(5, { replyAbsence: 'no_reply_sent', runState: 'escalated', outboxStatus: 'delivery_unknown' }),
+        ],
+      }) as never,
+    }));
+    const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
+    expect(blocks.get(1)).toContain('<span class="chip" style="color:var(--dim)">superseded · sent</span>');
+    // The chip and the sentence agree: the retry stopped, and the send went out.
+    expect(blocks.get(1)).toContain(
+      '<p class="absent">the run stopped; the action recorded on this turn was sent</p>',
+    );
+    // The row on a turn with no reply text is an action, not a customer reply.
+    expect(blocks.get(1)).not.toContain('without sending');
+    expect(blocks.get(1)).not.toMatch(/<p class="absent">[^<]*reply/);
+    expect(blocks.get(2)).toContain('<span class="chip" style="color:var(--ok)">approved</span>');
+    expect(blocks.get(2)).toContain('<div class="who">the system replied</div>');
+    expect(blocks.get(3)).toContain('<p class="absent">the run stopped without sending a reply</p>');
+    expect(blocks.get(4)).toContain('<p class="absent">the run stopped; the action recorded on this turn is still to be sent</p>');
+    expect(blocks.get(5)).toContain('<p class="absent">the run stopped; nobody can confirm the action recorded on this turn</p>');
+  });
+
+  // A redelivered message parks a second run on a turn whose first reply went
+  // out. The approval queue lists that run, so the turn says it waits and
+  // opens it as a case. The heading still says what the customer has.
+  it('says a turn waits when its newest run is parked, even after a sent reply', async () => {
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        ...THREAD,
+        turns: [turnOf(1, { replyText: 'We refunded the duplicate charge.', runState: 'awaiting_approval', outboxStatus: 'sent' })],
+      }) as never,
+    }));
+    const block = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text()).get(1)!;
+    expect(block).toContain('<span class="chip" style="color:var(--warn)">waiting for you</span>');
+    expect(block).toContain(`href="/case/${RUN}">open the case</a>`);
+    expect(block).not.toContain('href="/run/');
+    expect(block).toContain('<div class="who">the system replied</div>');
+  });
+
+  // A redelivered message can escalate while the relay still retries the
+  // first run's send. The relay will still send, so the heading follows the
+  // row and the chip names the escalation beside it.
+  it('heads a pending row as pending when a later run escalated', async () => {
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        ...THREAD,
+        turns: [turnOf(1, { replyText: 'We refunded the duplicate charge.', runState: 'escalated', outboxStatus: 'pending' })],
+      }) as never,
+    }));
+    const block = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text()).get(1)!;
+    expect(block).toContain('<span class="chip" style="color:var(--hot)">approved · escalated · pending</span>');
+    expect(block).toContain('<div class="who">approved, send pending</div>');
+  });
+
+  // A retried turn says how many runs worked it, marked by a class so the
+  // page keeps no inline style of its own for it.
+  it('counts the runs that worked a turn only when there was more than one', async () => {
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        ...THREAD,
+        turns: [turnOf(1, { replyAbsence: 'handled_automatically', runAttempts: 3 }), turnOf(2, { replyAbsence: 'handled_automatically' })],
+      }) as never,
+    }));
+    const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
+    expect(blocks.get(1)).toContain('<span class="m turnfact warn">3 attempts</span>');
+    expect(blocks.get(2)).not.toContain('attempts');
+  });
+
+  // The stylesheet lays out these classes, and a test of the stylesheet alone
+  // passes with none of them on the page.
+  it('draws the thread in the classes its layout names', async () => {
+    const base = await startGuarded(deps({ readConversation: async () => THREAD as never }));
+    const html = await (await fetch(`${base}/conversation/${CONVERSATION}`)).text();
+    expect(html).toContain('<div class="casehd">');
+    expect(html).toContain(
+      '<div class="m casemeta">conversation ' + CONVERSATION
+        + ' · 7 turns · opened 2026-08-30 06:00Z · no participant named</div>',
+    );
+    expect(html).toContain('<div class="wrap turns"><div class="turn">');
+    for (const block of turnBlocks(html).values()) {
+      expect(block).toMatch(/^<div class="turnmeta">/);
+      expect(block).toContain('<div class="turnbody">');
+      expect(block).toContain('<span class="m turnfact">');
+    }
+  });
+
+  it('draws a thread whose times the driver could not read', async () => {
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        ...THREAD,
+        openedAt: new Date(Number.NaN),
+        turns: [turnOf(1, { replyAbsence: 'handled_automatically', createdAt: new Date(Number.NaN) })],
+      }) as never,
+    }));
+    const response = await fetch(`${base}/conversation/${CONVERSATION}`);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain('· 1 turn · opened not a readable time ·');
+    expect(turnBlocks(html).get(1)).toContain('<span class="m turnfact">not a readable time</span>');
+  });
+
+  // A waiting turn is approved on its case, and the run page has no approval
+  // on it. Every other run opens as the record of what it did, named by its
+  // state. A turn no run joins links nowhere.
+  it('links a waiting turn to its case and every other run to its record', async () => {
+    const base = await startGuarded(deps({ readConversation: async () => THREAD as never }));
+    const html = await (await fetch(`${base}/conversation/${CONVERSATION}`)).text();
+    const blocks = turnBlocks(html);
+    expect(blocks.get(7)).toContain(`href="/case/${RUN}">open the case</a>`);
+    expect(blocks.get(7)).not.toContain('href="/run/');
+    for (const n of [1, 2, 3, 4, 5]) {
+      expect(blocks.get(n), `turn ${n}`).toContain(`href="/run/${RUN}"`);
+      expect(blocks.get(n), `turn ${n}`).not.toContain('href="/case/');
+    }
+    expect(blocks.get(4)).toContain(`href="/run/${RUN}">composed</a>`);
+    expect(blocks.get(6)).not.toContain('href="/run/');
+    expect(blocks.get(6)).not.toContain('href="/case/');
+    expect(html).toContain('no participant named');
+  });
+
+  // The reply text is written as the approval resolves the run, before the
+  // relay sends it. A relay that cannot confirm the send escalates the run
+  // (DEC-30), so the text is on the turn and nobody knows the customer has it.
+  it('does not call an approved reply sent when its run escalated afterwards', async () => {
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        ...THREAD,
+        turns: [
+          turnOf(1, { replyText: 'We refunded the duplicate charge.', runState: 'escalated', outboxStatus: 'delivery_unknown' }),
+          turnOf(2, { replyText: 'We refunded the duplicate charge.' }),
+        ],
+      }) as never,
+    }));
+    const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
+    expect(blocks.get(1)).toContain('>approved · escalated · delivery_unknown</span>');
+    expect(blocks.get(1)).toContain('color:var(--hot)');
+    expect(blocks.get(1)).toContain('approved, delivery not confirmed');
+    expect(blocks.get(1)).not.toContain('the system replied');
+    expect(blocks.get(2)).toContain('>approved</span>');
+    expect(blocks.get(2)).toContain('the system replied');
+    expect(blocks.get(2)).not.toContain('delivery not confirmed');
+  });
+
+  // The relay writes `sent` only after the adapter answers, and no update
+  // rewrites a sent row, so the heading says the customer has the reply. Two
+  // relays can still escalate the run after one of them sent, and that may
+  // mean a second send, so the chip names the escalation.
+  it('heads a recorded send as sent, and names a run that escalated after it', async () => {
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        ...THREAD,
+        turns: [turnOf(1, { replyText: 'We refunded the duplicate charge.', runState: 'escalated', outboxStatus: 'sent' })],
+      }) as never,
+    }));
+    const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
+    expect(blocks.get(1)).toContain('<span class="chip" style="color:var(--hot)">approved · escalated · sent</span>');
+    expect(blocks.get(1)).toContain('<div class="who">the system replied</div>');
+  });
+
+  // A resolved run commits its outbox row and does not deliver it. Only the
+  // relay's own record of the send lets the page say the customer has the
+  // reply, and only that record draws the success colour.
+  it('says a reply reached the customer only when the relay recorded the send', async () => {
+    const reply = 'We refunded the duplicate charge.';
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        ...THREAD,
+        turns: [
+          turnOf(1, { replyText: reply }),
+          turnOf(2, { replyText: reply, outboxStatus: 'pending' }),
+          turnOf(3, { replyText: reply, outboxStatus: 'fenced' }),
+          turnOf(4, { replyText: reply, runId: null, runState: null, runAttempts: 0, outboxStatus: null }),
+          turnOf(5, { replyAbsence: 'handled_automatically', outboxStatus: 'pending' }),
+          // The relay fences a send without moving the run, so a resolved
+          // run with a fenced row is what the ledger holds for one.
+          turnOf(6, { replyAbsence: 'approved_without_reply', outboxStatus: 'fenced' }),
+          // The relay refuses a malformed payload before any adapter call, and
+          // escalates the run in the same transaction.
+          turnOf(7, { replyText: reply, runState: 'escalated', outboxStatus: 'malformed' }),
+          turnOf(8, { replyText: reply, runState: 'escalated', outboxStatus: 'delivery_unknown' }),
+          // The chip and heading read the status alone when the run resolved.
+          turnOf(9, { replyText: reply, outboxStatus: 'delivery_unknown' }),
+        ],
+      }) as never,
+    }));
+    const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
+    const chipOf = (n: number): string => /<span class="chip"[^>]*>[^<]*<\/span>/.exec(blocks.get(n)!)![0];
+    expect(chipOf(1)).toBe('<span class="chip" style="color:var(--ok)">approved</span>');
+    expect(blocks.get(1)).toContain('the system replied');
+
+    // A pending row may follow a send that timed out, so it claims no more
+    // than the ledger holds.
+    expect(chipOf(2)).toContain('>approved · pending<');
+    expect(blocks.get(2)).toContain('<div class="who">approved, send pending</div>');
+
+    // DEC-28: the relay can fence a row on a later scan, after a send that
+    // timed out and may have landed. So a fenced row confirms nothing.
+    expect(chipOf(3)).toBe('<span class="chip" style="color:var(--hot)">approved · fenced</span>');
+    expect(blocks.get(3)).toContain('<div class="who">approved, delivery not confirmed</div>');
+    expect(blocks.get(3)).not.toContain('never sent');
+
+    // No run joins the turn, so no outbox row can say anything.
+    expect(chipOf(4)).toContain('>approved<');
+    expect(blocks.get(4)).toContain('a person approved this reply');
+
+    expect(chipOf(5)).toContain('>auto-answered · pending<');
+    expect(chipOf(6)).toBe('<span class="chip" style="color:var(--hot)">approved · fenced</span>');
+
+    expect(chipOf(7)).toBe('<span class="chip" style="color:var(--hot)">approved · escalated · malformed</span>');
+    expect(blocks.get(7)).toContain('approved, never sent');
+    expect(chipOf(8)).toBe('<span class="chip" style="color:var(--hot)">approved · escalated · delivery_unknown</span>');
+    expect(blocks.get(8)).toContain('approved, delivery not confirmed');
+    expect(blocks.get(8)).not.toContain('never sent');
+    expect(chipOf(9)).toBe('<span class="chip" style="color:var(--hot)">approved · delivery_unknown</span>');
+    expect(blocks.get(9)).toContain('<div class="who">approved, delivery not confirmed</div>');
+
+    for (const n of [2, 3, 4, 5, 6, 7, 8, 9]) {
+      expect(chipOf(n), `turn ${n}`).not.toContain('var(--ok)');
+      expect(blocks.get(n), `turn ${n}`).not.toContain('the system replied');
+    }
+  });
+
+  // An absent reply is headed as the reply, never as one the system sent: the
+  // sentence beneath says whether anything was.
+  it('heads an absent reply without saying the system replied', async () => {
+    const base = await startGuarded(deps({ readConversation: async () => THREAD as never }));
+    const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
+    for (const n of [1, 3, 4, 5, 6]) {
+      expect(blocks.get(n), `turn ${n}`).toContain('<div class="who">the reply</div>');
+      expect(blocks.get(n), `turn ${n}`).not.toContain('the system replied');
+    }
+  });
+
+  it('prints each turn at its own time, in UTC', async () => {
+    const base = await startGuarded(deps({ readConversation: async () => THREAD as never }));
+    const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
+    // Derived by hand from `turnOf`: day 1 + n of September, hour 8 + n,
+    // minute 10 + n.
+    expect(blocks.get(1)).toContain('2026-09-02 09:11Z');
+    expect(blocks.get(2)).toContain('2026-09-03 10:12Z');
+    expect(blocks.get(1)).not.toContain('2026-09-03 10:12Z');
+    for (const block of blocks.values()) expect(block).not.toContain('2026-08-30 06:00Z');
+  });
+
+  // A waiting turn holds nothing the customer received. The label says it
+  // waits for a person, and the absence stays a sentence in its own muted
+  // element, never prose that reads as text the customer received.
+  it('labels a waiting turn as waiting for a person', async () => {
+    const base = await startGuarded(deps({ readConversation: async () => THREAD as never }));
+    const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
+    const waiting = blocks.get(7)!;
+    expect(waiting).toContain('<div class="who">waiting for a person</div>');
+    expect(waiting).not.toContain('the system replied');
+    expect(waiting).toMatch(/<p class="absent waiting">this turn waits for a person to approve it<\/p>/);
+    expect(blocks.get(2)).toContain('the system replied');
+    expect(blocks.get(2)).not.toContain('waiting for a person</div>');
+  });
+
+  it('draws every absent half as a named sentence, and no empty block', async () => {
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        ...THREAD,
+        turns: [
+          turnOf(1, { bodyText: null, messageAbsence: 'not_retained', replyAbsence: 'handled_automatically' }),
+          turnOf(2, { bodyText: '  ', messageAbsence: 'empty_message', replyAbsence: 'no_reply_sent', runState: 'abandoned', outboxStatus: null }),
+          turnOf(3, { replyText: ' \n ' }),
+        ],
+      }) as never,
+    }));
+    const html = await (await fetch(`${base}/conversation/${CONVERSATION}`)).text();
+    const blocks = turnBlocks(html);
+    expect(blocks.get(1)).toMatch(/<p class="absent">the text of this message was not kept<\/p>/);
+    expect(blocks.get(1)).toMatch(/<p class="absent">answered by an internal write; no reply was sent to the customer<\/p>/);
+    expect(blocks.get(2)).toMatch(/<p class="absent">the customer sent no text<\/p>/);
+    expect(blocks.get(2)).toMatch(/<p class="absent">the run stopped without sending a reply<\/p>/);
+    expect(blocks.get(3)).toMatch(/<p class="absent">a person approved a reply that holds no text<\/p>/);
+    expect(blocks.get(3)).not.toContain('class="prose"></div>');
+    expect(html).not.toMatch(/<div class="prose">\s*<\/div>/);
+  });
+
+  // Every text on this page is ledger data a customer or an adapter chose,
+  // and the run state now reaches a chip built from a template string. Each
+  // one must arrive escaped, in every branch that draws it.
+  it('escapes every ledger value it draws, in every turn branch', async () => {
+    const hostile = '"><script>alert(1)</script>';
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        ...THREAD,
+        conversationId: hostile,
+        primaryTicketId: hostile,
+        state: hostile,
+        turns: [
+          // No row, so the chip names the run state rather than a recorded send.
+          turnOf(1, { ticketId: hostile, bodyText: hostile, replyText: hostile, runState: hostile, outboxStatus: null }),
+          turnOf(2, { ticketId: hostile, replyAbsence: hostile, runState: hostile }),
+          turnOf(3, { replyAbsence: 'no_reply_sent', runState: hostile, runAttempts: 3 }),
+          turnOf(4, { replyText: 'Refunded.', outboxStatus: hostile }),
+          turnOf(5, { replyAbsence: 'handled_automatically', outboxStatus: hostile }),
+          turnOf(6, { replyAbsence: 'no_reply_sent', runState: 'escalated', outboxStatus: hostile }),
+        ],
+      }) as never,
+    }));
+    const html = await (await fetch(`${base}/conversation/${CONVERSATION}`)).text();
+    expect(html).not.toContain(hostile);
+    // The page's own script is the one tag of its kind.
+    expect(html.split('<script>')).toHaveLength(2);
+    const blocks = turnBlocks(html);
+    expect(blocks.get(1)).toContain('approved · &quot;&gt;&lt;script&gt;');
+    expect(blocks.get(2)).toContain('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(blocks.get(3)).toContain('&quot;&gt;&lt;script&gt;');
+    expect(blocks.get(4)).toContain('approved · &quot;&gt;&lt;script&gt;');
+    expect(blocks.get(4)).toContain('<div class="who">approved, delivery not confirmed</div>');
+    expect(blocks.get(5)).toContain('auto-answered · &quot;&gt;&lt;script&gt;');
+    // A status the core would refuse never reaches the sentence as text.
+    expect(blocks.get(6)).toContain('<p class="absent">the run stopped; nobody can confirm the action recorded on this turn</p>');
   });
 
   it('answers 404 for a conversation the ledger does not hold, and for a bad id', async () => {
@@ -2927,6 +3389,36 @@ describe('the case a reviewer decides on (issue #102)', () => {
     for (const invented of ['plan:', 'tenure:', 'refunds in', 'case count']) {
       expect(card.toLowerCase()).not.toContain(invented);
     }
+  });
+
+  // An approval redirects here, and the page renders after the read's own
+  // fault handling. A time the driver could not turn into a date would have
+  // thrown there and hidden whether the approval committed.
+  it('draws the outcome of an approval when the conversation time is unreadable', async () => {
+    const base = await startGuarded(deps({
+      readRun: caseOf({ state: 'resolved', approved: true }),
+      readConversation: async () => ({
+        conversationId: CONVERSATION, primaryTicketId: 'SYN-1', state: 'open',
+        openedAt: new Date(Number.NaN), participantNamed: true, turns: [],
+      }),
+    }));
+    const res = await fetch(`${base}${CASE}?outcome=approved`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Approved. The relay performs it next.');
+    expect(html).toContain('not a readable time');
+  });
+
+  // The same on a case still waiting, which is where a refused approval
+  // lands. Its header prints an age, and an age of an unreadable time would
+  // have thrown there.
+  it('draws a refusal on a waiting case whose own time is unreadable', async () => {
+    const base = await startGuarded(deps({ readRun: caseOf({ createdAt: new Date(Number.NaN) }) }));
+    const res = await fetch(`${base}${CASE}?outcome=draft_missing`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('The parked draft is gone, so nothing was sent.');
+    expect(html).toContain('waiting age unreadable');
   });
 
   // A run recorded before the turn was stored carries a conversation and no

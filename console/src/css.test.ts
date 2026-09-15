@@ -409,7 +409,8 @@ describe('what reads at every width', () => {
     expect(side.get('max-width')).toBe('360px');
     // 460 + 300 + 24. Below that the side column wraps, and takes the width.
     expect(body.get('container-type')).toBe('inline-size');
-    expect(rule('.caseside', '@container (max-width: 783px)').get('max-width')).toBe('none');
+    // A range, so no fractional width below 784px keeps the side column narrow.
+    expect(rule('.caseside', '@container (width < 784px)').get('max-width')).toBe('none');
   });
 
   it('keeps the approval in reach at the foot of the case', () => {
@@ -421,6 +422,42 @@ describe('what reads at every width', () => {
     expect(bar.get('flex-wrap')).toBe('wrap');
     expect(rule('.actionbar .warnbar').get('flex')).toBe('1 1 420px');
     expect(rule('.actionbar form').get('flex')).toBe('none');
+  });
+
+  // Issue #103. A turn's time and chip sit beside what was said while there
+  // is room, and above it when there is not. Flex bases, because a fixed
+  // column track beside the rail leaves the prose too little at a narrow page.
+  it('wraps a conversation turn rather than fixing a column track', () => {
+    const turn = rule('.turn');
+    expect(turn.get('display')).toBe('flex');
+    expect(turn.get('flex-wrap')).toBe('wrap');
+    expect(turn.has('grid-template-columns')).toBe(false);
+    expect(rule('.turnmeta').get('flex')).toBe('0 0 150px');
+    const body = rule('.turnbody');
+    expect(body.get('flex')).toBe('1 1 320px');
+    expect(body.get('min-width')).toBe('0');
+    // 150 + 22 + 320. Below that the time and chip take a line of their own.
+    expect(rule('.turns').get('container-type')).toBe('inline-size');
+    expect(rule('.turns').get('max-width')).toBe('1100px');
+    const narrow = rule('.turnmeta', '@container (width < 492px)');
+    expect(narrow.get('flex-basis')).toBe('100%');
+    expect(narrow.get('flex-direction')).toBe('row');
+    // The count of attempts is marked by a class, not an inline style.
+    expect(rule('.turnfact.warn').get('color')).toBe('var(--warn)');
+    // No rule still places a half of the turn on a grid column.
+    expect(RULES.filter((r) => r.declarations.has('grid-column') && r.selector.includes('said'))).toHaveLength(0);
+  });
+
+  // The absence of a reply reads in the same register as the reply would,
+  // muted and italic, so it takes the place of the text rather than looking
+  // like a caption beneath an empty block.
+  it('sets a turn absence in the serif, muted and italic', () => {
+    const absent = rule('.said .absent');
+    expect(absent.get('font-family')).toContain('Charter');
+    expect(absent.get('font-size')).toBe('15px');
+    expect(absent.get('font-style')).toBe('italic');
+    expect(absent.get('color')).toBe('var(--mut)');
+    expect(rule('.said .absent.waiting').get('color')).toBe('var(--warn)');
   });
 
   // The queue no longer draws a case beside itself, so nothing lays one out.

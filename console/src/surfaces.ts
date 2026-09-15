@@ -14,7 +14,7 @@
 // operator should see; a rendered page is a claim about what the ledger
 // holds, and the two are not the same document. Every omission of that kind
 // is named in `docs/operations.md`.
-import { escapeHtml, initialsOf, renderGates, renderMetricValue } from './render.js';
+import { escapeHtml, initialsOf, isReadableTime, renderGates, renderMetricValue } from './render.js';
 // The engine's own record of which rules reach which gate. Re-deriving that
 // order here would be a second copy of it, free to drift from the one the
 // policy engine runs.
@@ -26,6 +26,7 @@ import {
 // which action is the permanent one.
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
 import type { PolicyReason } from 'auracle/policy';
+import type { OutboxStatus } from 'auracle/ledger-read';
 import type { ConsoleApproveOutcome } from './approve.js';
 import { CONSOLE_SCRIPT } from './script.js';
 import { groupQueue } from './queue.js';
@@ -279,6 +280,7 @@ function chip(text: string, token?: Token): string {
  */
 export function ageSays(at: Date | null, now: Date = new Date()): string {
   if (at === null) return 'age unrecorded';
+  if (!isReadableTime(at)) return 'age unreadable';
   const ms = now.getTime() - at.getTime();
   // A run stamped ahead of this clock. Two machines' clocks, or a backdated
   // history: either way it has not waited a negative time, and a minus sign
@@ -301,6 +303,8 @@ export function ageSays(at: Date | null, now: Date = new Date()): string {
  */
 export function whenSays(at: Date | null): string {
   if (at === null) return 'not recorded';
+  // An unreadable time would throw below and take the whole page with it.
+  if (!isReadableTime(at)) return 'not a readable time';
   return `${at.toISOString().slice(0, 16).replace('T', ' ')}Z`;
 }
 
@@ -1673,6 +1677,8 @@ function approveForm(
 export interface TurnView {
   readonly turnNumber: number;
   readonly ticketId: string;
+  /** When the message arrived. The ledger requires one on every turn. */
+  readonly createdAt: Date;
   readonly bodyText: string | null;
   readonly messageAbsence: string | null;
   readonly replyText: string | null;
@@ -1680,6 +1686,8 @@ export interface TurnView {
   readonly runId: string | null;
   readonly runState: string | null;
   readonly runAttempts: number;
+  /** What the relay recorded on the turn's outbox row, read across all its runs, or null. */
+  readonly outboxStatus: OutboxStatus | null;
 }
 
 /** One customer problem, and every turn of it. */
@@ -1699,11 +1707,14 @@ export interface ThreadView {
  * Six codes and six sentences. They are what the reader distinguishes, and a
  * surface that rendered two of them alike would send an operator to the wrong
  * place — which is the whole reason the reader distinguishes them.
+ * `replyAbsenceSays` replaces the `no_reply_sent` sentence on a turn whose row
+ * the relay did not refuse.
  */
 const REPLY_ABSENCE: Readonly<Record<string, string>> = {
   handled_automatically: 'answered by an internal write; no reply was sent to the customer',
   approved_without_reply: 'a person approved an action here; no reply text was recorded',
-  awaiting_approval: 'a reply is drafted and waiting for a person',
+  // Not "a reply is drafted": an internal write parks with no draft (DEC-34).
+  awaiting_approval: 'this turn waits for a person to approve it',
   in_flight: 'this run has not finished',
   no_reply_sent: 'the run stopped without sending a reply',
   not_retained: 'no run joins this turn, so nothing here can say what happened',
@@ -1719,47 +1730,201 @@ function absenceSays(table: Readonly<Record<string, string>>, code: string): str
   return Object.hasOwn(table, code) ? table[code]! : code;
 }
 
+/**
+ * Why a turn shows no reply, in words that agree with the turn's row.
+ *
+ * The absence code is the run's own: a run that stopped sent nothing. The row
+ * is read across every run of the turn, so a superseded retry sits on a row an
+ * earlier run sent, and a run the relay escalated holds an action nobody can
+ * confirm. Saying nothing went out would contradict the chip beside it. Only a
+ * malformed row proves the relay sent nothing, so it keeps the sentence.
+ *
+ * The row on a turn with no reply text is an action this page cannot call a
+ * customer reply: an internal write, or one a person approved (DEC-12,
+ * DEC-34). So the words name the action and never a reply.
+ */
+function replyAbsenceSays(turn: TurnView): string {
+  const code = turn.replyAbsence ?? 'not_retained';
+  if (code !== 'no_reply_sent' || turn.outboxStatus === null || turn.outboxStatus === 'malformed') {
+    return absenceSays(REPLY_ABSENCE, code);
+  }
+  switch (turn.outboxStatus) {
+    case 'sent': return 'the run stopped; the action recorded on this turn was sent';
+    case 'pending': return 'the run stopped; the action recorded on this turn is still to be sent';
+    // `fenced` and `delivery_unknown`, and any value the core would refuse.
+    default: return 'the run stopped; nobody can confirm the action recorded on this turn';
+  }
+}
+
 /** Surface 6: one conversation, read the way a responder reads it. */
 export function renderConversation(thread: ThreadView): string {
   return [
-    head('Conversation', 'One customer problem, and every turn of it.', [
-      chip(thread.state, thread.state === 'open' ? 'accent' : 'dim'),
-      chip(`${thread.turns.length} ${thread.turns.length === 1 ? 'turn' : 'turns'}`),
+    '<div class="casehd">',
+    '<div class="casetitle">',
+    `<span class="m casesubj">${escapeHtml(thread.primaryTicketId)}</span>`,
+    chip(thread.state, thread.state === 'open' ? 'accent' : 'dim'),
+    '</div>',
+    '<div class="m casemeta">',
+    escapeHtml([
+      `conversation ${thread.conversationId}`,
+      `${thread.turns.length} ${thread.turns.length === 1 ? 'turn' : 'turns'}`,
+      `opened ${whenSays(thread.openedAt)}`,
       // Whether it is bound to somebody, never who. An approver already sees
       // the message that address sent.
-      chip(thread.participantNamed ? 'participant named' : 'no participant named'),
-    ]),
-    '<div class="wrap">',
-    '<div class="hd"><div>',
-    `<div class="m" style="font-size:17px; font-weight:600">${escapeHtml(thread.primaryTicketId)}</div>`,
-    `<div class="hds">conversation ${escapeHtml(thread.conversationId)}</div>`,
-    '</div></div>',
+      thread.participantNamed ? 'participant named' : 'no participant named',
+    ].join(' · ')),
+    '</div>',
+    '</div>',
     thread.turns.length === 0
       ? nothing('This conversation holds no turn.')
-      : thread.turns.map((turn) => turnBlock(turn)).join(''),
-    '</div>',
+      : `<div class="wrap turns">${thread.turns.map((turn) => turnBlock(turn)).join('')}</div>`,
   ].join('');
+}
+
+/**
+ * What became of a turn, in a word or two.
+ *
+ * Read from the same facts as the reply's absence, so the chip and the
+ * sentence below it cannot disagree. `auto-answered` is a resolved run that
+ * recorded no approver. That is a run no person saw, or one approved before
+ * db/016 added the column, and the ledger cannot tell those two apart. DEC-12
+ * sends every customer reply through a person, so a person approved every
+ * turn with reply text. A turn no run joins says nothing about who answered it.
+ *
+ * Only a recorded send draws the success colour. A resolved run commits its
+ * outbox row and no more, so the relay's status is added to the chip until it
+ * says `sent`. The row can belong to an earlier run of the turn than the one
+ * the chip names, so a run that did not settle names its state beside the row.
+ */
+function turnOutcome(turn: TurnView): { readonly says: string; readonly token: Token } {
+  // The run the turn shows waits for a person, whatever an earlier run of the
+  // turn sent. The approval queue lists it, and this page must agree.
+  if (turn.runState === 'awaiting_approval') return { says: 'waiting for you', token: 'warn' };
+  if (turn.replyText !== null) {
+    // A person approved this text, and the row says what became of the send.
+    // A run shown beside it that did not settle is a separate fact: it may be
+    // the approval's own run escalating (DEC-30), or a later run on the turn.
+    return settled(turn.runState)
+      ? delivered('approved', turn.outboxStatus)
+      : withRow(`approved · ${turn.runState}`, turn.runState === 'escalated' ? 'hot' : 'dim', turn.outboxStatus);
+  }
+  switch (turn.replyAbsence) {
+    case 'handled_automatically': return delivered('auto-answered', turn.outboxStatus);
+    case 'approved_without_reply': return delivered('approved', turn.outboxStatus);
+    case 'in_flight': return withRow('in flight', 'dim', turn.outboxStatus);
+    case 'not_retained': return { says: 'no run', token: 'dim' };
+    default:
+      // A run that stopped, or an absence this console does not know. Either
+      // way the ledger's own state is the one thing it can say for certain.
+      return turn.runState === null
+        ? { says: 'no run', token: 'dim' }
+        : withRow(turn.runState, turn.runState === 'escalated' ? 'hot' : 'dim', turn.outboxStatus);
+  }
+}
+
+/**
+ * Whether the run the turn shows leaves the row to say what happened.
+ *
+ * A resolved run committed its row. A superseded run lost the insert to a row
+ * another run holds (section 4.2, rule 2), so that row is its outcome too.
+ */
+function settled(runState: string | null): runState is null | 'resolved' | 'superseded' {
+  return runState === null || runState === 'resolved' || runState === 'superseded';
+}
+
+/**
+ * A run state, and the row of the turn when one exists.
+ *
+ * A retry that stopped or still runs is a fact beside the row an earlier run
+ * holds, and neither hides the other. A row that is neither sent nor pending
+ * draws hot.
+ */
+function withRow(word: string, token: Token, outboxStatus: OutboxStatus | null): { readonly says: string; readonly token: Token } {
+  if (outboxStatus === null) return { says: word, token };
+  const neitherSentNorPending = outboxStatus !== 'sent' && outboxStatus !== 'pending';
+  return { says: `${word} · ${outboxStatus}`, token: neitherSentNorPending ? 'hot' : token };
+}
+
+/**
+ * A resolved outcome, qualified by what the relay recorded.
+ *
+ * `sent` is the one status that says the act happened. `pending` is a send
+ * still to come. Any other status is a send that did not or may not have
+ * happened. No status at all, on a run with no outbox row, claims nothing.
+ */
+function delivered(word: string, outboxStatus: OutboxStatus | null): { readonly says: string; readonly token: Token } {
+  if (outboxStatus === 'sent') return { says: word, token: 'ok' };
+  if (outboxStatus === null) return { says: word, token: 'dim' };
+  return { says: `${word} · ${outboxStatus}`, token: outboxStatus === 'pending' ? 'dim' : 'hot' };
+}
+
+/**
+ * The heading over a turn's reply, which says what the customer has.
+ *
+ * "The system replied" only when a person approved text and the relay
+ * recorded sending it. An absent reply is headed as the reply, because the
+ * sentence below says whether anything was sent.
+ *
+ * Only a malformed row proves nothing went out. Every other status short of
+ * `sent` may follow a send that landed: the relay leaves a row pending after a
+ * send that timed out, and fences it on a later scan once the epoch moves on
+ * (DEC-28). A heading that said "never sent" over those would invite a second
+ * reply to a customer who already has one.
+ */
+function replyHeading(turn: TurnView): string {
+  if (turn.replyText === null) {
+    // Not "drafted": a parked internal write holds no draft (DEC-34).
+    return turn.runState === 'awaiting_approval' ? 'waiting for a person' : 'the reply';
+  }
+  // The row alone decides, never the run state. The row can belong to an
+  // earlier run than the one the chip names, and the chip names that run.
+  switch (turn.outboxStatus) {
+    // The relay sets `sent` only after the adapter answers, and every status
+    // update is guarded on `pending`, so nothing rewrites it.
+    case 'sent': return 'the system replied';
+    // The relay refuses a malformed payload before any adapter call, so the
+    // ledger knows nothing went out. Nothing rewrites a payload, so this holds
+    // unless a relay deploy tightens the payload check after a send timed out.
+    case 'malformed': return 'approved, never sent';
+    case 'pending': return 'approved, send pending';
+    case null: return 'a person approved this reply';
+    // `fenced` and `delivery_unknown`. The core refuses any status outside
+    // its set, so nothing else reaches here from the ledger. A value that did
+    // would confirm nothing, and a heading is never left empty.
+    default:
+      return 'approved, delivery not confirmed';
+  }
 }
 
 /** One turn: what the customer wrote, and what the system did about it. */
 function turnBlock(turn: TurnView): string {
+  const outcome = turnOutcome(turn);
+  // A waiting run opens as its case, even on a turn an earlier run answered.
+  const waiting = turn.runState === 'awaiting_approval';
   return [
     '<div class="turn">',
     '<div class="turnmeta">',
     `<span class="lbl">turn ${escapeHtml(String(turn.turnNumber))}</span>`,
-    `<span class="m" style="font-size:10.5px; color:var(--dim)">${escapeHtml(turn.ticketId)}</span>`,
+    `<span class="m turnfact">${escapeHtml(whenSays(turn.createdAt))}</span>`,
+    chip(outcome.says, outcome.token),
+    `<span class="m turnfact">${escapeHtml(turn.ticketId)}</span>`,
     turn.runId === null
-      ? '<span class="m" style="font-size:10.5px; color:var(--dim)">no run</span>'
-      : `<a class="m" style="font-size:10.5px" href="/run/${encodeURIComponent(turn.runId)}">${
-        escapeHtml(turn.runState ?? 'run')}</a>`,
+      ? ''
+      // A waiting turn opens as a case, where it can be approved. Any other
+      // run opens as the record of what it did.
+      : waiting
+        ? `<a class="m turnfact" href="/case/${encodeURIComponent(turn.runId)}">open the case</a>`
+        : `<a class="m turnfact" href="/run/${encodeURIComponent(turn.runId)}">${
+          escapeHtml(turn.runState ?? 'run')}</a>`,
     // More than one run worked this turn, which means the consumer retried.
     // Counted rather than drawn as extra turns: a turn that took three runs
     // to abandon is one message the customer sent.
     turn.runAttempts > 1
-      ? `<span class="m" style="font-size:10.5px; color:var(--warn)">${
+      ? `<span class="m turnfact warn">${
         escapeHtml(String(turn.runAttempts))} attempts</span>`
       : '',
     '</div>',
+    '<div class="turnbody">',
     '<div class="said">',
     '<div class="who">the customer wrote</div>',
     // The absence decides here too, for the reason above.
@@ -1768,10 +1933,17 @@ function turnBlock(turn: TurnView): string {
       : `<div class="prose">${escapeHtml(turn.bodyText)}</div>`,
     '</div>',
     '<div class="said">',
-    '<div class="who">the system replied</div>',
+    `<div class="who">${escapeHtml(replyHeading(turn))}</div>`,
     turn.replyText === null
-      ? `<p class="absent">${escapeHtml(absenceSays(REPLY_ABSENCE, turn.replyAbsence ?? 'not_retained'))}</p>`
-      : `<div class="prose">${escapeHtml(turn.replyText)}</div>`,
+      ? `<p class="absent${waiting ? ' waiting' : ''}">${
+        escapeHtml(replyAbsenceSays(turn))}</p>`
+      // Nothing stops an approval recording a blank body: the helpdesk copy
+      // read back is what it stores. A blank is the one thing a turn never
+      // draws, so the blank is named.
+      : turn.replyText.trim() === ''
+        ? '<p class="absent">a person approved a reply that holds no text</p>'
+        : `<div class="prose">${escapeHtml(turn.replyText)}</div>`,
+    '</div>',
     '</div>',
     '</div>',
   ].join('');

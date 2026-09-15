@@ -437,6 +437,7 @@ async function main(): Promise<void> {
         turns: thread.turns.map((turn) => ({
           turnNumber: turn.turnNumber,
           ticketId: turn.ticketId,
+          createdAt: turn.createdAt,
           bodyText: turn.bodyText,
           messageAbsence: turn.messageAbsence,
           replyText: turn.replyText,
@@ -444,6 +445,7 @@ async function main(): Promise<void> {
           runId: turn.runId,
           runState: turn.runState,
           runAttempts: turn.runAttempts,
+          outboxStatus: turn.outboxStatus,
         })),
       };
     },

@@ -30,6 +30,17 @@ export function escapeHtml(text: string): string {
 }
 
 /**
+ * Whether a timestamp from the ledger is a date a surface can use.
+ *
+ * Typed `Date`, and not always one. The driver reads an infinite timestamp
+ * as a number and an out-of-range one as an invalid Date. Either throws, or
+ * prints `NaN`, the moment a surface does arithmetic on it.
+ */
+export function isReadableTime(at: unknown): at is Date {
+  return at instanceof Date && !Number.isNaN(at.getTime());
+}
+
+/**
  * A person's initials, for the rail's avatar: the first character of each of
  * the first two words, upper-cased.
  *

@@ -17,7 +17,7 @@
  */
 import type { Pool } from 'pg';
 
-import { TERMINAL_RUN_STATES } from '../ledger/insert.js';
+import { OUTBOX_STATUSES, TERMINAL_RUN_STATES, type OutboxStatus } from '../ledger/insert.js';
 
 /** A run identity the ledger can be asked about. The columns are `uuid`. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -41,7 +41,7 @@ export type MessageAbsence = 'not_retained' | 'empty_message';
  * Why a turn shows no agent reply.
  *
  * `turn.approved_reply_text` is written on the approval path alone
- * (DEC-37, db/011). Three different facts land in that null:
+ * (DEC-37, db/011). Six different facts land in that null:
  *
  *   - `handled_automatically`: a run resolved the turn with an internal write
  *     and no person saw it. DEC-12 makes every customer reply wait for a
@@ -51,8 +51,9 @@ export type MessageAbsence = 'not_retained' | 'empty_message';
  *     text. It is also what an approval before DEC-38 looks like, because
  *     `recordApprovedReply` needs a turn number the park did not carry — so
  *     this does not promise the customer received nothing.
- *   - `awaiting_approval`: a draft is parked and nobody has approved it, so
- *     the reply exists and has not been sent.
+ *   - `awaiting_approval`: the run is parked and nobody has approved it. A
+ *     customer reply parks as a draft; an internal write parks in the ledger
+ *     with no draft (DEC-34). Either way nothing has been sent.
  *   - `in_flight`: the run has not finished. It may yet send one, and saying
  *     it sent nothing would report a determination the ledger does not hold.
  *   - `no_reply_sent`: the run reached a terminal state that sent nothing —
@@ -82,11 +83,18 @@ export interface ConversationTurnRow {
    */
   readonly bodyText: string | null;
   readonly messageAbsence: MessageAbsence | null;
-  /** The reply an approval dispatched, or null with `replyAbsence` naming why. */
+  /**
+   * The reply an approval dispatched, or null with `replyAbsence` naming why.
+   *
+   * It belongs to the turn and not to `runId`: it is the text the last
+   * approval committed on the turn. A repeat approval of the same reply
+   * supersedes before it writes, so the text and the outbox row come from
+   * the same approval unless the action changed between runs.
+   */
   readonly replyText: string | null;
   readonly replyAbsence: ReplyAbsence | null;
   /**
-   * The run that answered this turn, joined on `run.turn_number` (db/015).
+   * The newest run of this turn, joined on `run.turn_number` (db/015).
    *
    * Null on a turn no run joins: a V1-era run recorded no turn, and a turn
    * whose run predates db/015 carries no number to join on.
@@ -105,6 +113,22 @@ export interface ConversationTurnRow {
    * describing the retries as messages the customer sent.
    */
   readonly runAttempts: number;
+  /**
+   * What the relay recorded on the turn's outbox row, or null when no run of
+   * the turn holds a row that counts. On a turn with reply text, only the
+   * approval row that names the reply's draft counts.
+   *
+   * Read from the newest run that holds a row, which need not be `runId`: a
+   * superseded retry holds none, and neither does a redelivered run still
+   * waiting for a person. On a turn with reply text, only the approval row
+   * that names the reply's draft counts, so another action on the turn cannot
+   * speak for the reply.
+   *
+   * A resolved run commits its row and does not deliver it: the relay sets
+   * `sent` after the adapter answers, and leaves `pending` while it retries.
+   * So this, and not the run state, says whether a customer has the reply.
+   */
+  readonly outboxStatus: OutboxStatus | null;
 }
 
 /** One customer problem, and every turn of it. */
@@ -145,6 +169,14 @@ const SELECT_THREAD = `
  * each copy, in an order nothing fixed.
  *
  * The newest is the one that decided, so it is the one the turn shows.
+ *
+ * The outbox row is read across every run of the turn, newest run first. A
+ * row is the effect a run committed (DEC-04). A retry of the same action
+ * derives the same key, loses the insert and stops superseded with no row
+ * (section 4.2, rule 2), so the row that says what became of the send can
+ * belong to an earlier run. The run and the row are two facts, and a newer
+ * run still waiting for a person must stay the run the turn shows.
+ *
  * Earlier attempts are counted rather than dropped, because a turn that took
  * three runs to abandon is a different fact from one that took a single run.
  */
@@ -157,6 +189,7 @@ const SELECT_TURNS = `
          r.run_id,
          r.state AS run_state,
          r.approved_by,
+         ob.status AS outbox_status,
          COALESCE(a.attempts, 0) AS attempts
     FROM turn t
     LEFT JOIN LATERAL (
@@ -167,6 +200,30 @@ const SELECT_TURNS = `
             ORDER BY created_at DESC, run_id DESC
             LIMIT 1
          ) r ON true
+    -- One row per run in practice: the approval writes step approve, the
+    -- automatic path writes step execute, and a run takes one path. Ordered
+    -- by step anyway, so a second row could never make the answer depend on
+    -- a plan.
+    --
+    -- A turn with reply text reads only the reply's own row. The key comes
+    -- from the action (DEC-24), so a later run that took another action holds
+    -- a row with its own status, and that status says nothing about whether
+    -- the customer has the reply. The approval records reply text only for a
+    -- draft-backed park, in the transaction that writes a row whose payload
+    -- names that draft. So the draft marks the reply's row, and a reply turn
+    -- reads that row or none. The relay sends the draft only for the customer
+    -- reply action; a profile that pairs a draft with another class is #124.
+    LEFT JOIN LATERAL (
+           SELECT o.status
+             FROM run rr
+             JOIN outbox o ON o.run_id = rr.run_id
+            WHERE rr.conversation_id = t.conversation_id
+              AND rr.turn_number = t.turn_number
+              AND (t.approved_reply_text IS NULL
+                   OR (o.step_id = 'approve' AND o.payload ? 'draftExternalId'))
+            ORDER BY rr.created_at DESC, rr.run_id DESC, o.step_id
+            LIMIT 1
+         ) ob ON true
     LEFT JOIN LATERAL (
            SELECT count(*)::int AS attempts
              FROM run
@@ -176,12 +233,6 @@ const SELECT_TURNS = `
    WHERE t.conversation_id = $1
    ORDER BY t.turn_number`;
 
-/**
- * Why this turn shows no reply, given the run that answered it.
- *
- * Read from the run's state rather than guessed. A turn with no run joined
- * cannot be explained at all, and says so.
- */
 /**
  * Why this turn shows no message, or null when it shows one.
  *
@@ -198,6 +249,12 @@ function messageAbsenceFor(bodyText: string | null): MessageAbsence | null {
   return null;
 }
 
+/**
+ * Why this turn shows no reply, given the newest run of this turn.
+ *
+ * Read from the run's state rather than guessed. A turn with no run joined
+ * cannot be explained at all, and says so.
+ */
 function replyAbsenceFor(runState: string | null, approvedBy: string | null): ReplyAbsence {
   if (runState === null) return 'not_retained';
   if (runState === 'awaiting_approval') return 'awaiting_approval';
@@ -212,6 +269,22 @@ function replyAbsenceFor(runState: string | null, approvedBy: string | null): Re
   // is the difference between an automatic write and an approved one, and
   // DEC-42's column is what says which.
   return approvedBy === null ? 'handled_automatically' : 'approved_without_reply';
+}
+
+/**
+ * The relay's status on a row, narrowed to the set db/006 allows.
+ *
+ * Throws on any other value. The CHECK makes one unreachable until a migration
+ * widens it, and a surface that drew an unknown status would guess what it
+ * says about the customer.
+ */
+function outboxStatusOf(value: unknown): OutboxStatus | null {
+  if (value === null || value === undefined) return null;
+  const status = OUTBOX_STATUSES.find((known) => known === value);
+  if (status === undefined) {
+    throw new Error(`outbox status ${String(value)} is not one of ${OUTBOX_STATUSES.join(', ')}`);
+  }
+  return status;
 }
 
 /**
@@ -259,6 +332,7 @@ export async function readConversation(
         runId: (turn['run_id'] as string | null) ?? null,
         runState,
         runAttempts: Number(turn['attempts'] ?? 0),
+        outboxStatus: outboxStatusOf(turn['outbox_status']),
       };
     }),
   };
