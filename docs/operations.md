@@ -1218,8 +1218,11 @@ opened. That is not when one last needed attention, so a listing would sort by
 the wrong thing.
 
 The console ships one script, and no more. It lights the document a claim
-cites, and it moves through the queue on the j and k keys. Every surface works
-without it: a claim carries an anchor to its source, and a queue row is a link.
+cites. On the queue it moves on j and k, and c opens the focused case. Esc
+leaves a case by its back link. Every surface works without it: a claim carries
+an anchor to its source, and a queue row is a link. The queue legend
+names only the keys that act, above the rows, where a long queue cannot
+hide it.
 
 The script is pinned by a hash of its own text. So a script the page did not
 ship cannot run, and neither does one injected into a page.

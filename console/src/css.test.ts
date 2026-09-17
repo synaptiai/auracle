@@ -460,6 +460,16 @@ describe('what reads at every width', () => {
     expect(rule('.designnotesays').get('max-width')).toBe('88ch');
   });
 
+  // The keys line sits between the queue header and the list, inset like the
+  // rows it annotates and resting just above the panel edge.
+  it('insets the queue keys line like the rows it annotates', () => {
+    const keys = rule('.keys');
+    const across = (padding: string | undefined) => padding?.split(' ')[1];
+    expect(across(keys.get('padding'))).toBe(across(rule('.item').get('padding')));
+    expect(keys.get('padding')).toBe('10px 16px 12px');
+    expect(keys.get('color')).toBe('var(--dim)');
+  });
+
   // The absence of a reply reads in the same register as the reply would,
   // muted and italic, so it takes the place of the text rather than looking
   // like a caption beneath an empty block.

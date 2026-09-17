@@ -561,8 +561,8 @@ async function route(
       return;
     }
     // `SameSite=Strict` and `HttpOnly`: nothing on this console reads the
-    // cookie from script, because there is no script, and a cross-site
-    // navigation has no business changing what the operator sees.
+    // cookie from its one script, and a cross-site navigation has no business
+    // changing what the operator sees.
     //
     // Not `Secure`. The console cannot know its own scheme — the runbook puts
     // it behind a proxy that terminates the TLS — and a `Secure` cookie on a

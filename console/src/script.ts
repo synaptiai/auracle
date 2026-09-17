@@ -1,7 +1,7 @@
 /**
  * The whole of the console's JavaScript (issue #51).
  *
- * It buys two things, and it is bounded to those two. Everything else on
+ * It buys three things, and it is bounded to those three. Everything else on
  * these surfaces is a link or a form post, and stays that way: this console
  * can dispatch a customer reply, so its attack surface is not a place to
  * spend convenience.
@@ -10,14 +10,18 @@
  *     it cites, and lighting a document marks the claims that rest on it.
  *     There is no CSS that links two arbitrary regions of a page, and this is
  *     the interaction that makes a citation feel checked rather than listed.
- *   - **Queue navigation.** j and k move through the approval queue. Enter is
- *     deliberately not bound: a row is an anchor, so Enter already follows the
- *     focused one — and binding it here took it from the Approve button, from
- *     every citation and from every rail link.
+ *   - **Queue navigation.** j and k move through the approval queue, and c
+ *     opens the focused case until a take exists (#107). Enter is deliberately
+ *     not bound: a row is an anchor, so Enter already follows the focused one
+ *     — and binding it here took it from the Approve button, from every
+ *     citation and from every rail link.
+ *   - **Esc leaves a case.** It follows the case's own back link, which keeps
+ *     the queue rule the reviewer chose.
  *
- * Both degrade. Every claim already carries an anchor to its source, and
- * every queue row is already a link — so with the script removed the page
- * loses highlighting and keyboard movement and loses nothing else.
+ * All three degrade. Every claim already carries an anchor to its source,
+ * every queue row is already a link, and a case keeps its back link — so with
+ * the script removed the page loses highlighting, the queue keys and the Esc
+ * shortcut, and loses nothing else.
  *
  * Served inline under a CSP hash rather than from a path. A hash permits this
  * exact text and nothing else, so a script injected into a page cannot run.
@@ -57,10 +61,18 @@ export const CONSOLE_SCRIPT = `
   bind(claims);
   bind(sources);
 
-  // The queue, by keyboard. Only where there is one, and never while the
-  // operator is typing into something.
+  // What the operator is typing into. A control keeps its keys; the
+  // dropdown's tag name is spelled from its parts, because this package
+  // refuses any SQL keyword in any string and that name is one of them.
+  var typing = { INPUT: 1, TEXTAREA: 1, BUTTON: 1 };
+  typing['SEL' + 'ECT'] = 1;
+  function inControl(event) {
+    var tag = (event.target && event.target.tagName) || '';
+    return Boolean(typing[tag] || (event.target && event.target.isContentEditable));
+  }
+
+  // The queue, by keyboard. Only where there is one.
   var rows = document.querySelectorAll('.list .item');
-  if (rows.length === 0) return;
   // No row is open on the queue, since each case has a page of its own. So
   // the first j reaches the first row.
   var at = -1;
@@ -72,23 +84,45 @@ export const CONSOLE_SCRIPT = `
     })(rows[r], r);
   }
 
+  // Esc leaves a case by the link a click already follows, keeping the queue
+  // rule the reviewer chose. It acts on every page that carries a back link,
+  // and obeys the same control guard as the queue keys, so no key is ever
+  // taken from a field.
+  var back = document.querySelector('.casehd a.back');
+
   document.addEventListener('keydown', function (event) {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === 'Escape' && back) {
+      if (inControl(event)) return;
+      // Same origin only. The href is server-built and always a local path
+      // today, and this keeps a future producer of the back link from making
+      // Esc run a scheme this page never ships.
+      var href = back.getAttribute('href');
+      if (href !== null) {
+        var url = new URL(href, document.baseURI);
+        if (url.origin === window.location.origin
+            && (url.protocol === 'http:' || url.protocol === 'https:')) {
+          event.preventDefault();
+          window.location.href = url.href;
+        }
+      }
+      return;
+    }
     // Enter belongs to whatever has focus. j and k move the queue; Enter on a
     // row already follows it, because the row is an anchor and j focused it.
-    // Taking Enter here took it from the Approve button, from every citation
-    // and from every rail link — on the one surface this script serves and
-    // for the one write this console makes.
-    if (event.key !== 'j' && event.key !== 'k') return;
-    var tag = (event.target && event.target.tagName) || '';
-    // A control the operator is using keeps its keys. The dropdown's tag name
-    // is spelled from its parts, because this package refuses any SQL keyword
-    // in any string and that name is one of them.
-    var typing = { INPUT: 1, TEXTAREA: 1, BUTTON: 1 };
-    typing['SEL' + 'ECT'] = 1;
-    if (typing[tag]) return;
-    if (event.target && event.target.isContentEditable) return;
+    // c opens the focused case, the same click a pointer would make. Nothing
+    // focused means no case is focused, so c does nothing rather than choose
+    // one.
+    if (event.key !== 'j' && event.key !== 'k' && event.key !== 'c') return;
+    if (rows.length === 0) return;
+    if (inControl(event)) return;
     event.preventDefault();
+    if (event.key === 'c') {
+      if (at < 0) return;
+      rows[at].focus();
+      rows[at].click();
+      return;
+    }
     at = event.key === 'j' ? Math.min(rows.length - 1, at + 1) : Math.max(0, at - 1);
     rows[at].focus();
     rows[at].scrollIntoView({ block: 'nearest' });

@@ -281,6 +281,8 @@ tbody tr:hover { background:var(--panel); }
 .qaside { margin: 0; padding: 10px 26px; border-bottom: 1px solid var(--rule); font-size: 12px; color: var(--mut); }
 .qgroup { padding: 12px 16px 8px; border-bottom: 1px solid var(--rule); }
 .qnote { margin: 6px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--mut); }
+/* The keys line above the queue, inset like the rows it annotates. */
+.keys { font-size:11px; color:var(--dim); padding:10px 16px 12px; }
 
 /* One claim of a draft. The mark is the point: an unsupported claim is the
  * sentence an approver came to find. */
@@ -405,7 +407,10 @@ td a, dd a { display: inline-block; }
  * whole width there. */
 .casehd { padding:14px 24px; border-bottom:1px solid var(--rule); background:var(--panel);
   display:flex; flex-direction:column; gap:6px; }
-.casehd .back { font-size:12px; color:var(--mut); align-self:flex-start; }
+.casehd .backrow { display:flex; gap:8px; align-items:baseline; align-self:flex-start; }
+.casehd .back { font-size:12px; color:var(--mut); }
+/* The key hint beside the back link, quieter than the link it annotates. */
+.casehd .backkey { font-size:11px; color:var(--dim); }
 .casetitle { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .casesubj { font-size:15px; font-weight:600; overflow-wrap:anywhere; }
 .casemeta { font-size:11px; color:var(--dim); overflow-wrap:anywhere; }

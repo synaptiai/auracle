@@ -6,6 +6,7 @@
 // delegation itself is proved in `approve.test.ts`.
 import type { AddressInfo } from 'node:net';
 import { connect } from 'node:net';
+import { readFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { request } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -2372,9 +2373,72 @@ describe('the one script this console ships', () => {
     expect(digest).toBe(declared);
   });
 
+  // The bindings are pinned by their key names, because the hash test proves
+  // the served text matches the policy but not that it binds the keys the
+  // legend names.
+  // Issue #105: no comment may claim the console ships no script. The claim
+  // once sat in server.ts, and the runbook held it too.
+  it('leaves no comment claiming the console ships no script', () => {
+    for (const file of ['server.ts', 'surfaces.ts', 'script.ts', 'css.ts']) {
+      const source = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+      expect(source, file).not.toContain('there is no script');
+      expect(source, file).not.toContain('ships no script');
+    }
+    // The runbook's own phrasing, which `check-docs.py` also refuses. The
+    // runbook never held the two phrasings above, so pinning them here would
+    // prove nothing about it. Its prose is wrapped, so the phrase is read with
+    // the whitespace collapsed, the same way the checker reads it.
+    const runbook = readFileSync(new URL('../../docs/operations.md', import.meta.url), 'utf8')
+      .replace(/\s+/g, ' ');
+    expect(runbook).not.toContain('ships no JavaScript');
+  });
+
+  it('binds Escape to the case back link and c to the focused row', async () => {
+    const base = await startGuarded(deps());
+    const script = /<script>([\s\S]*?)<\/script>/.exec(await (await fetch(base + '/')).text())?.[1] ?? '';
+    expect(script).toContain(".casehd a.back");
+    expect(script).toContain("event.key === 'Escape'");
+    expect(script).toContain("event.key === 'c'");
+    expect(script).toContain('url.origin === window.location.origin');
+    // The origin check is real, and Esc obeys the shared guard: the exact
+    // lines, so weakening either fails here rather than only in a browser.
+    expect(script).toContain('if (href !== null) {');
+    expect(script).toContain("if (event.key === 'Escape' && back) {\n      if (inControl(event)) return;");
+    expect(script).toContain('rows[at].click()');
+    // c acts on the focused row alone, so it never chooses one for a reviewer.
+    expect(script).toContain('if (at < 0) return;');
+    // The j/k/c guard at its own site, so removing it is not hidden by the
+    // same line serving Esc.
+    expect(script).toContain('if (rows.length === 0) return;\n    if (inControl(event)) return;');
+    // j and k move, and c joins them in the one key check. The movement line
+    // names only j, because k is its other half.
+    expect(script).toContain("event.key === 'j'");
+    expect(script).toContain("event.key !== 'j' && event.key !== 'k' && event.key !== 'c'");
+    // Enter stays unbound on purpose (#51): the focused anchor already opens.
+    // Both spellings, so a quote reformat cannot hide a binding.
+    expect(script).not.toContain("'Enter'");
+    expect(script).not.toContain('"Enter"');
+    expect(script).toContain('BUTTON: 1');
+    expect(script).toContain("typing['SEL' + 'ECT'] = 1;");
+    // No key acts while the reviewer types: the guard names every field.
+    expect(script).toContain('INPUT: 1');
+    expect(script).toContain('TEXTAREA: 1');
+    expect(script).toContain('isContentEditable');
+    // And the guard is applied to the keys, not only defined.
+    expect(script).toContain('if (inControl(event)) return;');
+    // The movement itself: j steps toward the bottom, k toward the top, and
+    // the focused row comes into view. Swapping the two breaks this.
+    expect(script).toContain("at = event.key === 'j' ? Math.min(rows.length - 1, at + 1) : Math.max(0, at - 1);");
+    expect(script).toContain('rows[at].scrollIntoView({ block: \'nearest\' });');
+    // Esc's consequence: it prevents the default and navigates, and the
+    // protocol check keeps a javascript: or data: link inert.
+    expect(script).toContain('event.preventDefault();\n          window.location.href = url.href;');
+    expect(script).toContain("url.protocol === 'http:' || url.protocol === 'https:'");
+  });
+
   it('ships exactly one, on every surface', async () => {
     const base = await startGuarded(deps());
-    for (const path of ['/', '/runs', `/run/${RUN}`, '/bands', '/latency', '/notes']) {
+    for (const path of ['/', '/runs', `/run/${RUN}`, '/bands', '/latency', '/notes', '/nowhere']) {
       const html = await (await fetch(base + path)).text();
       expect(html.split('<script>'), path).toHaveLength(2);
     }
@@ -2833,6 +2897,28 @@ describe('the queue a reviewer lands on (issue #101)', () => {
     waitingRun('22222222-2222-4222-8222-222222222222', 'SYN-CLEAN', {}),
     waitingRun('33333333-3333-4333-8333-333333333333', 'SYN-RISK', { gateReason: 'irreversible' }),
   ];
+
+  // Issue #105. The legend names only the keys that act on this page: j and
+  // k move, Enter follows the focused row natively, and c opens it. `a` is
+  // not bound until a batch confirm exists, so the legend omits it.
+  it('lists only the keys that act on it, and rows stay links', async () => {
+    const base = await startGuarded(deps({ listApprovals: async () => queue() }));
+    const html = await (await fetch(base + '/')).text();
+    // The whole line, so a key can join it only by failing this test.
+    expect(html).toContain('<div class="keys">j / k move · enter opens · c opens the case</div>');
+    expect(html).not.toContain('a confirms');
+    // Above the rows, where an uncapped queue cannot push it under the fold.
+    expect(html.indexOf('<div class="keys">')).toBeLessThan(html.indexOf('<div class="list">'));
+    // Degraded, the keys lose nothing: every row is still an anchor.
+    expect(html).toMatch(/<a class="item" href="\/case\//);
+  });
+
+  it('shows no keys where there is no queue to move through', async () => {
+    const base = await startGuarded(deps({ listApprovals: async () => [] }));
+    const html = await (await fetch(base + '/')).text();
+    // By structure, not wording: no keys line at all.
+    expect(html).not.toContain('<div class="keys">');
+  });
 
   it('opens on "Needs a person", and keeps Runs one link away', async () => {
     const base = await startGuarded(deps({ listApprovals: async () => queue() }));
@@ -3592,6 +3678,17 @@ describe('the case a reviewer decides on (issue #102)', () => {
       .filter((i) => i !== -1);
     return html.slice(start, ends.length === 0 ? undefined : Math.min(...ends));
   }
+
+  // Issue #105. Esc leaves the case by the same link a click does.
+  it('says Esc returns to the queue, beside the link it follows', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + CASE)).text();
+    // The hint sits right beside the link it follows, as the page renders it.
+    expect(html).toContain('<div class="backrow"><a class="back" href="/">← Needs a person</a><span class="backkey">esc returns to the queue</span></div>');
+    // The rule form too: Esc keeps the queue filter the reviewer chose.
+    const ruled = await (await fetch(`${base}${CASE}?rule=customer_visible`)).text();
+    expect(ruled).toContain('<div class="backrow"><a class="back" href="/?rule=customer_visible">← Needs a person</a><span class="backkey">esc returns to the queue</span></div>');
+  });
 
   it('heads the case with its ticket, its turn, its intent, its run and a way back', async () => {
     const base = await startGuarded(deps());

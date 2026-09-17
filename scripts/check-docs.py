@@ -24,6 +24,8 @@ into commands.
   script-index  Every script `package.json` defines appears in the runbook as
                 a command a reader can run, and the runbook names no script
                 the manifest has dropped.
+  script-claim  The runbook never claims the console ships no script, in any
+                spelling, including one a line break splits.
   map-coverage  The quick map's list of decisions no row names is exactly the
                 set no row names.
 
@@ -999,6 +1001,32 @@ def check_map_coverage(root: str, findings: list[str]) -> None:
             f"by a row: {extra}. Covered by no row and not named: {missing}")
 
 
+def check_script_claim(root: str, findings: list[str]) -> None:
+    """The runbook never claims the console ships no script.
+
+    The claim was true once and went stale when the console gained its one
+    pinned script (issue #105). A reader who meets it again is sent to a false
+    statement, and the console's own guard reads its source files rather than
+    the runbook, so the phrasing rule lives here.
+
+    Each phrase is read against the runbook with its whitespace collapsed and
+    its case folded. The runbook is wrapped prose, and a claim that returns
+    starts a sentence. Both spellings have to read as the one this check
+    exists to stop.
+    """
+    runbook = read_repo_file(root, RUNBOOK, findings)
+    if runbook is None:
+        return
+    bare = " ".join(runbook.split()).casefold()
+    for phrase, claim in (
+        ("ships no script", "the console ships no script"),
+        ("there is no script", "there is no script"),
+        ("ships no javascript", "the console ships no JavaScript"),
+    ):
+        if phrase in bare:
+            findings.append(f"{RUNBOOK}: claims {claim}")
+
+
 CHECKS = {
     "diagrams": check_diagrams,
     "legends": check_legends,
@@ -1010,6 +1038,7 @@ CHECKS = {
     "decisions": check_decisions,
     "dec-range": check_dec_range,
     "script-index": check_script_index,
+    "script-claim": check_script_claim,
     "map-coverage": check_map_coverage,
 }
 

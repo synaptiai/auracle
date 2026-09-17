@@ -1264,6 +1264,7 @@ export function renderApprovals(
     );
   }
   const sections = groupQueue(shownRuns);
+  const keysLine = keyLegend();
   const row = (run: RunDetail): string => [
     `<a class="item" href="${escapeHtml(caseHref(run.runId, rule))}">`,
     '<div class="itop">',
@@ -1301,6 +1302,7 @@ export function renderApprovals(
   ].join('');
   return [
     header,
+    keysLine,
     '<div class="list">',
     `<div class="lhd"><span class="lbl">Waiting · ${escapeHtml(String(shownRuns.length))}`
       + `${rule === null ? '' : escapeHtml(` · ${rule === UNRULED ? 'no gate rule' : gateRuleSays(rule)}`)}`
@@ -1317,6 +1319,20 @@ export function renderApprovals(
     }),
     '</div>',
   ].join('');
+}
+
+/**
+ * Only the keys that act in this release, because a legend that names a dead
+ * key sends a reviewer to press it. Enter is native to the focused anchor;
+ * c opens the case until a take exists (#107) and then takes it; a joins the
+ * legend with the batch confirm it activates.
+ *
+ * Drawn above the rows, not under them: the queue is uncapped, so a legend
+ * under the list would sit under the fold of every queue that is the reason
+ * the legend exists.
+ */
+function keyLegend(): string {
+  return '<div class="keys">j / k move · enter opens · c opens the case</div>';
 }
 
 /** The case page of a run, with a chosen queue rule kept for the way back. */
@@ -1381,7 +1397,9 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
   const rule = view.policyReason;
   return [
     '<div class="casehd">',
-    `<a class="back" href="${escapeHtml(queueHref(options.rule))}">← Needs a person</a>`,
+    '<div class="backrow">'
+      + `<a class="back" href="${escapeHtml(queueHref(options.rule))}">← Needs a person</a>`
+      + '<span class="backkey">esc returns to the queue</span></div>',
     '<div class="casetitle">',
     `<span class="m casesubj">${escapeHtml(view.ticketId)}</span>`,
     chip(rule === null ? 'no rule journalled' : gateRuleSays(rule), 'hot'),

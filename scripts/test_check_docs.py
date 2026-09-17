@@ -999,6 +999,38 @@ def case_script_index_pnpm_subcommand_collision(root):
     return "script-index", FAIL, "names no `pnpm run install`"
 
 
+def case_script_claim_runbook_says_the_console_ships_no_script(root):
+    # Issue #105: the claim was true once and went stale. Every wording that
+    # could return it is refused, because the console's own guard reads its
+    # source files and never the runbook.
+    script_repo(root, '{"build": "tsc"}',
+                "The console ships no script. Run `pnpm run build`.\n")
+    return "script-claim", FAIL, "claims the console ships no script"
+
+
+def case_script_claim_wrapped_claim_fails(root):
+    # The runbook is wrapped prose, so a returning claim can arrive with a
+    # line break inside the phrase. The break sits before the last word, where
+    # the shipped paragraph wraps.
+    script_repo(root, '{"build": "tsc"}',
+                "The console ships no\nJavaScript of its own. Run `pnpm run build`.\n")
+    return "script-claim", FAIL, "claims the console ships no JavaScript"
+
+
+def case_script_claim_sentence_initial_claim_fails(root):
+    # This phrasing reads as a sentence of its own, so its ordinary spelling
+    # capitalizes the first word. A case-sensitive match would read it as clean.
+    script_repo(root, '{"build": "tsc"}',
+                "There is no script to install. Run `pnpm run build`.\n")
+    return "script-claim", FAIL, "claims there is no script"
+
+
+def case_script_claim_clean_runbook_passes(root):
+    script_repo(root, '{"build": "tsc"}',
+                "The console ships one script, and no more. Run `pnpm run build`.\n")
+    return "script-claim", PASS, None
+
+
 MAP_REGISTER = """## 2. Decision register
 
 | ID | Decision | Rejected alternatives |
@@ -1064,6 +1096,14 @@ CASES = [
      case_script_index_runbook_names_a_dropped_script),
     ("a script colliding with a pnpm subcommand fails",
      case_script_index_pnpm_subcommand_collision),
+    ("a runbook claiming the console ships no script fails",
+     case_script_claim_runbook_says_the_console_ships_no_script),
+    ("a runbook whose claim a line break splits fails",
+     case_script_claim_wrapped_claim_fails),
+    ("a sentence-initial claim is read like any other",
+     case_script_claim_sentence_initial_claim_fails),
+    ("a runbook that claims no such thing passes",
+     case_script_claim_clean_runbook_passes),
     ("a quick map whose uncovered list is right passes", case_map_coverage_matches),
     ("a quick map that understates what it omits fails", case_map_coverage_understates),
     ("a quick map naming a covered decision fails",
@@ -1299,7 +1339,7 @@ def main() -> int:
                               "unknown check 'nonsense'")
         failures += check_cli("a blank --only runs every check",
                               ["--root", root, "--only", " , , "], 0,
-                              "docs clean: 11 check(s)")
+                              "docs clean: 12 check(s)")
         failures += check_cli("a repeated --only runs once",
                               ["--root", root, "--only", "links,links,links"], 0,
                               "docs clean: 1 check(s)")
