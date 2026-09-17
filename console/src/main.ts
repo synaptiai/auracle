@@ -46,7 +46,9 @@ import { SHUTDOWN_GRACE_MS } from './shutdown.js';
 import { CONSOLE_CSS } from './css.js';
 import { allowedHosts, identityHeader } from './hosts.js';
 import { ledgerName } from './ledger-name.js';
-import { agreementDetail, evidenceOf, latencyCaveats, stepSays, toDetail, toRow } from './views.js';
+import {
+  agreementDetail, evidenceOf, latencyCaveats, percentileShare, stepSays, toDetail, toRow,
+} from './views.js';
 import { cachedDaily } from './daily-cache.js';
 import { consolePoolConfig } from './pool.js';
 import { createConsole, RUNS_PAGE } from './server.js';
@@ -393,16 +395,8 @@ async function main(): Promise<void> {
       const waitMax = widest((p) => [p.wait.p50Ms, p.wait.p95Ms, p.wait.p99Ms]);
       const serviceMax = widest((p) => [p.service.p50Ms, p.service.p95Ms, p.service.p99Ms]);
 
-      const pct = (label: string, ms: number | null, max: number): Percentile => {
-        // Three cases, and a first version collapsed two of them. The floor
-        // exists so a percentile far below the widest still draws something
-        // rather than vanishing — but applied to a measured zero it drew a
-        // sliver, so a partition whose queue wait was genuinely zero looked
-        // like one with a wait too small to name. A zero is a measurement and
-        // it draws nothing.
-        const share = ms === null || ms === 0 || max <= 0 ? 0 : Math.max(0.02, ms / max);
-        return { label, text: humanMs(ms), share };
-      };
+      const pct = (label: string, ms: number | null, max: number): Percentile =>
+        ({ label, text: humanMs(ms), share: percentileShare(ms, max) });
 
       return report.partitions.map((p) => ({
         partition: p.partition,

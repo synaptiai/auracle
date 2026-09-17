@@ -4,7 +4,9 @@
 // nothing asserted them. The park branch is why that mattered.
 import { describe, expect, it } from 'vitest';
 
-import { agreementDetail, evidenceOf, latencyCaveats, stepSays, toDetail, toRow } from './views.js';
+import {
+  agreementDetail, evidenceOf, latencyCaveats, percentileShare, stepSays, toDetail, toRow,
+} from './views.js';
 import { ageSays, whenSays } from './surfaces.js';
 import type { JournalStep, RunJournal } from 'auracle/ledger-read';
 
@@ -414,5 +416,34 @@ describe('the timestamp a run list states', () => {
     // page down with it.
     expect(whenSays(new Date(Number.NaN))).toBe('not a readable time');
     expect(whenSays(Number.POSITIVE_INFINITY as unknown as Date)).toBe('not a readable time');
+  });
+});
+
+// Each input sits in a different case, so a version that folds two cases
+// together gives a different answer for one of them.
+describe('the share of a latency track a percentile fills', () => {
+  it('draws no track for a percentile nobody measured', () => {
+    expect(percentileShare(null, 1000)).toBeNull();
+    expect(percentileShare(null, 0)).toBeNull();
+  });
+
+  it('draws an empty track, and no sliver, for a measured zero', () => {
+    expect(percentileShare(0, 1000)).toBe(0);
+  });
+
+  it('draws a sliver for a value far below the widest', () => {
+    // 1 of 1000 is 0.001, under the 0.02 floor.
+    expect(percentileShare(1, 1000)).toBe(0.02);
+  });
+
+  it('draws its share of the widest otherwise', () => {
+    expect(percentileShare(500, 1000)).toBe(0.5);
+    expect(percentileShare(1000, 1000)).toBe(1);
+  });
+
+  // The caller's widest value is at least every measured one, so it never
+  // passes this pair. The guard exists to keep a division by zero off the page.
+  it('fills nothing when the maximum it is given is zero, rather than dividing by it', () => {
+    expect(percentileShare(250, 0)).toBe(0);
   });
 });

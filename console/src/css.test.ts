@@ -448,6 +448,18 @@ describe('what reads at every width', () => {
     expect(RULES.filter((r) => r.declarations.has('grid-column') && r.selector.includes('said'))).toHaveLength(0);
   });
 
+  // The handoff's notes: a panel card with a coloured left rule, a title and
+  // a measure of prose, in one column no wider than 1000px.
+  it('sets a design note as a card with a coloured left rule', () => {
+    expect(rule('.designnotes').get('max-width')).toBe('1000px');
+    expect(rule('.designnotes').get('gap')).toBe('12px');
+    const note = rule('.designnote');
+    expect(note.get('background')).toBe('var(--panel)');
+    expect(note.get('border-left-width')).toBe('2px');
+    expect(rule('.designnotetitle').get('font-weight')).toBe('600');
+    expect(rule('.designnotesays').get('max-width')).toBe('88ch');
+  });
+
   // The absence of a reply reads in the same register as the reply would,
   // muted and italic, so it takes the place of the text rather than looking
   // like a caption beneath an empty block.

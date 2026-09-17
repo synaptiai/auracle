@@ -5,6 +5,7 @@
 // two display rules reaching a rendered page, and the write's shape — the
 // delegation itself is proved in `approve.test.ts`.
 import type { AddressInfo } from 'node:net';
+import { connect } from 'node:net';
 import type { Server } from 'node:http';
 import { request } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -12,7 +13,7 @@ import { createHash } from 'node:crypto';
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { escapeHtml } from './render.js';
+import { escapeHtml, renderGates } from './render.js';
 
 import { allowedHosts } from './hosts.js';
 import { createConsole } from './server.js';
@@ -228,10 +229,11 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
   };
 }
 
-let open: Server | null = null;
+// Every server a test starts, closed after it. A test that starts several
+// would otherwise leave all but the last one listening.
+const opened: Server[] = [];
 afterEach(() => {
-  open?.close();
-  open = null;
+  for (const server of opened.splice(0)) server.close();
 });
 
 let allowedPort = 0;
@@ -287,7 +289,7 @@ async function startGuarded(
     states: [...STATES],
     ledger: LEDGER,
   });
-  open = server;
+  opened.push(server);
   await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
   allowedPort = port;
   return `http://127.0.0.1:${port}`;
@@ -303,6 +305,7 @@ describe('the console routes', () => {
       [CASE, 'Why this is yours'],
       ['/bands', 'Control bands'],
       ['/latency', 'Partition latency'],
+      ['/notes', 'Why the console works this way'],
     ] as const) {
       const res = await fetch(base + path);
       expect(res.status, path).toBe(200);
@@ -692,7 +695,8 @@ describe('what a fault and a refusal tell the operator', () => {
       const html = await res.text();
       expect(res.status).toBe(500);
       expect(html).not.toContain('ada@customer.example');
-      expect(html).toMatch(/console log names it [0-9a-f]{8}/);
+      // Worded for any page, since some pages read no ledger at all.
+      expect(html).toMatch(/Something failed while answering this page\. The console log names it [0-9a-f]{8}\./);
       // The operator can still find it, because they read the log already.
       expect(logged.join('\n')).toContain(secret);
     } finally {
@@ -2100,6 +2104,210 @@ describe('the conversation a responder reads', () => {
   });
 });
 
+describe('the design notes', () => {
+  /** Each card of the page: its colour token, title and sentences. */
+  function cardsOf(html: string): { token: string; title: string; says: string }[] {
+    return [...html.matchAll(
+      /<div class="designnote" style="border-left-color:var\(--([a-z]+)\)"><div class="designnotetitle">([^<]*)<\/div><div class="designnotesays">([^<]*)<\/div><\/div>/g,
+    )].map((m) => ({ token: m[1]!, title: m[2]!, says: m[3]! }));
+  }
+
+  // The maintainer's decision on #104: only cards the console already makes
+  // true ship now. Each of the other four ships with the issue that builds it.
+  it('shows the three cards the console makes true today, in order', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + '/notes')).text();
+    expect(cardsOf(html).map((c) => [c.token, c.title])).toEqual([
+      ['warn', 'The gates stay apart, everywhere'],
+      ['ok', 'An absence is still a sentence'],
+      ['dim', 'The engineer surfaces sit under Admin'],
+    ]);
+    for (const unbuilt of [
+      'The reply is edited here, and sent from here',
+      'A lock, because four people pull from one uncapped list',
+      'The knowledge base is edited from inside the case',
+      'Product is a first-class column',
+    ]) {
+      expect(html, unbuilt).not.toContain(unbuilt);
+    }
+  });
+
+  // The second decision: a card states what the console does, and names no
+  // code it replaced. The handoff's source lines named files and functions.
+  it('names no replaced code on any card', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + '/notes')).text();
+    const cards = cardsOf(html);
+    expect(cards).toHaveLength(3);
+    for (const card of cards) {
+      for (const source of ['was:', '.ts', 'approveControl', 'MESSAGE_ABSENCE', 'gateValue', 'Instrument']) {
+        expect(card.says, `${card.title}: ${source}`).not.toContain(source);
+        expect(card.title, `${card.title}: ${source}`).not.toContain(source);
+      }
+      expect(card.says.trim().length, card.title).toBeGreaterThan(0);
+    }
+    expect(html).not.toContain('was:');
+  });
+
+  // The words are pinned whole: a sentence added to a card is a new claim, and
+  // it fails here until someone checks it against the console. The subtitle
+  // promises a reason on every card, so it is pinned with them.
+  it('ships each card in the words the console was checked against', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + '/notes')).text();
+    expect(html).toContain(
+      '<div class="hdt">Design notes</div><div class="hds">Why the console works this way.'
+        + ' Each card states a rule the console keeps, and the reason for it.</div>',
+    );
+    expect(cardsOf(html).map((c) => c.says)).toEqual([
+      'No screen combines agreement and coverage into one score, because the system never computes one'
+        + ' and could not act on it. A screen that shows both shows each value on its own.'
+        + ' The queue group Both gates clean holds a case only when both values and both lines are recorded,'
+        + ' and each value clears its own line.',
+      'A turn with no message or no reply names why, in a sentence of its own.'
+        + ' On a run or case page, a gate with no recorded value shows an em dash with a note that names the absence,'
+        + ' and draws no bar.'
+        + ' No screen renders an unmeasured value as zero, because a zero would read as a measurement.',
+      'Runs, control bands and partition latency sit under Admin.'
+        + ' They answer questions about the pipeline, and a person clearing a queue between'
+        + ' two engineering tasks is not asking them.',
+    ]);
+  });
+
+  // Each claim, checked on the screens it describes rather than on the card.
+  it('makes each card true of the console it describes', async () => {
+    const base = await startGuarded(deps());
+    // Card 1: the gate panel draws each gate under its own label and value,
+    // and neither a mean nor a product appears.
+    const both = renderGates({ agreement: 0.89, coverage: 0.94 });
+    expect(both).toMatch(/Sample agreement<\/div>[^]*?<span class="big">0\.890<\/span>/);
+    expect(both).toMatch(/Groundedness coverage<\/div>[^]*?<span class="big">0\.940<\/span>/);
+    for (const combined of ['0.915', '0.837']) expect(both).not.toContain(combined);
+    // The only figures on the panel are the two values: no blend of any kind.
+    expect(both.match(/\d\.\d{3}/g)).toEqual(['0.890', '0.940']);
+    // The queue row prints each value as its own token, and names the group.
+    const queue = await (await fetch(base + '/')).text();
+    // The fixture's rule gates before either threshold is read, so each value
+    // carries that note beside it, still as a token of its own.
+    // The whole line, so no score can join it unseen.
+    expect(queue).toContain(
+      '<div class="m imeta">refund-request · customer_visible · tier unrecorded'
+        + ' · agreement 0.89 (not read) · coverage 0.94 (not read)</div>',
+    );
+    expect(queue).toContain('Both gates clean');
+    // Card 2: on the panel a gate with no recorded value shows a dash and its
+    // reason, draws no bar, and never a zero. The gate beside it keeps its bar.
+    const one = renderGates({ agreement: 0.89, coverage: null, coverageAbsent: 'not recorded' });
+    expect(one).toContain('<span class="big">—</span>');
+    expect(one).toContain('<span class="m gateabsent">not recorded</span>');
+    expect(one.match(/class="track"/g) ?? []).toHaveLength(1);
+    expect(one).not.toContain('0.000');
+    // The queue row draws nothing for an unrecorded gate, and never a zero.
+    const unrecorded = await startGuarded(deps({
+      listApprovals: async () => [{
+        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+        reason: 'customer_visible', stepsUsed: 4,
+        agreement: null, draftExternalId: 'D-1',
+      }] as never,
+    }));
+    const row = await (await fetch(unrecorded + '/')).text();
+    expect(row).not.toContain(' · agreement');
+    expect(row).toContain(' · coverage 0.94 (not read)');
+    // A case with one gate unrecorded is not clean, whatever the other says.
+    expect(row).not.toContain('Both gates clean');
+    const noCoverage = await startGuarded(deps({
+      listApprovals: async () => [{
+        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+        reason: 'customer_visible', stepsUsed: 4,
+        agreement: 0.89, gateCoverage: null, draftExternalId: 'D-1',
+      }] as never,
+    }));
+    const coverageRow = await (await fetch(noCoverage + '/')).text();
+    expect(coverageRow).not.toContain(' · coverage');
+    expect(coverageRow).toContain(' · agreement 0.89 (not read)');
+    expect(coverageRow).not.toContain('Both gates clean');
+    // A missing line keeps a case out of the group, whatever its values say.
+    const noLine = await startGuarded(deps({
+      listApprovals: async () => [{
+        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+        agreementThreshold: null, reason: 'customer_visible', stepsUsed: 4,
+        agreement: 0.89, draftExternalId: 'D-1',
+      }] as never,
+    }));
+    const lineRes = await fetch(noLine + '/');
+    const lineQueue = await lineRes.text();
+    expect(lineRes.status).toBe(200);
+    expect(lineQueue).toContain(' · agreement 0.89 (not read)');
+    expect(lineQueue).not.toContain('Both gates clean');
+    // The run page draws a gate with no recorded value as the card says.
+    const unread = await startGuarded(deps({ readRun: async () => ({ ...WAITING, coverage: null }) as never }));
+    const runPage = await (await fetch(`${unread}/run/${RUN}`)).text();
+    expect(runPage).toContain('<span class="big">—</span>');
+    expect(runPage).toContain('<span class="m gateabsent">not recorded</span>');
+    expect(runPage.match(/class="track"/g) ?? []).toHaveLength(1);
+    expect(runPage).not.toContain('0.000');
+    // The case page draws it the same way, with its own note.
+    const casePage = await (await fetch(unread + CASE)).text();
+    expect(casePage).toContain('<span class="big">—</span>');
+    expect(casePage).toContain('<span class="m gateabsent">the journal holds no coverage for this run</span>');
+    expect(casePage.match(/class="track"/g) ?? []).toHaveLength(1);
+    expect(casePage).not.toContain('0.000');
+    // The latency page draws no track for a percentile nobody measured, and a
+    // track for one measured at zero.
+    const latency = await startGuarded(deps({
+      readLatency: async () => [{
+        partition: 0,
+        wait: [
+          { label: 'p50', text: '-', share: null },
+          { label: 'p95', text: '0ms', share: 0 },
+          { label: 'p99', text: '0ms', share: 0 },
+        ],
+        service: [
+          { label: 'p50', text: '40.4s', share: 0.1 },
+          { label: 'p95', text: '3.0h', share: 1 },
+          { label: 'p99', text: '3.4h', share: 1 },
+        ],
+        runs: 1, caveats: [],
+      }],
+    }));
+    const latencyPage = await (await fetch(latency + '/latency')).text();
+    expect(latencyPage).toContain('<span class="lbl">p50</span><span></span><span class="pv" style="color:var(--mut)">-</span>');
+    expect(latencyPage.match(/class="track"/g) ?? []).toHaveLength(5);
+    // Card 3: the Admin group of the rail holds all three surfaces.
+    const notes = await (await fetch(base + '/notes')).text();
+    // The group alone: its label, its links, and the close of its own element.
+    const admin = /<div class="navgroup"><div class="lbl">Admin<\/div>((?:<a [^>]*>(?:(?!<\/a>).)*<\/a>)*)<\/div>/
+      .exec(notes)?.[1];
+    expect(admin).toBeDefined();
+    for (const surface of ['Runs', 'Control bands', 'Partition latency']) {
+      expect(admin, surface).toContain(`<span class="navlabel">${surface}</span>`);
+    }
+  });
+
+  // The page draws from nothing but its own copy, so a ledger that cannot
+  // answer still leaves it readable. Every reader the console holds is
+  // refused and counted, a reader added later included.
+  it('reads no ledger', async () => {
+    const asked: string[] = [];
+    const refusing = Object.fromEntries(Object.keys(deps()).map((name) => [
+      name,
+      async (): Promise<never> => { asked.push(name); throw new Error(`${name} was asked`); },
+    ]));
+    // A named reviewer and a theme cookie, so the rail's reviewer block and
+    // the theme are drawn on the way too, and neither reaches a reader.
+    const base = await startGuarded(refusing as unknown as ConsoleDeps, undefined, 'x-forwarded-user');
+    const res = await fetch(base + '/notes', {
+      headers: { 'x-forwarded-user': 'Ada Synthetic', cookie: 'theme=light' },
+    });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Why the console works this way');
+    expect(html).toContain('Ada Synthetic');
+    expect(html).toContain('data-theme="light"');
+    expect(asked).toEqual([]);
+  });
+});
+
 describe('the document behind a citation', () => {
   it('shows what the document says today', async () => {
     const base = await startGuarded(deps());
@@ -2166,7 +2374,7 @@ describe('the one script this console ships', () => {
 
   it('ships exactly one, on every surface', async () => {
     const base = await startGuarded(deps());
-    for (const path of ['/', '/runs', `/run/${RUN}`, '/bands', '/latency']) {
+    for (const path of ['/', '/runs', `/run/${RUN}`, '/bands', '/latency', '/notes']) {
       const html = await (await fetch(base + path)).text();
       expect(html.split('<script>'), path).toHaveLength(2);
     }
@@ -2440,6 +2648,88 @@ describe('the theme', () => {
     expect(html).toContain('data-theme="dark"');
   });
 
+  // HEAD is a read. Every read route answers it as it answers GET, with no
+  // body; the theme route writes a cookie, so it answers GET alone.
+  /** A raw HEAD exchange, so the bytes after the headers are the server's own. */
+  async function rawHead(base: string, path: string): Promise<{ head: string; after: string }> {
+    const { port } = new URL(base);
+    const wire = await new Promise<string>((resolve, reject) => {
+      const socket = connect(Number(port), '127.0.0.1', () => {
+        socket.write(`HEAD ${path} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`);
+      });
+      let data = '';
+      socket.setEncoding('utf8');
+      socket.on('data', (chunk: string) => { data += chunk; });
+      socket.on('end', () => resolve(data));
+      socket.on('error', reject);
+      // Its own bound, so a server that never closes fails here by name.
+      socket.setTimeout(2000, () => socket.destroy(new Error(`HEAD ${path}: the server did not close`)));
+    });
+    const split = wire.indexOf('\r\n\r\n');
+    if (split === -1) throw new Error(`HEAD ${path}: no end of headers in ${JSON.stringify(wire)}`);
+    return { head: wire.slice(0, split), after: wire.slice(split + 4) };
+  }
+
+  it('answers HEAD on every read route, and not on the theme route', async () => {
+    const base = await startGuarded(deps());
+    for (const path of [
+      '/', '/runs', `/run/${RUN}`, CASE, `/conversation/${CONVERSATION}`, '/document/SYN-DOC-01',
+      '/bands', '/latency', '/notes', '/console.css',
+    ]) {
+      const get = await fetch(base + path);
+      const head = await fetch(base + path, { method: 'HEAD' });
+      expect(head.status, path).toBe(get.status);
+      expect(get.status, path).toBe(200);
+      // The same headers a GET carries, so a HEAD tells a client the truth.
+      for (const header of ['content-type', 'content-security-policy', 'x-frame-options', 'cache-control']) {
+        expect(head.headers.get(header), `${path} ${header}`).toBe(get.headers.get(header));
+      }
+      // On the wire, so the check does not rest on a client dropping a body.
+      // Node drops one written through `send`; this catches a body written to
+      // the socket some other way.
+      const raw = await rawHead(base, path);
+      expect(raw.head, path).toMatch(/^HTTP\/1\.1 200 /);
+      expect(raw.after, path).toBe('');
+    }
+    // The redirects and the refusals answer HEAD as they answer GET.
+    for (const [path, location] of [
+      ['/?state=awaiting_approval', '/runs?state=awaiting_approval'],
+      ['/approvals', '/'],
+      [`/?run=${RUN}`, CASE],
+    ] as const) {
+      const res = await fetch(base + path, { method: 'HEAD', redirect: 'manual' });
+      expect(res.status, path).toBe(303);
+      expect(res.headers.get('location'), path).toBe(location);
+    }
+    expect((await fetch(base + '/nowhere', { method: 'HEAD' })).status).toBe(404);
+    const theme = await fetch(`${base}/theme?to=light&back=%2Fnotes`, { method: 'HEAD', redirect: 'manual' });
+    expect(theme.status).toBe(404);
+    expect(theme.headers.get('set-cookie')).toBeNull();
+  });
+
+  // A read that fails under HEAD fails as it does under GET: a tagged 500, and
+  // the fault on the log line.
+  it('answers a failed HEAD read with the tagged fault, and logs it', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => { logged.push(String(line)); });
+    try {
+      const base = await startGuarded(deps({ listRuns: async () => { throw new Error('the runs read failed'); } }));
+      const res = await fetch(base + '/runs', { method: 'HEAD' });
+      expect(res.status).toBe(500);
+      expect(logged.join('\n')).toContain('the runs read failed');
+      expect(logged.join('\n')).toMatch(/"tag":"[0-9a-f]{8}"/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('returns to the design notes after the theme changes there', async () => {
+    const base = await startGuarded(deps());
+    const res = await fetch(`${base}/theme?to=light&back=%2Fnotes`, { redirect: 'manual' });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/notes');
+  });
+
   it('sets the cookie and returns to the surface the operator was reading', async () => {
     const base = await startGuarded(deps());
     const res = await fetch(`${base}/theme?to=light&back=%2Fbands`, { redirect: 'manual' });
@@ -2593,10 +2883,14 @@ describe('the queue a reviewer lands on (issue #101)', () => {
   it('says under the clean group that the gates are never blended and decided nothing', async () => {
     const base = await startGuarded(deps({ listApprovals: async () => queue() }));
     const html = await (await fetch(base + '/')).text();
-    expect(html).toContain('never blends them into one score');
-    expect(html).toContain('Neither gate decided these cases');
-    // The rows under it mark both values not read, and the note says why.
-    expect(html).toContain('so each row marks both values not read');
+    // Pinned whole: the design notes repeat the clean rule, and the two must
+    // not drift apart.
+    expect(html).toContain(
+      'Agreement and coverage are two independent gates, and this console never blends'
+        + ' them into one score. Clean means both values and both lines are recorded, and each value'
+        + ' clears its own line. Neither gate decided these cases. Another rule sent each one to a person,'
+        + ' and its row names the rule.',
+    );
   });
 
   it('draws no group that holds nothing', async () => {
@@ -2759,7 +3053,7 @@ describe('the queue a reviewer lands on (issue #101)', () => {
       expect(await res.text(), path).not.toContain('class="on"><span class="navlabel">');
     }
     // A surface's own path under a method it does not serve is not that surface.
-    for (const path of ['/', '/bands']) {
+    for (const path of ['/', '/bands', '/notes']) {
       const res = await fetch(base + path, {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
@@ -3707,7 +4001,7 @@ describe('the case a reviewer decides on (issue #102)', () => {
       expect(html).toContain('console_approved');
       expect(html).toContain('console_approve_failed');
       expect(html).not.toContain('data-outcome');
-      expect(html).not.toContain('while reading the ledger');
+      expect(html).not.toContain('Something failed while answering this page');
       const line = logged.find((entry) => entry.includes('console_case_unread'));
       expect(line).toContain(tag!);
       expect(line).toContain(RUN);
@@ -3748,7 +4042,7 @@ describe('the case a reviewer decides on (issue #102)', () => {
       expect(res.status).toBe(500);
       expect(html).toContain('may or may not have committed');
       expect(html).toContain(`href="/case/${RUN}?rule=high_risk"`);
-      expect(html).not.toContain('while reading the ledger');
+      expect(html).not.toContain('Something failed while answering this page');
       // The log line an incident reader needs: which run, who claimed it,
       // where the request came from, and the tag the page showed.
       const tag = /names it ([0-9a-f]{8})\./.exec(html)?.[1];
@@ -3883,8 +4177,15 @@ describe('the rail', () => {
     const rail = railOf(await (await fetch(base + '/bands')).text());
     expect(groupsOf(rail)).toEqual([
       ['Work', ['Needs a person']],
-      ['Admin', ['Runs', 'Control bands', 'Partition latency']],
+      ['Admin', ['Runs', 'Control bands', 'Partition latency', 'Design notes']],
     ]);
+  });
+
+  it('marks Design notes in the rail on its own page', async () => {
+    const base = await startGuarded(deps());
+    const rail = railOf(await (await fetch(base + '/notes')).text());
+    expect(rail).toContain('<a href="/notes" class="on"><span class="navlabel">Design notes</span>');
+    expect(rail.match(/class="on"/g)).toHaveLength(1);
   });
 
   it('names the product as a support console', async () => {

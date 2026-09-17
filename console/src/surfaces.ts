@@ -105,8 +105,9 @@ export interface Shell {
  *
  * A reviewer clears a queue, and an engineer audits a run or reads a band.
  * The work group comes first because it is the one with a deadline on it;
- * the surfaces an engineer audits sit under Admin, out of that path. The
- * queue is also the page the console opens on, at `/`.
+ * the surfaces an engineer audits sit under Admin, out of that path, beside
+ * the design notes that say why the console works this way. The queue is also
+ * the page the console opens on, at `/`.
  *
  * A group with no surface behind it is left out rather than drawn as a
  * heading over nothing, so the knowledge group appears with its first screen.
@@ -133,6 +134,7 @@ const GROUPS: readonly {
       { href: '/runs', title: 'Runs' },
       { href: '/bands', title: 'Control bands' },
       { href: '/latency', title: 'Partition latency' },
+      { href: '/notes', title: 'Design notes' },
     ],
   },
 ];
@@ -1183,9 +1185,9 @@ const GROUP_LABELS: Readonly<Record<QueueGroup, { readonly label: string; readon
   clean: {
     label: 'Both gates clean',
     note: 'Agreement and coverage are two independent gates, and this console never blends'
-      + ' them into one score. Clean means each recorded value clears its own line.'
-      + ' Neither gate decided these cases, so each row marks both values not read.'
-      + ' Another rule sent each one to a person, and its row names the rule.',
+      + ' them into one score. Clean means both values and both lines are recorded, and each value'
+      + ' clears its own line.'
+      + ' Neither gate decided these cases. Another rule sent each one to a person, and its row names the rule.',
   },
   rest: { label: 'Everything else waiting', note: null },
 };
@@ -2122,8 +2124,12 @@ function legend(): string {
 export interface Percentile {
   readonly label: string;
   readonly text: string;
-  /** Share of the widest value on this surface, so the bars compare. */
-  readonly share: number;
+  /**
+   * Share of the widest value on this surface, so the bars compare, or null
+   * when the percentile was not measured. A null draws no track: an empty
+   * track and a track filled to zero look alike, and only one is a reading.
+   */
+  readonly share: number | null;
 }
 
 export interface LatencyRow {
@@ -2133,6 +2139,56 @@ export interface LatencyRow {
   readonly runs: number;
   /** Counts the job reports beside the figures, already worded. */
   readonly caveats: readonly string[];
+}
+
+/**
+ * Why the console works the way it does, one card per rule.
+ *
+ * Each card states what the console does now, and names no code it replaced.
+ * A card joins only when the console makes it true: a card for a feature not
+ * yet built ships with that feature, so this page never describes a console
+ * nobody can use. Every sentence here is a claim about another surface. The
+ * server suite pins the words, and checks each claim against the renderer.
+ */
+const DESIGN_NOTES: readonly { readonly token: Token; readonly title: string; readonly says: string }[] = [
+  {
+    token: 'warn',
+    title: 'The gates stay apart, everywhere',
+    says: 'No screen combines agreement and coverage into one score, because the system never computes one'
+      + ' and could not act on it. A screen that shows both shows each value on its own.'
+      + ' The queue group Both gates clean holds a case only when both values and both lines are recorded,'
+      + ' and each value clears its own line.',
+  },
+  {
+    token: 'ok',
+    title: 'An absence is still a sentence',
+    says: 'A turn with no message or no reply names why, in a sentence of its own.'
+      + ' On a run or case page, a gate with no recorded value shows an em dash with a note that names the absence,'
+      + ' and draws no bar.'
+      + ' No screen renders an unmeasured value as zero, because a zero would read as a measurement.',
+  },
+  {
+    token: 'dim',
+    title: 'The engineer surfaces sit under Admin',
+    says: 'Runs, control bands and partition latency sit under Admin.'
+      + ' They answer questions about the pipeline, and a person clearing a queue between'
+      + ' two engineering tasks is not asking them.',
+  },
+];
+
+/** The design notes: what the console does, and why. */
+export function renderDesignNotes(): string {
+  return [
+    head('Design notes', 'Why the console works this way. Each card states a rule the console keeps, and the reason for it.'),
+    '<div class="wrap designnotes">',
+    ...DESIGN_NOTES.map((note) => [
+      `<div class="designnote" style="border-left-color:var(--${note.token})">`,
+      `<div class="designnotetitle">${escapeHtml(note.title)}</div>`,
+      `<div class="designnotesays">${escapeHtml(note.says)}</div>`,
+      '</div>',
+    ].join('')),
+    '</div>',
+  ].join('');
 }
 
 /** Surface 5: queue wait and service time per partition. */
@@ -2168,7 +2224,9 @@ function latencyRow(row: LatencyRow): string {
     `<div class="pcts">${values.map((p) => [
       '<div class="pl">',
       `<span class="lbl">${escapeHtml(p.label)}</span>`,
-      `<span class="track"><i style="width:${(p.share * 100).toFixed(1)}%; background:${colour}"></i></span>`,
+      p.share === null
+        ? '<span></span>'
+        : `<span class="track"><i style="width:${(p.share * 100).toFixed(1)}%; background:${colour}"></i></span>`,
       `<span class="pv" style="color:var(--mut)">${escapeHtml(p.text)}</span>`,
       '</div>',
     ].join('')).join('')}</div>`;

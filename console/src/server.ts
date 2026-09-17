@@ -28,6 +28,7 @@ import {
   renderApprovals,
   renderBands,
   renderCase,
+  renderDesignNotes,
   renderLatency,
   renderConversation,
   renderDocument,
@@ -491,7 +492,7 @@ export function createConsole(
       send(
         res,
         500,
-        bare('Error', `Something failed while reading the ledger. The console log names it ${tag}.`, theme),
+        bare('Error', `Something failed while answering this page. The console log names it ${tag}.`, theme),
       );
     });
   });
@@ -539,12 +540,16 @@ async function route(
     return;
   }
   const path = url.pathname;
-  const surfaces = ['/', '/runs', '/bands', '/latency'];
+  // HEAD is a read like GET, and `sameOrigin` already treats it as one. Node
+  // drops the body of a HEAD answer, so every read route serves both. The
+  // theme route stays GET alone, because it writes a cookie.
+  const reads = req.method === 'GET' || req.method === 'HEAD';
+  const surfaces = ['/', '/runs', '/bands', '/latency', '/notes'];
   const reviewer = reviewerFor(req, options);
   const shell = (at: string, approvals: number | null = null): Shell =>
     shellFor(options, theme, at, approvals, reviewer);
 
-  if (req.method === 'GET' && path === CSS_PATH) {
+  if (reads && path === CSS_PATH) {
     send(res, 200, css, 'text/css');
     return;
   }
@@ -576,20 +581,20 @@ async function route(
   // Where the runs list and the queue lived before the queue became the
   // landing page. A bookmark or a pasted link still reaches the page it meant,
   // with its query intact, rather than a different surface under its old path.
-  if (req.method === 'GET' && path === '/' && url.searchParams.has('state')) {
+  if (reads && path === '/' && url.searchParams.has('state')) {
     res.writeHead(303, { ...SAFETY_HEADERS, location: `/runs${url.search}` });
     res.end();
     return;
   }
   // The old queue's link to one run named it in the query string. It now
   // names that run's case, in one hop rather than through the queue.
-  if (req.method === 'GET' && path === '/approvals') {
+  if (reads && path === '/approvals') {
     res.writeHead(303, { ...SAFETY_HEADERS, location: queueRedirect(url.searchParams) ?? `/${url.search}` });
     res.end();
     return;
   }
 
-  if (req.method === 'GET' && path === '/runs') {
+  if (reads && path === '/runs') {
     const wanted = url.searchParams.get('state');
     // A state outside the ledger's own vocabulary is a page nobody has. It
     // is not silently widened to every state: that would answer a question
@@ -608,7 +613,7 @@ async function route(
     return;
   }
 
-  if (req.method === 'GET' && path.startsWith('/run/')) {
+  if (reads && path.startsWith('/run/')) {
     const runId = decodeRunPath(path.slice('/run/'.length));
     // Checked before it reaches the ledger. `run_id` is a `uuid` column, so
     // an id of another shape makes Postgres raise rather than match nothing:
@@ -627,7 +632,7 @@ async function route(
     return;
   }
 
-  if (req.method === 'GET' && path === '/') {
+  if (reads && path === '/') {
     // A link that named a run on the queue, from before each case had a page
     // of its own. It opens that case. A value that is not a run id is never
     // rebuilt into a path, and the queue draws as if none were named.
@@ -669,7 +674,7 @@ async function route(
     return;
   }
 
-  if (req.method === 'GET' && path.startsWith('/case/')) {
+  if (reads && path.startsWith('/case/')) {
     const runId = decodeRunPath(path.slice('/case/'.length));
     // Shape first, as the run route does: `run_id` is a `uuid` column, and an
     // id of another shape would make Postgres raise rather than match nothing.
@@ -685,8 +690,8 @@ async function route(
     try {
       run = await deps.readRun(runId);
     } catch (error) {
-      // The approval redirects here, and the catch-all would answer that the
-      // console failed while reading, with no word on the approval. With no
+      // The approval redirects here, and the catch-all would answer that
+      // something failed, with no word on the approval. With no
       // state to check the outcome against, the page shows none. It says the
       // approval's answer is on the log line the approval wrote.
       const tag = randomUUID().slice(0, 8);
@@ -733,7 +738,7 @@ async function route(
     return;
   }
 
-  if (req.method === 'GET' && path.startsWith('/conversation/')) {
+  if (reads && path.startsWith('/conversation/')) {
     const id = decodeRunPath(path.slice('/conversation/'.length));
     // Shape first, as the run route does: the column is uuid, and a driver
     // exception is not an answer a surface can render.
@@ -754,7 +759,7 @@ async function route(
     return;
   }
 
-  if (req.method === 'GET' && path.startsWith('/document/')) {
+  if (reads && path.startsWith('/document/')) {
     const docId = decodeRunPath(path.slice('/document/'.length));
     // No shape check: a document id is whatever the adopter's corpus uses,
     // and the query parameterises it. The length bound is this route's own,
@@ -777,17 +782,22 @@ async function route(
     return;
   }
 
-  if (req.method === 'GET' && path === '/bands') {
+  if (reads && path === '/bands') {
     send(res, 200, page('Control bands', renderBands(await deps.readBands()), shell('/bands')));
     return;
   }
 
-  if (req.method === 'GET' && path === '/latency') {
+  if (reads && path === '/latency') {
     send(res, 200, page(
       'Partition latency',
       renderLatency(await deps.readLatency()),
       shell('/latency'),
     ));
+    return;
+  }
+
+  if (reads && path === '/notes') {
+    send(res, 200, page('Design notes', renderDesignNotes(), shell('/notes')));
     return;
   }
 

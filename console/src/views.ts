@@ -187,6 +187,26 @@ export function stepSays(step: JournalStep, journal: RunJournal): string | null 
  * Folding these in as zeros would invent the most flattering possible number
  * about the runs the ledger knows least about.
  */
+/**
+ * How much of a latency track one percentile fills, given the widest value
+ * on the surface. Null when the percentile was not measured.
+ *
+ * Four cases, and earlier versions collapsed two pairs of them. The floor
+ * exists so a percentile far below the widest still draws a sliver rather
+ * than vanishing. A measured zero draws an empty track and no sliver, because
+ * a zero is a measurement and a sliver would call it a wait too small to name.
+ * An unmeasured percentile has no share at all, so it draws no track: an
+ * empty track would look like a measured zero. With no widest value above
+ * zero there is no scale, so nothing fills; the caller never passes such a
+ * maximum beside a measured value, and the guard only prevents a division by
+ * zero.
+ */
+export function percentileShare(ms: number | null, max: number): number | null {
+  if (ms === null) return null;
+  if (ms === 0 || max <= 0) return 0;
+  return Math.max(0.02, ms / max);
+}
+
 export function latencyCaveats(p: PartitionLatency): string[] {
   const pairs: readonly (readonly [number, string])[] = [
     [p.wait.unmeasured, 'no arrival time'],

@@ -384,6 +384,17 @@ td a, dd a { display: inline-block; }
 .navgroup + .navgroup { margin-top: 14px; }
 .navgroup > .lbl { padding: 0 14px 5px; }
 
+/* --- the design notes ----------------------------------------------------
+ *
+ * One column of cards, each with a rule on its left in the colour of what it
+ * is about. The column stops at the handoff's 1000px, so a card's prose keeps
+ * a readable measure on a wide page. */
+.designnotes { max-width:1000px; gap:12px; }
+.designnote { background:var(--panel); border:1px solid var(--rule); border-left-width:2px;
+  border-radius:var(--r-lg); padding:15px 17px; }
+.designnotetitle { font-size:13.5px; font-weight:600; }
+.designnotesays { font-size:12.5px; color:var(--mut); margin-top:7px; max-width:88ch; }
+
 /* --- the case -------------------------------------------------------------
  *
  * Two columns that wrap. The main column holds what the customer reads and

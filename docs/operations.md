@@ -1185,10 +1185,14 @@ Eight surfaces read live data. The queue, one case, the runs and one run in
 detail. One conversation and one document. The control bands and the partition
 latency.
 
-The rail holds four of them, in two groups. Work holds the queue, named Needs a
-person, which a reviewer comes to clear. Admin holds the runs, the bands and
-the latency, which an engineer audits. The rail draws no group that has no
-surface.
+The rail holds four of them and the design notes, in two groups. Work holds the
+queue, named Needs a person, which a reviewer comes to clear. Admin holds the
+runs, the bands and the latency, which an engineer audits. Admin also holds the
+design notes. The rail draws no group that has no surface.
+
+The design notes are at `/notes`, and the page reads no ledger. Each card states
+one rule the console keeps, and the reason for it. A card joins the page only
+when the console makes it true. So a card ships with the feature it describes.
 
 The console opens on the queue, at `/`. The runs list is at `/runs`. Each case
 has its own page, at `/case/<run>`. `/?state=` redirects to `/runs` and keeps
