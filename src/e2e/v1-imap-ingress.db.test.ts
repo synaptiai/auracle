@@ -20,6 +20,7 @@ import { afterAll, beforeEach, describe, expect, it, inject } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
 import { enqueueTicket } from '../coordinator/intake.js';
+import { parseProducts } from '../config/products.js';
 import { toIntakeTicket } from '../intake/adapter.js';
 import { ImapPoller } from '../ingress/imap-poller.js';
 import { pollCycle } from '../imap/daemon.js';
@@ -28,6 +29,15 @@ import { ImapMailboxFetcher, imapFlowFactory } from '../imap/fetcher.js';
 import { resetMailboxes } from '../test-support/mailbox-reset.js';
 
 const PARTITION_COUNT = 8;
+
+/** The channel map these cases enqueue through (DEC-47). */
+const CATALOGUE = parseProducts({
+  products: [
+    { id: 'aurora', label: 'Aurora' },
+    { id: 'ledger', label: 'Ledger' },
+  ],
+  channels: { shipping: 'aurora', billing: 'ledger' },
+});
 // One GreenMail server now serves every mail suite, so each suite owns its
 // own mailboxes. Sharing `support@acme.example` with the duplex suite let
 // its delivered mail count as this suite's unseen mail. Synthetic reserved
@@ -93,7 +103,7 @@ function runCycle(fetcher: ImapMailboxFetcher, logs: ImapDaemonLogEntry[]): Prom
   const poller = new ImapPoller({
     fetchMessages: () => fetcher.fetchUnseen(),
     onEvent: async (event) => {
-      await enqueueTicket(pool, toIntakeTicket(event), PARTITION_COUNT);
+      await enqueueTicket(pool, toIntakeTicket(event, CATALOGUE), PARTITION_COUNT);
     },
     onError: () => {},
   });

@@ -119,6 +119,10 @@ export async function coordinateTicket(
       modelVer: deps.pins.modelVer,
       deadlineAt: deps.limits.deadlineAt,
       ...(input.enqueuedAt === undefined ? {} : { enqueuedAt: input.enqueuedAt }),
+      // DEC-47: the product the message arrived with. The run is where every
+      // later reader finds it: retrieval scopes by it, and the console
+      // filters by it.
+      ...(input.product === undefined ? {} : { product: input.product }),
     },
     null,
   );

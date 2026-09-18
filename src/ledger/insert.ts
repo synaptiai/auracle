@@ -56,6 +56,13 @@ export interface FencedRunInput {
   turnNumber?: number;
   stepsUsed?: number;
   deadlineAt: Date;
+  /**
+   * DEC-47: the product of the channel this run's message arrived on, copied
+   * from the intake row. Absent on a run with no channel — a replay, a
+   * caller that files runs directly — which writes null, the same value a
+   * message on an unmapped channel records.
+   */
+  product?: string | null;
 }
 
 export interface FencedOutboxInput {
@@ -140,6 +147,12 @@ export function runInsertStatement(withClock: boolean, withFinish = false): stri
     // a run with no turn writes null here and a reader joins on the column
     // rather than assuming turn one.
     'turn_number',
+    // DEC-47: the product of the channel the message arrived on. Fixed for
+    // the same reason: a run with no product writes null, and every reader
+    // of the column — the console's filter, the retrieval scope — has to see
+    // that null rather than a column that is sometimes absent from the
+    // statement.
+    'product',
   ];
   if (withClock) columns.push('created_at');
   if (withFinish) columns.push('finished_at');
@@ -239,6 +252,7 @@ export async function fencedInsert(
         run.enqueuedAt ?? null,
         run.conversationId ?? null,
         run.turnNumber ?? null,
+        run.product ?? null,
       ];
       if (clock !== undefined) values.push(clock.createdAt.toISOString());
       // A run inserted already terminal never transitions, so this insert is

@@ -112,6 +112,9 @@ describe('escalations CLI queries', () => {
       intentId: null,
       // Nobody approved an escalated run, so the run records no approver.
       approved: false,
+      // DEC-47: a seeded run names no channel, so it records no product.
+      // Null is that fact, and it is not a product named ''.
+      product: null,
       outboxStatus: null,
       draftExternalId: null,
       payloadRecorded: false,

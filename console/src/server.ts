@@ -24,7 +24,10 @@ import { escapeHtml } from './render.js';
 import { CONSOLE_SCRIPT } from './script.js';
 import {
   caseHref,
+  filtersQuery,
+  narrowToProduct,
   narrowToRule,
+  queueHref,
   page,
   renderApprovals,
   renderBands,
@@ -105,6 +108,20 @@ export interface ConsoleDeps {
   /** The live hold on a case, or null (DEC-46). Read before the page. */
   readonly readHold: (runId: string) => Promise<Hold | null>;
   /**
+   * DEC-47: the products the named reviewer covers, for the queue's order.
+   *
+   * One statement, read once per queue page. Empty means no declared focus,
+   * which orders the queue as it always was. A throw is a fault in the
+   * roster read: the queue draws and says which log line names it.
+   */
+  readonly readReviewerProducts: (reviewer: string) => Promise<readonly string[]>;
+  /**
+   * DEC-47: the label each product is shown by, from the catalogue the
+   * process read at startup. A plain map, not a read: the file is read once,
+   * and nothing here touches the ledger.
+   */
+  readonly productLabels: ReadonlyMap<string, string>;
+  /**
    * The live holds on a list of cases, in one statement (DEC-46).
    *
    * The queue is uncapped, so a read per row is one statement behind every
@@ -144,6 +161,39 @@ const CSS_PATH = '/console.css';
  * log whole either.
  */
 const SHOWN_DIGEST = /^[0-9a-f]{64}$/;
+
+/**
+ * The queue filters a URL carries (DEC-47).
+ *
+ * Read as they arrive and compared against what is waiting, never validated
+ * against a list: a value nothing carries narrows to an empty queue, which
+ * is what it asked for. Neither value reaches a statement.
+ */
+function queueFilters(url: URL): { rule: string | null; product: string | null } {
+  return {
+    rule: url.searchParams.get('rule'),
+    product: url.searchParams.get('product'),
+  };
+}
+
+/**
+ * Where the theme toggle returns: the queue with only the filters that still
+ * narrow something (DEC-47).
+ *
+ * A filter that matched nothing when the page was drawn must not be written
+ * back into a link, or a reviewer returns to an empty queue they did not
+ * choose. Both filters are kept independently, so clearing one does not
+ * clear the other.
+ */
+function queueBack(
+  waiting: readonly RunDetail[],
+  filters: { rule: string | null; product: string | null },
+): string {
+  const keepRule = filters.rule !== null && narrowToRule(waiting, filters.rule).length > 0;
+  const keepProduct = filters.product !== null
+    && narrowToProduct(waiting, filters.product).length > 0;
+  return queueHref(keepRule ? filters.rule : null, keepProduct ? filters.product : null);
+}
 
 /**
  * What a request that named no reviewer is told, by both refusals.
@@ -382,12 +432,16 @@ function safeReturn(back: string | null, surfaces: readonly string[]): string {
   // parameter survives, re-encoded, so nothing else in the value returns.
   const query = back.indexOf('?');
   if (query !== -1) {
-    const rule = new URLSearchParams(back.slice(query + 1)).get('rule');
+    // DEC-47: the product rides with the rule, and both are re-encoded from
+    // the values this console read rather than from the caller's text.
+    const params = new URLSearchParams(back.slice(query + 1));
+    const rule = params.get('rule');
+    const product = params.get('product');
     const at = back.slice(0, query);
-    if (at === '/') return rule === null ? '/' : `/?rule=${encodeURIComponent(rule)}`;
+    if (at === '/') return queueHref(rule, product);
     if (at.startsWith('/case/')) {
       const id = decodeRunPath(at.slice('/case/'.length));
-      return id !== null && isRunId(id) ? caseHref(id, rule) : '/';
+      return id !== null && isRunId(id) ? caseHref(id, rule, product) : '/';
     }
     return '/';
   }
@@ -696,11 +750,24 @@ async function route(
       console.error(logLine({ event: 'console_holds_unread', tag, error: describeFault(error) }));
       holds = { unreadTag: tag };
     }
-    // Which gate rule the queue is narrowed to. Compared against what is
-    // actually waiting rather than validated against a list: a value nothing
-    // carries narrows to an empty queue, which is what it asked for and says
-    // so, and it never reaches a statement in any case.
-    const rule = url.searchParams.get('rule');
+    // Which gate rule and which product the queue is narrowed to. Compared
+    // against what is actually waiting rather than validated against a list:
+    // a value nothing carries narrows to an empty queue, which is what it
+    // asked for and says so, and it never reaches a statement in any case.
+    // DEC-47: the product is read the same way, and both apply at once.
+    const { rule, product } = queueFilters(url);
+    // DEC-47: the products this request's reviewer covers, for the queue's
+    // own order. A fault does not take the queue away — the queue is the
+    // work — so it draws in the ledger's order and the page says so.
+    let mine: readonly string[] = [];
+    let mineUnread: string | null = null;
+    try {
+      mine = await deps.readReviewerProducts(reviewer);
+    } catch (error) {
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({ event: 'console_products_unread', tag, error: describeFault(error) }));
+      mineUnread = tag;
+    }
     // The counts are a header over the work, so a fault reading them does not
     // take the queue away. It is logged under a tag the page names, the way
     // a page fault is, and the text stays in the log.
@@ -714,14 +781,22 @@ async function route(
     }
     send(res, 200, page(
       'Needs a person',
-      renderApprovals(waiting, rule, today, holds),
+      renderApprovals(
+        waiting,
+        { rule, product, mine, labels: deps.productLabels, mineUnread },
+        today,
+        holds,
+      ),
       // Everything waiting, never the narrowed view. A rail badge that fell
       // because a filter was on would report a queue that had emptied.
       // The theme returns with the rule only when something waiting carries
       // it. A rule the query string invented is never written back out.
       {
         ...shell('/', waiting.length),
-        back: rule === null || narrowToRule(waiting, rule).length === 0 ? '/' : `/?rule=${encodeURIComponent(rule)}`,
+        // The theme returns with the filters only when something waiting
+        // carries them. A value the query string invented is never written
+        // back out.
+        back: queueBack(waiting, { rule, product }),
       },
     ));
     return;
@@ -732,7 +807,7 @@ async function route(
     // Shape first, as the run route does: `run_id` is a `uuid` column, and an
     // id of another shape would make Postgres raise rather than match nothing.
     const outcome = url.searchParams.get('outcome') ?? '';
-    const rule = url.searchParams.get('rule');
+    const { rule, product } = queueFilters(url);
     if (runId === null || !isRunId(runId)) {
       send(res, 404, page('Case', nothingFound(), shell(NOT_A_SURFACE)));
       return;
@@ -809,9 +884,9 @@ async function route(
     send(res, 200, page(
       `Case ${run.ticketId}`,
       renderCase({ ...run, customer }, {
-        outcome, rule, readBack: options.readBack, hold, taken, handoverTo,
+        outcome, rule, product, readBack: options.readBack, hold, taken, handoverTo,
       }),
-      { ...shell(`/case/${runId}`), back: caseHref(runId, rule) },
+      { ...shell(`/case/${runId}`), back: caseHref(runId, rule, product) },
     ));
     return;
   }
@@ -949,7 +1024,10 @@ async function route(
         'Error',
         `The take may or may not have committed, and the console log names the fault ${tag}.`,
         theme,
-        { href: caseHref(runId, url.searchParams.get('rule')), text: 'Open the case to see its state.' },
+        {
+          href: caseHref(runId, url.searchParams.get('rule'), url.searchParams.get('product')),
+          text: 'Open the case to see its state.',
+        },
       ));
       return;
     }
@@ -966,7 +1044,9 @@ async function route(
       host: req.headers.host ?? null,
       from,
     }));
-    const keptRule = url.searchParams.get('rule');
+    // DEC-47: both filters come back with it. They travel on the form's own
+    // action, so this reads them off the URL as the approval does.
+    const kept = url.searchParams;
     // A refused handover carries the identity back, so the page can leave it
     // in the field: a person who typed a colleague's name should not have to
     // type it again to fix a typo. One that moved the case does not, because
@@ -978,7 +1058,7 @@ async function route(
       ...SAFETY_HEADERS,
       location: `/case/${encodeURIComponent(runId)}?taken=${encodeURIComponent(outcome)}`
         + keptTo
-        + (keptRule === null || keptRule === '' ? '' : `&rule=${encodeURIComponent(keptRule)}`),
+        + filtersQuery(kept.get('rule'), kept.get('product')).replace(/^\?/, '&'),
     });
     res.end();
     return;
@@ -1085,7 +1165,10 @@ async function route(
         'Error',
         `Something failed during the approval, and it may or may not have committed. The console log names it ${tag}.`,
         theme,
-        { href: caseHref(runId, url.searchParams.get('rule')), text: 'Open the case to see its state.' },
+        {
+          href: caseHref(runId, url.searchParams.get('rule'), url.searchParams.get('product')),
+          text: 'Open the case to see its state.',
+        },
       ));
       return;
     }
@@ -1115,11 +1198,16 @@ async function route(
     // the run id is ignored, and that stance is what stops a body posted here
     // from being recorded as an approved reply — so the filter travels on the
     // action's query string instead of becoming a second field.
-    const keptRule = url.searchParams.get('rule');
+    // Both filters come back with it (DEC-47), read off the action's query
+    // string and never off the body.
+    const keptFilters = filtersQuery(
+      url.searchParams.get('rule'),
+      url.searchParams.get('product'),
+    ).replace(/^\?/, '&');
     res.writeHead(303, {
       ...SAFETY_HEADERS,
       location: `/case/${encodeURIComponent(runId)}?outcome=${encodeURIComponent(outcome)}`
-        + (keptRule === null || keptRule === '' ? '' : `&rule=${encodeURIComponent(keptRule)}`),
+        + keptFilters,
     });
     res.end();
     return;
@@ -1140,7 +1228,10 @@ async function route(
 function queueRedirect(params: URLSearchParams): string | null {
   const run = params.get('run');
   if (run === null || !isRunId(run)) return null;
-  return caseHref(run, params.get('rule'));
+  // Both filters ride along, as they do on every other link to a case
+  // (DEC-47): an old link that named a rule may name a product too, and the
+  // case it opens returns to the queue the reviewer was reading.
+  return caseHref(run, params.get('rule'), params.get('product'));
 }
 
 /**

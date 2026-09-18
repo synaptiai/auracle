@@ -95,10 +95,16 @@ export interface QueueSection<T> {
  * rather than a field of the run, because a hold is not a fact about the case:
  * the same case is held for one reviewer and free for another, and
  * `queueGroupOf` reads only what the ledger recorded about the run.
+ *
+ * `mine` is DEC-47's own-products preference: a case whose product the
+ * reviewer covers sorts first inside its group, and the groups themselves do
+ * not move. It decides order and nothing else. Every case still waits for a
+ * person, and a reviewer who covers no product sees the queue as it was.
  */
 export function groupQueue<T extends Groupable & { readonly createdAt: Date | null }>(
   runs: readonly T[],
   held?: (run: T) => boolean,
+  mine?: (run: T) => boolean,
 ): QueueSection<T>[] {
   // An unreadable time is no more a date than a missing one, and sorts with
   // the undated rather than throwing or scattering the order.
@@ -111,10 +117,21 @@ export function groupQueue<T extends Groupable & { readonly createdAt: Date | nu
   };
   const groupOf = (run: T): QueueGroup =>
     held?.(run) === true ? 'held' : queueGroupOf(run);
+  // The reader's own products first, then the longest wait. Age decides
+  // inside each half, so a run the reader covers never jumps ahead of
+  // another run they cover.
+  const byOwnProductFirst = (a: T, b: T): number => {
+    if (mine === undefined) return 0;
+    const left = mine(a) ? 0 : 1;
+    const right = mine(b) ? 0 : 1;
+    return left - right;
+  };
   return QUEUE_GROUPS
     .map((group) => ({
       group,
-      runs: runs.filter((run) => groupOf(run) === group).sort(byAge),
+      runs: runs
+        .filter((run) => groupOf(run) === group)
+        .sort((a, b) => byOwnProductFirst(a, b) || byAge(a, b)),
     }))
     .filter((section) => section.runs.length > 0);
 }

@@ -126,6 +126,8 @@ describe('what a run row carries onto a page', () => {
     costMicros: 1234, stepsUsed: 6,
     agreement: 0.89, agreementThreshold: 0.8, coverageReviewThreshold: 0.75,
     riskTier: 'high' as const, approved: false,
+    // DEC-47: the product of the channel the message arrived on.
+    product: 'aurora',
   };
 
   it('keeps a null reason a null, rather than an empty string', () => {
@@ -146,6 +148,14 @@ describe('what a run row carries onto a page', () => {
   // not. A row carries the fields this function names and no others, so a
   // field added to the reader cannot reach a surface by accident — which is
   // the property the trim above depends on.
+  // DEC-47: the product is carried through whole. It is a value from the
+  // catalogue rather than free text, so it is not trimmed like a reason, and
+  // a run with none carries that null rather than a blank.
+  it('carries the product, and a null when the channel mapped to none', () => {
+    expect(toRow(item).product).toBe('aurora');
+    expect(toRow({ ...item, product: null }).product).toBeNull();
+  });
+
   it('carries no field this boundary did not name', () => {
     const row = toRow({
       ...item,

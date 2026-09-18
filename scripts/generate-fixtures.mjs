@@ -387,7 +387,13 @@ if (fitTickets.length !== HALF || reportTickets.length !== HALF) {
 // (DEC-22). Every entry declares an owner and a review date (DEC-23).
 // ---------------------------------------------------------------------------
 
-function doc(id, kind, title, body, path, ownerIdx, reviewBy, linkedIntents) {
+/**
+ * DEC-47: the products a document serves, and the empty list means every
+ * product. The synthetic deployment serves the products products.json
+ * declares, so a scoped document names one of those ids and an unscoped one
+ * serves anybody — which is what most of this corpus is.
+ */
+function doc(id, kind, title, body, path, ownerIdx, reviewBy, linkedIntents, products = []) {
   return {
     doc_id: id,
     kind, // 'document' | 'canonical_resolution'
@@ -397,6 +403,7 @@ function doc(id, kind, title, body, path, ownerIdx, reviewBy, linkedIntents) {
     owner: REVIEWERS[ownerIdx],
     review_by: reviewBy,
     linked_intents: linkedIntents,
+    products,
   };
 }
 
@@ -415,16 +422,16 @@ const DOCUMENTS = [
     'articles/data-deletion', 1, '2026-01-31', ['data-deletion-request']),
   doc('DOC-SYN-005', 'document', 'Fixing sync errors in the desktop client',
     'This article covers pause states, error codes such as E-412 and the reconnect procedure for stalled clients.',
-    'articles/sync-errors', 2, '2026-03-15', ['sync-error-report']),
+    'articles/sync-errors', 2, '2026-03-15', ['sync-error-report'], ['aurora']),
   doc('DOC-SYN-006', 'document', 'Recovering access to an account',
     'This article explains the recovery flow when the second factor and the backup codes are both unavailable.',
     'articles/account-recovery', 1, '2026-02-28', ['account-recovery', 'login-trouble']),
   doc('DOC-SYN-007', 'document', 'Export formats and limits',
     'This article lists the export formats, the empty-archive causes and the retry rule for partial exports.',
-    'articles/exports', 2, '2026-05-01', ['export-broken']),
+    'articles/exports', 2, '2026-05-01', ['export-broken'], ['aurora']),
   doc('DOC-SYN-008', 'document', 'List endpoints and cursor pagination',
     'This article shows the cursor parameter, the page size default and the header that reports the next cursor.',
-    'articles/api-pagination', 2, '2026-04-15', ['api-usage-question', 'integration-failure']),
+    'articles/api-pagination', 2, '2026-04-15', ['api-usage-question', 'integration-failure'], ['ledger']),
   // Canonical resolutions pair a resolved outcome with the intents they answer.
   doc('RES-SYN-101', 'canonical_resolution', 'Resolved: duplicate charge refunded',
     'Outcome: the billing queue verified the double charge, refunded the duplicate and confirmed the correct renewal date.',
@@ -470,7 +477,7 @@ const DOCUMENTS = [
     'articles/bug-reports', 2, '2026-02-28', ['bug-minor-report']),
   doc('DOC-SYN-017', 'document', 'Using the mobile app',
     'This article covers the mobile sign-in, the features that differ from the desktop client and the offline behaviour of the app.',
-    'articles/mobile-app', 2, '2026-05-01', ['mobile-app-question']),
+    'articles/mobile-app', 2, '2026-05-01', ['mobile-app-question'], ['aurora']),
   doc('DOC-SYN-018', 'document', 'Escalating an unresolved ticket',
     'This article explains when a ticket may be escalated, who reviews an escalation and what the requester is told.',
     'articles/escalations', 1, '2026-03-01', ['other']),
@@ -506,10 +513,10 @@ const DOCUMENTS = [
     'resolutions/bug-released', 2, '2026-02-28', ['bug-minor-report']),
   doc('RES-SYN-113', 'canonical_resolution', 'Resolved: mobile sign-in restored',
     'Outcome: the technical queue cleared the stored session, guided a fresh sign-in and confirmed the app worked.',
-    'resolutions/mobile-signin', 2, '2026-03-15', ['mobile-app-question', 'login-trouble']),
+    'resolutions/mobile-signin', 2, '2026-03-15', ['mobile-app-question', 'login-trouble'], ['aurora']),
   doc('RES-SYN-114', 'canonical_resolution', 'Resolved: webhook signature mismatch corrected',
     'Outcome: the technical queue traced the rejected events, corrected the signing secret and confirmed delivery resumed.',
-    'resolutions/webhook-signature', 2, '2026-01-31', ['integration-failure', 'api-usage-question']),
+    'resolutions/webhook-signature', 2, '2026-01-31', ['integration-failure', 'api-usage-question'], ['ledger']),
   doc('RES-SYN-115', 'canonical_resolution', 'Resolved: feature request recorded',
     'Outcome: the general queue recorded the request, linked it to the existing group and told the customer where to follow it.',
     'resolutions/feature-recorded', 1, '2026-05-01', ['feature-request']),

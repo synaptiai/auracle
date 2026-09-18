@@ -15,6 +15,7 @@ import {
   addReviewer,
   deactivateReviewer,
   listReviewers,
+  reviewerProducts,
 } from './roster.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 4 });
@@ -47,6 +48,46 @@ describe('the reviewer roster (DEC-45)', () => {
 
     // Deactivating again changes nothing and says so.
     expect(await deactivateReviewer(pool, identity)).toEqual({ outcome: 'not_active' });
+  });
+
+  // DEC-47: the products a reviewer covers. Empty means the reviewer covers
+  // everything, which is what a reviewer with no declared focus covers — so
+  // an add that names no products leaves the order of the queue alone.
+  it('records the products a reviewer covers, and reports when they change', async () => {
+    const identity = `reviewer-${randomUUID().slice(0, 8)}@example.test`;
+
+    expect(await addReviewer(pool, identity, ['aurora'])).toEqual({ outcome: 'added' });
+    expect((await listReviewers(pool))[0]?.products).toEqual(['aurora']);
+
+    // The same list again changes nothing, and says so.
+    expect(await addReviewer(pool, identity, ['aurora'])).toEqual({ outcome: 'already_listed' });
+
+    // A different list is a change to a row that stays active, and it is not
+    // a reactivation: the reviewer was already working.
+    expect(await addReviewer(pool, identity, ['ledger', 'aurora']))
+      .toEqual({ outcome: 'products_set' });
+    expect((await listReviewers(pool))[0]?.products).toEqual(['ledger', 'aurora']);
+
+    // Naming no products leaves what the row holds: an operator adding an
+    // identity who is already covered must not silently narrow them to
+    // nothing, which is what a written empty list would mean.
+    expect(await addReviewer(pool, identity)).toEqual({ outcome: 'already_listed' });
+    expect((await listReviewers(pool))[0]?.products).toEqual(['ledger', 'aurora']);
+
+    // A reviewer added with no products covers everything.
+    const plain = `reviewer-${randomUUID().slice(0, 8)}@example.test`;
+    await addReviewer(pool, plain);
+    expect((await listReviewers(pool)).find((row) => row.identity === plain)?.products)
+      .toEqual([]);
+  });
+
+  it('answers the products one reviewer covers, for the queue order', async () => {
+    const identity = `reviewer-${randomUUID().slice(0, 8)}@example.test`;
+    await addReviewer(pool, identity, ['aurora']);
+    // The console reads this on every request, so it is one statement and it
+    // answers a stranger the same way it answers an unscoped reviewer.
+    expect(await reviewerProducts(pool, identity)).toEqual(['aurora']);
+    expect(await reviewerProducts(pool, 'nobody@example.test')).toEqual([]);
   });
 
   it('adds an identity once, and says so rather than raising', async () => {

@@ -1,0 +1,11 @@
+{
+  "products": [
+    { "id": "aurora", "label": "Aurora" },
+    { "id": "ledger", "label": "Ledger" }
+  ],
+  "channels": {
+    "shipping": "aurora",
+    "Aurora Support": "aurora",
+    "billing": "ledger"
+  }
+}

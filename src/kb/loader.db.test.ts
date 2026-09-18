@@ -10,6 +10,7 @@ import path from 'node:path';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { parseProducts } from '../config/products.js';
 import { dbUrl } from '../db/config.js';
 import type {
   EmbeddingRequest,
@@ -31,6 +32,15 @@ await pool.query('SELECT 1');
 
 const DIM = 1536;
 const FRESH_REVIEW_BY = '2999-01-01';
+
+/** The channel map and products the loader checks a document against. */
+const CATALOGUE = parseProducts({
+  products: [
+    { id: 'aurora', label: 'Aurora' },
+    { id: 'ledger', label: 'Ledger' },
+  ],
+  channels: { shipping: 'aurora', billing: 'ledger' },
+});
 
 // Seeded PRNG so every run uses identical synthetic vectors (DEC-18: fixtures only).
 function mulberry32(seed: number): () => number {
@@ -108,6 +118,9 @@ async function writeCorpus(dir: string): Promise<void> {
       'title: Refund policy',
       'owner: billing-docs',
       `review_by: ${FRESH_REVIEW_BY}`,
+      // DEC-47: this document serves one product. The two beside it declare
+      // none, so they serve every product.
+      'products: ledger',
       '---',
       'Refunds arrive within **five business days**.',
       '',
@@ -154,7 +167,7 @@ describe('kb loader against postgres', () => {
     const vectors = [unitVector(11), unitVector(22), unitVector(33)];
     const stub = new VectorStub(vectors);
 
-    const report = await loadKbDirectory(pool, stub, corpusDir, DEFAULT_EMBED_MODEL);
+    const report = await loadKbDirectory(pool, stub, corpusDir, DEFAULT_EMBED_MODEL, CATALOGUE);
 
     expect(report).toMatchObject({
       indexed: 3,
@@ -167,9 +180,12 @@ describe('kb loader against postgres', () => {
     expect(stub.calls).toHaveLength(1);
     expect(stub.calls[0]?.input).toHaveLength(3);
 
-    const rows = await pool.query<{ doc_id: string; kind: string; body: string }>(
-      'SELECT doc_id, kind, body FROM document ORDER BY doc_id',
-    );
+    const rows = await pool.query<{
+      doc_id: string;
+      kind: string;
+      body: string;
+      products: string[];
+    }>('SELECT doc_id, kind, body, products FROM document ORDER BY doc_id');
     expect(rows.rows.map((r) => r.doc_id)).toEqual([
       'kb-billing-resolution',
       'kb-password-reset',
@@ -178,6 +194,13 @@ describe('kb loader against postgres', () => {
     expect(rows.rows.find((r) => r.doc_id === 'kb-billing-resolution')?.kind).toBe(
       'canonical_resolution',
     );
+    // DEC-47: the product the frontmatter named, and the empty list for the
+    // files that named none — which is what "serves every product" reads as.
+    expect(rows.rows.map((r) => [r.doc_id, r.products])).toEqual([
+      ['kb-billing-resolution', []],
+      ['kb-password-reset', []],
+      ['kb-refund-policy', ['ledger']],
+    ]);
     // Markdown syntax is gone from the stored body.
     expect(rows.rows.find((r) => r.doc_id === 'kb-password-reset')?.body).not.toMatch(
       /\*\*|\#|\[|https:/,
@@ -210,7 +233,7 @@ describe('kb loader against postgres', () => {
     );
     const stub = new VectorStub([unitVector(11), unitVector(22), unitVector(33)]);
 
-    const report = await loadKbDirectory(pool, stub, corpusDir, DEFAULT_EMBED_MODEL);
+    const report = await loadKbDirectory(pool, stub, corpusDir, DEFAULT_EMBED_MODEL, CATALOGUE);
 
     expect(report.indexed).toBe(3);
     expect(report.failed).toBe(1);
@@ -222,10 +245,46 @@ describe('kb loader against postgres', () => {
     expect(count.rows[0]?.n).toBe('3');
   });
 
+  // DEC-47: a document declaring a product the catalogue does not hold would
+  // be retrieved by nobody — the filter keeps a run's own product's documents
+  // and the unscoped ones — so it is refused by name, per file, while the
+  // rest of the corpus still loads.
+  it('refuses a document naming a product the catalogue does not hold', async () => {
+    await writeFile(
+      path.join(corpusDir, 'stray-product.md'),
+      [
+        '---',
+        'doc_id: kb-stray',
+        'kind: document',
+        'title: A stray product',
+        'owner: support-docs',
+        `review_by: ${FRESH_REVIEW_BY}`,
+        'products: nobody-serves-this',
+        '---',
+        'body',
+      ].join('\n'),
+      'utf8',
+    );
+    const stub = new VectorStub([unitVector(11), unitVector(22), unitVector(33)]);
+
+    const report = await loadKbDirectory(pool, stub, corpusDir, DEFAULT_EMBED_MODEL, CATALOGUE);
+
+    expect(report.indexed).toBe(3);
+    expect(report.failed).toBe(1);
+    expect(report.failures).toHaveLength(1);
+    expect(report.failures[0]).toContain('stray-product.md');
+    expect(report.failures[0]).toContain('nobody-serves-this');
+    expect(report.failures[0]).toContain('kb-stray');
+    const stored = await pool.query<{ n: string }>(
+      "SELECT count(*) AS n FROM document WHERE doc_id = 'kb-stray'",
+    );
+    expect(stored.rows[0]?.n).toBe('0');
+  });
+
   it('aborts when provider output does not match the column dimension', async () => {
     const stub = new VectorStub([[1, 0, 0, 0, 0, 0, 0, 0]]);
     await expect(
-      loadKbDirectory(pool, stub, corpusDir, DEFAULT_EMBED_MODEL),
+      loadKbDirectory(pool, stub, corpusDir, DEFAULT_EMBED_MODEL, CATALOGUE),
     ).rejects.toThrowError(/dimension mismatch.*vector\(1536\).*8 dimensions/s);
     const count = await pool.query<{ n: string }>('SELECT count(*) AS n FROM document');
     expect(count.rows[0]?.n).toBe('0');
@@ -234,7 +293,7 @@ describe('kb loader against postgres', () => {
   it('pre-flights the DDL pin against a known model before any embed call', async () => {
     const stub = new VectorStub([]);
     await expect(
-      loadKbDirectory(pool, stub, corpusDir, 'openai/text-embedding-3-large'),
+      loadKbDirectory(pool, stub, corpusDir, 'openai/text-embedding-3-large', CATALOGUE),
     ).rejects.toThrowError(/dimension mismatch.*vector\(1536\).*3072/s);
     expect(stub.calls).toHaveLength(0);
   });

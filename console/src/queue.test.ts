@@ -99,7 +99,29 @@ describe('the group a waiting case belongs to', () => {
 
 describe('the queue in groups', () => {
   const at = (iso: string): Date => new Date(iso);
-  const run = (runId: string, over: Record<string, unknown>) => ({ runId, ...CLEAN, createdAt: at('2026-09-14T10:00:00Z'), ...over });
+
+  /**
+   * One waiting run, as this suite builds them.
+   *
+   * Declared rather than inferred, so a predicate over a row is one type
+   * and applies to every case here. The fields are the ones the grouping
+   * reads, plus the product it orders by (DEC-47).
+   */
+  interface QueueRun {
+    readonly runId: string;
+    readonly product: string | null;
+    readonly createdAt: Date | null;
+    readonly gateReason: string;
+    readonly riskTier: string | null;
+    readonly actionClass: string;
+    readonly agreement: number | null;
+    readonly agreementThreshold: number | null;
+    readonly gateCoverage: number | null;
+    readonly coverageReviewThreshold: number | null;
+  }
+  const run = (runId: string, over: Partial<QueueRun> = {}): QueueRun => ({
+    ...CLEAN, runId, product: null, createdAt: at('2026-09-14T10:00:00Z'), ...over,
+  });
 
   it('orders the groups first, clean, rest, and each oldest first', () => {
     const groups = groupQueue([
@@ -158,6 +180,56 @@ describe('the queue in groups', () => {
       // what this group is about.
       ['held', ['held-clean', 'held-risky']],
     ]);
+  });
+
+  // DEC-47: the reader's own products come first inside each group. It is an
+  // order and not a filter: every case is still on the page, and the groups
+  // themselves do not move — a case the reader covers and that a hold puts
+  // in the last group stays in the last group.
+  it('sorts the reader\'s own products first, inside the group', () => {
+    const runs = [
+      run('clean-ledger', { product: 'ledger', createdAt: at('2026-09-14T12:00:00Z') }),
+      run('clean-aurora', { product: 'aurora', createdAt: at('2026-09-14T08:00:00Z') }),
+      run('clean-nobody', { product: null, createdAt: at('2026-09-14T07:00:00Z') }),
+      run('risky-aurora', { gateReason: 'irreversible', product: 'aurora', createdAt: at('2026-09-14T06:00:00Z') }),
+    ];
+    const mine = (r: QueueRun): boolean => r.product === 'ledger';
+    const groups = groupQueue(runs, undefined, mine);
+
+    expect(groups.map((g) => [g.group, g.runs.map((r) => r.runId)])).toEqual([
+      // The risky case is aurora, which this reader does not cover, so it
+      // keeps its own order — the preference reorders a group, never the
+      // groups. And the covered case leads its group though it is newest.
+      ['first', ['risky-aurora']],
+      // Then age, inside the half the reader does not cover: 07:00 then
+      // 08:00. The preference moves a case to the front of its group; it
+      // does not lift one case above another the reader covers.
+      ['clean', ['clean-ledger', 'clean-nobody', 'clean-aurora']],
+    ]);
+
+    // Age still decides inside each half: two covered cases keep their order.
+    const two = groupQueue(
+      [
+        run('older-covered', { product: 'ledger', createdAt: at('2026-09-14T08:00:00Z') }),
+        run('newer-covered', { product: 'ledger', createdAt: at('2026-09-14T12:00:00Z') }),
+      ],
+      undefined,
+      mine,
+    );
+    expect(two[0]!.runs.map((r) => r.runId)).toEqual(['older-covered', 'newer-covered']);
+  });
+
+  // A reader who declares no products sees the queue exactly as it was. The
+  // predicate is the caller's, so this is also what every caller before
+  // DEC-47 gets.
+  it('orders by age alone when the reader covers nothing', () => {
+    const runs = [
+      run('new', { product: 'aurora', createdAt: at('2026-09-14T12:00:00Z') }),
+      run('old', { product: 'ledger', createdAt: at('2026-09-14T08:00:00Z') }),
+    ];
+    expect(groupQueue(runs, undefined, () => false)[0]!.runs.map((r) => r.runId))
+      .toEqual(['old', 'new']);
+    expect(groupQueue(runs)[0]!.runs.map((r) => r.runId)).toEqual(['old', 'new']);
   });
 
   // The predicate is what marks a case held. A caller that names none groups

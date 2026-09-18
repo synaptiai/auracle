@@ -20,12 +20,24 @@ export interface ReviewerRow {
   readonly active: boolean;
   readonly addedAt: Date;
   readonly deactivatedAt: Date | null;
+  /**
+   * DEC-47: the products this reviewer covers, for the queue's own order.
+   * Empty means no declared focus. It grants nothing: the console serves
+   * every case to every reviewer.
+   */
+  readonly products: readonly string[];
 }
 
 export type AddReviewerOutcome =
   | { readonly outcome: 'added' }
   /** The identity was deactivated, and adding it again makes it active. */
   | { readonly outcome: 'reactivated' }
+  /**
+   * The identity is listed and active, and the products it covers changed.
+   * Its own outcome rather than a reactivation: this reviewer was already
+   * working, and the sentence an operator reads has to say what moved.
+   */
+  | { readonly outcome: 'products_set' }
   /** The identity is already listed and active. Nothing changed. */
   | { readonly outcome: 'already_listed' }
   /**
@@ -58,6 +70,7 @@ export type DeactivateOutcome =
 export async function addReviewer(
   pool: Pool,
   identity: string,
+  products?: readonly string[],
 ): Promise<AddReviewerOutcome> {
   const name = approverFrom(identity);
   if (name === UNATTRIBUTED) {
@@ -67,17 +80,62 @@ export async function addReviewer(
   // mistaken deactivation has to be reversible with the tool that shipped.
   // `xmax = 0` is the row Postgres wrote rather than updated: one statement
   // answers both whether it was listed and which of the two ways.
-  const written = await pool.query(
-    `INSERT INTO reviewer (identity) VALUES ($1)
-     ON CONFLICT (identity) DO UPDATE
-       SET active = true, deactivated_at = NULL
-       WHERE reviewer.active = false
-     RETURNING (xmax = 0) AS inserted`,
-    [name],
+  //
+  // DEC-47: `products` absent is not `products` empty. Absent leaves what the
+  // row holds, so an operator adding a colleague who is already covered does
+  // not clear a focus they never mentioned. The two `COALESCE`s say that in
+  // SQL: the insert takes an empty list for a reviewer added with none, and
+  // the update keeps the stored one.
+  //
+  // The outcome needs the row as it was, and a `RETURNING` clause sees the
+  // row as it now is. So the statement reads the old one into a CTE first,
+  // in the same snapshot as the conflict check.
+  const written = await pool.query<{
+    inserted: boolean | null;
+    touched: string;
+    was_active: boolean | null;
+  }>(
+    `WITH before AS (
+       SELECT active FROM reviewer WHERE identity = $1
+     ), written AS (
+       INSERT INTO reviewer (identity, products)
+       VALUES ($1, COALESCE($2::text[], '{}'))
+       ON CONFLICT (identity) DO UPDATE
+         SET active = true,
+             deactivated_at = NULL,
+             products = COALESCE($2::text[], reviewer.products)
+         WHERE reviewer.active = false
+            OR ($2::text[] IS NOT NULL AND reviewer.products IS DISTINCT FROM $2::text[])
+       RETURNING (xmax = 0) AS inserted
+     )
+     SELECT (SELECT inserted FROM written) AS inserted,
+            (SELECT count(*) FROM written) AS touched,
+            (SELECT active FROM before)    AS was_active`,
+    [name, products === undefined ? null : [...products]],
   );
   const row = written.rows[0];
-  if (row === undefined) return { outcome: 'already_listed' };
-  return row.inserted === true ? { outcome: 'added' } : { outcome: 'reactivated' };
+  if (row === undefined || Number(row.touched) === 0) return { outcome: 'already_listed' };
+  if (row.inserted === true) return { outcome: 'added' };
+  return row.was_active === false ? { outcome: 'reactivated' } : { outcome: 'products_set' };
+}
+
+/**
+ * The products one reviewer covers, for the queue's own order (DEC-47).
+ *
+ * Empty for a reviewer this ledger does not hold, which is the same answer
+ * as a reviewer who declared no focus: nothing is reordered. The console
+ * reads it for the reviewer the request already resolved to, so an unknown
+ * identity here is a race with a deactivation rather than a stranger.
+ */
+export async function reviewerProducts(
+  pool: Pool,
+  identity: string,
+): Promise<readonly string[]> {
+  const rows = await pool.query<{ products: string[] }>(
+    'SELECT products FROM reviewer WHERE identity = $1',
+    [identity],
+  );
+  return rows.rows[0]?.products ?? [];
 }
 
 /**
@@ -114,7 +172,7 @@ export async function deactivateReviewer(
 /** Every reviewer, newest first, active ones included either way. */
 export async function listReviewers(pool: Pool): Promise<ReviewerRow[]> {
   const rows = await pool.query(
-    `SELECT identity, active, added_at, deactivated_at
+    `SELECT identity, active, added_at, deactivated_at, products
        FROM reviewer
       ORDER BY added_at DESC, identity`,
   );
@@ -123,6 +181,7 @@ export async function listReviewers(pool: Pool): Promise<ReviewerRow[]> {
     active: row.active as boolean,
     addedAt: row.added_at as Date,
     deactivatedAt: (row.deactivated_at as Date | null) ?? null,
+    products: (row.products as string[] | null) ?? [],
   }));
 }
 

@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { Pool } from 'pg';
 
+import { assertKnownProducts, type ProductCatalogue } from '../config/products.js';
 import type { ModelProvider } from '../models/provider.js';
 import { indexDocument } from '../retriever/retriever.js';
 import type { DocKind, IndexedDoc } from '../retriever/types.js';
@@ -42,6 +43,13 @@ const KNOWN_EMBED_DIMS: Readonly<Record<string, number>> = {
 
 const REQUIRED_FIELDS = ['doc_id', 'kind', 'title', 'owner', 'review_by'] as const;
 
+/**
+ * DEC-47: the products a document serves. Optional, because a document that
+ * names none serves every product — so a file that omits the line is
+ * complete rather than missing a field.
+ */
+const OPTIONAL_FIELDS = ['products'] as const;
+
 export interface DocumentFrontmatter {
   docId: string;
   kind: DocKind;
@@ -49,6 +57,12 @@ export interface DocumentFrontmatter {
   owner: string;
   /** ISO calendar date (YYYY-MM-DD), stored verbatim. */
   reviewBy: string;
+  /**
+   * DEC-47: the products this document serves, comma separated in the
+   * frontmatter. Empty means every product, and it is what a file that
+   * names none declares.
+   */
+  products: readonly string[];
 }
 
 export interface LoadReport {
@@ -108,10 +122,11 @@ export function parseFrontmatter(raw: string): {
       throw new Error(`missing frontmatter field: ${field}`);
     }
   }
+  const known = [...REQUIRED_FIELDS, ...OPTIONAL_FIELDS];
   for (const key of fields.keys()) {
-    if (!REQUIRED_FIELDS.includes(key as (typeof REQUIRED_FIELDS)[number])) {
+    if (!known.includes(key as (typeof known)[number])) {
       throw new Error(
-        `unknown frontmatter field: ${key} (allowed: ${REQUIRED_FIELDS.join(', ')})`,
+        `unknown frontmatter field: ${key} (allowed: ${known.join(', ')})`,
       );
     }
   }
@@ -145,8 +160,18 @@ export function parseFrontmatter(raw: string): {
   const reviewBy = fields.get('review_by') ?? '';
   assertIsoDate(reviewBy);
 
+  // DEC-47: the products, comma separated. A blank item is refused by name
+  // rather than dropped: `products: aurora,` is a typo, and a dropped empty
+  // item would silently narrow the scope the operator wrote.
+  const rawProducts = (fields.get('products') ?? '').trim();
+  const products =
+    rawProducts === '' ? [] : rawProducts.split(',').map((product) => product.trim());
+  if (products.some((product) => product === '')) {
+    throw new Error(`products must be a comma-separated list with no empty item, got "${rawProducts}"`);
+  }
+
   return {
-    frontmatter: { docId, kind, title, owner, reviewBy },
+    frontmatter: { docId, kind, title, owner, reviewBy, products },
     markdownBody: lines.slice(close + 1).join('\n'),
   };
 }
@@ -269,6 +294,7 @@ export async function loadKbDirectory(
   provider: ModelProvider,
   dir: string,
   embedModelVer: string,
+  catalogue: ProductCatalogue,
 ): Promise<LoadReport> {
   const ddlPath = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -309,6 +335,13 @@ export async function loadKbDirectory(
         );
       }
       seenIds.set(frontmatter.docId, name);
+      // DEC-47: a document naming a product the catalogue does not hold is
+      // retrieved by nobody — the filter keeps a run's own product's
+      // documents and the unscoped ones — so the fault is refused here, by
+      // name, rather than met later as an answer that silently missed its
+      // source. Per file, like every other frontmatter fault: the run
+      // continues and reports it.
+      assertKnownProducts(catalogue, frontmatter.products, frontmatter.docId);
       docs.push({
         file: name,
         text: `${frontmatter.title}\n\n${stripMarkdown(markdownBody)}`,
@@ -319,6 +352,7 @@ export async function loadKbDirectory(
           body: stripMarkdown(markdownBody),
           owner: frontmatter.owner,
           reviewBy: frontmatter.reviewBy,
+          products: frontmatter.products,
         },
       });
     } catch (err) {

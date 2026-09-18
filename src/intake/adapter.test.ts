@@ -5,14 +5,30 @@
 import { describe, expect, it } from 'vitest';
 
 import type { NormalizedEvent } from '../adapters/types.js';
+import { parseProducts } from '../config/products.js';
 
 import { intakeEnqueuer, toIntakeTicket } from './adapter.js';
+
+/**
+ * The catalogue these cases map through (DEC-47). Two products, and a
+ * channel that serves neither, which is what tells a mapped channel from an
+ * unmapped one.
+ */
+const CATALOGUE = parseProducts({
+  products: [
+    { id: 'aurora', label: 'Aurora' },
+    { id: 'ledger', label: 'Ledger' },
+  ],
+  channels: { shipping: 'aurora', billing: 'ledger' },
+});
 
 function event(overrides?: {
   ticketSubject?: string;
   messageSubject?: string | null;
   bodyText?: string;
   ticketId?: string;
+  /** The source's queue field, which DEC-47 reads as the channel. */
+  queue?: string | null;
 }): NormalizedEvent {
   return {
     sourceId: 'src-1',
@@ -20,7 +36,7 @@ function event(overrides?: {
     ticket: {
       ticketId: overrides?.ticketId ?? 't-1',
       subject: overrides?.ticketSubject ?? 'Order damaged',
-      queue: null,
+      queue: overrides?.queue ?? null,
       status: 'open',
       customerAddress: 'dana.doe@example.test',
     },
@@ -42,7 +58,7 @@ function event(overrides?: {
 
 describe('toIntakeTicket', () => {
   it('joins subject and bodyText with a blank line', () => {
-    expect(toIntakeTicket(event())).toEqual({
+    expect(toIntakeTicket(event(), CATALOGUE)).toEqual({
       ticketId: 't-1',
       // The source's own message identity keys the queue row (DEC-24).
       messageId: 'm-1',
@@ -50,14 +66,38 @@ describe('toIntakeTicket', () => {
       // DEC-35: the sender the conversation check reads.
       customerAddress: 'dana.doe@example.test',
       ticketText: 'Order damaged\n\nThe box arrived crushed.',
+      // DEC-47: this event names no channel, so no product is mapped.
+      product: null,
     });
+  });
+
+  // DEC-47: "each run records the product of the channel its message arrived
+  // on". The channel is what the source reported on the ticket, mapped
+  // through the catalogue, and the row carries the product id.
+  it('maps the channel the source reported to the product that serves it', () => {
+    const result = toIntakeTicket(event({ queue: 'shipping' }), CATALOGUE);
+    expect(result.product).toBe('aurora');
+  });
+
+  it('maps each channel to its own product', () => {
+    expect(toIntakeTicket(event({ queue: 'billing' }), CATALOGUE).product).toBe('ledger');
+  });
+
+  // Null, never an empty string: a product named `''` is a product the
+  // retrieval filter would look for, and no document declares it.
+  it('records no product for a channel the catalogue does not name', () => {
+    expect(toIntakeTicket(event({ queue: 'returns' }), CATALOGUE).product).toBeNull();
+  });
+
+  it('records no product when the source named no channel', () => {
+    expect(toIntakeTicket(event({ queue: null }), CATALOGUE).product).toBeNull();
   });
 
   it('derives a content identity when the source names no message', () => {
     const base = event();
     const withoutId = { ...base, message: { ...base.message, messageId: null } };
 
-    const derived = toIntakeTicket(withoutId).messageId;
+    const derived = toIntakeTicket(withoutId, CATALOGUE).messageId;
 
     expect(derived).toMatch(/^no-id-[0-9a-f]{32}$/);
     // Never the delivery id. That used to stand in, and DEC-38 made it
@@ -71,7 +111,8 @@ describe('toIntakeTicket', () => {
     const withoutId = { ...base, message: { ...base.message, messageId: null } };
     const redelivered = { ...withoutId, sourceId: 'src-2-after-uidvalidity-change' };
 
-    expect(toIntakeTicket(redelivered).messageId).toBe(toIntakeTicket(withoutId).messageId);
+    expect(toIntakeTicket(redelivered, CATALOGUE).messageId)
+      .toBe(toIntakeTicket(withoutId, CATALOGUE).messageId);
   });
 
   it('separates two different messages that both name no message id', () => {
@@ -82,26 +123,27 @@ describe('toIntakeTicket', () => {
       message: { ...base.message, messageId: null, bodyText: 'A different problem.' },
     };
 
-    expect(toIntakeTicket(second).messageId).not.toBe(toIntakeTicket(first).messageId);
+    expect(toIntakeTicket(second, CATALOGUE).messageId)
+      .not.toBe(toIntakeTicket(first, CATALOGUE).messageId);
   });
 
   it('prefers the message subject over the ticket subject', () => {
-    const result = toIntakeTicket(event({ messageSubject: 'Re: Order damaged' }));
+    const result = toIntakeTicket(event({ messageSubject: 'Re: Order damaged' }), CATALOGUE);
     expect(result.ticketText).toBe('Re: Order damaged\n\nThe box arrived crushed.');
   });
 
   it('falls back to the ticket subject when the message has none', () => {
-    const result = toIntakeTicket(event({ messageSubject: null }));
+    const result = toIntakeTicket(event({ messageSubject: null }), CATALOGUE);
     expect(result.ticketText).toBe('Order damaged\n\nThe box arrived crushed.');
   });
 
   it('emits only the body when both subjects are empty', () => {
-    const result = toIntakeTicket(event({ ticketSubject: '', messageSubject: '' }));
+    const result = toIntakeTicket(event({ ticketSubject: '', messageSubject: '' }), CATALOGUE);
     expect(result.ticketText).toBe('The box arrived crushed.');
   });
 
   it('keeps the ticket id unchanged', () => {
-    expect(toIntakeTicket(event({ ticketId: 't-42' })).ticketId).toBe('t-42');
+    expect(toIntakeTicket(event({ ticketId: 't-42' }), CATALOGUE).ticketId).toBe('t-42');
   });
 });
 
@@ -123,6 +165,6 @@ describe('intakeEnqueuer', () => {
       throw new Error('intake down');
     });
 
-    await expect(intakeEnqueuer(pool as never, 8)(event())).rejects.toThrow('intake down');
+    await expect(intakeEnqueuer(pool as never, 8, CATALOGUE)(event())).rejects.toThrow('intake down');
   });
 });

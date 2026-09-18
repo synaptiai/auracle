@@ -19,6 +19,9 @@ function item(over: Partial<EscalationItem> = {}): EscalationItem {
     fault: null,
     gateReason: 'customer_visible',
     intentId: 'refund-request',
+    // DEC-47: the product of the channel the message arrived on. The table
+    // prints no column for it yet; the row carries it all the same.
+    product: 'aurora',
     coverage: 0.94,
     agreement: 0.91,
     agreementThreshold: 0.8,

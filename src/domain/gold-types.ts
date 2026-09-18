@@ -193,6 +193,11 @@ export interface FixtureDocument {
   owner: string;
   review_by: string;
   linked_intents: string[];
+  /**
+   * DEC-47: the products this document serves. An empty list means every
+   * product, which is what a document nobody scoped serves.
+   */
+  products: string[];
 }
 
 /**

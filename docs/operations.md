@@ -394,6 +394,15 @@ It listens on `WEBHOOK_PORT` (default 8080). It enqueues into
 `PARTITION_COUNT` partitions (default 8). Set the count to the number of
 partitions your consumers own.
 
+Both ingress drivers read the channel map at startup (DEC-47). The map is
+`products.json` at the working directory, and `PRODUCTS_FILE` names another
+path. Each entry maps a channel to a product. The run records the product of the
+channel its message arrived on. A process refuses to start when the map is
+unreadable, so no message enqueues with an unresolvable product.
+
+A ticket whose channel the map does not name records no product. Its run then
+retrieves only the documents that declare none.
+
 **Set `WEBHOOK_SECRET` before you expose this port.** The driver verifies an
 `X-Auracle-Signature` header, which holds the hex HMAC-SHA256 of the raw body
 under that key. Without the variable the driver accepts every caller and logs
@@ -1266,6 +1275,11 @@ The proxy may send the name as UTF-8 or as Latin-1. The console reads bytes
 that decode as UTF-8 as UTF-8, and any other bytes as Latin-1. A Latin-1 name
 whose bytes also form valid UTF-8 therefore reads as UTF-8. Such a name is
 rare.
+
+The queue names the product of each waiting case (DEC-47). A chip per
+product carries the count of the whole queue. The console reads the channel
+map for the product labels, at the path `PRODUCTS_FILE` names. It refuses to
+start when that file is unreadable, as the ingress processes do.
 
 A case holds one reviewer at a time. Taking it marks it held for twenty
 minutes. The queue shows the others who holds it, and how long is left. Set

@@ -147,6 +147,12 @@ export interface CoordinateInput {
    */
   customerAddress?: string | null;
   /**
+   * DEC-47: the product of the channel this message arrived on, read from
+   * the intake row. Copied onto the run, where every later read finds it.
+   * Absent for a caller with no queue, which records no product.
+   */
+  product?: string | null;
+  /**
    * Prior turns of this conversation, oldest first. Empty on a first turn.
    *
    * DEC-37: the classifier and the composer read it. The gates never do, so

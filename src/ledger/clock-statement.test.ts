@@ -18,7 +18,7 @@ describe('the run insert statement without a clock', () => {
     expect(NO_CLOCK).not.toContain('created_at');
   });
 
-  it('names the twelve columns it named before the seam existed', () => {
+  it('names every column the run row needs, the clock aside', () => {
     for (const column of [
       'run_id',
       'ticket_id',
@@ -33,6 +33,7 @@ describe('the run insert statement without a clock', () => {
       'enqueued_at',
       'conversation_id',
       'turn_number',
+      'product',
     ]) {
       expect(NO_CLOCK).toContain(column);
     }
@@ -52,7 +53,7 @@ describe('the run insert statement without a clock', () => {
     expect(columns).toEqual([
       'run_id', 'ticket_id', 'partition', 'epoch', 'state', 'prompt_ver',
       'model_ver', 'cost_micros', 'steps_used', 'deadline_at', 'enqueued_at',
-      'conversation_id', 'turn_number',
+      'conversation_id', 'turn_number', 'product',
     ]);
     expect(NO_CLOCK).toContain(`$${columns.length}`);
     expect(NO_CLOCK).not.toContain(`$${columns.length + 1}`);

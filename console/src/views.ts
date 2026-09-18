@@ -22,6 +22,11 @@ export function toRow(item: {
   reason: string | null; gateReason: string | null; intentId: string | null;
   coverage: number | null; createdAt: Date | null;
   costMicros: number; stepsUsed: number;
+  /**
+   * DEC-47: the product of the channel this run's message arrived on. Null
+   * is a channel the map does not name, and the queue says so in words.
+   */
+  product: string | null;
 }): RunRow {
   return {
     runId: item.runId,
@@ -38,6 +43,7 @@ export function toRow(item: {
     gateCoverage: item.coverage,
     createdAt: item.createdAt,
     stepsUsed: item.stepsUsed,
+    product: item.product,
   };
 }
 

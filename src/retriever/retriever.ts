@@ -30,6 +30,14 @@ export interface HybridSearchOptions {
   includeStale?: boolean;
   /** DEC-21: applied when at least 50 candidates survive fusion. */
   rerank?: Rerank;
+  /**
+   * DEC-47: the product of the channel the run's message arrived on. The
+   * filter keeps a document whose `products` holds it and every document
+   * that declares none. Null — and absent, which means the same thing —
+   * keeps the unscoped documents alone, so a run with no product never reads
+   * another product's corpus.
+   */
+  product?: string | null;
 }
 
 interface DocumentRow {
@@ -48,15 +56,16 @@ export async function indexDocument(
   embedding: number[],
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::vector)
+    `INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding, products)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8::text[])
      ON CONFLICT (doc_id) DO UPDATE SET
        kind = EXCLUDED.kind,
        title = EXCLUDED.title,
        body = EXCLUDED.body,
        owner = EXCLUDED.owner,
        review_by = EXCLUDED.review_by,
-       embedding = EXCLUDED.embedding`,
+       embedding = EXCLUDED.embedding,
+       products = EXCLUDED.products`,
     [
       doc.docId,
       doc.kind,
@@ -65,6 +74,10 @@ export async function indexDocument(
       doc.owner,
       doc.reviewBy,
       `[${embedding.join(',')}]`,
+      // DEC-47: the products this document serves. A reindex is the whole
+      // row, so the column is written like every other one — a document
+      // that stops declaring a product stops being retrieved for it.
+      [...(doc.products ?? [])],
     ],
   );
 }
@@ -84,26 +97,39 @@ export async function hybridSearch(
   const staleFilter = options.includeStale === true ? '' : 'AND review_by >= CURRENT_DATE';
   const vectorLiteral = `[${queryEmbedding.join(',')}]`;
 
+  // DEC-47: the unscoped documents and the run's own product's, and nothing
+  // else. One predicate rather than two statements: with a null product,
+  // `@> ARRAY[null]` is false and the empty branch is all that survives —
+  // which is the same sentence, read for a run that arrived on an unmapped
+  // channel. Verified against the database rather than assumed.
+  //
+  // `d.` qualifies it because the lexical channel joins the query, and both
+  // channels carry the same filter: a scope applied to one of them would let
+  // the other product's documents through from the channel that kept them.
+  const productFilter =
+    "AND (d.products = '{}'::text[] OR d.products @> ARRAY[$3]::text[])";
+  const product = options.product ?? null;
+
   // Lexical channel: ts_rank_cd supplies the ordering only. Its score never
   // leaves this query — the fusion consumes the rank positions (DEC-21).
   const bm25 = await pool.query<DocumentRow>(
     `SELECT d.doc_id, d.kind, d.title, d.body, d.owner,
             to_char(d.review_by, 'YYYY-MM-DD') AS review_by
      FROM document d, plainto_tsquery('english', $1) q
-     WHERE d.tsv @@ q ${staleFilter}
+     WHERE d.tsv @@ q ${staleFilter} ${productFilter}
      ORDER BY ts_rank_cd(d.tsv, q) DESC
      LIMIT $2`,
-    [query, depth],
+    [query, depth, product],
   );
 
   const dense = await pool.query<DocumentRow>(
     `SELECT d.doc_id, d.kind, d.title, d.body, d.owner,
             to_char(d.review_by, 'YYYY-MM-DD') AS review_by
      FROM document d
-     WHERE true ${staleFilter}
+     WHERE true ${staleFilter} ${productFilter}
      ORDER BY d.embedding <=> $1::vector
      LIMIT $2`,
-    [vectorLiteral, depth],
+    [vectorLiteral, depth, product],
   );
 
   const fusedIds = rrfFuse([

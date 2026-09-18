@@ -65,10 +65,18 @@ export { approveRun } from '../approval/approve.js';
 // definition, because the two must agree byte for byte on the text.
 export { replyDigest } from '../approval/shown.js';
 
-// DEC-45: whether an identity may review. A read, and the only part of the
-// roster the console reaches: the writers are a command-line tool's, so a
-// console can never add itself a reviewer.
-export { activeReviewer } from '../reviewers/roster.js';
+// DEC-45: whether an identity may review, and DEC-47: the products that
+// reviewer covers, which the queue reads to put their cases first. Both are
+// reads, and they are the only part of the roster the console reaches: the
+// writers are a command-line tool's, so a console can never add itself a
+// reviewer or move a product into its own list.
+export { activeReviewer, reviewerProducts } from '../reviewers/roster.js';
+
+// DEC-47: the product catalogue. The console reads it once at startup for
+// the labels it draws. It is a file read rather than a ledger read, and it
+// opens no connection: `src/test-support/purity.test.ts` lists this barrel
+// for the reads beside it, not for this one.
+export { productCatalogueFromEnv, type ProductCatalogue } from '../config/products.js';
 
 // DEC-46: the case hold. `takeHold` is a write, and it joins `approveRun` as
 // one of the console's own — `console/src/select-only.test.ts` names every

@@ -18,6 +18,7 @@
 import { Pool } from 'pg';
 
 import { loadDotEnv } from '../config/env.js';
+import { productCatalogueFromEnv } from '../config/products.js';
 import { requireDbUrl } from '../db/config.js';
 import { openRouterFromEnv } from '../models/from-env.js';
 import { DEFAULT_EMBED_MODEL, loadKbDirectory } from './loader.js';
@@ -61,7 +62,7 @@ async function main(): Promise<void> {
   const pool = new Pool({ connectionString: requireDbUrl('the knowledge-base CLI'), max: 1 });
   try {
     console.log(`indexing ${dir} with ${embedModelVer}...`);
-    const report = await loadKbDirectory(pool, provider, dir, embedModelVer);
+    const report = await loadKbDirectory(pool, provider, dir, embedModelVer, productCatalogueFromEnv());
     for (const failure of report.failures) {
       console.error(failure);
     }

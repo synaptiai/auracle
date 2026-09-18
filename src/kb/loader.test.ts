@@ -33,6 +33,8 @@ describe('parseFrontmatter', () => {
       title: 'Reset passwords',
       owner: 'support-docs',
       reviewBy: '2999-01-01',
+      // DEC-47: no `products` line means the document serves every product.
+      products: [],
     });
     expect(markdownBody).toBe('# Steps\n\nOpen the login page.');
   });
@@ -75,6 +77,21 @@ describe('parseFrontmatter', () => {
     expect(() => parseFrontmatter(raw)).toThrowError(
       /kind must be "document" or "resolution"/,
     );
+  });
+
+  // DEC-47: a document serves the products its frontmatter names, and a
+  // document that names none serves every product. That is the decision's
+  // second sentence, and empty is how a file says it.
+  it('reads the products a document declares (DEC-47)', () => {
+    const raw = frontmatterOf('x').replace(
+      'review_by: 2999-01-01',
+      'review_by: 2999-01-01\nproducts: aurora, ledger',
+    );
+    expect(parseFrontmatter(raw).frontmatter.products).toEqual(['aurora', 'ledger']);
+  });
+
+  it('reads a document that declares no products as serving every one', () => {
+    expect(parseFrontmatter(frontmatterOf('x')).frontmatter.products).toEqual([]);
   });
 
   it('rejects an unknown field so a typo never silently drops data', () => {

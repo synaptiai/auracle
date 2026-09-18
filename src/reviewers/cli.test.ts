@@ -5,9 +5,16 @@
 // they lived inside `main`. Nothing here runs `main()` — the command's exit
 // codes and its output split were checked by running it, and the roster suite
 // covers the queries behind it.
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
-import { parseArgs, renderAdded, renderDeactivated, renderList, USAGE } from './cli.js';
+import {
+  parseArgs, refusalFor, renderAdded, renderDeactivated, renderList, showsEveryCharacter, USAGE,
+} from './cli.js';
 import type { ReviewerRow } from './roster.js';
 
 function reviewer(over: Partial<ReviewerRow> = {}): ReviewerRow {
@@ -16,6 +23,7 @@ function reviewer(over: Partial<ReviewerRow> = {}): ReviewerRow {
     active: true,
     addedAt: new Date('2026-09-18T09:00:00.000Z'),
     deactivatedAt: null,
+    products: [],
     ...over,
   };
 }
@@ -32,6 +40,7 @@ describe('the reviewer roster command (DEC-45)', () => {
     expect(parseArgs(['--', '--add', 'anna@example.test'])).toEqual({
       action: 'add',
       identity: 'anna@example.test',
+      products: null,
     });
     expect(parseArgs(['--', '--list'])).toEqual({ action: 'list' });
     expect(parseArgs(['--deactivate', '--', 'anna@example.test'])).toEqual({
@@ -50,6 +59,7 @@ describe('the reviewer roster command (DEC-45)', () => {
     expect(parseArgs(['--add', 'anna@example.test'])).toEqual({
       action: 'add',
       identity: 'anna@example.test',
+      products: null,
     });
     expect(parseArgs(['--deactivate', 'anna@example.test'])).toEqual({
       action: 'deactivate',
@@ -98,22 +108,134 @@ describe('the reviewer roster command (DEC-45)', () => {
       }),
     ]);
     expect(listed.split('\n')).toEqual([
-      'anna@example.test\tactive\tadded 2026-09-18',
-      'bo@example.test\tdeactivated\tadded 2026-09-18',
+      'anna@example.test\tactive\tadded 2026-09-18\tproducts: none',
+      'bo@example.test\tdeactivated\tadded 2026-09-18\tproducts: none',
     ]);
     expect(renderList([])).toContain('serves nobody');
   });
 
-  // Three outcomes, three sentences. A reactivation changed the roster, and
-  // the first version told the maintainer it was already listed, which is the
-  // one sentence that means nothing changed.
-  it('says which of the three an add did', () => {
+  // Four outcomes, four sentences. A reactivation changed the roster, and the
+  // first version told the maintainer it was already listed, which is the one
+  // sentence that means nothing changed. A products change is the third way a
+  // row can move, and it is not a reactivation: the reviewer was working.
+  // A command that named products says what the row now covers, whatever
+  // else it did: a reactivation and a products change is two moves, and a
+  // sentence naming one leaves the operator guessing about the other.
+  it('names the products an add wrote, beside what else it did', () => {
+    expect(renderAdded({ outcome: 'added' }, 'anna@example.test', ['aurora']))
+      .toBe('added anna@example.test, covering aurora');
+    expect(renderAdded({ outcome: 'reactivated' }, 'anna@example.test', ['aurora', 'ledger']))
+      .toBe('reactivated anna@example.test, covering aurora, ledger');
+    expect(renderAdded({ outcome: 'products_set' }, 'anna@example.test', ['ledger']))
+      .toBe('set the products anna@example.test covers to ledger');
+    // Nothing was written, so nothing is claimed about the row.
+    expect(renderAdded({ outcome: 'already_listed' }, 'anna@example.test', null))
+      .toBe('anna@example.test is already on the roster');
+  });
+
+  it('says which of the four an add did', () => {
     expect(renderAdded({ outcome: 'added' }, 'anna@example.test'))
       .toBe('added anna@example.test');
     expect(renderAdded({ outcome: 'reactivated' }, 'anna@example.test'))
       .toBe('reactivated anna@example.test');
+    expect(renderAdded({ outcome: 'products_set' }, 'anna@example.test'))
+      .toBe('set the products anna@example.test covers');
     expect(renderAdded({ outcome: 'already_listed' }, 'anna@example.test'))
       .toBe('anna@example.test is already on the roster');
+  });
+
+  // DEC-47: `--products` names what a reviewer covers, and the queue puts
+  // their products first. Absent means the flag was not written, which is not
+  // the same as an empty list: an operator adding an identity must not clear
+  // a focus they did not mention.
+  it('reads the products a reviewer covers, when the flag names them', () => {
+    expect(parseArgs(['--add', 'anna@example.test']))
+      .toEqual({ action: 'add', identity: 'anna@example.test', products: null });
+    expect(parseArgs(['--add', 'anna@example.test', '--products', 'aurora, ledger']))
+      .toEqual({
+        action: 'add',
+        identity: 'anna@example.test',
+        products: ['aurora', 'ledger'],
+      });
+    // The flag may come first: a command line is not a fixed word order.
+    expect(parseArgs(['--products', 'aurora', '--add', 'anna@example.test']))
+      .toEqual({ action: 'add', identity: 'anna@example.test', products: ['aurora'] });
+  });
+
+  // The identity is found by position, not by value: a reviewer whose
+  // identity reads like a product id is still a reviewer, and the old
+  // value-based lookup answered that this --add needed an identity.
+  it('reads an identity that reads like a product id', () => {
+    expect(parseArgs(['--add', 'aurora', '--products', 'aurora']))
+      .toEqual({ action: 'add', identity: 'aurora', products: ['aurora'] });
+    expect(parseArgs(['--products', 'aurora', '--add', 'aurora']))
+      .toEqual({ action: 'add', identity: 'aurora', products: ['aurora'] });
+  });
+
+  // DEC-47: a product the catalogue does not hold is refused before the row
+  // is written, and the sentence names the file that was read — which is the
+  // file `PRODUCTS_FILE` names, not always the shipped one.
+  it('refuses a product the catalogue does not hold, naming the file', () => {
+    const shipped = fileURLToPath(new URL('../../products.json', import.meta.url));
+    expect(refusalFor(['aurora', 'ledger'], shipped)).toBeNull();
+    expect(refusalFor([], shipped)).toBeNull();
+    expect(refusalFor(['aurora', 'nobody-serves-this'], shipped)).toBe(
+      `refused: 'nobody-serves-this' is not a product this deployment serves (${shipped})`,
+    );
+
+    // The path is the caller's, so an operator running with PRODUCTS_FILE
+    // hears the file they edited rather than the shipped one. A catalogue
+    // that cannot be read is a fault rather than a refusal: this names the
+    // second file, which holds a different product.
+    const elsewhere = join(mkdtempSync(join(tmpdir(), 'auracle-products-')), 'products.json');
+    writeFileSync(elsewhere, JSON.stringify({
+      products: [{ id: 'other', label: 'Other' }],
+      channels: { other: 'other' },
+    }));
+    expect(refusalFor(['aurora'], elsewhere)).toBe(
+      `refused: 'aurora' is not a product this deployment serves (${elsewhere})`,
+    );
+    expect(refusalFor(['other'], elsewhere)).toBeNull();
+    expect(() => refusalFor(['aurora'], `${elsewhere}.missing`)).toThrow(/could not be read/);
+  });
+
+  it('refuses a products list that is not one', () => {
+    expect(parseArgs(['--add', 'anna@example.test', '--products']))
+      .toEqual({ error: '--products needs a comma-separated list of products' });
+    expect(parseArgs(['--add', 'anna@example.test', '--products', 'aurora,,ledger']))
+      .toEqual({ error: "'aurora,,ledger' has an empty item" });
+    expect(parseArgs(['--add', 'anna@example.test', '--products', 'aurora,aurora']))
+      .toEqual({ error: "'aurora,aurora' names aurora twice" });
+    expect(parseArgs(['--add', 'anna@example.test', '--products', '--list']))
+      .toEqual({ error: '--products needs a comma-separated list of products' });
+    // The flag belongs to --add: a deactivation covers nobody.
+    // The flag belongs to --add, and the refusal says so rather than calling
+    // it unknown while the usage beside it lists the flag.
+    expect(parseArgs(['--deactivate', 'anna@example.test', '--products', 'aurora']))
+      .toEqual({ error: '--products belongs to --add, not to --deactivate' });
+  });
+
+  it('prints the products a reviewer covers, and says none when none', () => {
+    const listed = renderList([
+      {
+        identity: 'anna@example.test',
+        active: true,
+        addedAt: new Date('2026-09-18T10:00:00.000Z'),
+        deactivatedAt: null,
+        products: ['aurora', 'ledger'],
+      },
+      {
+        identity: 'bo@example.test',
+        active: true,
+        addedAt: new Date('2026-09-18T10:00:00.000Z'),
+        deactivatedAt: null,
+        products: [],
+      },
+    ]);
+    expect(listed.split('\n')).toEqual([
+      'anna@example.test\tactive\tadded 2026-09-18\tproducts: aurora, ledger',
+      'bo@example.test\tactive\tadded 2026-09-18\tproducts: none',
+    ]);
   });
 
   it('says whether a deactivation changed anything', () => {
@@ -126,6 +248,29 @@ describe('the reviewer roster command (DEC-45)', () => {
   // A word past the identity is refused, as it is past `--list`. Dropping it
   // runs a different command than the one typed: `--add anna --active` used
   // to add her and say nothing about a flag nobody had written.
+  // A word that opens with `--` is a flag this command does not know. The
+  // positional lookup alone would take one for an identity, and an identity
+  // of that shape names no reviewer.
+  it('refuses a flag where an identity belongs', () => {
+    expect(parseArgs(['--add', '--active']))
+      .toEqual({ error: "unknown argument '--active'" });
+    expect(parseArgs(['--deactivate', '--products', 'aurora']))
+      .toEqual({ error: '--products belongs to --add, not to --deactivate' });
+  });
+
+  // The refusal's own subject is a value that draws nothing: a zero-width
+  // space prints as nothing at all, and a non-breaking space prints as an
+  // ordinary one. The sentence shows each such character as its code point,
+  // so the operator can see what was refused.
+  it('shows the characters that draw nothing', () => {
+    expect(showsEveryCharacter('anna@example.test')).toBe('anna@example.test');
+    expect(showsEveryCharacter('anna\u200b@example.test')).toBe('anna<U+200B>@example.test');
+    expect(showsEveryCharacter('anna\u00a0reviewer')).toBe('anna<U+00A0>reviewer');
+    // Every other character is kept verbatim, including the punctuation and
+    // symbols a name may hold.
+    expect(showsEveryCharacter("o'brien+test&co")).toBe("o'brien+test&co");
+  });
+
   it('refuses a word past the identity it was given', () => {
     expect(parseArgs(['--add', 'anna@example.test', 'extra']))
       .toEqual({ error: "unknown argument 'extra'" });

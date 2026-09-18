@@ -148,7 +148,13 @@ describe('migrate', () => {
 
     // Re-applying the file is a no-op rather than a duplicate-constraint
     // error: it is forward-only and safe to run again.
-    await client.query('DELETE FROM schema_version WHERE version = 20');
+    //
+    // From 20 upward, not 20 alone. The runner refuses a file older than the
+    // highest recorded version, so re-applying one means removing its record
+    // and every record above it. Deleting only version 20 passed while 020
+    // was the newest file and refused the moment 021 existed — a case about
+    // one migration that breaks when an unrelated one ships.
+    await client.query('DELETE FROM schema_version WHERE version >= 20');
     await expect(migrate(client)).resolves.toBeDefined();
     await client.query(
       "UPDATE case_hold SET released_at = now(), release_kind = 'take_other' WHERE run_id = $1",
@@ -156,9 +162,128 @@ describe('migrate', () => {
     );
   });
 
+  // DEC-47: the product of the channel a message arrived on, recorded at
+  // arrival and copied onto the run. Nullable on both tables, because a
+  // channel the map does not name is a real answer and not a gap.
+  it('installs the product dimension on the run and the intake row (db/021, DEC-47)', async () => {
+    await migrate(client);
+    const runId = await seedRun();
+
+    // Nullable on both tables, because DEC-47's rejected alternatives are a
+    // product nobody declared and a product inferred from the message: a
+    // message on an unmapped channel records no product, and that is null.
+    const columns = await client.query<{ table_name: string; is_nullable: string; data_type: string }>(
+      // Scoped to this schema: information_schema is not search_path
+      // scoped, and the template database this clone came from holds its own
+      // run and intake.
+      `SELECT table_name, is_nullable, data_type FROM information_schema.columns
+        WHERE table_schema = 'migrate_test'
+          AND table_name IN ('run', 'intake') AND column_name = 'product'
+        ORDER BY table_name`,
+    );
+    expect(columns.rows).toEqual([
+      { table_name: 'intake', is_nullable: 'YES', data_type: 'text' },
+      { table_name: 'run', is_nullable: 'YES', data_type: 'text' },
+    ]);
+
+    // A run written before this migration keeps no product, and that null is
+    // the answer: the change backfills nothing.
+    const run = await client.query<{ product: string | null }>(
+      'SELECT product FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(run.rows[0]?.product).toBeNull();
+
+    // Both write and read it as text.
+    await client.query('UPDATE run SET product = $2 WHERE run_id = $1', [runId, 'aurora']);
+    const written = await client.query<{ product: string | null }>(
+      'SELECT product FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(written.rows[0]?.product).toBe('aurora');
+
+    await client.query(
+      `INSERT INTO intake (ticket_id, message_id, partition, ticket_text, product)
+       VALUES ('T-9', 'M-9', 0, 'a message', 'ledger')`,
+    );
+    const intake = await client.query<{ product: string | null }>(
+      "SELECT product FROM intake WHERE ticket_id = 'T-9'",
+    );
+    expect(intake.rows[0]?.product).toBe('ledger');
+  });
+
+  it('installs the products a reviewer covers (db/023, DEC-47)', async () => {
+    await migrate(client);
+
+    // Empty is the default and means no declared focus, so a reviewer added
+    // before this migration is not reordered behind anyone.
+    const column = await client.query<{ is_nullable: string; data_type: string }>(
+      `SELECT is_nullable, data_type FROM information_schema.columns
+        WHERE table_schema = 'migrate_test' AND table_name = 'reviewer'
+          AND column_name = 'products'`,
+    );
+    expect(column.rows).toEqual([{ is_nullable: 'NO', data_type: 'ARRAY' }]);
+
+    await client.query("INSERT INTO reviewer (identity) VALUES ('anna@example.test')");
+    const plain = await client.query<{ products: string[] }>(
+      "SELECT products FROM reviewer WHERE identity = 'anna@example.test'",
+    );
+    expect(plain.rows[0]?.products).toEqual([]);
+
+    await client.query(
+      "UPDATE reviewer SET products = ARRAY['aurora'] WHERE identity = 'anna@example.test'",
+    );
+    const scoped = await client.query<{ products: string[] }>(
+      "SELECT products FROM reviewer WHERE identity = 'anna@example.test'",
+    );
+    expect(scoped.rows[0]?.products).toEqual(['aurora']);
+  });
+
+  it('installs the products a document serves (db/022, DEC-47)', async () => {
+    await migrate(client);
+
+    // Empty is the default and means every product, so a document indexed
+    // before this migration serves everyone rather than nobody.
+    const column = await client.query<{ is_nullable: string; data_type: string; column_default: string }>(
+      `SELECT is_nullable, data_type, column_default FROM information_schema.columns
+        WHERE table_schema = 'migrate_test' AND table_name = 'document'
+          AND column_name = 'products'`,
+    );
+    expect(column.rows).toHaveLength(1);
+    expect(column.rows[0]?.is_nullable).toBe('NO');
+    expect(column.rows[0]?.data_type).toBe('ARRAY');
+    expect(column.rows[0]?.column_default).toContain("'{}'");
+
+    // The GIN index the retrieval filter reads.
+    const index = await client.query<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes
+        WHERE schemaname = 'migrate_test' AND tablename = 'document'
+          AND indexname = 'document_products_idx'`,
+    );
+    expect(index.rows).toHaveLength(1);
+    expect(index.rows[0]?.indexdef).toContain('gin');
+
+    await client.query(
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding)
+       VALUES ('D-1', 'document', 't', 'b', 'o', CURRENT_DATE, array_fill(0, ARRAY[1536])::vector)`,
+    );
+    const stored = await client.query<{ products: string[] }>(
+      "SELECT products FROM document WHERE doc_id = 'D-1'",
+    );
+    expect(stored.rows[0]?.products).toEqual([]);
+    await client.query(
+      "UPDATE document SET products = ARRAY['aurora'] WHERE doc_id = 'D-1'",
+    );
+    const scoped = await client.query<{ products: string[] }>(
+      "SELECT products FROM document WHERE doc_id = 'D-1'",
+    );
+    expect(scoped.rows[0]?.products).toEqual(['aurora']);
+  });
+
   // DEC-46: two tables, and the constraints that make them readable. The
-  // live table holds one row per case, so "who holds this" is one lookup; the
-  // history is append-only and keeps what happened after the row moves on.
+  // live table holds one row per case, so "who holds this" is one lookup;
+  // the history is append-only and keeps what happened after the row moved
+  // on.
   it('installs the case hold and its history (db/019, DEC-46)', async () => {
     await migrate(client);
     const runId = await seedRun();

@@ -9,6 +9,7 @@ import type { Server } from 'node:http';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { productCatalogueFromEnv } from '../config/products.js';
 import { pollPartition } from '../coordinator/intake.js';
 import { dbUrl } from '../db/config.js';
 import { WEBHOOK_FULL_PAYLOAD, WEBHOOK_MINIMAL_PAYLOAD } from '../ingress/fixtures.js';
@@ -30,7 +31,12 @@ await pool.query('SELECT 1');
 let server: Server | null = null;
 
 async function start(): Promise<string> {
-  server = createWebhookServer({ onEvent: intakeEnqueuer(pool, PARTITION_COUNT) });
+  // The catalogue the daemons read: `PRODUCTS_FILE` or the file this
+  // repository ships. DEC-47's map is deployment configuration, so the
+  // suite that proves a delivery records a product reads the same one.
+  server = createWebhookServer({
+    onEvent: intakeEnqueuer(pool, PARTITION_COUNT, productCatalogueFromEnv()),
+  });
   await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
   const address = server.address() as AddressInfo;
   return `http://127.0.0.1:${address.port}/webhooks/support`;
@@ -100,6 +106,27 @@ describe('webhook → intake path', () => {
     expect(row?.['partition']).toBeLessThan(PARTITION_COUNT);
   });
 
+  // DEC-47: the product of the channel the message arrived on is recorded at
+  // arrival, before any run exists. The full payload names `shipping`, which
+  // products.json maps to a product; the minimal payload names no channel at
+  // all, and that is null rather than an empty product.
+  it('records the product of the channel the delivery arrived on', async () => {
+    const url = await start();
+
+    await post(url, WEBHOOK_FULL_PAYLOAD);
+    await post(url, WEBHOOK_MINIMAL_PAYLOAD);
+
+    const rows = await pool.query<{ ticket_id: string; product: string | null }>(
+      'SELECT ticket_id, product FROM intake ORDER BY ticket_id',
+    );
+    expect(rows.rows).toEqual([
+      { ticket_id: 'wh-ticket-4471', product: 'aurora' },
+      // The minimal payload's ticket carries no queue field. Null is not the
+      // product named '', which no document would declare.
+      { ticket_id: 'wh-ticket-8812', product: null },
+    ]);
+  });
+
   it('makes enqueued tickets pollable through the consumer seam', async () => {
     const url = await start();
 
@@ -119,6 +146,9 @@ describe('webhook → intake path', () => {
       // no linkage, and these two payloads name different tickets.
       expect(ticket.conversationId).not.toBeNull();
     }
+    // DEC-47: the consumer carries the product from the queue row onto the
+    // run it files, so the poll has to return it.
+    expect(polled.map((ticket) => ticket.product)).toEqual(['aurora', null]);
   });
 
   it('answers 500 and leaves the queue untouched when the insert fails', async () => {

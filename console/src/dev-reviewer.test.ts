@@ -104,6 +104,12 @@ describe('the deployments that must not name the development reviewer', () => {
   // The behavioural check reads the module URL, so the image must hold no
   // console source for it to pass there. It copies `dist` and the core's
   // package files, and nothing under `console/src`.
+  //
+  // `products.json` joined the list with DEC-47, and it is data rather than
+  // source: the channel map a process reads at startup, as `db/` and
+  // `fixtures/` are. The rule this case holds is that no source tree reaches
+  // the runtime stage, so the file is named here rather than the rule
+  // loosened.
   it('ships compiled output, so the source check cannot pass in the image', () => {
     const dockerfile = readFileSync(ROOT + 'Dockerfile', 'utf8');
     const runtime = dockerfile.slice(dockerfile.indexOf('AS runtime'));
@@ -113,7 +119,9 @@ describe('the deployments that must not name the development reviewer', () => {
     expect(copies.length).toBeGreaterThanOrEqual(5);
     for (const line of copies) {
       expect(line, line).not.toMatch(/console\/src|\/src\b/);
-      expect(line, line).toMatch(/dist|package\.json|db\b|fixtures|entrypoint\.sh/);
+      expect(line, line).toMatch(
+        /dist|package\.json|db\b|fixtures|entrypoint\.sh|products\.json/,
+      );
     }
     // And the console's entry point is the compiled one, not a source run.
     expect(readFileSync(ROOT + 'docker/entrypoint.sh', 'utf8')).not.toContain('tsx');

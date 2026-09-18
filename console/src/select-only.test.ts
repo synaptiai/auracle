@@ -148,6 +148,9 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   listEscalations: 'read',
   listRuns: 'read',
   probeLedger: 'read',
+  // DEC-47: the product catalogue, read once at startup for the labels the
+  // queue draws. A file read, and no statement.
+  productCatalogueFromEnv: 'read',
   readConversation: 'read',
   readDays: 'read',
   readDocument: 'read',
@@ -160,6 +163,10 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   releaseHold: 'write',
   replyDigest: 'read',
   requireDbUrl: 'read',
+  // DEC-47: the products the reviewer covers, for the queue's own order. A
+  // read of the roster: the console can order by a preference, and cannot
+  // set one.
+  reviewerProducts: 'read',
   selectReadBackAdapter: 'read',
   takeHold: 'write',
   turnAnsweredBy: 'read',

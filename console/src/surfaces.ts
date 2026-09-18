@@ -62,6 +62,15 @@ export interface RunRow {
   /** When the ledger opened the run, so a surface ordered by time shows it. */
   readonly createdAt: Date | null;
   readonly stepsUsed: number;
+  /**
+   * DEC-47: the product of the channel this run's message arrived on, or
+   * null when that channel mapped to no product.
+   *
+   * Null is a value on the queue, not a gap: a run whose channel the map
+   * does not name is its own chip and its own row of words. A surface that
+   * drew nothing for it would read as a product nobody had chosen.
+   */
+  readonly product: string | null;
 }
 
 export type Theme = 'dark' | 'light';
@@ -1052,19 +1061,30 @@ export function renderRunDetail(run: RunView): string {
  */
 const UNRULED = 'unruled';
 
-function gateFilters(runs: readonly RunDetail[], active: string | null): string {
+function gateFilters(
+  runs: readonly RunDetail[],
+  active: string | null,
+  product: string | null,
+): string {
   const rules = [...new Set(runs.map((run) => run.gateReason ?? UNRULED))].sort();
   if (rules.length < 2) return '';
+  // Escaped, as the row link, the back link and the four forms are: the value
+  // is already percent-encoded by `filtersQuery`, and the attribute adds the
+  // one escaping an HTML parser undoes. A site that relied on the encoder
+  // alone would be the site that ships an injection the day a value reaches
+  // it another way.
   const one = (href: string, label: string, on: boolean, count: number): string =>
-    `<a href="${href}"${on ? ' class="on"' : ''}>${escapeHtml(label)}`
+    `<a href="${escapeHtml(href)}"${on ? ' class="on"' : ''}>${escapeHtml(label)}`
       + `<span class="dim"> ${escapeHtml(String(count))}</span></a>`;
   return [
     '<div class="filters">',
     '<span class="lbl">needs a person</span>',
     '<div class="seg">',
-    one('/', 'all', active === null, runs.length),
+    // DEC-47: each chip keeps the product the page arrived with, so choosing
+    // a rule narrows the product rather than replacing it with every product.
+    one(queueHref(null, product), 'all', active === null, runs.length),
     ...rules.map((rule) => one(
-      `/?rule=${encodeURIComponent(rule)}`,
+      queueHref(rule, product),
       rule === UNRULED ? 'no gate rule' : gateRuleSays(rule),
       active === rule,
       runs.filter((run) => (run.gateReason ?? UNRULED) === rule).length,
@@ -1072,6 +1092,86 @@ function gateFilters(runs: readonly RunDetail[], active: string | null): string 
     '</div>',
     '</div>',
   ].join('');
+}
+
+/**
+ * The queue's own spelling for a run whose channel mapped to no product.
+ *
+ * Wrapped in double underscores, which `parseProducts` reserves: a catalogue
+ * cannot declare this name, so the chip it labels holds only the runs with no
+ * product and never a product that happens to share the spelling.
+ */
+const NO_PRODUCT = '__none__';
+
+/**
+ * The product a run holds, as a chip or a row reads it.
+ *
+ * `''` is the absence as much as null is. The column is `text` with no
+ * CHECK, so a row can carry it — a hand-written insert, a backfill, a caller
+ * that passed it to `enqueueTicket` — and a surface that drew it would print
+ * a blank where the rule says an absence is stated in words.
+ */
+function productOf(value: string | null): string {
+  return value === null || value === '' ? NO_PRODUCT : value;
+}
+
+/**
+ * The products a queue can be narrowed to, and what each holds (DEC-47).
+ *
+ * Derived from what is waiting, as the gate-rule filter is: a product that
+ * nothing carries today does not offer a filter that empties the list, and a
+ * run whose channel mapped to no product is reachable as `no product` rather
+ * than hidden — it is still work.
+ *
+ * The counts are read from every waiting run, never from the narrowed view.
+ * A filter that reported its own count as the queue would show a reviewer a
+ * queue that emptied the moment they narrowed it.
+ *
+ * Each chip carries the OTHER filter the page arrived with. A reviewer who
+ * narrowed to one product and then picks a rule means both, and a chip that
+ * rebuilt the URL from its own dimension alone would silently drop the
+ * product they chose.
+ */
+function productChips(
+  runs: readonly RunDetail[],
+  active: string | null,
+  rule: string | null,
+  labels: ReadonlyMap<string, string>,
+): string {
+  const values = [...new Set(runs.map((run) => productOf(run.product)))].sort();
+  if (values.length < 2) return '';
+  // Escaped, as the row link, the back link and the four forms are: the value
+  // is already percent-encoded by `filtersQuery`, and the attribute adds the
+  // one escaping an HTML parser undoes. A site that relied on the encoder
+  // alone would be the site that ships an injection the day a value reaches
+  // it another way.
+  const one = (href: string, label: string, on: boolean, count: number): string =>
+    `<a href="${escapeHtml(href)}"${on ? ' class="on"' : ''}>${escapeHtml(label)}`
+      + `<span class="dim"> ${escapeHtml(String(count))}</span></a>`;
+  return [
+    '<div class="filters">',
+    '<span class="lbl">product</span>',
+    '<div class="seg">',
+    // `all` clears this filter and keeps the other one.
+    one(queueHref(rule, null), 'all', active === null, runs.length),
+    ...values.map((value) => one(
+      queueHref(rule, value),
+      value === NO_PRODUCT ? 'no product' : productLabel(labels, value),
+      active === value,
+      runs.filter((run) => productOf(run.product) === value).length,
+    )),
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
+/** The runs a chosen product leaves, or all of them when none is chosen. */
+export function narrowToProduct(
+  runs: readonly RunDetail[],
+  product: string | null,
+): readonly RunDetail[] {
+  if (product === null) return runs;
+  return runs.filter((run) => productOf(run.product) === product);
 }
 
 /**
@@ -1126,6 +1226,22 @@ function isPolicyReason(value: string | null): value is PolicyReason {
  * a queue row is a layout a person cannot read as well as a claim this
  * console cannot stand behind.
  */
+/**
+ * DEC-47: the product a case is for, in words. Null is said, not drawn.
+ *
+ * The catalogue's label when it holds one, and the id otherwise. A product
+ * the catalogue no longer declares still has runs, and a row that drew a
+ * blank for one would read as a product nobody had chosen.
+ */
+function productSays(product: string | null, labels: ReadonlyMap<string, string>): string {
+  return product === null || product === '' ? 'no product' : productLabel(labels, product);
+}
+
+/** The label a product is shown by, or its id when the catalogue holds none. */
+function productLabel(labels: ReadonlyMap<string, string>, product: string): string {
+  return labels.get(product) ?? product;
+}
+
 function gateRuleSays(gateReason: string | null): string {
   if (gateReason === null) return 'no gate rule journalled';
   return isPolicyReason(gateReason) ? gateReason : 'a rule this console does not know';
@@ -1194,6 +1310,32 @@ export interface QueueTodayView {
   readonly reachedQueue: number;
 }
 
+/**
+ * What the queue is showing, and to whom (DEC-47).
+ *
+ * The two filters are separate and both apply: a reviewer working one gate
+ * rule on one product gets both at once rather than one replacing the other.
+ * `mine` is the products the request's reviewer covers, read from the roster,
+ * for the order only.
+ */
+export interface QueueView {
+  readonly rule: string | null;
+  readonly product: string | null;
+  readonly mine: readonly string[];
+  /**
+   * DEC-47: the label each product is shown by, from the catalogue the
+   * process read at startup. A product the map does not hold is shown by its
+   * id, which is its real name rather than a blank.
+   */
+  readonly labels: ReadonlyMap<string, string>;
+  /**
+   * The tag of the fault that stopped the console reading the reviewer's own
+   * products, or null. The queue still draws: it orders by the ledger's own
+   * rule rather than by a preference it could not read, and it says so.
+   */
+  readonly mineUnread: string | null;
+}
+
 /** The counts, or the tag of the fault that stopped the console reading them. */
 export type QueueTodayRead =
   | { readonly counts: QueueTodayView }
@@ -1225,6 +1367,20 @@ const GROUP_LABELS: Readonly<Record<QueueGroup, { readonly label: string; readon
       + ' and the case returns to its own group. To move a hold to you, open the case and confirm it.',
   },
 };
+
+/**
+ * What the queue says when it could not read the reviewer's own products
+ * (DEC-47).
+ *
+ * The queue draws, ordered as it was before this existed. A reviewer who
+ * declared products and reads a list in the ledger's order would otherwise
+ * think the console had ignored their choice.
+ */
+function mineUnreadSays(view: QueueView): string {
+  if (view.mineUnread === null) return '';
+  return '<p class="qaside">The products you cover were not read, so this queue is in its own'
+    + ` order rather than yours. The console log names the fault ${escapeHtml(view.mineUnread)}.</p>`;
+}
 
 /**
  * What the queue says when it could not read who holds what (DEC-46).
@@ -1288,14 +1444,25 @@ function agreementSays(agreement: number | null, gateReason: string | null): str
  */
 export function renderApprovals(
   runs: readonly RunDetail[],
-  rule: string | null,
+  view: QueueView,
   today: QueueTodayRead,
   holds: QueueHoldsRead,
 ): string {
-  // `runs` is everything waiting. The chips and the count are read from it
+  const { rule, product, mine } = view;
+  // A filter the query string invented narrows to nothing, which is what it
+  // asked for, and the list says so.
+  //
+  // `runs` is everything waiting. The chips and the counts are read from it
   // rather than from the narrowed view, so a filter cannot make the queue
   // report that it has emptied — and so each chip can say how many it holds.
-  const shownRuns = narrowToRule(runs, rule);
+  // Both filters narrow, and either may be the only one set.
+  const shownRuns = narrowToProduct(narrowToRule(runs, rule), product);
+  // A value that narrows NOTHING is never written back out into a link: the
+  // cross-filter links below carry only the filters that the waiting runs
+  // actually carry. Without this, a value from a query string — hostile or
+  // merely stale — would ride from the address bar into every chip's href.
+  const keptRule = narrowToRule(runs, rule).length > 0 ? rule : null;
+  const keptProduct = narrowToProduct(runs, product).length > 0 ? product : null;
   // "Held by someone else" is the whole meaning of the group: a case the
   // reader holds is theirs to work, and stays where its gate facts put it.
   const heldByAnother = (runId: string): QueueHold | null => {
@@ -1307,17 +1474,32 @@ export function renderApprovals(
     'Needs a person',
     `${todaySays(today)} This list is not capped, so the oldest is on it.`,
     [chip(`${runs.length} waiting`)],
-  ) + gateFilters(runs, rule) + ESCALATED_ELSEWHERE + holdsUnreadSays(holds);
+  ) + gateFilters(runs, keptRule, keptProduct)
+    + productChips(runs, keptProduct, keptRule, view.labels)
+    + ESCALATED_ELSEWHERE + holdsUnreadSays(holds) + mineUnreadSays(view);
   if (shownRuns.length === 0) {
     // For approval, not for a person. An escalated run waits for a person as
     // well, and the line above says where it is.
+    // Which filter emptied it, when one did: a reviewer who set two has to
+    // be able to tell which one to clear.
+    if (rule === null && product === null) {
+      return header + nothing('Nothing is waiting for approval.');
+    }
     return header + nothing(
-      rule === null
-        ? 'Nothing is waiting for approval.'
-        : 'Nothing waiting carries that rule.',
+      rule !== null && product !== null
+        ? 'Nothing waiting carries that rule for that product.'
+        : rule !== null
+          ? 'Nothing waiting carries that rule.'
+          : 'Nothing waiting is for that product.',
     );
   }
-  const sections = groupQueue(shownRuns, (run) => heldByAnother(run.runId) !== null);
+  // DEC-47: the reviewer's own products first, inside each group.
+  const covered = new Set(mine);
+  const sections = groupQueue(
+    shownRuns,
+    (run) => heldByAnother(run.runId) !== null,
+    (run) => run.product !== null && covered.has(run.product),
+  );
   const keysLine = keyLegend();
   // Who holds it and for how long, on the row. The group says somebody does;
   // the row says who, because a queue of hundreds has more than one holder.
@@ -1328,7 +1510,7 @@ export function renderApprovals(
       : `held by ${escapeHtml(hold.reviewer)} · ${escapeHtml(ageSays(hold.takenAt))} · `;
   };
   const row = (run: RunDetail): string => [
-    `<a class="item" href="${escapeHtml(caseHref(run.runId, rule))}">`,
+    `<a class="item" href="${escapeHtml(caseHref(run.runId, keptRule, keptProduct))}">`,
     '<div class="itop">',
     `<span class="m isubj">${escapeHtml(run.ticketId)}</span>`,
     // How long it has waited, on the row. The header says the oldest is on
@@ -1341,6 +1523,10 @@ export function renderApprovals(
     `<div class="m imeta">`,
     `${heldSays(run.runId)}`,
     `${escapeHtml(run.intentId ?? 'intent unrecorded')}`,
+    // DEC-47: which product this case is for, said on the row. A reviewer
+    // reading a queue ordered by their own products has to see why a case
+    // sits where it does, and `no product` is a fact rather than a blank.
+    ` · ${escapeHtml(productSays(run.product, view.labels))}`,
     ` · ${escapeHtml(gateRuleSays(run.gateReason))}`,
     // Why a case sits where its rule does not put it. A compensation cannot be
     // undone, and the `irreversible` rule already says so.
@@ -1369,6 +1555,10 @@ export function renderApprovals(
     '<div class="list">',
     `<div class="lhd"><span class="lbl">Waiting · ${escapeHtml(String(shownRuns.length))}`
       + `${rule === null ? '' : escapeHtml(` · ${rule === UNRULED ? 'no gate rule' : gateRuleSays(rule)}`)}`
+      // DEC-47: the product is named the way the rule is. A narrowed list
+      // that said `Waiting · 2` and nothing else would leave the narrowing
+      // to a chip's highlight to explain.
+      + `${product === null || product === '' ? '' : escapeHtml(` · ${product === NO_PRODUCT ? 'no product' : productLabel(view.labels, product)}`)}`
       + '</span></div>',
     ...sections.map((section) => {
       const { label, note } = GROUP_LABELS[section.group];
@@ -1398,15 +1588,38 @@ function keyLegend(): string {
   return '<div class="keys">j / k move · enter opens · c takes the case</div>';
 }
 
-/** The case page of a run, with a chosen queue rule kept for the way back. */
-export function caseHref(runId: string, rule: string | null): string {
-  return `/case/${encodeURIComponent(runId)}`
-    + (rule === null || rule === '' ? '' : `?rule=${encodeURIComponent(rule)}`);
+/**
+ * The case page of a run, with the chosen queue filters kept for the way
+ * back (DEC-47).
+ *
+ * The rule rode here first, and the product rides beside it rather than
+ * replacing it: a reviewer working one rule on one product clears one filter
+ * at a time, and a case that dropped either would send them back to a queue
+ * they had not chosen.
+ */
+export function caseHref(runId: string, rule: string | null, product: string | null = null): string {
+  return `/case/${encodeURIComponent(runId)}${filtersQuery(rule, product)}`;
 }
 
-/** The queue, with a chosen rule kept. */
-function queueHref(rule: string | null): string {
-  return rule === null || rule === '' ? '/' : `/?rule=${encodeURIComponent(rule)}`;
+/** The queue, with the chosen filters kept. */
+export function queueHref(rule: string | null, product: string | null): string {
+  return `/${filtersQuery(rule, product)}`;
+}
+
+/**
+ * `?rule=…&product=…`, each value encoded on its own.
+ *
+ * Written out rather than through `URLSearchParams`, whose form encoding
+ * turns a space into `+` and escapes the parentheses a rule name may hold.
+ * Both spellings decode to the same value, so this is about the links a
+ * browser already holds and about one encoding being this console's, not
+ * two.
+ */
+export function filtersQuery(rule: string | null, product: string | null): string {
+  const parts: string[] = [];
+  if (rule !== null && rule !== '') parts.push(`rule=${encodeURIComponent(rule)}`);
+  if (product !== null && product !== '') parts.push(`product=${encodeURIComponent(product)}`);
+  return parts.length === 0 ? '' : `?${parts.join('&')}`;
 }
 
 /**
@@ -1433,6 +1646,8 @@ export interface CaseOptions {
   readonly outcome: string;
   /** The queue rule a person came from, kept on the way back. */
   readonly rule: string | null;
+  /** DEC-47: the queue product a person came from, kept the same way. */
+  readonly product: string | null;
   /**
    * The adapter the console reads drafts back through, or null when it reads
    * none (section 4.10). The case says which, because it decides whether an
@@ -1503,7 +1718,7 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
   return [
     '<div class="casehd">',
     '<div class="backrow">'
-      + `<a class="back" href="${escapeHtml(queueHref(options.rule))}">← Needs a person</a>`
+      + `<a class="back" href="${escapeHtml(queueHref(options.rule, options.product))}">← Needs a person</a>`
       + '<span class="backkey">esc returns to the queue</span></div>',
     '<div class="casetitle">',
     `<span class="m casesubj">${escapeHtml(view.ticketId)}</span>`,
@@ -1713,28 +1928,33 @@ function holdBar(view: CaseView, options: CaseOptions): string {
   const hold = read.hold;
   const said = answered;
   const field = `<input type="hidden" name="runId" value="${escapeHtml(view.runId)}">`;
-  const action = `<form method="post" action="/take">`;
+  // DEC-47: the queue filters ride on every form that returns to the case,
+  // so a take, a release or a handover does not drop the queue the reviewer
+  // was reading. They travel on the action's query string, as the approval's
+  // do, and never as a field.
+  const filters = escapeHtml(filtersQuery(options.rule, options.product));
 
   if (hold === null) {
     return `<div class="holdbar"><p class="discl">Nobody holds this case.</p>`
-      + `<form method="post" action="/take">${field}`
+      + `<form method="post" action="/take${filters}">${field}`
       + `<button class="btn" type="submit">Take this case</button></form>${said}</div>`;
   }
   if (hold.mine) {
     return `<div class="holdbar"><p class="discl">Held by you · ${escapeHtml(remainingSays(hold.remainingMs))}.</p>`
-      + `<form method="post" action="/take">${field}<input type="hidden" name="release" value="1">`
+      + `<form method="post" action="/take${filters}">${field}<input type="hidden" name="release" value="1">`
       + `<button class="btn" type="submit">Release it</button></form>`
       // The handover names a teammate. The identity is text rather than a
       // list of the team: the console shows no roster, and the core refuses
       // a name that is not on it.
-      + `<form method="post" action="/take">${field}<input type="hidden" name="handover" value="1">`
+      + `<form method="post" action="/take${filters}">${field}<input type="hidden" name="handover" value="1">`
       + `<input class="identity" name="to" type="text" size="18" placeholder="teammate identity"`
       + ` value="${escapeHtml(options.handoverTo)}">`
       + `<button class="btn" type="submit">Hand it over</button></form>${said}</div>`;
   }
   return `<div class="holdbar"><p class="discl">Held by ${escapeHtml(hold.reviewer)}`
     + ` · ${escapeHtml(remainingSays(hold.remainingMs))}.</p>`
-    + `${action}${field}<input type="hidden" name="over" value="1">`
+    + `<form method="post" action="/take${filters}">${field}`
+    + '<input type="hidden" name="over" value="1">'
     + `<button class="btn" type="submit">Take it over</button></form>${said}</div>`;
 }
 
@@ -1835,7 +2055,13 @@ function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
       ? `<p class="discl">${escapeHtml(act.says)}</p>`
       // The digest is of the reply this page drew, which is the text the
       // ledger parked and the text the approval will compare against.
-      : approveForm(view.runId, act.label, act.says, options.rule, replyDigest(view.evidence.draftBody ?? ''))
+      : approveForm(
+        view.runId,
+        act.label,
+        act.says,
+        { rule: options.rule, product: options.product },
+        replyDigest(view.evidence.draftBody ?? ''),
+      )
         + (act.kind === 'reply' ? `<p class="readback">${escapeHtml(readBackSays(options.readBack))}</p>` : '');
   return `<div class="actionbar">${inner}</div>`;
 }
@@ -1954,15 +2180,19 @@ function approveForm(
   runId: string,
   label: string,
   says: string,
-  rule: string | null = null,
+  filters: { readonly rule: string | null; readonly product: string | null },
   shown: string | null = null,
 ): string {
   return [
     '<div class="warnbar"><span class="dot" style="color:var(--accent); margin-top:5px"></span>',
     `<div>${escapeHtml(says)}</div></div>`,
-    // The filter rides on the action, not in a field.
-    `<form method="post" action="/approve${
-      rule === null ? '' : `?rule=${encodeURIComponent(rule)}`}">`,
+    // The filters ride on the action, not in a field, and both of them: an
+    // approval that came from a narrowed queue returns to that queue
+    // (DEC-47). The POST reads them off the URL, so a body cannot set one.
+    // Escaped, because the pair holds an `&` and an attribute carries
+    // `&amp;`. The POST reads it back decoded, so the filter survives the
+    // round trip either way.
+    `<form method="post" action="/approve${escapeHtml(filtersQuery(filters.rule, filters.product))}">`,
     `<input type="hidden" name="runId" value="${escapeHtml(runId)}">`,
     shown === null ? '' : `<input type="hidden" name="shown" value="${escapeHtml(shown)}">`,
     `<button class="btn primary" type="submit">${escapeHtml(label)}</button>`,
@@ -2468,6 +2698,18 @@ const DESIGN_NOTES: readonly { readonly token: Token; readonly title: string; re
     says: 'Runs, control bands and partition latency sit under Admin.'
       + ' They answer questions about the pipeline, and a person clearing a queue between'
       + ' two engineering tasks is not asking them.',
+  },
+  {
+    token: 'ok',
+    title: 'Product is a first-class column',
+    says: 'Each run records the product of the channel its message arrived on, and the console reads that'
+      + ' value rather than inferring one from the message.'
+      + ' Every queue row names the product it is for, and a run whose channel the map does not name says'
+      + ' no product rather than drawing a blank.'
+      + ' A chip per product carries the count read from every waiting run, so narrowing the queue never'
+      + ' reports it as smaller than it is.'
+      + ' The products a reviewer covers read first, and that order hides nothing: every waiting case is'
+      + ' still on the page.',
   },
   {
     token: 'accent',

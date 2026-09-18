@@ -139,6 +139,12 @@ export interface EscalationItem {
    * not carried: this read feeds an unauthenticated page.
    */
   readonly approved: boolean;
+  /**
+   * DEC-47: the product of the channel this run's message arrived on, or
+   * null when that channel mapped to no product. The queue groups and
+   * narrows on it; a null is its own value there, not an absence to hide.
+   */
+  readonly product: string | null;
   readonly costMicros: number;
   readonly stepsUsed: number;
 }
@@ -224,6 +230,7 @@ const RUN_SELECT_BODY = `
          park.result ->> 'actionClass'     AS action_class,
          park.result ->> 'delivery'        AS delivery,
          (r.approved_by IS NOT NULL)       AS approved,
+         r.product            AS product,
          o.status             AS outbox_status
     FROM run r
     LEFT JOIN step_journal esc
@@ -295,6 +302,7 @@ const OUTBOX_SELECT = `
          park.result ->> 'actionClass'     AS action_class,
          park.result ->> 'delivery'        AS delivery,
          (r.approved_by IS NOT NULL)       AS approved,
+         r.product            AS product,
          o.status             AS outbox_status
     FROM outbox o
     JOIN run r ON r.run_id = o.run_id
@@ -362,6 +370,10 @@ function toItem(row: Record<string, unknown>): EscalationItem {
         : null,
     actionClass: (row['action_class'] as string | null) ?? null,
     delivery: (row['delivery'] as string | null) ?? null,
+    // DEC-47: the product of the channel this run's message arrived on. Null
+    // is a run whose channel mapped to no product, which every surface
+    // states in words rather than drawing a blank.
+    product: (row['product'] as string | null) ?? null,
     approved: row['approved'] === true,
     costMicros: row['cost_micros'] as number,
     stepsUsed: row['steps_used'] as number,

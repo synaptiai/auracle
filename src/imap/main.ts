@@ -12,6 +12,8 @@
  * - IMAP_INTERVAL_MS  milliseconds between polls (default: 60000)
  * - PARTITION_COUNT   DEC-27 intake partition count (default: 8)
  * - DATABASE_URL      ledger connection (see src/db/config.ts)
+ * - PRODUCTS_FILE     the channel map the product is read from
+ *                     (default: products.json)
  *
  * All values may live in a ./.env file: this entrypoint loads it at startup
  * when present. An explicit shell env always wins over .env.
@@ -19,6 +21,7 @@
 import { Pool } from 'pg';
 
 import { loadDotEnv, positiveIntEnv, requiredEnv } from '../config/env.js';
+import { productCatalogueFromEnv } from '../config/products.js';
 import { requireDbUrl } from '../db/config.js';
 import { intakeEnqueuer } from '../intake/adapter.js';
 import { startImapDaemon } from './daemon.js';
@@ -37,12 +40,17 @@ async function main(): Promise<void> {
   const intervalMs = positiveIntEnv('IMAP_INTERVAL_MS', 60_000);
   const partitionCount = positiveIntEnv('PARTITION_COUNT', 8);
 
+  // Read once, before the first poll (DEC-47). A catalogue that cannot be
+  // read refuses this process rather than enqueuing a ticket whose product
+  // nothing can resolve.
+  const catalogue = productCatalogueFromEnv();
+
   const pool = new Pool({ connectionString: requireDbUrl('the IMAP ingress'), max: 1 });
   const fetcher = new ImapMailboxFetcher(config, imapFlowFactory(config));
 
   const daemon = startImapDaemon({
     fetcher,
-    onEvent: intakeEnqueuer(pool, partitionCount),
+    onEvent: intakeEnqueuer(pool, partitionCount, catalogue),
     intervalMs,
   });
 

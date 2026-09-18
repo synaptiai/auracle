@@ -131,7 +131,11 @@ export const CONSOLE_SCRIPT = `
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(taken)) return;
       var takeForm = document.createElement('form');
       takeForm.method = 'post';
-      takeForm.action = '/take';
+      // The queue's filters ride on the action, as they do on every form the
+      // server renders (DEC-47). The take redirect rebuilds them from the
+      // POST URL, so a shortcut that dropped them would return the reviewer
+      // to a queue they had not chosen.
+      takeForm.action = '/take' + window.location.search;
       var takeField = document.createElement('input');
       takeField.type = 'hidden';
       takeField.name = 'runId';

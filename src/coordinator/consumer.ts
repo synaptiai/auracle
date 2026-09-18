@@ -219,6 +219,8 @@ async function abandonMessage(
     conversationId: string | null;
     /** DEC-35: the turn this message was, when the intake row recorded one. */
     turnNumber: number | null;
+    /** DEC-47: the product recorded at arrival, which this run inherits. */
+    product: string | null;
   },
   reason: string,
 ): Promise<boolean> {
@@ -271,15 +273,27 @@ async function abandonMessage(
     const run = await client.query<{ run_id: string }>(
       `INSERT INTO run (run_id, ticket_id, partition, epoch, state,
                         prompt_ver, model_ver, deadline_at, finished_at,
-                        conversation_id, turn_number)
+                        conversation_id, turn_number, product)
        VALUES (gen_random_uuid(), $1, $2, $4, 'escalated',
-               'intake', 'intake', now(), now(), $3, $5)
+               'intake', 'intake', now(), now(), $3, $5, $6)
        RETURNING run_id`,
       // DEC-35: the turn this abandoned message was. Without it the run that
       // records an abandoned turn is the one run a conversation surface
       // cannot join to its turn — which is the turn an operator most needs to
       // trace, because it is the one the system gave up on.
-      [polled.ticketId, polled.partition, polled.conversationId, epoch, polled.turnNumber],
+      //
+      // DEC-47: the abandonment is a run like any other, and it is the run an
+      // operator reads when a message went unanswered. The product comes from
+      // the queue row this call is deleting, so this is the last moment it
+      // can be recorded.
+      [
+        polled.ticketId,
+        polled.partition,
+        polled.conversationId,
+        epoch,
+        polled.turnNumber,
+        polled.product,
+      ],
     );
     // The escalations view reads its reason from this step, so the operator
     // sees why the message was abandoned and not merely that it vanished.
@@ -413,6 +427,8 @@ export async function processQueuedTickets(
         // DEC-35: the conversation, its participant, and the turns before this.
         conversationId: polled.conversationId,
         customerAddress: polled.customerAddress,
+        // DEC-47: the product recorded at arrival, onto the run row.
+        product: polled.product,
         // DEC-38: the turn joins the idempotency key.
         ...(polled.turnNumber === null ? {} : { turnNumber: polled.turnNumber }),
         history: await conversationHistory(

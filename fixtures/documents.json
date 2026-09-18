@@ -12,7 +12,8 @@
       "linked_intents": [
         "invoice-copy-request",
         "billing-dispute"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-002",
@@ -25,7 +26,8 @@
       "linked_intents": [
         "refund-request",
         "chargeback-notice"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-003",
@@ -37,7 +39,8 @@
       "review_by": "2026-04-01",
       "linked_intents": [
         "cancel-subscription"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-004",
@@ -49,7 +52,8 @@
       "review_by": "2026-01-31",
       "linked_intents": [
         "data-deletion-request"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-005",
@@ -61,6 +65,9 @@
       "review_by": "2026-03-15",
       "linked_intents": [
         "sync-error-report"
+      ],
+      "products": [
+        "aurora"
       ]
     },
     {
@@ -74,7 +81,8 @@
       "linked_intents": [
         "account-recovery",
         "login-trouble"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-007",
@@ -86,6 +94,9 @@
       "review_by": "2026-05-01",
       "linked_intents": [
         "export-broken"
+      ],
+      "products": [
+        "aurora"
       ]
     },
     {
@@ -99,6 +110,9 @@
       "linked_intents": [
         "api-usage-question",
         "integration-failure"
+      ],
+      "products": [
+        "ledger"
       ]
     },
     {
@@ -112,7 +126,8 @@
       "linked_intents": [
         "refund-request",
         "billing-dispute"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-102",
@@ -124,7 +139,8 @@
       "review_by": "2026-02-15",
       "linked_intents": [
         "login-trouble"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-103",
@@ -136,7 +152,8 @@
       "review_by": "2026-04-01",
       "linked_intents": [
         "cancel-subscription"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-104",
@@ -148,7 +165,8 @@
       "review_by": "2026-03-15",
       "linked_intents": [
         "integration-failure"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-105",
@@ -160,7 +178,8 @@
       "review_by": "2026-05-01",
       "linked_intents": [
         "notification-settings-help"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-106",
@@ -172,7 +191,8 @@
       "review_by": "2026-01-31",
       "linked_intents": [
         "status-inquiry"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-009",
@@ -184,7 +204,8 @@
       "review_by": "2026-03-01",
       "linked_intents": [
         "payment-failure"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-010",
@@ -196,7 +217,8 @@
       "review_by": "2026-04-01",
       "linked_intents": [
         "plan-change-question"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-011",
@@ -208,7 +230,8 @@
       "review_by": "2026-02-15",
       "linked_intents": [
         "onboarding-help"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-012",
@@ -220,7 +243,8 @@
       "review_by": "2026-05-01",
       "linked_intents": [
         "how-to-question"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-013",
@@ -232,7 +256,8 @@
       "review_by": "2026-03-15",
       "linked_intents": [
         "pricing-question"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-014",
@@ -244,7 +269,8 @@
       "review_by": "2026-04-15",
       "linked_intents": [
         "documentation-gap"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-015",
@@ -257,7 +283,8 @@
       "linked_intents": [
         "feedback-positive",
         "feature-request"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-016",
@@ -269,7 +296,8 @@
       "review_by": "2026-02-28",
       "linked_intents": [
         "bug-minor-report"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-017",
@@ -281,6 +309,9 @@
       "review_by": "2026-05-01",
       "linked_intents": [
         "mobile-app-question"
+      ],
+      "products": [
+        "aurora"
       ]
     },
     {
@@ -293,7 +324,8 @@
       "review_by": "2026-03-01",
       "linked_intents": [
         "other"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-019",
@@ -306,7 +338,8 @@
       "linked_intents": [
         "invoice-copy-request",
         "billing-dispute"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-020",
@@ -319,7 +352,8 @@
       "linked_intents": [
         "account-recovery",
         "login-trouble"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-021",
@@ -332,7 +366,8 @@
       "linked_intents": [
         "integration-failure",
         "api-usage-question"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "DOC-SYN-022",
@@ -344,7 +379,8 @@
       "review_by": "2026-01-31",
       "linked_intents": [
         "status-inquiry"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-107",
@@ -356,7 +392,8 @@
       "review_by": "2026-03-01",
       "linked_intents": [
         "payment-failure"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-108",
@@ -368,7 +405,8 @@
       "review_by": "2026-04-01",
       "linked_intents": [
         "plan-change-question"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-109",
@@ -380,7 +418,8 @@
       "review_by": "2026-02-15",
       "linked_intents": [
         "onboarding-help"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-110",
@@ -392,7 +431,8 @@
       "review_by": "2026-05-01",
       "linked_intents": [
         "pricing-question"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-111",
@@ -404,7 +444,8 @@
       "review_by": "2026-04-15",
       "linked_intents": [
         "documentation-gap"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-112",
@@ -416,7 +457,8 @@
       "review_by": "2026-02-28",
       "linked_intents": [
         "bug-minor-report"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-113",
@@ -429,6 +471,9 @@
       "linked_intents": [
         "mobile-app-question",
         "login-trouble"
+      ],
+      "products": [
+        "aurora"
       ]
     },
     {
@@ -442,6 +487,9 @@
       "linked_intents": [
         "integration-failure",
         "api-usage-question"
+      ],
+      "products": [
+        "ledger"
       ]
     },
     {
@@ -454,7 +502,8 @@
       "review_by": "2026-05-01",
       "linked_intents": [
         "feature-request"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-116",
@@ -466,7 +515,8 @@
       "review_by": "2026-04-01",
       "linked_intents": [
         "export-broken"
-      ]
+      ],
+      "products": []
     },
     {
       "doc_id": "RES-SYN-117",
@@ -478,7 +528,8 @@
       "review_by": "2026-02-15",
       "linked_intents": [
         "data-deletion-request"
-      ]
+      ],
+      "products": []
     }
   ]
 }

@@ -98,6 +98,10 @@ const EVIDENCE = {
  * case here. A case about time overrides it.
  */
 const ROW = {
+  // DEC-47: the product of the channel the message arrived on. Every fixture
+  // row carries one unless a case is about the runs whose channel mapped to
+  // none, which is what a null says.
+  product: 'aurora',
   gateReason: 'customer_visible',
   intentId: 'refund-request',
   gateCoverage: 0.94,
@@ -234,6 +238,13 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
     // DEC-46: the case hold. The default is an unheld case whose takes and
     // releases succeed, so a case about a surface is not also a case about
     // the hold; the hold's own cases override these.
+    // DEC-47: the products this request's reviewer covers. Empty by default,
+    // so the queue's order is the ledger's own and a case about the order
+    // says which products it means.
+    readReviewerProducts: async () => [],
+    // DEC-47: what each product is called. The shipped catalogue's two, so a
+    // case about a chip reads the label an operator would see.
+    productLabels: new Map([['aurora', 'Aurora'], ['ledger', 'Ledger']]),
     readHold: async () => null,
     readHolds: async () => new Map(),
     takeHold: async () => ({ outcome: 'taken' }),
@@ -2148,12 +2159,12 @@ describe('the design notes', () => {
       ['ok', 'An absence is still a sentence'],
       ['dim', 'The engineer surfaces sit under Admin'],
       // DEC-46: the case hold, which the console keeps now.
+      ['ok', 'Product is a first-class column'],
       ['accent', 'A lock, because four people pull from one uncapped list'],
     ]);
     for (const unbuilt of [
       'The reply is edited here, and sent from here',
       'The knowledge base is edited from inside the case',
-      'Product is a first-class column',
     ]) {
       expect(html, unbuilt).not.toContain(unbuilt);
     }
@@ -2165,7 +2176,7 @@ describe('the design notes', () => {
     const base = await startGuarded(deps());
     const html = await (await fetch(base + '/notes')).text();
     const cards = cardsOf(html);
-    expect(cards).toHaveLength(4);
+    expect(cards).toHaveLength(5);
     for (const card of cards) {
       for (const source of ['was:', '.ts', 'approveControl', 'MESSAGE_ABSENCE', 'gateValue', 'Instrument']) {
         expect(card.says, `${card.title}: ${source}`).not.toContain(source);
@@ -2198,6 +2209,14 @@ describe('the design notes', () => {
       'Runs, control bands and partition latency sit under Admin.'
         + ' They answer questions about the pipeline, and a person clearing a queue between'
         + ' two engineering tasks is not asking them.',
+      'Each run records the product of the channel its message arrived on, and the console reads that'
+        + ' value rather than inferring one from the message.'
+        + ' Every queue row names the product it is for, and a run whose channel the map does not name says'
+        + ' no product rather than drawing a blank.'
+        + ' A chip per product carries the count read from every waiting run, so narrowing the queue never'
+        + ' reports it as smaller than it is.'
+        + ' The products a reviewer covers read first, and that order hides nothing: every waiting case is'
+        + ' still on the page.',
       'The queue is not capped, so the same case can sit in front of four reviewers at once.'
         + ' A reviewer takes a case before working it, so the others see who holds it and the time left.'
         + ' The hold says who is working, and it refuses no write: any reviewer may still approve the case.'
@@ -2223,7 +2242,9 @@ describe('the design notes', () => {
     // carries that note beside it, still as a token of its own.
     // The whole line, so no score can join it unseen.
     expect(queue).toContain(
-      '<div class="m imeta">refund-request · customer_visible · tier unrecorded'
+      // DEC-47 put the product beside the intent, so the row says which
+      // product the case is for on the surface that orders by one.
+      '<div class="m imeta">refund-request · Aurora · customer_visible · tier unrecorded'
         + ' · agreement 0.89 (not read) · coverage 0.94 (not read)</div>',
     );
     expect(queue).toContain('Both gates clean');
@@ -2354,6 +2375,64 @@ describe('the design notes', () => {
     expect(heldCase).toContain('Take it over');
     expect(heldCase).toContain('action="/approve');
     expect(heldCase).toContain('Approve and send');
+  });
+
+  // Card 5, claimed on the queue it describes (DEC-47). Every sentence of
+  // the card is checked here: the row names the product, `no product` is
+  // said rather than drawn, the chip count comes from every waiting run
+  // while a filter is on, and the reviewer's own products read first without
+  // hiding a case.
+  it('makes the product card true of the console it describes', async () => {
+    // Built here rather than through the queue harness below, which is
+    // declared inside another describe. Each case carries its own time, so
+    // the order this case reads is the order the card claims.
+    const one = (
+      runId: string,
+      ticketId: string,
+      product: string | null,
+      createdAt: string,
+    ) => ({
+      runId, ticketId, state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+      reason: null, stepsUsed: 4, draftExternalId: 'D-1', coverage: null,
+      agreement: 0.91, agreementThreshold: 0.8, gateCoverage: 0.86,
+      coverageReviewThreshold: 0.8, product, createdAt: new Date(createdAt),
+    });
+    const runs = [
+      one('11111111-1111-4111-8111-111111111111', 'SYN-AURORA', 'aurora', '2026-09-14T12:00:00Z'),
+      one('22222222-2222-4222-8222-222222222222', 'SYN-LEDGER', 'ledger', '2026-09-14T11:00:00Z'),
+      one('33333333-3333-4333-8333-333333333333', 'SYN-UNSCOPED', null, '2026-09-14T10:00:00Z'),
+    ];
+    const base = await startGuarded(deps({
+      listApprovals: async () => runs,
+      readReviewerProducts: async () => ['ledger'],
+    }));
+
+    // The value comes from the run, and the row states it — including the
+    // null, which is a sentence rather than a gap.
+    const queue = await (await fetch(base + '/')).text();
+    expect(queue).toContain('refund-request · Aurora · customer_visible');
+    expect(queue).toContain('refund-request · Ledger · customer_visible');
+    expect(queue).toContain('refund-request · no product · customer_visible');
+    // The reviewer's own product reads first, and nothing is hidden to do it.
+    // The covered case leads though it is not the oldest, and the two the
+    // reviewer does not cover keep their age order behind it.
+    expect([...queue.matchAll(/SYN-(AURORA|LEDGER|UNSCOPED)/g)].map((m) => m[0])).toEqual([
+      'SYN-LEDGER', 'SYN-UNSCOPED', 'SYN-AURORA',
+    ]);
+    for (const ticket of ['SYN-AURORA', 'SYN-LEDGER', 'SYN-UNSCOPED']) {
+      expect(queue, ticket).toContain(ticket);
+    }
+
+    // Narrowed, the counts still come from every waiting run: the queue
+    // reports one case shown and three waiting, never one of one.
+    const narrowed = await (await fetch(base + '/?product=aurora')).text();
+    expect(narrowed).toContain('Waiting · 1');
+    expect(narrowed).toContain('<a href="/?product=ledger">Ledger<span class="dim"> 1</span></a>');
+    expect(narrowed).toContain('<a href="/?product=__none__">no product<span class="dim"> 1</span></a>');
+    // `all` offers the whole queue and is not the chip being shown. The mark
+    // is on the product the view is narrowed to.
+    expect(narrowed).toContain('<a href="/">all<span class="dim"> 3</span></a>');
+    expect(narrowed).toContain('<a href="/?product=aurora" class="on">Aurora');
   });
 
   // The page draws from nothing but its own copy, so a ledger that cannot
@@ -2488,7 +2567,9 @@ describe('the one script this console ships', () => {
     // builds a form and submits it: no link writes on a GET, and the pinned
     // lines below are what keeps that true if the script is ever rewritten.
     expect(script).toContain("takeForm.method = 'post';");
-    expect(script).toContain("takeForm.action = '/take';");
+    // The queue's filters ride with it (DEC-47): a take from a narrowed
+    // queue returns to that queue, as the case page's own take does.
+    expect(script).toContain("takeForm.action = '/take' + window.location.search;");
     expect(script).toContain('takeForm.submit();');
     expect(script).toContain('if (rowUrl.origin !== window.location.origin) return;');
     // c acts on the focused row alone, so it never chooses one for a reviewer.
@@ -2874,6 +2955,37 @@ describe('taking a case (DEC-46)', () => {
     const past = await remaining(-1_000);
     expect(past).toContain('less than a minute left');
     expect(past).not.toContain('1 minute left');
+  });
+
+  // DEC-47: a take from a narrowed queue returns to that queue. The four
+  // forms carry both filters on their action, the POST reads them off the
+  // URL, and the 303 rebuilds the case with both — so the reviewer's next
+  // click is "← Needs a person" back to the list they were working. The
+  // approval had this case; the take did not, and a later edit dropping
+  // `${filters}` from the four strings would have shipped green.
+  it('returns a take to the queue the reviewer narrowed to', async () => {
+    const base = await startGuarded(deps({ readHold: async () => null }));
+    const narrowed = await (await fetch(
+      base + `${CASE}?rule=customer_visible&product=aurora`,
+    )).text();
+    expect(narrowed).toContain('action="/take?rule=customer_visible&amp;product=aurora"');
+
+    const posted = await fetch(base + '/take?rule=customer_visible&product=aurora', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: new URLSearchParams({ runId: RUN }).toString(),
+      redirect: 'manual',
+    });
+    expect(posted.status).toBe(303);
+    const location = posted.headers.get('location') ?? '';
+    expect(location).toContain('rule=customer_visible');
+    expect(location).toContain('product=aurora');
+
+    const landed = await (await fetch(base + location)).text();
+    expect(landed).toContain('href="/?rule=customer_visible&amp;product=aurora"');
   });
 
   // The case is not the place for a hold: a run that is not waiting is not
@@ -3577,6 +3689,175 @@ describe('the queue a reviewer lands on (issue #101)', () => {
     expect(html).toMatch(/<a class="item" href="\/case\//);
   });
 
+  // DEC-47: a chip per product the queue holds, each with the count read
+  // from every waiting run. The product rides beside the rule as a second
+  // filter, and one closed set does not name the other.
+  describe('the product the case is for (DEC-47)', () => {
+    const scoped = () => [
+      waitingRun('11111111-1111-4111-8111-111111111111', 'SYN-AURORA', { product: 'aurora' }),
+      waitingRun('22222222-2222-4222-8222-222222222222', 'SYN-LEDGER', { product: 'ledger' }),
+      waitingRun('33333333-3333-4333-8333-333333333333', 'SYN-UNSCOPED', { product: null }),
+      waitingRun('44444444-4444-4444-8444-444444444444', 'SYN-AURORA-2', { product: 'aurora' }),
+    ];
+
+    it('offers a chip per product, with the count read from every waiting run', async () => {
+      const base = await startGuarded(deps({ listApprovals: async () => scoped() }));
+      const queue = await (await fetch(base + '/')).text();
+
+      expect(queue).toContain('<span class="lbl">product</span>');
+      // The whole chip, so a count from the narrowed view cannot pass.
+      expect(queue).toContain('<a href="/?product=aurora">Aurora<span class="dim"> 2</span></a>');
+      expect(queue).toContain('<a href="/?product=ledger">Ledger<span class="dim"> 1</span></a>');
+      expect(queue).toContain('<a href="/?product=__none__">no product<span class="dim"> 1</span></a>');
+      // `all` is the one being shown, so it is the chip that is marked.
+      expect(queue).toContain('<a href="/" class="on">all<span class="dim"> 4</span></a>');
+    });
+
+    it('narrows to one product without moving the other counts', async () => {
+      const base = await startGuarded(deps({ listApprovals: async () => scoped() }));
+      const narrowed = await (await fetch(base + '/?product=aurora')).text();
+
+      expect(narrowed).toContain('SYN-AURORA');
+      expect(narrowed).toContain('SYN-AURORA-2');
+      expect(narrowed).not.toContain('SYN-LEDGER');
+      expect(narrowed).not.toContain('SYN-UNSCOPED');
+      // Every count is still read from the whole queue, so a filter never
+      // reports the queue as smaller than it is.
+      expect(narrowed).toContain('<a href="/?product=ledger">Ledger<span class="dim"> 1</span></a>');
+      expect(narrowed).toContain('<a href="/">all<span class="dim"> 4</span></a>');
+      expect(narrowed).not.toContain('<a href="/" class="on">all');
+      // The chip for the product being shown is marked.
+      expect(narrowed).toContain('<a href="/?product=aurora" class="on">Aurora');
+      // And the count in the list header is the narrowed one.
+      expect(narrowed).toContain('Waiting · 2');
+    });
+
+    it('narrows to the runs whose channel mapped to no product', async () => {
+      const base = await startGuarded(deps({ listApprovals: async () => scoped() }));
+      const narrowed = await (await fetch(base + '/?product=__none__')).text();
+      expect(narrowed).toContain('SYN-UNSCOPED');
+      expect(narrowed).not.toContain('SYN-AURORA');
+      expect(narrowed).not.toContain('SYN-LEDGER');
+    });
+
+    it('says which filter emptied the queue, and names both when both did', async () => {
+      const base = await startGuarded(deps({ listApprovals: async () => scoped() }));
+      const product = await (await fetch(base + '/?product=not-a-product')).text();
+      expect(product).toContain('Nothing waiting is for that product.');
+
+      // Both filters at once: the view is the intersection, and the sentence
+      // names both so a reviewer knows which to clear.
+      const both = await (await fetch(base + '/?rule=irreversible&product=aurora')).text();
+      expect(both).toContain('Nothing waiting carries that rule for that product.');
+    });
+
+    it('applies both filters at once, and keeps both on the way to a case', async () => {
+      const base = await startGuarded(deps({ listApprovals: async () => scoped() }));
+      const both = await (await fetch(base + '/?product=aurora&rule=customer_visible')).text();
+      expect(both).toContain('SYN-AURORA');
+      expect(both).not.toContain('SYN-LEDGER');
+
+      // The chosen filters ride on each row's link, so opening a case and
+      // coming back does not lose them.
+      expect(both).toContain(
+        'href="/case/11111111-1111-4111-8111-111111111111?rule=customer_visible&amp;product=aurora"',
+      );
+      const opened = await (await fetch(
+        base + '/case/11111111-1111-4111-8111-111111111111?rule=customer_visible&product=aurora',
+      )).text();
+      expect(opened).toContain(
+        '<a class="back" href="/?rule=customer_visible&amp;product=aurora">← Needs a person</a>',
+      );
+    });
+
+    // DEC-47: the catalogue's label is what a person reads, and the id is
+    // what the ledger holds. A product the catalogue no longer declares
+    // still has runs, and it is shown by its id rather than by a blank.
+    it('shows the label the catalogue gives a product, and the id without one', async () => {
+      const base = await startGuarded(deps({
+        listApprovals: async () => [
+          waitingRun('11111111-1111-4111-8111-111111111111', 'SYN-AURORA', { product: 'aurora' }),
+          waitingRun('22222222-2222-4222-8222-222222222222', 'SYN-RETIRED', {
+            product: 'retired-product',
+          }),
+        ],
+      }));
+      const queue = await (await fetch(base + '/')).text();
+      // The chip, the row and the header all name the label.
+      expect(queue).toContain('>Aurora<span class="dim"> 1</span></a>');
+      expect(queue).toContain('refund-request · Aurora · customer_visible');
+      // A product the catalogue does not hold is shown by its id: the ledger
+      // records that value, and it is the name an operator would look up.
+      expect(queue).toContain('>retired-product<span class="dim"> 1</span></a>');
+      expect(queue).toContain('refund-request · retired-product · customer_visible');
+    });
+
+    // The column is `text` with no CHECK, so a row can carry the empty
+    // string — a hand-written insert, a backfill, a caller that passed it.
+    // It is an absence, and every surface says so rather than drawing a
+    // blank beside a chip that clears the filter.
+    it('reads an empty product as the absence it is', async () => {
+      const base = await startGuarded(deps({
+        listApprovals: async () => [
+          waitingRun('11111111-1111-4111-8111-111111111111', 'SYN-EMPTY', { product: '' }),
+          waitingRun('22222222-2222-4222-8222-222222222222', 'SYN-AURORA', { product: 'aurora' }),
+        ],
+      }));
+      const queue = await (await fetch(base + '/')).text();
+      expect(queue).toContain('refund-request · no product · customer_visible');
+      expect(queue).toContain('>no product<span class="dim"> 1</span></a>');
+      expect(queue).not.toContain(' ·  · ');
+
+      // And it narrows with the runs that carry no product at all.
+      const narrowed = await (await fetch(base + '/?product=__none__')).text();
+      expect(narrowed).toContain('SYN-EMPTY');
+      expect(narrowed).not.toContain('SYN-AURORA');
+    });
+
+    // A run whose channel the map does not name says so on the row rather
+    // than drawing nothing, which would read as a product nobody chose.
+    it('says no product on the row a product would be', async () => {
+      const base = await startGuarded(deps({
+        listApprovals: async () => [
+          waitingRun('33333333-3333-4333-8333-333333333333', 'SYN-UNSCOPED', { product: null }),
+        ],
+      }));
+      const queue = await (await fetch(base + '/')).text();
+      expect(queue).toContain('refund-request · no product · customer_visible');
+    });
+
+    // The order is the reviewer's, and a fault reading it does not take the
+    // queue away: the queue is the work. The page says which log line names
+    // the fault, so a reviewer who declared products knows why the list is
+    // not in their order.
+    it('orders by the reviewer\'s products, and says so when it cannot read them', async () => {
+      const listed = await startGuarded(deps({
+        listApprovals: async () => scoped(),
+        readReviewerProducts: async () => ['ledger'],
+      }));
+      const queue = await (await fetch(listed + '/')).text();
+      // The ledger case is the newest of the four and still leads its group.
+      const order = [...queue.matchAll(/SYN-(AURORA|LEDGER|UNSCOPED|AURORA-2)/g)]
+        .map((match) => match[0]);
+      expect(order[0]).toBe('SYN-LEDGER');
+
+      const broken = await startGuarded(deps({
+        listApprovals: async () => scoped(),
+        readReviewerProducts: async () => {
+          throw new Error('the roster read failed');
+        },
+      }));
+      const response = await fetch(broken + '/');
+      expect(response.status).toBe(200);
+      const drawn = await response.text();
+      expect(drawn).toContain('SYN-AURORA');
+      expect(drawn).toContain('The products you cover were not read');
+      expect(drawn).toMatch(/The console log names the fault [0-9a-f]{8}\./);
+      // And it did not reorder on a preference it could not read.
+      expect(drawn.match(/SYN-LEDGER/g)?.length).toBe(1);
+    });
+  });
+
   it('shows no keys where there is no queue to move through', async () => {
     const base = await startGuarded(deps({ listApprovals: async () => [] }));
     const html = await (await fetch(base + '/')).text();
@@ -4242,6 +4523,22 @@ describe('narrowing the queue to one gate rule', () => {
       expect(html, hostile).toContain('Nothing waiting carries that rule');
     }
   });
+
+  // DEC-47 gives the queue a second filter, and a query string is a query
+  // string: the product is never echoed either, not raw, not escaped, not
+  // encoded. The page names only the products the waiting runs carry.
+  it('never echoes a product the query string invented', async () => {
+    const base = await startGuarded(deps({ listApprovals: async () => mixed() }));
+    for (const hostile of ['<script>alert(1)</script>', '"onmouseover="x', 'zzz-marker']) {
+      const html = await (await fetch(
+        base + '/?product=' + encodeURIComponent(hostile),
+      )).text();
+      expect(html, hostile).not.toContain(hostile);
+      expect(html, hostile).not.toContain(escapeHtml(hostile));
+      expect(html, hostile).not.toContain(encodeURIComponent(hostile));
+      expect(html, hostile).toContain('Nothing waiting is for that product.');
+    }
+  });
 });
 
 describe('the time a run list is ordered by', () => {
@@ -4761,6 +5058,51 @@ describe('the case a reviewer decides on (issue #102)', () => {
     expect(html.split('<script>')).toHaveLength(2);
     expect(html).toContain(`action="/approve?rule=${encodeURIComponent(hostile)}"`);
     expect(html).toContain(`href="/?rule=${encodeURIComponent(hostile)}"`);
+  });
+
+  // DEC-47: an approval from a narrowed queue returns to that queue. The
+  // filters ride on the form's action, the POST reads them off the URL, and
+  // the 303 rebuilds the case with both — so the reviewer's next click is
+  // "← Needs a person" back to the list they were working.
+  it('returns an approval to the queue the reviewer narrowed to', async () => {
+    const base = await startGuarded(deps());
+    const narrowed = await (await fetch(base + `${CASE}?rule=customer_visible&product=aurora`)).text();
+    expect(narrowed).toContain('action="/approve?rule=customer_visible&amp;product=aurora"');
+
+    // The digest the page drew, as a browser posts it: the approval refuses
+    // a request without one.
+    const shown = /name="shown" value="([0-9a-f]{64})"/.exec(narrowed)?.[1] ?? '';
+    expect(shown).not.toBe('');
+    const posted = await fetch(base + '/approve?rule=customer_visible&product=aurora', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        // The console's own form, as a browser sends it.
+        'sec-fetch-site': 'same-origin',
+      },
+      body: new URLSearchParams({ runId: RUN, shown }).toString(),
+      redirect: 'manual',
+    });
+    expect(posted.status).toBe(303);
+    const location = posted.headers.get('location') ?? '';
+    expect(location).toContain('rule=customer_visible');
+    expect(location).toContain('product=aurora');
+
+    // And the case it lands on carries both back to the queue.
+    const landed = await (await fetch(base + location)).text();
+    expect(landed).toContain('href="/?rule=customer_visible&amp;product=aurora"');
+  });
+
+  // A product arrives the same way (DEC-47) and reaches the page only
+  // encoded. It rides on the same links the rule does, so the two cases fail
+  // together or not at all.
+  it('encodes a hostile product on the back link and the row links', async () => {
+    const base = await startGuarded(deps());
+    const hostile = '"><script>alert(1)</script>';
+    const html = await (await fetch(`${base}${CASE}?product=${encodeURIComponent(hostile)}`)).text();
+    expect(html).not.toContain(hostile);
+    expect(html.split('<script>')).toHaveLength(2);
+    expect(html).toContain(`href="/?product=${encodeURIComponent(hostile)}"`);
   });
 
   // The header states the case's age only while it waits. A resolved case

@@ -157,6 +157,24 @@ describe('fencedInsert', () => {
   // insert's own transaction. A creation that read the fence first — outside
   // that lock — hands two creations the same epoch, and the second then
   // raises no fence at all.
+  // DEC-47: the product of the channel the run's message arrived on. Absent
+  // on the input means the run records none, which is what a caller with no
+  // channel — a replay, a test — honestly has.
+  it('records the product it was given, and none when given none', async () => {
+    const withProduct = makeRun('next');
+    await fencedInsert(pool, { ...withProduct, product: 'aurora' }, null);
+    const without = makeRun('next');
+    await fencedInsert(pool, without, null);
+
+    const rows = await pool.query<{ run_id: string; product: string | null }>(
+      'SELECT run_id::text AS run_id, product FROM run WHERE run_id = ANY($1)',
+      [[withProduct.runId, without.runId]],
+    );
+    const byId = new Map(rows.rows.map((row) => [row.run_id, row.product]));
+    expect(byId.get(withProduct.runId)).toBe('aurora');
+    expect(byId.get(without.runId)).toBeNull();
+  });
+
   it('allocates the next epoch under the ticket lock, and never twice', async () => {
     const first = makeRun('next');
     const second = makeRun('next');

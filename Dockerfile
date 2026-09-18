@@ -71,6 +71,13 @@ COPY db ./db
 # that only the offline jobs read. No process this image starts opens it.
 COPY fixtures ./fixtures
 
+# The channel map the ingress processes read at startup (DEC-47).
+# products.json sits at the working directory, which is where
+# `productCatalogueFromEnv` looks when PRODUCTS_FILE names no other path.
+# Found by running the image, not by building it: the build is silent about
+# a file read at runtime, and a missing one refuses the process at startup.
+COPY products.json ./products.json
+
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 

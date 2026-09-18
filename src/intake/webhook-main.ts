@@ -10,6 +10,8 @@
 // - PARTITION_COUNT  DEC-27 partition count used at enqueue time
 //                    (default: 8, must match the consumers)
 // - DATABASE_URL     ledger connection (see src/db/config.ts)
+// - PRODUCTS_FILE    the channel map the product is read from
+//                    (default: products.json)
 //
 // All values may live in a ./.env file: this entrypoint loads it at startup
 // when present. An explicit shell env always wins over .env.
@@ -22,6 +24,7 @@ import { Pool } from 'pg';
 import { requireDbUrl } from '../db/config.js';
 import { createWebhookServer } from '../ingress/webhook-server.js';
 import { loadDotEnv, positiveIntEnv } from '../config/env.js';
+import { productCatalogueFromEnv } from '../config/products.js';
 import { intakeEnqueuer } from './adapter.js';
 import { runEntry } from '../cli/entry.js';
 
@@ -30,9 +33,16 @@ async function main(): Promise<void> {
   const port = positiveIntEnv('WEBHOOK_PORT', 8080);
   const partitionCount = positiveIntEnv('PARTITION_COUNT', 8);
 
+  // Read once, before the listener opens. DEC-47 needs the channel map for
+  // every delivery, and a map read per delivery would answer the first one
+  // and then fail the ones an operator is editing. A catalogue that cannot
+  // be read refuses this process rather than enqueuing a ticket whose
+  // product nothing can resolve.
+  const catalogue = productCatalogueFromEnv();
+
   const pool = new Pool({ connectionString: requireDbUrl('the webhook ingress'), max: 1 });
   const server = createWebhookServer({
-    onEvent: intakeEnqueuer(pool, partitionCount),
+    onEvent: intakeEnqueuer(pool, partitionCount, catalogue),
     // Absent means the driver runs open and says so at startup.
     secret: process.env['WEBHOOK_SECRET'],
   });

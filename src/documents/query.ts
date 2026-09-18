@@ -34,6 +34,11 @@ export interface IndexedDocument {
   /** DEC-23: past this date the document leaves the automatic path. */
   readonly reviewBy: string;
   /**
+   * DEC-47: the products this document serves. Empty means every product.
+   * read as the fact it is rather than as a gap: nobody scoped it.
+   */
+  readonly products: readonly string[];
+  /**
    * Whether the review date has passed.
    *
    * Computed in the database against its own clock, so a console in another
@@ -51,7 +56,8 @@ const SELECT_DOCUMENT = `
          body,
          owner,
          to_char(review_by, 'YYYY-MM-DD') AS review_by,
-         review_by >= CURRENT_DATE        AS fresh
+         review_by >= CURRENT_DATE        AS fresh,
+         products
     FROM document
    WHERE doc_id = $1`;
 
@@ -77,6 +83,7 @@ export async function readDocument(
     body: String(row['body']),
     owner: String(row['owner']),
     reviewBy: String(row['review_by']),
+    products: (row['products'] as string[] | null) ?? [],
     fresh: row['fresh'] === true,
   };
 }

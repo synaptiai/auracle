@@ -58,7 +58,14 @@ export async function retrieve(ctx: RunContext): Promise<StepResult> {
     ctx.pool,
     ctx.input.ticketText,
     queryVector,
-    { limit: 5 },
+    {
+      limit: 5,
+      // DEC-47: this run reads its own product's documents and the documents
+      // that declare none. Null — a message whose channel maps to no product
+      // — reads the unscoped ones alone, so the scope narrows rather than
+      // widening to everything.
+      product: ctx.input.product ?? null,
+    },
   );
   ctx.progress.stepsUsed++;
   await journalFinish(ctx, 'retrieve', 'done', {

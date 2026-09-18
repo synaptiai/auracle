@@ -30,6 +30,7 @@ async function index(
   docId: string,
   body: string,
   reviewBy: string,
+  products?: string[],
 ): Promise<void> {
   await indexDocument(
     pool,
@@ -40,6 +41,7 @@ async function index(
       body,
       owner: 'billing-team',
       reviewBy,
+      ...(products === undefined ? {} : { products }),
     },
     EMBEDDING,
   );
@@ -54,6 +56,16 @@ describe('a document a claim cited', () => {
     expect(doc?.owner).toBe('billing-team');
     expect(doc?.reviewBy).toBe('2030-01-01');
     expect(doc?.kind).toBe('document');
+  });
+
+  // DEC-47: the products a document serves. Empty means every product, and
+  // that is the answer for a document nobody scoped — so the reader has to
+  // return the value rather than a default it invented.
+  it('says which products the document serves (DEC-47)', async () => {
+    await index('SYN-SCOPED', 'Only for one product.', '2030-01-01', ['aurora', 'ledger']);
+    await index('SYN-UNSCOPED', 'For anybody.', '2030-01-01');
+    expect((await readDocument(pool, 'SYN-SCOPED'))?.products).toEqual(['aurora', 'ledger']);
+    expect((await readDocument(pool, 'SYN-UNSCOPED'))?.products).toEqual([]);
   });
 
   // A run journals the ids it retrieved, and a document can leave the index

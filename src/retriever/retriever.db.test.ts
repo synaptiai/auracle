@@ -137,6 +137,116 @@ describe('section 4.6 retriever', () => {
     expect(needingReview.map((d) => d.docId)).toEqual(['stale']);
   });
 
+  // DEC-47: "a run retrieves the documents of its product and the documents
+  // that declare no product". Three documents, each the strongest match for
+  // one query, so a filter that leaked or that dropped the unscoped ones
+  // shows up as a missing or extra row rather than as a ranking change.
+  describe('the product scope (DEC-47)', () => {
+    /** Indexes one document per scope, each leading both channels for its query. */
+    async function indexThreeScopes(): Promise<void> {
+      const rand = mulberry32(23);
+      const base = unitVector(rand);
+      // The same text in all three, so the query matches every one of them
+      // equally and only the scope can tell them apart.
+      const text = 'refund windows refund windows refund windows fourteen days';
+      await indexDocument(pool, doc('aurora-doc', 'refund windows', text, { products: ['aurora'] }), base);
+      await indexDocument(pool, doc('ledger-doc', 'refund windows', text, { products: ['ledger'] }), near(base, rand, 0.01));
+      await indexDocument(pool, doc('unscoped-doc', 'refund windows', text), near(base, rand, 0.01));
+    }
+
+    it("keeps the run's own product and the unscoped documents, and nothing else", async () => {
+      await indexThreeScopes();
+      const rand = mulberry32(24);
+
+      const aurora = await hybridSearch(pool, 'refund windows', unitVector(rand), {
+        limit: 10,
+        product: 'aurora',
+      });
+      expect([...aurora.map((d) => d.docId)].sort()).toEqual(['aurora-doc', 'unscoped-doc']);
+    });
+
+    it('keeps a run with no product to the unscoped documents alone', async () => {
+      await indexThreeScopes();
+      const rand = mulberry32(25);
+
+      const unscoped = await hybridSearch(pool, 'refund windows', unitVector(rand), {
+        limit: 10,
+        product: null,
+      });
+      expect(unscoped.map((d) => d.docId)).toEqual(['unscoped-doc']);
+
+      // Absent is the same answer as null: a caller with no product must not
+      // receive another product's corpus by default.
+      const omitted = await hybridSearch(pool, 'refund windows', unitVector(rand), { limit: 10 });
+      expect(omitted.map((d) => d.docId)).toEqual(['unscoped-doc']);
+    });
+
+    it('filters both channels, not only the one that returned the document', async () => {
+      // Both documents carry the query's token and match it, so each is a
+      // candidate of BOTH channels. A filter on one query alone therefore
+      // lets the other product's document through from the channel that
+      // kept it, whichever channel that is: the other document has the
+      // exact query embedding (the dense channel would rank it first), and
+      // it matches the token (the lexical channel would rank it too). An
+      // earlier version gave the other document no token, and a filter on
+      // the dense query alone passed it.
+      const rand = mulberry32(26);
+      const base = unitVector(rand);
+      await indexDocument(
+        pool,
+        doc('lexical-hit', 'ERR_9911 chargeback', 'the chargeback code is ERR_9911', {
+          products: ['aurora'],
+        }),
+        near(base, rand, 0.4),
+      );
+      await indexDocument(
+        pool,
+        doc('dense-hit', 'ERR_9911 handling', 'the chargeback code is ERR_9911', {
+          products: ['ledger'],
+        }),
+        base,
+      );
+
+      const results = await hybridSearch(pool, 'ERR_9911', base, {
+        limit: 10,
+        product: 'aurora',
+      });
+      expect(results.map((d) => d.docId)).toEqual(['lexical-hit']);
+    });
+
+    // A non-fresh document is admitted by the approval path (DEC-23). The
+    // scope is not a freshness rule: an approved answer reads the same
+    // corpus, so the filter still applies.
+    it('applies the scope to the approved path as well', async () => {
+      const rand = mulberry32(27);
+      const base = unitVector(rand);
+      const text = 'deprecated refund workflow deprecated refund workflow';
+      await indexDocument(
+        pool,
+        doc('stale-aurora', 'deprecated refund workflow', text, {
+          products: ['aurora'],
+          reviewBy: STALE_REVIEW_BY,
+        }),
+        base,
+      );
+      await indexDocument(
+        pool,
+        doc('stale-ledger', 'deprecated refund workflow', text, {
+          products: ['ledger'],
+          reviewBy: STALE_REVIEW_BY,
+        }),
+        near(base, rand, 0.01),
+      );
+
+      const approved = await hybridSearch(pool, 'deprecated refund workflow', base, {
+        limit: 10,
+        includeStale: true,
+        product: 'ledger',
+      });
+      expect(approved.map((d) => d.docId)).toEqual(['stale-ledger']);
+    });
+  });
+
   it('engages the reranker at 50+ fused candidates and stands down below', async () => {
     const rand = mulberry32(23);
     const base = unitVector(rand);

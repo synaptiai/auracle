@@ -8,6 +8,7 @@ import type { Pool } from 'pg';
 import { createHash } from 'node:crypto';
 
 import type { NormalizedEvent } from '../adapters/types.js';
+import { productForChannel, type ProductCatalogue } from '../config/products.js';
 import { enqueueTicket } from '../coordinator/intake.js';
 import type { IntakeTicket } from '../coordinator/intake.js';
 import type { IntakeHandler } from '../ingress/types.js';
@@ -19,6 +20,11 @@ import type { IntakeHandler } from '../ingress/types.js';
  * classifier sees one document, not one concatenated string. The message
  * subject is preferred (it is the current turn's subject); the ticket
  * subject backs it up when the source leaves the message subject empty.
+ *
+ * The catalogue is a parameter rather than a module import, because the map
+ * is deployment configuration: which channel serves which product is the
+ * deployment's answer, and a test that wanted another answer would have to
+ * edit a file the processes read.
  */
 /**
  * A stable stand-in identity for a message the source did not name.
@@ -41,10 +47,19 @@ function contentMessageId(message: NormalizedEvent['message']): string {
   return `no-id-${digest.slice(0, 32)}`;
 }
 
-export function toIntakeTicket(event: NormalizedEvent): IntakeTicket {
+export function toIntakeTicket(
+  event: NormalizedEvent,
+  catalogue: ProductCatalogue,
+): IntakeTicket {
   const subject = event.message.subject ?? event.ticket.subject;
   return {
     ticketId: event.ticket.ticketId,
+    // DEC-47: the product of the channel this message arrived on, resolved
+    // here so the queue row carries it and the run that answers inherits it.
+    // The channel is the source's own queue field, which the helpdesk
+    // reported and this seam used to drop. Null when it names none, or names
+    // one the catalogue does not serve.
+    product: productForChannel(catalogue, event.ticket.queue),
     // The source's own message identity, so a repeat deduplicates and a new
     // message enqueues (DEC-24).
     //
@@ -74,8 +89,12 @@ export function toIntakeTicket(event: NormalizedEvent): IntakeTicket {
  * Each event is enqueued under its DEC-36 partition, which follows the
  * conversation, so a consumer picks it up by polling that partition alone.
  */
-export function intakeEnqueuer(pool: Pool, partitionCount: number): IntakeHandler {
+export function intakeEnqueuer(
+  pool: Pool,
+  partitionCount: number,
+  catalogue: ProductCatalogue,
+): IntakeHandler {
   return async (event) => {
-    await enqueueTicket(pool, toIntakeTicket(event), partitionCount);
+    await enqueueTicket(pool, toIntakeTicket(event, catalogue), partitionCount);
   };
 }

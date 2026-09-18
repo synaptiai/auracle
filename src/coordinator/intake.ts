@@ -39,6 +39,17 @@ export interface IntakeTicket {
   customerAddress?: string | null;
   /** What the adapter knows about the conversation this message joins. */
   linkage?: ConversationLinkage | null;
+  /**
+   * DEC-47: the product of the channel the message arrived on, resolved by
+   * the adapter against the deployment's channel map. Null when the channel
+   * names no product, which is a different fact from a product named ''.
+   *
+   * Optional, as `conversationId` and `turnNumber` are on the run insert: a
+   * caller with no channel has no product to name, and the column takes null
+   * for that. The only production constructor is `toIntakeTicket`, which
+   * always answers.
+   */
+  product?: string | null;
 }
 
 /** What one enqueue resolved or created. */
@@ -262,8 +273,8 @@ export async function enqueueTicket(
 
       const inserted = await client.query(
         `INSERT INTO intake (ticket_id, message_id, partition, ticket_text,
-                             conversation_id, turn_number)
-         VALUES ($1, $2, $3, $4, $5, $6)
+                             conversation_id, turn_number, product)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (ticket_id, message_id) DO NOTHING`,
         [
           ticket.ticketId,
@@ -272,6 +283,10 @@ export async function enqueueTicket(
           ticket.ticketText,
           conversationId,
           turnNumber,
+          // DEC-47: recorded at arrival, because the run that answers this
+          // message is filed by a consumer that may never see it — a message
+          // abandoned in the queue still has to say what it was about.
+          ticket.product ?? null,
         ],
       );
 
@@ -364,6 +379,13 @@ export interface PolledTicket {
   customerAddress: string | null;
   /** Open item 7: arrival time, carried to the run row at pickup. */
   enqueuedAt: Date;
+  /**
+   * DEC-47: the product recorded at arrival, carried to the run row. Null
+   * when the message's channel mapped to no product. The run records the
+   * same value, so a run is never narrower or wider than the row that
+   * queued it.
+   */
+  product: string | null;
 }
 
 /**
@@ -383,7 +405,7 @@ export async function pollPartition(
   if (partitions.length === 0) return [];
   const rows = await pool.query(
     `SELECT i.ticket_id, i.message_id, i.partition, i.ticket_text, i.enqueued_at,
-            i.conversation_id, i.turn_number, c.customer_address
+            i.conversation_id, i.turn_number, i.product, c.customer_address
        FROM intake i
        LEFT JOIN conversation c ON c.conversation_id = i.conversation_id
       WHERE i.partition = ANY ($1)
@@ -400,6 +422,7 @@ export async function pollPartition(
     turnNumber: (row['turn_number'] as number | null) ?? null,
     customerAddress: (row['customer_address'] as string | null) ?? null,
     enqueuedAt: row['enqueued_at'] as Date,
+    product: (row['product'] as string | null) ?? null,
   }));
 }
 

@@ -13,12 +13,22 @@ import { SIMPLE_TEXT_EMAIL } from '../adapters/fixtures.js';
 import { dbUrl } from '../db/config.js';
 import type { IntakeHandler } from '../ingress/types.js';
 import { enqueueTicket } from '../coordinator/intake.js';
+import { parseProducts } from '../config/products.js';
 import { toIntakeTicket } from '../intake/adapter.js';
 import { pollCycle } from './daemon.js';
 import type { ImapDaemonLogEntry } from './daemon.js';
 import { ImapPoller } from '../ingress/imap-poller.js';
 
 const PARTITION_COUNT = 8;
+
+/** The channel map these cases enqueue through (DEC-47). */
+const CATALOGUE = parseProducts({
+  products: [
+    { id: 'aurora', label: 'Aurora' },
+    { id: 'ledger', label: 'Ledger' },
+  ],
+  channels: { shipping: 'aurora', billing: 'ledger' },
+});
 
 const pool = new Pool({ connectionString: dbUrl(), max: 5 });
 // src/test-support/db-global-setup.ts guarantees a reachable database before
@@ -101,7 +111,7 @@ describe('imap daemon intake', () => {
     await pollCycle({
       fetcher: mailbox.fetcher,
       poller: makePoller(mailbox.fetcher, async (event) => {
-        await enqueueTicket(pool, toIntakeTicket(event), PARTITION_COUNT);
+        await enqueueTicket(pool, toIntakeTicket(event, CATALOGUE), PARTITION_COUNT);
       },
       ),
       log,
@@ -149,7 +159,7 @@ describe('imap daemon intake', () => {
         if (event.message.bodyText.includes('POISON')) {
           throw new Error('intake exploded');
         }
-        await enqueueTicket(pool, toIntakeTicket(event), PARTITION_COUNT);
+        await enqueueTicket(pool, toIntakeTicket(event, CATALOGUE), PARTITION_COUNT);
       }),
       log: () => {},
     });
@@ -168,7 +178,7 @@ describe('imap daemon intake', () => {
     // so a handler that returns undefined lets markSeen race the enqueue and
     // the ordering this case is named for is never exercised.
     const onEvent: IntakeHandler = async (event) => {
-      await enqueueTicket(pool, toIntakeTicket(event), PARTITION_COUNT);
+      await enqueueTicket(pool, toIntakeTicket(event, CATALOGUE), PARTITION_COUNT);
     };
     const runCycle = (): Promise<void> =>
       pollCycle({

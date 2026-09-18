@@ -198,6 +198,17 @@ async function seedDistinctPartitions(
   return seeded;
 }
 
+/** The doc ids the retrieve step journalled, for one ticket's run. */
+async function retrievedDocIds(ticketId: string): Promise<Set<string>> {
+  const rows = await pool.query<{ doc_ids: string[] }>(
+    `SELECT (sj.result->'docIds')::jsonb AS doc_ids
+       FROM step_journal sj JOIN run r ON r.run_id = sj.run_id
+      WHERE sj.step_id = 'retrieve' AND r.ticket_id = $1`,
+    [ticketId],
+  );
+  return new Set(rows.rows.flatMap((row) => row.doc_ids));
+}
+
 interface RunRow {
   run_id: string;
   epoch: string;
@@ -374,6 +385,184 @@ describe('section 4.3 partition consumer', () => {
       'm-1@example.test',
       'm-2@example.test',
     ]);
+  });
+
+  // DEC-47: "each run records the product of the channel its message arrived
+  // on". Two turns of ONE conversation, each arriving on a different
+  // channel, and each run has to record its own. Reading the product from
+  // the conversation, or from the first turn, passes every single-turn case
+  // and fails here.
+  it('gives each run on one conversation the product of its own channel (DEC-47)', async () => {
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const first = await enqueueTicket(
+      pool,
+      {
+        ticketId,
+        messageId: 'ch-1@example.test',
+        ticketText: 'The tiles arrived broken.',
+        product: 'aurora',
+      },
+      PARTITION_COUNT,
+    );
+    const second = await enqueueTicket(
+      pool,
+      {
+        ticketId,
+        messageId: 'ch-2@example.test',
+        ticketText: 'Same order, now asking about the invoice.',
+        product: 'ledger',
+      },
+      PARTITION_COUNT,
+    );
+    expect(second.conversationId).toBe(first.conversationId);
+    expect(second.partition).toBe(first.partition);
+
+    // One poll per turn, so the two runs are separable.
+    await processQueuedTickets(makeDeps(happyScript(), 'turn-one'), {
+      ...optionsFor([first.partition]),
+      scanBatchSize: 1,
+    });
+    await processQueuedTickets(makeDeps(happyScript(), 'turn-two'), {
+      ...optionsFor([first.partition]),
+      scanBatchSize: 1,
+    });
+
+    const runs = await pool.query<{ turn_number: number; product: string | null }>(
+      `SELECT turn_number, product FROM run
+        WHERE ticket_id = $1 AND turn_number IS NOT NULL
+        ORDER BY turn_number`,
+      [ticketId],
+    );
+    expect(runs.rows).toEqual([
+      { turn_number: 1, product: 'aurora' },
+      { turn_number: 2, product: 'ledger' },
+    ]);
+  });
+
+  // A message on a channel the map does not name records no product, on the
+  // run as on the queue row. Null is the answer; a product named '' would be
+  // a product no document declares, and the retrieval filter would look for
+  // it.
+  it('gives a run no product when its channel mapped to none (DEC-47)', async () => {
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const queued = await enqueueTicket(
+      pool,
+      { ticketId, messageId: 'unmapped-1@example.test', ticketText: TICKET_TEXT, product: null },
+      PARTITION_COUNT,
+    );
+
+    const [result] = await processQueuedTickets(makeDeps(happyScript(), 'unmapped'), {
+      ...optionsFor([queued.partition]),
+      scanBatchSize: 1,
+    });
+    expect(result?.outcome).toBe('resolved');
+
+    const run = await pool.query<{ product: string | null }>(
+      'SELECT product FROM run WHERE ticket_id = $1',
+      [ticketId],
+    );
+    expect(run.rows[0]?.product).toBeNull();
+  });
+
+  // The abandonment files a run of its own, and it is the run an operator
+  // reads when a message never got answered. Its product comes from the
+  // queue row the abandonment deletes, so it is the last chance to record it.
+  it('records the product on the run an abandonment files (DEC-47)', async () => {
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const queued = await enqueueTicket(
+      pool,
+      {
+        ticketId,
+        messageId: 'abandoned-1@example.test',
+        ticketText: TICKET_TEXT,
+        product: 'aurora',
+      },
+      PARTITION_COUNT,
+    );
+
+    // An empty script: the classifier finds no response and the run throws,
+    // which at a ceiling of one files the abandonment.
+    await processQueuedTickets(makeDeps([], 'poison'), {
+      ...optionsFor([queued.partition]),
+      maxIntakeAttempts: 1,
+    });
+
+    const run = await pool.query<{ state: string; product: string | null }>(
+      'SELECT state, product FROM run WHERE ticket_id = $1 ORDER BY state',
+      [ticketId],
+    );
+    // Two runs, and both carry the product: the walk filed 'received' before
+    // it failed, and the abandonment filed 'escalated' over it. The second is
+    // the one an operator reads, and it is filed after the queue row is
+    // deleted, so this is the only place its product could come from.
+    expect(run.rows).toEqual([
+      { state: 'escalated', product: 'aurora' },
+      { state: 'received', product: 'aurora' },
+    ]);
+  });
+
+  // DEC-47's second sentence, end to end: a run retrieves the documents of
+  // its product and the documents that declare no product. The retrieve
+  // step threads the run's product, and the journal records what it read —
+  // so this is the evidence that the scope reaches the search rather than
+  // stopping at the column.
+  it('retrieves its own product’s documents and the unscoped ones (DEC-47)', async () => {
+    // Both match the ticket text, so only the scope can separate them.
+    await indexDocument(
+      pool,
+      {
+        docId: 'd-aurora',
+        kind: 'document',
+        title: 'Aurora password reset',
+        body: 'Aurora accounts reset the password from the account settings page.',
+        owner: 'synthetic-owner',
+        reviewBy: '2999-01-01',
+        products: ['aurora'],
+      },
+      VEC,
+    );
+    await indexDocument(
+      pool,
+      {
+        docId: 'd-ledger',
+        kind: 'document',
+        title: 'Ledger password reset',
+        body: 'Ledger accounts reset the password from the account settings page.',
+        owner: 'synthetic-owner',
+        reviewBy: '2999-01-01',
+        products: ['ledger'],
+      },
+      VEC,
+    );
+
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const scoped = await enqueueTicket(
+      pool,
+      { ticketId, messageId: 'scope-1@example.test', ticketText: TICKET_TEXT, product: 'aurora' },
+      PARTITION_COUNT,
+    );
+    await processQueuedTickets(makeDeps(happyScript(), 'scoped'), {
+      ...optionsFor([scoped.partition]),
+      scanBatchSize: 1,
+    });
+
+    const read = await retrievedDocIds(ticketId);
+    expect([...read].sort()).toEqual(['d-aurora', 'd1']);
+    expect(read.has('d-ledger')).toBe(false);
+
+    // The same ticket on an unmapped channel reads the unscoped corpus
+    // alone, so the scope narrows rather than merely filtering a list.
+    const unscopedTicket = `T-${randomUUID().slice(0, 8)}`;
+    const unscoped = await enqueueTicket(
+      pool,
+      { ticketId: unscopedTicket, messageId: 'scope-2@example.test', ticketText: TICKET_TEXT, product: null },
+      PARTITION_COUNT,
+    );
+    await processQueuedTickets(makeDeps(happyScript(), 'unscoped'), {
+      ...optionsFor([unscoped.partition]),
+      scanBatchSize: 1,
+    });
+    expect([...(await retrievedDocIds(unscopedTicket))]).toEqual(['d1']);
   });
 
   // Two production lines in processQueuedTickets had no cover at all. The

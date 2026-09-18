@@ -31,8 +31,9 @@ import { Pool } from 'pg';
 
 import {
   activeReviewer, approveRun, handoverHold, readHold, readHolds, releaseHold,
-  selectReadBackAdapter, takeHold,
+  reviewerProducts, selectReadBackAdapter, takeHold,
 } from 'auracle/ledger-read';
+import { productCatalogueFromEnv } from 'auracle/ledger-read';
 import { requireHoldLapse } from './hold-lapse.js';
 import { reviewerResolver } from './reviewer.js';
 import { readDays } from 'auracle/ledger-read';
@@ -522,6 +523,16 @@ async function main(): Promise<void> {
     // DEC-45: every request, read or write, is resolved against the roster
     // before any page is built. The header is the one the operator named,
     // and the roster is the ledger's.
+    // DEC-47: the products this reviewer covers, for the queue's order. A
+    // read of the roster, so the console can order by a preference without
+    // ever being able to set one.
+    readReviewerProducts: async (reviewer: string) => reviewerProducts(pool, reviewer),
+    // DEC-47: what each product is called on the page. Read once, from the
+    // file the ingress processes read, so a chip says `Aurora` where the
+    // catalogue does.
+    productLabels: new Map(
+      productCatalogueFromEnv().products.map((product) => [product.id, product.label]),
+    ),
     // DEC-46: the case hold. The two reads serve the case bar and the queue;
     // the three writes are the console's own, and `select-only.test.ts` names
     // them.

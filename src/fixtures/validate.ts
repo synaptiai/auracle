@@ -388,6 +388,20 @@ export function validateDocuments(raw: unknown): FixtureDocument[] {
     assert(typeof entry['url'] === 'string' && entry['url'].startsWith('https://'), `document ${id} url is not https`);
     assert(Array.isArray(entry['linked_intents']), `document ${id} linked_intents is not an array`);
     assert(entry['linked_intents'].length > 0, `document ${id} links no intents`);
+    // DEC-47: the products the document serves. An empty list is a real
+    // answer — it serves every product — so the field is required and only
+    // its contents are checked. A blank or repeated product is refused by
+    // name: both are things a generator typo produces, and neither has a
+    // reader that could make sense of it.
+    const products = entry['products'];
+    assert(Array.isArray(products), `document ${id} products is not an array`);
+    for (const product of products) {
+      assert(
+        typeof product === 'string' && product.length > 0 && product.trim() === product,
+        `document ${id} declares the product ${JSON.stringify(product)}, which is not a product id`,
+      );
+    }
+    assert(new Set(products).size === products.length, `document ${id} declares a product twice`);
   }
   return documents as unknown as FixtureDocument[];
 }

@@ -8,11 +8,13 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
   CLAIM_GRADES, FIT_COUNT, INTENT_CAP, REPORT_COUNT, goldCaseText, isFirstTurn,
 } from '../domain/gold-types.js';
+import { loadProducts } from '../config/products.js';
 import { assertHalvesDisjoint, claimDigest, halfDigest, identityOf } from './digest.js';
 import {
   conversationHistories, fixturesDir, loadDocuments, loadGoldHalf, loadGoldSet, loadTaxonomy, readHalfIdentity,
@@ -861,6 +863,42 @@ describe('retrieval corpus', () => {
 
   it('links only intents that exist in the taxonomy', () => {
     expect(() => assertIntentsKnown(taxonomy, documents)).not.toThrow();
+  });
+
+  // DEC-47: every document declares the products it serves, and an empty list
+  // means every product. The corpus carries both, because a corpus of one
+  // kind cannot tell a product filter that works from one that returns
+  // everything or nothing.
+  it('declares the products each document serves (DEC-47)', () => {
+    for (const document of documents) {
+      expect(Array.isArray(document.products)).toBe(true);
+      for (const product of document.products) {
+        expect(typeof product).toBe('string');
+        expect(product.trim()).toBe(product);
+        expect(product.length).toBeGreaterThan(0);
+      }
+      expect(new Set(document.products).size).toBe(document.products.length);
+    }
+    expect(documents.some((d) => d.products.length > 0)).toBe(true);
+    expect(documents.some((d) => d.products.length === 0)).toBe(true);
+  });
+
+  // The corpus names products from the catalogue this repository ships, so a
+  // document cannot declare one that no run would ever be recorded for —
+  // which is the state that makes a document unretrievable.
+  it('names only products the shipped catalogue holds', () => {
+    // Read from the file this repository ships, not from a copy: a corpus
+    // that outlived a catalogue edit is exactly what this catches.
+    // fileURLToPath, not `.pathname`: a pathname is percent-encoded, so a
+    // checkout under a directory with a space in it would fail to open the
+    // file and be reported as a corpus fault.
+    const catalogue = loadProducts(fileURLToPath(new URL('../../products.json', import.meta.url)));
+    const held = new Set(catalogue.products.map((product) => product.id));
+    for (const document of documents) {
+      for (const product of document.products) {
+        expect(held.has(product), `${document.doc_id} names ${product}`).toBe(true);
+      }
+    }
   });
 });
 
