@@ -10,8 +10,8 @@
  *     it cites, and lighting a document marks the claims that rest on it.
  *     There is no CSS that links two arbitrary regions of a page, and this is
  *     the interaction that makes a citation feel checked rather than listed.
- *   - **Queue navigation.** j and k move through the approval queue, and c
- *     opens the focused case until a take exists (#107). Enter is deliberately
+ *   - **Queue navigation.** j and k move through the approval queue, c takes
+ *     the focused case (DEC-46), and Enter opens it. Enter is deliberately
  *     not bound: a row is an anchor, so Enter already follows the focused one
  *     — and binding it here took it from the Approve button, from every
  *     citation and from every rail link.
@@ -108,19 +108,37 @@ export const CONSOLE_SCRIPT = `
       }
       return;
     }
-    // Enter belongs to whatever has focus. j and k move the queue; Enter on a
-    // row already follows it, because the row is an anchor and j focused it.
-    // c opens the focused case, the same click a pointer would make. Nothing
-    // focused means no case is focused, so c does nothing rather than choose
-    // one.
+    // Enter belongs to whatever has focus. j and k move the queue, c takes
+    // the focused case, and Enter on a row already follows it, because the
+    // row is an anchor and j focused it. Nothing focused means no case is
+    // focused, so c does nothing rather than choose one.
     if (event.key !== 'j' && event.key !== 'k' && event.key !== 'c') return;
     if (rows.length === 0) return;
     if (inControl(event)) return;
     event.preventDefault();
     if (event.key === 'c') {
       if (at < 0) return;
-      rows[at].focus();
-      rows[at].click();
+      // DEC-46: c takes the focused case. A take is a write, so it is a form
+      // post — this builds the one the row needs and submits it. A link
+      // would write on a GET, which the console never does, and the row's
+      // own form would be a button inside an anchor, which is not markup a
+      // browser accepts.
+      var rowHref = rows[at].getAttribute('href');
+      if (rowHref === null) return;
+      var rowUrl = new URL(rowHref, document.baseURI);
+      if (rowUrl.origin !== window.location.origin) return;
+      var taken = decodeURIComponent(rowUrl.pathname.split('/')[2] || '');
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(taken)) return;
+      var takeForm = document.createElement('form');
+      takeForm.method = 'post';
+      takeForm.action = '/take';
+      var takeField = document.createElement('input');
+      takeField.type = 'hidden';
+      takeField.name = 'runId';
+      takeField.value = taken;
+      takeForm.appendChild(takeField);
+      document.body.appendChild(takeForm);
+      takeForm.submit();
       return;
     }
     at = event.key === 'j' ? Math.min(rows.length - 1, at + 1) : Math.max(0, at - 1);

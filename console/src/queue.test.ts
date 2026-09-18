@@ -137,4 +137,38 @@ describe('the queue in groups', () => {
     const groups = groupQueue([run('only', {})]);
     expect(groups.map((g) => g.group)).toEqual(['clean']);
   });
+
+  // Criterion 4 (DEC-46). A case somebody else holds is not work this
+  // reviewer can start, so it leaves the group its gate facts put it in for
+  // the last one. It returns when the hold lapses or is released.
+  it('puts a case somebody else holds in its own group, after every other', () => {
+    const groups = groupQueue(
+      [
+        run('free-first', { gateReason: 'high_risk', createdAt: at('2026-09-14T07:00:00Z') }),
+        run('held-clean', { createdAt: at('2026-09-14T08:00:00Z') }),
+        run('held-risky', { gateReason: 'irreversible', createdAt: at('2026-09-14T09:00:00Z') }),
+        run('free-rest', { gateCoverage: 0.5, createdAt: at('2026-09-14T10:00:00Z') }),
+      ],
+      (held) => held.runId.startsWith('held-'),
+    );
+    expect(groups.map((g) => [g.group, g.runs.map((r) => r.runId)])).toEqual([
+      ['first', ['free-first']],
+      ['rest', ['free-rest']],
+      // Oldest first here too, and a risky case is no different: the hold is
+      // what this group is about.
+      ['held', ['held-clean', 'held-risky']],
+    ]);
+  });
+
+  // The predicate is what marks a case held. A caller that names none groups
+  // by the gate facts alone, which is what every caller did before this
+  // group existed.
+  it('groups by the gate facts when no hold is named', () => {
+    const runs = [
+      run('risky', { gateReason: 'irreversible' }),
+      run('said', {}),
+    ];
+    expect(groupQueue(runs).map((g) => [g.group, g.runs.map((r) => r.runId)]))
+      .toEqual([['first', ['risky']], ['clean', ['said']]]);
+  });
 });

@@ -9,16 +9,18 @@ import { POLICY_REASONS } from 'auracle/policy';
 import { isReadableTime } from './render.js';
 
 /**
- * The three groups, in the order a reviewer works them.
+ * The four groups, in the order a reviewer works them.
  *
  * `first`: the gate rule is `irreversible` or `high_risk`, the gate recorded
  * the intent's risk tier as high, or the run parked a compensation, an action
  * nobody can take back. `clean`: agreement cleared its own line and coverage
  * cleared the review line, each on its own. `rest`: everything else waiting.
+ * `held` (DEC-46): somebody else took the case, so it is not work to start —
+ * it waits last, and returns to its own group when the hold ends.
  */
-export type QueueGroup = 'first' | 'clean' | 'rest';
+export type QueueGroup = 'first' | 'clean' | 'rest' | 'held';
 
-export const QUEUE_GROUPS: readonly QueueGroup[] = ['first', 'clean', 'rest'];
+export const QUEUE_GROUPS: readonly QueueGroup[] = ['first', 'clean', 'rest', 'held'];
 
 /** What the grouping reads from a waiting run. */
 export interface Groupable {
@@ -88,9 +90,15 @@ export interface QueueSection<T> {
  * Oldest first inside each group, because the longest wait is the one owed
  * first. A run with no readable time sorts after every dated one, so a missing
  * value never jumps the line. A group with nothing in it is left out.
+ *
+ * `held` names the cases somebody else holds (DEC-46). It is a parameter
+ * rather than a field of the run, because a hold is not a fact about the case:
+ * the same case is held for one reviewer and free for another, and
+ * `queueGroupOf` reads only what the ledger recorded about the run.
  */
 export function groupQueue<T extends Groupable & { readonly createdAt: Date | null }>(
   runs: readonly T[],
+  held?: (run: T) => boolean,
 ): QueueSection<T>[] {
   // An unreadable time is no more a date than a missing one, and sorts with
   // the undated rather than throwing or scattering the order.
@@ -101,10 +109,12 @@ export function groupQueue<T extends Groupable & { readonly createdAt: Date | nu
     if (right === null) return -1;
     return left - right;
   };
+  const groupOf = (run: T): QueueGroup =>
+    held?.(run) === true ? 'held' : queueGroupOf(run);
   return QUEUE_GROUPS
     .map((group) => ({
       group,
-      runs: runs.filter((run) => queueGroupOf(run) === group).sort(byAge),
+      runs: runs.filter((run) => groupOf(run) === group).sort(byAge),
     }))
     .filter((section) => section.runs.length > 0);
 }

@@ -28,6 +28,8 @@ import { indexDocument } from '../retriever/retriever.js';
 
 import { readRun } from '../escalations/query.js';
 import { approveRun } from './approve.js';
+import { holdHistory, readHold, takeHold } from '../holds/hold.js';
+import { replyDigest } from './shown.js';
 import { approvalEditDistance } from './edit_distance.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
@@ -140,6 +142,15 @@ async function parkReply(ticketId: string): Promise<{
 async function runState(runId: string): Promise<string | undefined> {
   const rows = await pool.query('SELECT state FROM run WHERE run_id = $1', [runId]);
   return rows.rows[0]?.state as string | undefined;
+}
+
+/** The reply text the ledger holds for a parked run (the console's draft). */
+async function parkedBody(runId: string): Promise<string> {
+  const rows = await pool.query(
+    "SELECT result->>'body' AS body FROM step_journal WHERE run_id = $1 AND step_id = 'park'",
+    [runId],
+  );
+  return rows.rows[0]!.body as string;
 }
 
 async function outboxRows(runId: string): Promise<
@@ -720,6 +731,255 @@ describe('approval completion path (DEC-12 end to end)', () => {
     // DEC-45: a name nobody holds has no source, and 'none' says so — the
     // same reading the migration gives every historical `unattributed` row.
     expect(rows[0]?.approved_by_source).toBe('none');
+  });
+
+  // Criterion 3 of #107, and DEC-46: sending ends the sender's hold on the
+  // case, and it does so in the transaction that records the send.
+  it('releases the sender\'s hold in the transaction that sends', async () => {
+    const ticket = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkReply(ticket);
+    await takeHold(pool, {
+      runId: parked.runId, reviewer: 'anna@example.test', lapseMs: 1_200_000,
+    });
+
+    expect((await approveRun(pool, parked.runId, {
+      approvedBy: 'anna@example.test',
+      approvedBySource: 'roster',
+    })).outcome).toBe('approved');
+
+    // The hold is released, and the history says the send ended it.
+    expect(await readHold(pool, parked.runId)).toBeNull();
+    const { rows } = await pool.query(
+      'SELECT release_kind, released_by FROM case_hold WHERE run_id = $1',
+      [parked.runId],
+    );
+    expect(rows[0]).toMatchObject({ release_kind: 'send', released_by: 'anna@example.test' });
+    expect((await holdHistory(pool, parked.runId)).map((event) => event.kind))
+      .toEqual(['take', 'send']);
+  });
+
+  // Risk row "Release on send": an approval that does not commit must not
+  // release anything. A release written before the approval commits, or
+  // outside its transaction, leaves a case nobody holds and a send nobody
+  // made.
+  it('leaves the hold in place when the approval does not commit', async () => {
+    const ticket = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkReply(ticket);
+    await takeHold(pool, {
+      runId: parked.runId, reviewer: 'anna@example.test', lapseMs: 1_200_000,
+    });
+    // The run leaves the queue under Anna: her approval is now a request the
+    // ledger refuses, and nothing about it may commit.
+    await pool.query("UPDATE run SET state = 'resolved' WHERE run_id = $1", [parked.runId]);
+
+    const outcome = await approveRun(pool, parked.runId, {
+      approvedBy: 'anna@example.test',
+      approvedBySource: 'roster',
+    });
+    expect(outcome.outcome).not.toBe('approved');
+
+    const hold = await readHold(pool, parked.runId);
+    expect(hold?.reviewer).toBe('anna@example.test');
+    expect((await holdHistory(pool, parked.runId)).map((event) => event.kind)).toEqual(['take']);
+  });
+
+  // Criterion 9, the risk row's own discriminating check. The reviewer read
+  // the reply on the case page and the console put a digest of that text in
+  // the form. The ledger recomputes it under the run's lock, so a reply
+  // rewritten after they read it is refused, named, and commits nothing —
+  // including the read-back's edit distance, which would otherwise measure a
+  // text the person never saw.
+  it('refuses a reply that changed since the reviewer read it', async () => {
+    const ticket = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkReply(ticket);
+    const shown = replyDigest(await parkedBody(parked.runId));
+
+    // The saved reply changes after the page was drawn. The ledger holds the
+    // new text and the form holds the digest of the old one.
+    await pool.query(
+      `UPDATE step_journal SET result = jsonb_set(result, '{body}', to_jsonb($2::text))
+        WHERE run_id = $1 AND step_id = 'park'`,
+      [parked.runId, 'A different reply entirely.'],
+    );
+
+    const outcome = await approveRun(pool, parked.runId, {
+      approvedBy: 'anna@example.test',
+      approvedBySource: 'roster',
+      shown,
+    });
+    expect(outcome).toEqual({ outcome: 'shown_changed' });
+    // Nothing committed: the run still waits, no record left for the relay,
+    // and no approver was written beside a move that did not happen.
+    expect(await runState(parked.runId)).toBe('awaiting_approval');
+    expect(await outboxRows(parked.runId)).toEqual([]);
+    const run = await pool.query(
+      'SELECT approved_by, approved_by_source FROM run WHERE run_id = $1',
+      [parked.runId],
+    );
+    expect(run.rows[0]).toMatchObject({ approved_by: null, approved_by_source: null });
+  });
+
+  // The risk row's exact wrong version: a guard that compares the reply the
+  // approval read when it started instead of the reply the ledger holds under
+  // the lock. The window here is real — `readDraft` runs after the parked
+  // record is read and before the transaction opens — and a guard reading
+  // outside it approves a reply the reviewer never saw.
+  it('reads the reply under the lock, not when the approval began', async () => {
+    const ticket = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkReply(ticket);
+    const shown = replyDigest(await parkedBody(parked.runId));
+
+    const readDraft = {
+      readDraft: async () => {
+        await pool.query(
+          `UPDATE step_journal SET result = jsonb_set(result, '{body}', to_jsonb($2::text))
+            WHERE run_id = $1 AND step_id = 'park'`,
+          [parked.runId, 'Rewritten while the approval was in flight.'],
+        );
+        return { body: 'The helpdesk copy.' };
+      },
+    };
+
+    expect(await approveRun(pool, parked.runId, {
+      approvedBy: 'anna@example.test',
+      approvedBySource: 'roster',
+      shown,
+      readDraft,
+    })).toEqual({ outcome: 'shown_changed' });
+    expect(await runState(parked.runId)).toBe('awaiting_approval');
+  });
+
+  // The other half: the digest of the text the ledger holds is the one the
+  // reviewer was shown, so the approval commits.
+  it('approves the reply whose digest is the one the reviewer read', async () => {
+    const ticket = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkReply(ticket);
+    const shown = replyDigest(await parkedBody(parked.runId));
+
+    expect((await approveRun(pool, parked.runId, {
+      approvedBy: 'anna@example.test',
+      approvedBySource: 'roster',
+      shown,
+    })).outcome).toBe('approved');
+    expect(await runState(parked.runId)).toBe('resolved');
+    expect(await outboxRows(parked.runId)).toHaveLength(1);
+  });
+
+  // Criterion 9: `pnpm run approve` passes no digest and is exempt, and so is
+  // any other caller that names none. The guard is a statement about a page a
+  // person was reading, and a caller with no page has none to compare.
+  it('approves without a digest, which is the command line\'s path', async () => {
+    const ticket = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkReply(ticket);
+    expect((await approveRun(pool, parked.runId, {
+      approvedBy: 'anna@example.test',
+      approvedBySource: 'roster',
+    })).outcome).toBe('approved');
+  });
+
+  // And the arm that leaves the queue without sending anything. Another run
+  // holds the semantic key, so this approval sent nothing and named nobody:
+  // a `send` recorded here would credit a person with a send they did not
+  // make. The hold ends by its period, and the history says so.
+  it('leaves the hold for its period when the approval is superseded', async () => {
+    const ticket = `T-${randomUUID().slice(0, 8)}`;
+    const first = await parkReply(ticket);
+    expect((await approveRun(pool, first.runId, {
+      approvedBy: 'anna@example.test',
+      approvedBySource: 'roster',
+    })).outcome).toBe('approved');
+
+    // A second run on the same ticket parks the same action, so its record
+    // collides on the semantic key (DEC-24) and the ledger supersedes it.
+    const second = await parkReply(ticket);
+    await takeHold(pool, {
+      runId: second.runId, reviewer: 'anna@example.test', lapseMs: 1_200_000,
+    });
+
+    expect((await approveRun(pool, second.runId, {
+      approvedBy: 'anna@example.test',
+      approvedBySource: 'roster',
+    })).outcome).toBe('superseded');
+    // Still held, with no send recorded: the case is out of the queue, and
+    // the hold ends when its period does.
+    expect((await readHold(pool, second.runId))?.reviewer).toBe('anna@example.test');
+    expect((await holdHistory(pool, second.runId)).map((event) => event.kind)).toEqual(['take']);
+  });
+
+  // The command line names nobody, and the send still ends the hold: the case
+  // has left the queue either way, and a hold left on it would be recorded as
+  // a lapse instead. `released_by` carries the ledger's own word for a
+  // nameless approver, which is what `run.approved_by` records.
+  it('ends the hold on a send that named nobody', async () => {
+    const ticket = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkReply(ticket);
+    await takeHold(pool, {
+      runId: parked.runId, reviewer: 'anna@example.test', lapseMs: 1_200_000,
+    });
+
+    expect((await approveRun(pool, parked.runId)).outcome).toBe('approved');
+    expect(await readHold(pool, parked.runId)).toBeNull();
+    const { rows } = await pool.query(
+      'SELECT reviewer, released_by, release_kind FROM case_hold WHERE run_id = $1',
+      [parked.runId],
+    );
+    expect(rows[0]).toMatchObject({
+      reviewer: 'anna@example.test',
+      released_by: 'unattributed',
+      release_kind: 'send',
+    });
+    expect((await holdHistory(pool, parked.runId)).map((event) => [event.kind, event.reviewer]))
+      .toEqual([['take', 'anna@example.test'], ['send', 'unattributed']]);
+  });
+
+  // Criterion 8, and the maintainer's ruling of 2026-09-18: the send ends the
+  // hold on the case it resolved, whoever holds it. The case has left the
+  // queue, so a hold on it would say somebody is still working it — and the
+  // history would read as a lapse twenty minutes later instead of the send
+  // that ended it, overstating the time the case held a person.
+  it('ends the hold on the case a send resolves, whoever held it', async () => {
+    const ticket = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkReply(ticket);
+    await takeHold(pool, {
+      runId: parked.runId, reviewer: 'anna@example.test', lapseMs: 1_200_000,
+    });
+
+    // Bo holds nothing, and approves the case Anna is reading. The
+    // reservation is advisory (DEC-46), and the send is what ends it.
+    expect((await approveRun(pool, parked.runId, {
+      approvedBy: 'bo@example.test',
+      approvedBySource: 'roster',
+    })).outcome).toBe('approved');
+
+    expect(await readHold(pool, parked.runId)).toBeNull();
+    expect((await holdHistory(pool, parked.runId)).map((event) => [event.kind, event.reviewer]))
+      .toEqual([['take', 'anna@example.test'], ['send', 'bo@example.test']]);
+    // The row keeps whose hold it was, and says who ended it.
+    const { rows } = await pool.query(
+      'SELECT reviewer, released_by, release_kind FROM case_hold WHERE run_id = $1',
+      [parked.runId],
+    );
+    expect(rows[0]).toMatchObject({
+      reviewer: 'anna@example.test',
+      released_by: 'bo@example.test',
+      release_kind: 'send',
+    });
+  });
+
+  // Criterion 8: the reservation is advisory. An approval asks nobody to hold
+  // the case, so the reviewer who opens a case from a stale queue — or from a
+  // bookmark — still approves it. Nothing is recorded, because nothing
+  // happened: the case was simply nobody's.
+  it('approves a case nobody holds, and records no hold', async () => {
+    const ticket = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkReply(ticket);
+    expect(await readHold(pool, parked.runId)).toBeNull();
+
+    expect((await approveRun(pool, parked.runId, {
+      approvedBy: 'bo@example.test',
+      approvedBySource: 'roster',
+    })).outcome).toBe('approved');
+    expect(await holdHistory(pool, parked.runId)).toEqual([]);
   });
 
   // DEC-45: the name and where it came from are recorded together, because

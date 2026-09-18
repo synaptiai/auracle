@@ -1,4 +1,4 @@
-// The console's one write (issue #27, DEC-11, DEC-40).
+// The console's approval write (issue #27, DEC-11, DEC-40).
 //
 // DEC-11 rejected "a Slack queue; a new web queue" by name, and section 4.2
 // says adopters do not install a new interface to receive a draft. DEC-40
@@ -12,8 +12,9 @@
 // distance are therefore the command line's, not a second implementation of
 // them.
 //
-// This is the console's only statement against the ledger that is not a
-// SELECT, and `select-only.test.ts` is what holds that claim to one.
+// This is the console's one approval path, and `select-only.test.ts` is what
+// holds it to one: the holds (DEC-46) are the console's other writes, and it
+// names every write it makes.
 import type { Pool } from 'pg';
 import type { ApproveOptions, ApproveOutcome, DraftReadBack } from 'auracle/ledger-read';
 
@@ -98,6 +99,14 @@ export interface ApproveRequest {
    * all the same, and a value it refuses records nobody.
    */
   readonly approvedBy: string;
+  /**
+   * DEC-46: the digest of the reply the page the reviewer read drew.
+   *
+   * Required, because every approval this console makes is an approval of a
+   * page it rendered. The approval recomputes it from the reply the ledger
+   * holds, under the run's lock, and refuses the send when the two differ.
+   */
+  readonly shown: string;
 }
 
 export async function approveFromConsole(
@@ -117,6 +126,9 @@ export async function approveFromConsole(
     // DEC-45: the console only serves an identity it checked against the
     // roster, so the ledger records where this name came from.
     approvedBySource: 'roster',
+    // DEC-46: the reply this page drew, so the approval can refuse a case
+    // whose saved reply moved under the reviewer.
+    shown: request.shown,
     ...(deps.readDraft === undefined ? {} : { readDraft: deps.readDraft }),
   };
   try {
@@ -142,8 +154,8 @@ export function approvalFor(deps: {
   readonly approveRun: ApproveDeps['approveRun'];
   readonly readBack: ConsoleReadBack | null;
   readonly log: (record: Readonly<Record<string, unknown>>) => void;
-}): (runId: string, approvedBy: string) => Promise<ConsoleApproveOutcome['outcome']> {
-  return async (runId, approvedBy) => {
+}): (runId: string, approvedBy: string, shown: string) => Promise<ConsoleApproveOutcome['outcome']> {
+  return async (runId, approvedBy, shown) => {
     const outcome = await approveFromConsole(
       {
         pool: deps.pool,
@@ -153,7 +165,7 @@ export function approvalFor(deps: {
           deps.log({ event: 'console_read_back_failed', runId: failedRun, draftExternalId, fault });
         },
       },
-      { runId, approvedBy },
+      { runId, approvedBy, shown },
     );
     return outcome.outcome;
   };

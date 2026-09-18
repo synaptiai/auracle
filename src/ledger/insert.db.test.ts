@@ -362,6 +362,68 @@ describe('fencedTransition and the runs the fence still governs', () => {
     expect(moved).toEqual({ outcome: 'stale_epoch', highestAcceptedEpoch: 50n });
   });
 
+  // DEC-46's shown-text guard: a caller's own precondition on values the row
+  // cannot express. It is asked under the same lock, with the state the row
+  // holds, and a true answer refuses the transition without writing anything.
+  it('refuses a write its own precondition refuses, and changes nothing', async () => {
+    const run = makeRun(1n, 'awaiting_approval');
+    await fencedInsert(pool, run, null);
+
+    const asked: string[] = [];
+    const moved = await fencedTransition(pool, {
+      runId: run.runId,
+      state: 'resolved',
+      costMicros: 0,
+      stepsUsed: 1,
+      fromState: 'awaiting_approval',
+      outbox: makeOutbox(run, 'key-refused'),
+      refuseIf: async (_client, currentState) => {
+        asked.push(currentState);
+        return true;
+      },
+    });
+
+    expect(moved).toEqual({ outcome: 'refused' });
+    // It is asked about the state under the lock, so a precondition can
+    // compare what the caller showed a person with what the row holds.
+    expect(asked).toEqual(['awaiting_approval']);
+    // And the refusal wrote nothing: the run is where it was, and the outbox
+    // holds no record. An implementation that wrote and then rolled back
+    // would satisfy this too — what these assertions hold is that nothing
+    // committed, and the placement in `fencedTransition` is what makes the
+    // write not happen rather than unhappen.
+    const row = await pool.query('SELECT state FROM run WHERE run_id = $1', [run.runId]);
+    expect(row.rows[0]!.state).toBe('awaiting_approval');
+    const outbox = await pool.query('SELECT 1 FROM outbox WHERE run_id = $1', [run.runId]);
+    expect(outbox.rows).toHaveLength(0);
+  });
+
+  // The other answer: a precondition that is satisfied lets the same write
+  // through, so the hook refuses nothing by itself.
+  it('accepts a write whose precondition is satisfied', async () => {
+    const run = makeRun(1n, 'awaiting_approval');
+    await fencedInsert(pool, run, null);
+
+    const asked: string[] = [];
+    const moved = await fencedTransition(pool, {
+      runId: run.runId,
+      state: 'resolved',
+      costMicros: 0,
+      stepsUsed: 1,
+      fromState: 'awaiting_approval',
+      outbox: makeOutbox(run, 'key-accepted'),
+      refuseIf: async (_client, currentState) => {
+        asked.push(currentState);
+        return false;
+      },
+    });
+
+    expect(moved).toEqual({ outcome: 'accepted' });
+    expect(asked).toEqual(['awaiting_approval']);
+    const row = await pool.query('SELECT state FROM run WHERE run_id = $1', [run.runId]);
+    expect(row.rows[0]!.state).toBe('resolved');
+  });
+
   // The boundary of the escape, at its other end: a run that has finished is
   // not parked either, so the fence still governs it. No production caller
   // moves a terminal run today, which is why this is the fail-closed half of

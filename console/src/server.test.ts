@@ -12,6 +12,7 @@ import { request } from 'node:http';
 import { createHash } from 'node:crypto';
 
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
+import { replyDigest } from 'auracle/ledger-read';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { escapeHtml, renderGates } from './render.js';
@@ -230,6 +231,14 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
     // an active reviewer, so a case about a surface is not also a case about
     // the gate; the gate's own cases override it.
     reviewerFor: async () => ({ reviewer: REVIEWER }),
+    // DEC-46: the case hold. The default is an unheld case whose takes and
+    // releases succeed, so a case about a surface is not also a case about
+    // the hold; the hold's own cases override these.
+    readHold: async () => null,
+    readHolds: async () => new Map(),
+    takeHold: async () => ({ outcome: 'taken' }),
+    releaseHold: async () => ({ outcome: 'released' }),
+    handoverHold: async () => ({ outcome: 'handed_over' }),
     readQueueToday: async () => ({ day: '2026-09-14', arrived: 3, reachedQueue: 1 }),
     ...overrides,
   };
@@ -257,6 +266,14 @@ const STATES = ['gated', 'awaiting_approval', 'resolved'] as const;
 const LEDGER = 'localhost:5433/auracle';
 /** DEC-45: the reviewer the gate resolves, unless a case says otherwise. */
 const REVIEWER = 'synthetic-reviewer@example.test';
+
+/**
+ * DEC-46: the digest of the reply the page drew, as the approval form carries
+ * it. Every console approval carries one — the route refuses a post without a
+ * digest — and the approval's own comparison against the ledger is proved in
+ * its database suite. Any 64 hex characters do here.
+ */
+const SHOWN = 'c'.repeat(64);
 
 /**
  * A refusal from the gate, for a case about what the console does with one.
@@ -385,11 +402,11 @@ describe('the console routes', () => {
         'content-type': 'application/x-www-form-urlencoded',
         'sec-fetch-site': 'same-origin',
       },
-      body: new URLSearchParams({ runId: RUN }).toString(),
+      body: new URLSearchParams({ shown: SHOWN, runId: RUN }).toString(),
       redirect: 'manual',
     });
     expect(res.status).toBe(303);
-    expect(approve).toHaveBeenCalledWith(RUN, REVIEWER);
+    expect(approve).toHaveBeenCalledWith(RUN, REVIEWER, SHOWN);
   });
 
   // The reply the customer receives is the draft the helpdesk holds: the
@@ -408,17 +425,18 @@ describe('the console routes', () => {
         'sec-fetch-site': 'same-origin',
       },
       body: new URLSearchParams({
-        runId: RUN, finalBody: 'never sent', approvedBy: 'not-from-a-form',
+        runId: RUN, finalBody: 'never sent', approvedBy: 'not-from-a-form', shown: SHOWN,
       }).toString(),
       redirect: 'manual',
     });
-    // Two arguments and no more: the run id, and the reviewer the gate
-    // resolved against the roster (DEC-45). Neither comes from the form. A
-    // body posted here would be recorded as the approved reply while the
-    // relay sent the parked draft, and a reviewer taken from a form is a
-    // name anyone can type.
-    expect(approve).toHaveBeenCalledWith(RUN, REVIEWER);
-    expect(approve.mock.calls[0]).toHaveLength(2);
+    // Three arguments and no more: the run id, the reviewer the gate resolved
+    // against the roster (DEC-45), and the digest of the reply this console
+    // drew (DEC-46). Not one of them comes from the form's text. A body posted
+    // here would be recorded as the approved reply while the relay sent the
+    // parked draft, and a reviewer taken from a form is a name anyone can
+    // type.
+    expect(approve).toHaveBeenCalledWith(RUN, REVIEWER, SHOWN);
+    expect(approve.mock.calls[0]).toHaveLength(3);
   });
 
   // And the page offers no way to type one.
@@ -466,7 +484,9 @@ describe('the console routes', () => {
       readRun: caseOf({ reason: null, draftExternalId: null, payloadRecorded: false }),
     }));
     const html = await (await fetch(base + CASE)).text();
-    expect(html).not.toContain('<form');
+    // The approval, not "a form": since DEC-46 the case also carries the
+    // take control, and a page with a hold bar has a form on it.
+    expect(html).not.toContain('action="/approve"');
     expect(html).toContain('neither a helpdesk draft nor an action payload');
   });
 });
@@ -490,7 +510,7 @@ describe('the console against a page it did not serve', () => {
         'sec-fetch-site': 'cross-site',
         origin: 'https://evil.example',
       },
-      body: new URLSearchParams({ runId: RUN }).toString(),
+      body: new URLSearchParams({ shown: SHOWN, runId: RUN }).toString(),
       redirect: 'manual',
     });
     expect(res.status).toBe(403);
@@ -513,7 +533,7 @@ describe('the console against a page it did not serve', () => {
           'sec-fetch-site': 'cross-site',
           origin: 'https://evil.example',
         },
-        body: new URLSearchParams({ runId: RUN }).toString(),
+        body: new URLSearchParams({ shown: SHOWN, runId: RUN }).toString(),
         redirect: 'manual',
       });
       const refused = logged
@@ -535,7 +555,7 @@ describe('the console against a page it did not serve', () => {
         'content-type': 'application/x-www-form-urlencoded',
         origin: 'https://evil.example',
       },
-      body: new URLSearchParams({ runId: RUN }).toString(),
+      body: new URLSearchParams({ shown: SHOWN, runId: RUN }).toString(),
       redirect: 'manual',
     });
     expect(res.status).toBe(403);
@@ -554,7 +574,7 @@ describe('the console against a page it did not serve', () => {
         'content-type': 'application/x-www-form-urlencoded',
         'sec-fetch-site': 'none',
       },
-      body: new URLSearchParams({ runId: RUN }).toString(),
+      body: new URLSearchParams({ shown: SHOWN, runId: RUN }).toString(),
       redirect: 'manual',
     });
     expect(res.status).toBe(403);
@@ -570,7 +590,7 @@ describe('the console against a page it did not serve', () => {
     const res = await fetch(`${base}/approve`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ runId: RUN }).toString(),
+      body: new URLSearchParams({ shown: SHOWN, runId: RUN }).toString(),
       redirect: 'manual',
     });
     expect(res.status).toBe(403);
@@ -590,11 +610,11 @@ describe('the console against a page it did not serve', () => {
         'content-type': 'application/x-www-form-urlencoded',
         origin: base,
       },
-      body: new URLSearchParams({ runId: RUN }).toString(),
+      body: new URLSearchParams({ shown: SHOWN, runId: RUN }).toString(),
       redirect: 'manual',
     });
     expect(res.status).toBe(303);
-    expect(approve).toHaveBeenCalledWith(RUN, REVIEWER);
+    expect(approve).toHaveBeenCalledWith(RUN, REVIEWER, SHOWN);
   });
 
   // Framing is the way a foreign page reaches the write without forging any
@@ -624,7 +644,7 @@ describe('the console against a page it did not serve', () => {
         'content-type': 'application/x-www-form-urlencoded',
         'sec-fetch-site': 'same-origin',
       },
-      body: new URLSearchParams({ runId: RUN }).toString(),
+      body: new URLSearchParams({ shown: SHOWN, runId: RUN }).toString(),
       redirect: 'manual',
     });
     expect(post.status).toBe(303);
@@ -803,7 +823,7 @@ describe('what a fault and a refusal tell the operator', () => {
           'content-type': 'application/x-www-form-urlencoded',
           'sec-fetch-site': 'same-origin',
         },
-        body: `runId=${RUN}`,
+        body: `runId=${RUN}&shown=${SHOWN}`,
         redirect: 'manual' as const,
       });
       const line = logged.find((entry) => entry.includes('console_approved'));
@@ -905,7 +925,7 @@ describe('what a fault and a refusal tell the operator', () => {
           'content-type': 'application/x-www-form-urlencoded',
           'sec-fetch-site': 'same-origin',
         },
-        body: `runId=${RUN}`,
+        body: `runId=${RUN}&shown=${SHOWN}`,
         redirect: 'manual' as const,
       });
       const line = logged.find((entry) => entry.includes('console_approved'));
@@ -943,7 +963,7 @@ describe('what a fault and a refusal tell the operator', () => {
           'content-type': 'application/x-www-form-urlencoded',
           'sec-fetch-site': 'same-origin',
         },
-        body: `runId=${RUN}`,
+        body: `runId=${RUN}&shown=${SHOWN}`,
         redirect: 'manual' as const,
       });
       const record = JSON.parse(logged.find((entry) => entry.includes('console_approved')) ?? '{}') as Record<string, unknown>;
@@ -1045,7 +1065,7 @@ describe('what a fault and a refusal tell the operator', () => {
           'content-type': 'application/x-www-form-urlencoded',
           'sec-fetch-site': 'same-origin',
         },
-        body: `runId=${RUN}`,
+        body: `runId=${RUN}&shown=${SHOWN}`,
         redirect: 'manual' as const,
       });
       const record = JSON.parse(logged.find((entry) => entry.includes('console_approved')) ?? '{}') as Record<string, unknown>;
@@ -1081,7 +1101,7 @@ describe('what a fault and a refusal tell the operator', () => {
           'content-type': 'application/x-www-form-urlencoded',
           'sec-fetch-site': 'same-origin',
         },
-        body: `runId=${RUN}`,
+        body: `runId=${RUN}&shown=${SHOWN}`,
         redirect: 'manual' as const,
       });
       const line = logged.find((entry) => entry.includes('console_approved'));
@@ -1183,7 +1203,7 @@ describe('the reply an approver reads before they send it', () => {
     }));
     const html = await (await fetch(base + CASE)).text();
     expect(html).toContain('neither a helpdesk draft nor an action payload');
-    expect(html).not.toContain('<button');
+    expect(html).not.toContain('action="/approve"');
   });
 
   // `compensate` is the class the policy engine judges irreversible, and a
@@ -2120,17 +2140,18 @@ describe('the design notes', () => {
 
   // The maintainer's decision on #104: only cards the console already makes
   // true ship now. Each of the other four ships with the issue that builds it.
-  it('shows the three cards the console makes true today, in order', async () => {
+  it('shows the cards the console makes true today, in order', async () => {
     const base = await startGuarded(deps());
     const html = await (await fetch(base + '/notes')).text();
     expect(cardsOf(html).map((c) => [c.token, c.title])).toEqual([
       ['warn', 'The gates stay apart, everywhere'],
       ['ok', 'An absence is still a sentence'],
       ['dim', 'The engineer surfaces sit under Admin'],
+      // DEC-46: the case hold, which the console keeps now.
+      ['accent', 'A lock, because four people pull from one uncapped list'],
     ]);
     for (const unbuilt of [
       'The reply is edited here, and sent from here',
-      'A lock, because four people pull from one uncapped list',
       'The knowledge base is edited from inside the case',
       'Product is a first-class column',
     ]) {
@@ -2144,7 +2165,7 @@ describe('the design notes', () => {
     const base = await startGuarded(deps());
     const html = await (await fetch(base + '/notes')).text();
     const cards = cardsOf(html);
-    expect(cards).toHaveLength(3);
+    expect(cards).toHaveLength(4);
     for (const card of cards) {
       for (const source of ['was:', '.ts', 'approveControl', 'MESSAGE_ABSENCE', 'gateValue', 'Instrument']) {
         expect(card.says, `${card.title}: ${source}`).not.toContain(source);
@@ -2177,6 +2198,11 @@ describe('the design notes', () => {
       'Runs, control bands and partition latency sit under Admin.'
         + ' They answer questions about the pipeline, and a person clearing a queue between'
         + ' two engineering tasks is not asking them.',
+      'The queue is not capped, so the same case can sit in front of four reviewers at once.'
+        + ' A reviewer takes a case before working it, so the others see who holds it and the time left.'
+        + ' The hold says who is working, and it refuses no write: any reviewer may still approve the case.'
+        + ' A hold lapses on its own without activity, twenty minutes by default.'
+        + ' Taking a second case releases the first, because a person reads one case at a time.',
     ]);
   });
 
@@ -2288,6 +2314,46 @@ describe('the design notes', () => {
     for (const surface of ['Runs', 'Control bands', 'Partition latency']) {
       expect(admin, surface).toContain(`<span class="navlabel">${surface}</span>`);
     }
+  });
+
+  // Card 4, claimed on the screens it describes (DEC-46). The queue is
+  // uncapped and says which cases somebody has; the case page names the
+  // holder, offers the approval anyway, and offers the way to move the hold
+  // on. The card's "twenty minutes by default" is the console's own default,
+  // held by `lifecycle.test.ts` beside the rest of the entry point's
+  // configuration.
+  it('makes the lock card true of the console it describes', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => [{
+        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+        reason: 'customer_visible', stepsUsed: 4, agreement: 0.89, draftExternalId: 'D-1',
+      }] as never,
+      readHolds: async () => new Map([[RUN, {
+        reviewer: 'anna@example.test',
+        takenAt: new Date(Date.now() - 4 * 60_000),
+        lapsesAt: new Date(Date.now() + 16 * 60_000),
+      }]]),
+    }));
+    // Four reviewers, one uncapped list, and the list says who has what.
+    const queue = await (await fetch(base + '/')).text();
+    expect(queue).toContain('This list is not capped, so the oldest is on it.');
+    expect(queue).toContain('Held by someone else');
+    expect(queue).toContain('held by anna@example.test · 4m');
+
+    // The case names the holder and the time left, and the hold refuses no
+    // write: the approval is drawn beside it, and the takeover with it.
+    const readHold = async () => ({
+      reviewer: 'anna@example.test',
+      takenAt: new Date(Date.now() - 4 * 60_000),
+      lapsesAt: new Date(Date.now() + 16 * 60_000),
+    });
+    const held = await startGuarded(deps({ readHold }));
+    const heldCase = await (await fetch(held + CASE)).text();
+    expect(heldCase).toContain('Held by anna@example.test');
+    expect(heldCase).toContain('16 minutes left');
+    expect(heldCase).toContain('Take it over');
+    expect(heldCase).toContain('action="/approve');
+    expect(heldCase).toContain('Approve and send');
   });
 
   // The page draws from nothing but its own copy, so a ledger that cannot
@@ -2407,7 +2473,7 @@ describe('the one script this console ships', () => {
     expect(runbook).not.toContain('ships no JavaScript');
   });
 
-  it('binds Escape to the case back link and c to the focused row', async () => {
+  it('binds Escape to the case back link and c to the take', async () => {
     const base = await startGuarded(deps());
     const script = /<script>([\s\S]*?)<\/script>/.exec(await (await fetch(base + '/')).text())?.[1] ?? '';
     expect(script).toContain(".casehd a.back");
@@ -2418,7 +2484,13 @@ describe('the one script this console ships', () => {
     // lines, so weakening either fails here rather than only in a browser.
     expect(script).toContain('if (href !== null) {');
     expect(script).toContain("if (event.key === 'Escape' && back) {\n      if (inControl(event)) return;");
-    expect(script).toContain('rows[at].click()');
+    // c takes the focused case (DEC-46). The take is a write, so the script
+    // builds a form and submits it: no link writes on a GET, and the pinned
+    // lines below are what keeps that true if the script is ever rewritten.
+    expect(script).toContain("takeForm.method = 'post';");
+    expect(script).toContain("takeForm.action = '/take';");
+    expect(script).toContain('takeForm.submit();');
+    expect(script).toContain('if (rowUrl.origin !== window.location.origin) return;');
     // c acts on the focused row alone, so it never chooses one for a reviewer.
     expect(script).toContain('if (at < 0) return;');
     // The j/k/c guard at its own site, so removing it is not hidden by the
@@ -2482,7 +2554,7 @@ describe('who the ledger records as the approver', () => {
         'content-type': 'application/x-www-form-urlencoded',
         'sec-fetch-site': 'same-origin',
       },
-      body: `runId=${RUN}`,
+      body: `runId=${RUN}&shown=${SHOWN}`,
       redirect: 'manual',
     });
     expect(calls).toEqual(['Ida Lindqvist']);
@@ -2505,7 +2577,7 @@ describe('who the ledger records as the approver', () => {
         'content-type': 'application/x-www-form-urlencoded',
         'sec-fetch-site': 'same-origin',
       },
-      body: new URLSearchParams({ runId: RUN, approvedBy: 'typed-by-anyone' }).toString(),
+      body: new URLSearchParams({ shown: SHOWN, runId: RUN, approvedBy: 'typed-by-anyone' }).toString(),
       redirect: 'manual',
     });
     expect(calls).toEqual(['Ida Lindqvist']);
@@ -2650,6 +2722,571 @@ describe('the gate every request passes (DEC-45)', () => {
         .find((entry) => entry['reason'] === 'reviewer_unread');
       expect(record).toBeDefined();
       expect(String(record!['error'])).toContain('connection terminated');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+// DEC-46, criterion 9. The approval form carries a digest of the reply the
+// page drew, and the route refuses a post without one — so every console
+// approval is an approval of a reply some page showed, and the ledger can
+// refuse it when that reply has moved since.
+describe('the shown-text guard (DEC-46)', () => {
+  /** The reply the case fixture drew, which the digest is of. */
+  const DRAFT = 'We refunded the duplicate charge. Your bank decides when it lands.';
+
+  const post = (base: string, body: string) => fetch(base + '/approve', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      'sec-fetch-site': 'same-origin',
+    },
+    body,
+    redirect: 'manual',
+  });
+
+  it('carries the digest of the reply the case drew', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).toContain(`name="shown" value="${replyDigest(DRAFT)}"`);
+  });
+
+  // Every shape but a SHA-256 in hex is a request this console did not
+  // render. It is refused before the approval reads it, and the run id it
+  // names never reaches the ledger.
+  it('refuses a post that carries no digest, or one of another shape', async () => {
+    const approved: string[] = [];
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({
+        approve: async (runId: string) => { approved.push(runId); return 'approved'; },
+      }));
+      const bodies = [
+        // Absent, empty, too short, too long, and uppercase: the digest is
+        // written in hex by `replyDigest`, and nothing else is one.
+        `runId=${RUN}`,
+        `runId=${RUN}&shown=`,
+        `runId=${RUN}&shown=abc123`,
+        `runId=${RUN}&shown=${'c'.repeat(63)}`,
+        `runId=${RUN}&shown=${'C'.repeat(64)}`,
+      ];
+      for (const body of bodies) {
+        expect((await post(base, body)).status, body).toBe(400);
+      }
+      expect(approved).toEqual([]);
+      expect(logged.filter((line) => line.includes('not_a_shown_digest'))).toHaveLength(bodies.length);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // The refusal the ledger sends back, in the words the case shows. The page
+  // it lands on has just drawn the reply again, so the sentence says to read
+  // it again rather than to retry.
+  it('names the reply when the ledger refuses the approval', async () => {
+    const base = await startGuarded(deps({ approve: async () => 'shown_changed' }));
+    const html = await (await fetch(base + `${CASE}?outcome=shown_changed`)).text();
+    expect(html).toContain('The reply changed since this page was drawn');
+    expect(html).toContain('refused');
+  });
+
+  // And the other half of criterion 9: a case whose state changed is refused
+  // with the state it moved to, so a reviewer reads which change happened
+  // rather than that something did.
+  it('names the state a case moved to', async () => {
+    const base = await startGuarded(deps({ readRun: caseOf({ state: 'resolved' }) }));
+    const html = await (await fetch(base + `${CASE}?outcome=not_awaiting_approval`)).text();
+    expect(html).toContain('It is resolved now');
+  });
+});
+
+describe('taking a case (DEC-46)', () => {
+  /** A hold on one case, lapsing in `minutes` from now. */
+  const holdFor = (reviewer: string, minutes: number) => ({
+    reviewer,
+    takenAt: new Date(Date.now() - 60_000),
+    lapsesAt: new Date(Date.now() + minutes * 60_000),
+  });
+
+  // The bar has three states, and each says what the reviewer can do about
+  // it. A free case is the plain take; the others are somebody's hold.
+  it('offers a take on a free case', async () => {
+    const base = await startGuarded(deps({ readHold: async () => null }));
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).toContain('Nobody holds this case.');
+    expect(html).toContain('Take this case');
+    expect(html).toContain('action="/take"');
+    // No takeover field: one press takes a free case.
+    expect(html).not.toContain('name="over"');
+  });
+
+  // Criterion 1: the second reviewer is told who holds it, and the takeover
+  // is a second press — the form carries `over`, so the page asks.
+  it('names the holder, and asks before moving their hold', async () => {
+    const base = await startGuarded(deps({
+      readHold: async () => holdFor('anna@example.test', 8),
+    }));
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).toContain('Held by anna@example.test');
+    expect(html).toContain('8 minutes left');
+    expect(html).toContain('Take it over');
+    expect(html).toContain('name="over"');
+  });
+
+  // Criterion 5 and 6: the holder sees their own hold and how long is left,
+  // and can let it go.
+  it('shows the holder their own hold, its remaining time, and the release', async () => {
+    const base = await startGuarded(deps({
+      readHold: async () => holdFor(REVIEWER, 1),
+    }));
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).toContain('Held by you');
+    expect(html).toContain('1 minute left');
+    expect(html).toContain('Release it');
+    expect(html).toContain('name="release"');
+  });
+
+  // Criterion 5: the case shows the holder's remaining time, and the console
+  // is what turns `lapses_at` into it. The figure rounds up, so a hold that
+  // has 90 seconds on it never reads "1 minute left" and then ends early.
+  it('says how long is left, rounding up so a minute is never early', async () => {
+    const endsIn = (ms: number) => deps({
+      readHold: async () => ({
+        reviewer: REVIEWER,
+        takenAt: new Date(Date.now() - 60_000),
+        lapsesAt: new Date(Date.now() + ms),
+      }),
+    });
+    const remaining = async (ms: number) =>
+      (await (await fetch(await startGuarded(endsIn(ms)) + CASE)).text());
+
+    // Ninety seconds, twenty-nine, and one already past: three answers, and
+    // the last one is the only one that says a hold is nearly over. Twenty-
+    // nine seconds is the input that tells the rule apart from rounding to
+    // nearest: 0.483 minutes rounds to none, and the rule says one.
+    expect(await remaining(90_000)).toContain('2 minutes left');
+    expect(await remaining(29_000)).toContain('1 minute left');
+    expect(await remaining(29_000)).not.toContain('less than a minute left');
+    const past = await remaining(-1_000);
+    expect(past).toContain('less than a minute left');
+    expect(past).not.toContain('1 minute left');
+  });
+
+  // The case is not the place for a hold: a run that is not waiting is not
+  // something anyone takes, and the bar says nothing about it.
+  it('draws no hold bar on a case that is not waiting', async () => {
+    const base = await startGuarded(deps({
+      readRun: caseOf({ state: 'resolved' }),
+      readHold: async () => holdFor('anna@example.test', 8),
+    }));
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).not.toContain('Held by anna@example.test');
+    expect(html).not.toContain('action="/take"');
+  });
+
+  // The take itself: the request's reviewer, the run from the form, and the
+  // answer drawn back on the case it names.
+  it('takes the case for the request\'s reviewer, and says so', async () => {
+    const calls: Array<[string, string, boolean]> = [];
+    const base = await startGuarded(deps({
+      // The state the answer describes: this reviewer holds it now, so the
+      // page's own read has to agree with the sentence (DEC-46).
+      readHold: async () => holdFor(REVIEWER, 20),
+      takeHold: async (runId: string, reviewer: string, over: boolean) => {
+        calls.push([runId, reviewer, over]);
+        return { outcome: 'taken' };
+      },
+    }));
+    const res = await fetch(base + '/take', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: `runId=${RUN}`,
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(`/case/${RUN}?taken=taken`);
+    // The reviewer the gate resolved, never a name from the form.
+    expect(calls).toEqual([[RUN, REVIEWER, false]]);
+    expect((await (await fetch(base + `/case/${RUN}?taken=taken`)).text()))
+      .toContain('You hold this case now.');
+  });
+
+  // Risk row "Takeover bookkeeping", at the console's edge: the takeover is
+  // the confirmed press and nothing else. A free case takes with no `over`.
+  it('takes over only when the form confirms it', async () => {
+    const seen: boolean[] = [];
+    const base = await startGuarded(deps({
+      readHold: async () => holdFor('anna@example.test', 8),
+      takeHold: async (_runId: string, _reviewer: string, over: boolean) => {
+        seen.push(over);
+        return { outcome: 'held_by_other', holder: holdFor('anna@example.test', 8) };
+      },
+    }));
+    const post = (body: string) => fetch(base + '/take', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body,
+      redirect: 'manual',
+    });
+    expect((await post(`runId=${RUN}&over=1`)).status).toBe(303);
+    expect((await post(`runId=${RUN}`)).status).toBe(303);
+    expect(seen).toEqual([true, false]);
+    // And the page says what happened, in the words a person reads: the
+    // refusal names whoever has it now (criterion 6).
+    expect((await (await fetch(base + `/case/${RUN}?taken=held_by_other`)).text()))
+      .toContain('anna@example.test holds this case now.');
+  });
+
+  it('releases the case its holder asked to release', async () => {
+    const released: Array<[string, string]> = [];
+    const base = await startGuarded(deps({
+      releaseHold: async (runId: string, reviewer: string) => {
+        released.push([runId, reviewer]);
+        return { outcome: 'released' };
+      },
+    }));
+    const res = await fetch(base + '/take', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: `runId=${RUN}&release=1`,
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(`/case/${RUN}?taken=released`);
+    expect(released).toEqual([[RUN, REVIEWER]]);
+  });
+
+  // Criterion 3: a handover moves the case to the teammate it names, and the
+  // holder is the only person who can hand it anywhere.
+  it('hands the case to the teammate the holder names', async () => {
+    const handed: Array<[string, string, string]> = [];
+    const base = await startGuarded(deps({
+      // Before the handover the holder is the reviewer; the page the redirect
+      // lands on reads the case after it, so it names the teammate.
+      readHold: async () => holdFor('bo@example.test', 20),
+      handoverHold: async (runId: string, reviewer: string, to: string) => {
+        handed.push([runId, reviewer, to]);
+        return { outcome: 'handed_over' };
+      },
+    }));
+    const res = await fetch(base + '/take', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: `runId=${RUN}&handover=1&to=bo%40example.test`,
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(`/case/${RUN}?taken=handed_over`);
+    expect(handed).toEqual([[RUN, REVIEWER, 'bo@example.test']]);
+    expect((await (await fetch(base + `/case/${RUN}?taken=handed_over`)).text()))
+      .toContain('The case is theirs now.');
+  });
+
+  // Criterion 6, at the strength it has: a refusal keeps what the reviewer
+  // typed. Typing a colleague's identity twice to fix a typo is the failure
+  // this prevents.
+  it('keeps the identity it was given when the handover is refused', async () => {
+    const base = await startGuarded(deps({
+      readHold: async () => holdFor(REVIEWER, 8),
+      handoverHold: async () => ({ outcome: 'not_a_reviewer' }),
+    }));
+    const res = await fetch(base + '/take', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: `runId=${RUN}&handover=1&to=typo%40example.test`,
+      redirect: 'manual',
+    });
+    expect(res.headers.get('location')).toBe(
+      `/case/${RUN}?taken=not_a_reviewer&to=typo%40example.test`,
+    );
+    const html = await (await fetch(base + res.headers.get('location')!)).text();
+    expect(html).toContain('That identity is not an active reviewer');
+    expect(html).toContain('value="typo@example.test"');
+  });
+
+  // Criterion 6, the half a refusal owes: a reviewer whose hold moved is told
+  // who holds the case now. This is how the earlier holder learns of it at
+  // their next action, and it must name the person — "somebody else holds
+  // this" sends them looking for who.
+  it('tells the reviewer who holds the case now, when their hold moved', async () => {
+    const base = await startGuarded(deps({
+      readHold: async () => holdFor('anna@example.test', 8),
+      releaseHold: async () => ({
+        outcome: 'held_by_other',
+        holder: holdFor('anna@example.test', 8),
+      }),
+    }));
+    const res = await fetch(base + '/take', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: `runId=${RUN}&release=1`,
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(303);
+    const html = await (await fetch(base + res.headers.get('location')!)).text();
+    expect(html).toContain('anna@example.test holds this case now.');
+    // Criterion 6's other half: the case is not taken away from them. The
+    // reply they were reading is still on the page, and so is the takeover.
+    expect(html).toContain('We refunded the duplicate charge.');
+    expect(html).toContain('Take it over');
+  });
+
+  // The same refusal for a handover. The case is somebody else's now, so the
+  // handover field is gone with it and there is nowhere for the typed name to
+  // go; what the page owes is whose case it is.
+  it('names the holder who has the case when a handover no longer finds theirs', async () => {
+    const base = await startGuarded(deps({
+      readHold: async () => holdFor('anna@example.test', 8),
+      handoverHold: async () => ({ outcome: 'not_yours' }),
+    }));
+    const res = await fetch(base + '/take', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: `runId=${RUN}&handover=1&to=bo%40example.test`,
+      redirect: 'manual',
+    });
+    const html = await (await fetch(base + res.headers.get('location')!)).text();
+    expect(html).toContain('anna@example.test holds this case now.');
+    // And the page offers the one thing left to do about it.
+    expect(html).toContain('Take it over');
+  });
+
+  // And when the read finds nobody, the page says that rather than repeating
+  // a sentence about a holder who is gone. The hold moved twice, or it lapsed
+  // in the instant between the refusal and this page.
+  it('does not claim a holder the read no longer finds', async () => {
+    const base = await startGuarded(deps({ readHold: async () => null }));
+    const html = await (await fetch(base + `${CASE}?taken=held_by_other`)).text();
+    expect(html).toContain('Nobody holds this case.');
+    expect(html).toContain('The hold moved, and nobody holds this case now.');
+    // No name, and no claim that somebody has it.
+    expect(html).not.toContain('anna@example.test');
+    expect(html).not.toContain('Somebody else holds this case');
+  });
+
+  // A holder who types their own identity into the handover field. The field
+  // is free text, so this is a press a person can make, and the answer says
+  // the case is still theirs rather than that it moved.
+  it('says the case stayed theirs when the handover named the holder', async () => {
+    const base = await startGuarded(deps({
+      readHold: async () => holdFor(REVIEWER, 8),
+      handoverHold: async () => ({ outcome: 'already_yours' }),
+    }));
+    const res = await fetch(base + '/take', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: `runId=${RUN}&handover=1&to=${encodeURIComponent(REVIEWER)}`,
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(303);
+    const html = await (await fetch(base + res.headers.get('location')!)).text();
+    expect(html).toContain('You already hold this case, so it did not move.');
+    expect(html).not.toContain('The case is theirs now.');
+  });
+
+  // The outcome arrives on the query string, so a link can carry any text.
+  // `taken` is read like `outcome` is: a value this console does not know is
+  // its own fixed sentence, never echoed as the console's words — and never a
+  // bare lookup, because `Object.prototype` answers `toString` with a
+  // function and `escapeHtml` then throws on it.
+  it('answers an unknown take outcome in its own words, and never throws', async () => {
+    const base = await startGuarded(deps());
+    for (const taken of ['toString', 'constructor', '__proto__', 'valueOf', 'hello world']) {
+      const res = await fetch(base + `${CASE}?taken=${encodeURIComponent(taken)}`);
+      expect(res.status, taken).toBe(200);
+      const html = await res.text();
+      expect(html, taken).not.toContain(taken);
+      expect(html, taken).toContain('That is not an answer this console knows.');
+    }
+    // And a value it does know still draws its own sentence.
+    const known = await (await fetch(base + `${CASE}?taken=released`)).text();
+    expect(known).toContain('You released this case.');
+  });
+
+  // The hold read failed. The page must not answer for it: "Nobody holds this
+  // case" is a fact this read did not establish, and the take form would rest
+  // on it. The fault rides to the bar with the tag of its log line, as the
+  // customer read does, and the approval is untouched beside it.
+  it('says the hold was not read, rather than that nobody has it', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({
+        readHold: async () => { throw new Error('connection terminated'); },
+      }));
+      const res = await fetch(base + CASE);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain('The hold on this case was not read');
+      expect(html).not.toContain('Nobody holds this case.');
+      expect(html).not.toContain('action="/take"');
+      // A fault reading the hold says nothing about the approval.
+      expect(html).toContain('action="/approve');
+      const record = logged
+        .map((entry) => JSON.parse(entry) as Record<string, unknown>)
+        .find((entry) => entry['event'] === 'console_hold_unread');
+      expect(record).toBeDefined();
+      expect(html).toContain(String(record!['tag']));
+      expect(String(record!['error'])).toContain('connection terminated');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // A take sentence must fit the hold this page read (DEC-46). The redirect
+  // carries it, and a link can carry any value: `?taken=taken` on a page that
+  // reloaded after the hold lapsed drew "You hold this case now" beside
+  // "Nobody holds this case".
+  it('drops a take sentence the hold it describes has moved past', async () => {
+    const base = await startGuarded(deps({ readHold: async () => null }));
+    const html = await (await fetch(base + `${CASE}?taken=taken`)).text();
+    expect(html).not.toContain('You hold this case now.');
+    expect(html).toContain('That is not an answer this console knows.');
+  });
+
+  // The two refusals about somebody else's hold are dropped when the hold is
+  // the reader's own: "Somebody else holds this case" under "Held by you" is
+  // the same contradiction as the stale take, on the outcomes that word a
+  // holder other than the one this page read.
+  it('drops a refusal about somebody else when the hold is the reader\'s', async () => {
+    const base = await startGuarded(deps({ readHold: async () => holdFor(REVIEWER, 8) }));
+    for (const taken of ['held_by_other', 'not_yours']) {
+      const html = await (await fetch(base + `${CASE}?taken=${taken}`)).text();
+      expect(html, taken).toContain('Held by you');
+      expect(html, taken).not.toContain('Somebody else holds this case');
+      expect(html, taken).toContain('That is not an answer this console knows.');
+    }
+  });
+
+  // And the answer survives a case that left the queue: `not_waiting` is
+  // exactly what a take of a case somebody else just resolved answers.
+  it('draws the take\'s answer on a case that has left the queue', async () => {
+    const base = await startGuarded(deps({ readRun: caseOf({ state: 'resolved' }) }));
+    const html = await (await fetch(base + `${CASE}?taken=not_waiting`)).text();
+    expect(html).toContain('This case is not waiting for a person, so nobody can take it.');
+    expect(html).not.toContain('action="/take"');
+  });
+
+  // The exception: an outcome whose fit is the run's state alone is drawn
+  // even when the hold read failed. A take of a case that just left the
+  // queue answers `not_waiting`, and the reviewer is owed that answer.
+  it('draws the state-only answer when the hold could not be read', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const base = await startGuarded(deps({
+        readRun: caseOf({ state: 'resolved' }),
+        readHold: async () => { throw new Error('connection terminated'); },
+      }));
+      const html = await (await fetch(base + `${CASE}?taken=not_waiting`)).text();
+      expect(html).toContain('This case is not waiting for a person, so nobody can take it.');
+      // Nothing is said about a hold: the case is nobody's to take, and this
+      // page did not read who has it.
+      expect(html).not.toContain('The hold on this case was not read');
+      expect(html).not.toContain('Held by');
+      // A sentence about a hold is still dropped: the read cannot check it.
+      const other = await (await fetch(base + `${CASE}?taken=released`)).text();
+      expect(other).not.toContain('You released this case.');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // A fault can arrive after the transaction committed and before this
+  // process read the answer, so the page does not claim the take failed.
+  it('does not claim the take failed when the fault may have arrived late', async () => {
+    const base = await startGuarded(deps({
+      takeHold: async () => { throw new Error('connection terminated'); },
+    }));
+    const res = await fetch(base + '/take', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: `runId=${RUN}`,
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(500);
+    expect(await res.text()).toContain('may or may not have committed');
+  });
+
+  // A run id of another shape is a request this console declines, and it
+  // never reaches the hold.
+  it('refuses a run id that is not one, without reaching the hold', async () => {
+    const taken: string[] = [];
+    const base = await startGuarded(deps({
+      takeHold: async (runId: string) => { taken.push(runId); return { outcome: 'taken' }; },
+    }));
+    const res = await fetch(base + '/take', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: 'runId=abc',
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(400);
+    expect(taken).toEqual([]);
+  });
+
+  // The take is a write about a person, so the console records it, with the
+  // action the form asked for.
+  it('records the take, the takeover and the release it made', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({
+        readHold: async () => holdFor('anna@example.test', 8),
+      }));
+      for (const body of [`runId=${RUN}`, `runId=${RUN}&over=1`, `runId=${RUN}&release=1`]) {
+        await fetch(base + '/take', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded',
+            'sec-fetch-site': 'same-origin',
+          },
+          body,
+          redirect: 'manual',
+        });
+      }
+      const records = logged
+        .map((entry) => JSON.parse(entry) as Record<string, unknown>)
+        .filter((entry) => entry['event'] === 'console_took');
+      expect(records.map((entry) => entry['action'])).toEqual(['take', 'over', 'release']);
+      expect(records.every((entry) => entry['reviewer'] === REVIEWER)).toBe(true);
     } finally {
       spy.mockRestore();
     }
@@ -2932,7 +3569,7 @@ describe('the queue a reviewer lands on (issue #101)', () => {
     const base = await startGuarded(deps({ listApprovals: async () => queue() }));
     const html = await (await fetch(base + '/')).text();
     // The whole line, so a key can join it only by failing this test.
-    expect(html).toContain('<div class="keys">j / k move · enter opens · c opens the case</div>');
+    expect(html).toContain('<div class="keys">j / k move · enter opens · c takes the case</div>');
     expect(html).not.toContain('a confirms');
     // Above the rows, where an uncapped queue cannot push it under the fold.
     expect(html.indexOf('<div class="keys">')).toBeLessThan(html.indexOf('<div class="list">'));
@@ -3227,7 +3864,7 @@ describe('the queue a reviewer lands on (issue #101)', () => {
     const res = await fetch(base + '/approve', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
-      body: `runId=${RUN}`,
+      body: `runId=${RUN}&shown=${SHOWN}`,
       redirect: 'manual',
     });
     expect(res.status).toBe(303);
@@ -3284,6 +3921,126 @@ describe('the approval queue', () => {
     // The page ships exactly one script, the pinned one.
     expect(html.split('<script>')).toHaveLength(2);
     expect(html).toContain('SYN-1');
+  });
+});
+
+// Criterion 4 (DEC-46). Four reviewers pull from one uncapped list, and
+// nothing on it said which cases somebody was already reading. The queue now
+// says who holds each of those, and for how long.
+describe('the queue\'s held group (DEC-46)', () => {
+  const RUN_B = '8a2d4c6e-1f3b-4a90-9c7e-2d5b8f0a1c34';
+
+  function waiting(...runIds: readonly string[]) {
+    return runIds.map((runId, i) => ({
+      runId, ticketId: `SYN-${i}`, state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+      reason: 'customer_visible', stepsUsed: 4, agreement: 0.89, coverage: 0.94,
+      draftExternalId: `D-${i}`,
+    }));
+  }
+
+  /** A live hold, taken `minutes` ago, as the queue reader returns it. */
+  const heldBy = (reviewer: string, minutes: number) => ({
+    reviewer,
+    takenAt: new Date(Date.now() - minutes * 60_000),
+    lapsesAt: new Date(Date.now() + (20 - minutes) * 60_000),
+  });
+
+  /** The one row a case opened from this queue would open, as HTML. */
+  const rowFor = (html: string, runId: string): string => {
+    const at = html.indexOf(`href="/case/${runId}"`);
+    return at === -1 ? '' : html.slice(at, html.indexOf('</a>', at));
+  };
+
+  it('names the holder and how long they have held it, in its own group', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => waiting(RUN),
+      readHolds: async () => new Map([[RUN, heldBy('anna@example.test', 4)]]),
+    }));
+    const html = await (await fetch(base + '/')).text();
+    expect(html).toContain('Held by someone else');
+    expect(rowFor(html, RUN)).toContain('held by anna@example.test · 4m');
+  });
+
+  // The group is "held by someone else", and a case the reader holds is not.
+  // It stays where its gate facts put it: it is theirs to work.
+  it('keeps a case the reader holds in its own group', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => waiting(RUN, RUN_B),
+      readHolds: async () => new Map([
+        [RUN, heldBy(REVIEWER, 3)],
+        [RUN_B, heldBy('anna@example.test', 4)],
+      ]),
+    }));
+    const html = await (await fetch(base + '/')).text();
+    expect(html).toContain('Held by someone else');
+    // The reader's own case is drawn above the held group, so it is not in it.
+    expect(html.indexOf('SYN-0')).toBeLessThan(html.indexOf('Held by someone else'));
+    expect(rowFor(html, RUN_B)).toContain('held by anna@example.test');
+    // And the reader's row claims no holder: the group is somebody else's.
+    expect(rowFor(html, RUN)).not.toContain('held by');
+  });
+
+  it('names each holder on that holder\'s own row', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => waiting(RUN, RUN_B),
+      readHolds: async () => new Map([
+        [RUN, heldBy('anna@example.test', 4)],
+        [RUN_B, heldBy('bo@example.test', 9)],
+      ]),
+    }));
+    const html = await (await fetch(base + '/')).text();
+    expect(rowFor(html, RUN)).toContain('held by anna@example.test · 4m');
+    expect(rowFor(html, RUN)).not.toContain('bo@example.test');
+    expect(rowFor(html, RUN_B)).toContain('held by bo@example.test · 9m');
+  });
+
+  // Criterion 4, risk row "Queue query count". The queue is uncapped and the
+  // holds are read for the whole page at once: a read per row is one
+  // statement behind every row, and a 476-row queue cost 476 of them.
+  it('reads the holds for the whole page in one call', async () => {
+    const ids = Array.from(
+      { length: 30 },
+      (_, i) => `0000000${String(i).padStart(2, '0')}-1111-4111-8111-111111111111`,
+    );
+    const calls: string[][] = [];
+    const base = await startGuarded(deps({
+      listApprovals: async () => waiting(...ids),
+      readHolds: async (runIds: readonly string[]) => {
+        calls.push([...runIds]);
+        return new Map();
+      },
+    }));
+    await (await fetch(base + '/')).text();
+    expect(calls).toEqual([ids]);
+  });
+
+  // Failure mode "timeouts". The queue is the work, so a fault reading the
+  // holds does not take it away. It draws without them and says so, because a
+  // queue that quietly dropped the holders would read as a queue nobody has.
+  it('draws the queue when the holds cannot be read, and says so', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({
+        listApprovals: async () => waiting(RUN),
+        readHolds: async () => { throw new Error('connection terminated'); },
+      }));
+      const html = await (await fetch(base + '/')).text();
+      expect(html).toContain('SYN-0');
+      expect(html).not.toContain('Held by someone else');
+      expect(html).not.toContain('held by');
+      const record = logged
+        .map((entry) => JSON.parse(entry) as Record<string, unknown>)
+        .find((entry) => entry['event'] === 'console_holds_unread');
+      expect(record).toBeDefined();
+      expect(String(record!['error'])).toContain('connection terminated');
+      // The page names the log line, as the counts' fault does.
+      expect(html).toContain(String(record!['tag']));
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -3610,7 +4367,7 @@ describe('the run an approver reads, and the run the button posts', () => {
         'content-type': 'application/x-www-form-urlencoded',
         'sec-fetch-site': 'same-origin',
       },
-      body: `runId=${A}`,
+      body: `runId=${A}&shown=${SHOWN}`,
       redirect: 'manual',
     });
     expect(posted.status).toBe(303);
@@ -3628,7 +4385,7 @@ describe('the run an approver reads, and the run the button posts', () => {
         'content-type': 'application/x-www-form-urlencoded',
         'sec-fetch-site': 'same-origin',
       },
-      body: `runId=${A}`,
+      body: `runId=${A}&shown=${SHOWN}`,
       redirect: 'manual',
     });
     expect(posted.headers.get('location')).toBe(`/case/${A}?outcome=approved`);
@@ -3958,7 +4715,9 @@ describe('the case a reviewer decides on (issue #102)', () => {
     expect(bar).toContain('Approve and send');
     expect(bar).toContain('a sent reply cannot be recalled');
     expect(bar).toContain(`name="runId" value="${RUN}"`);
-    expect(html.match(/type="submit"/g) ?? []).toHaveLength(1);
+    // One submit in the approval's own bar. The case carries the hold bar's
+    // submit beside it since DEC-46, which is not the approval.
+    expect(bar.match(/type="submit"/g) ?? []).toHaveLength(1);
   });
 
   it('carries the at-most-once and cannot-be-undone warnings for a compensation', async () => {
@@ -4156,7 +4915,7 @@ describe('the case a reviewer decides on (issue #102)', () => {
           'content-type': 'application/x-www-form-urlencoded',
           'sec-fetch-site': 'same-origin',
         },
-        body: `runId=${RUN}`,
+        body: `runId=${RUN}&shown=${SHOWN}`,
         redirect: 'manual',
       });
       const html = await res.text();
@@ -4221,7 +4980,7 @@ describe('the case a reviewer decides on (issue #102)', () => {
     const res = await fetch(base + '/approve', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
-      body: `runId=${RUN}`,
+      body: `runId=${RUN}&shown=${SHOWN}`,
       redirect: 'manual',
     });
     expect(res.headers.get('location')).toBe(`/case/${RUN}?outcome=read_back_failed`);

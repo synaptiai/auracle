@@ -35,6 +35,7 @@ surface. A pointer to a section that does not cover them is worse than a gap.
 | `fixtures` | DEC-18, DEC-31 | `src/fixtures/fixtures.test.ts` | 5. Offline jobs |
 | `goldreport` | DEC-05, DEC-31, DEC-32, DEC-39 | `src/goldreport/goldreport.test.ts` | 5. Offline jobs |
 | `groundedness` | DEC-05, DEC-07, DEC-31 | `src/groundedness/groundedness.test.ts` | 5. Offline jobs |
+| `holds` | DEC-46 | `src/holds/holds.db.test.ts` | 7.0 The operator console |
 | `imap` | DEC-24, DEC-27 | `src/imap/fetcher.test.ts` | 3. Running the processes |
 | `ingress` | DEC-24 | `src/ingress/webhook-server.test.ts` | 3. Running the processes |
 | `intake` | DEC-35, DEC-36, DEC-38 | `src/intake/adapter.test.ts` | 3. Running the processes |
@@ -58,7 +59,7 @@ surface. A pointer to a section that does not cover them is worse than a gap.
 
 ## Decisions no row names
 
-DEC-01, DEC-08, DEC-15, DEC-33, DEC-44, DEC-46, DEC-47, DEC-48, DEC-49, DEC-50,
+DEC-01, DEC-08, DEC-15, DEC-33, DEC-44, DEC-47, DEC-48, DEC-49, DEC-50,
 DEC-51.
 
 DEC-08 and DEC-15 hold across the repository, so no directory owns either.
@@ -69,7 +70,7 @@ DEC-01 and DEC-33 do belong to directories. `adapters` cites DEC-01 in four
 module headers, and `adapters` and `approval` both carry DEC-33. Neither made
 a cell that holds four decisions at most. Read the module headers for those.
 
-The other seven rows the register gained on 2026-09-14 have no directory that
+The other six rows the register gained on 2026-09-14 have no directory that
 implements them yet. Each joins the row of the directory that implements it,
 in the change that ships it. Until then a row names the decisions its code
 obeys today.

@@ -6,9 +6,10 @@
 // be stated as a package boundary rather than as a convention.
 //
 // Reads go through the query modules the jobs use — `readDays`, `readLatency`,
-// `listRuns`, `listEscalations`, `readRunJournal`. The one write goes through
-// `approveFromConsole`, which hands off to `approveRun`. This module issues no
-// statement itself, and `select-only.test.ts` holds that.
+// `listRuns`, `listEscalations`, `readRunJournal`. The writes go through
+// `approveFromConsole`, which hands off to `approveRun`, and the case holds
+// (DEC-46). This module issues no statement itself, and
+// `select-only.test.ts` holds that.
 //
 // It ships one script, and no more. The state filter is a set of links and the
 // theme toggle is a cookie set on a redirect, because a console that can send
@@ -38,7 +39,8 @@ import {
 } from './surfaces.js';
 import type { ConsoleApproveOutcome } from './approve.js';
 import type {
-  BandRow, CustomerRead, DocumentPage, LatencyRow, QueueTodayRead, QueueTodayView,
+  BandRow, CaseHoldRead, CustomerRead, DocumentPage, LatencyRow,
+  QueueHold, QueueHoldsRead, QueueTodayRead, QueueTodayView,
   RunDetail, RunRow, RunView, Shell,
   ThreadView, Theme,
 } from './surfaces.js';
@@ -47,6 +49,7 @@ import { describeFault } from 'auracle/cli';
 // JSON leaves several line breaks raw.
 import { logLine } from 'auracle/format';
 import type { ReviewerFor } from './reviewer.js';
+import type { HandoverOutcome, Hold, ReleaseOutcome, TakeOutcome } from 'auracle/ledger-read';
 
 /**
  * Everything the console reads or writes, injected.
@@ -79,7 +82,8 @@ export interface ConsoleDeps {
   readonly readConversation: (conversationId: string) => Promise<ThreadView | null>;
   readonly readDocument: (docId: string) => Promise<DocumentPage | null>;
   /**
-   * The approval, with the reviewer this request resolved to (DEC-45).
+   * The approval, with the reviewer this request resolved to (DEC-45) and the
+   * digest of the reply the page drew (DEC-46).
    *
    * The identity has already passed the roster, so it is never undefined
    * here: the gate refuses a request before this call when no reviewer
@@ -88,6 +92,7 @@ export interface ConsoleDeps {
   readonly approve: (
     runId: string,
     approvedBy: string,
+    shown: string,
   ) => Promise<ConsoleApproveOutcome['outcome']>;
   /**
    * The reviewer behind this request, or the reason there is none (DEC-45).
@@ -97,9 +102,48 @@ export interface ConsoleDeps {
    * nobody: the console serves nothing it cannot attribute.
    */
   readonly reviewerFor: ReviewerFor;
+  /** The live hold on a case, or null (DEC-46). Read before the page. */
+  readonly readHold: (runId: string) => Promise<Hold | null>;
+  /**
+   * The live holds on a list of cases, in one statement (DEC-46).
+   *
+   * The queue is uncapped, so a read per row is one statement behind every
+   * row. A case whose hold lapsed is simply not in the map.
+   */
+  readonly readHolds: (runIds: readonly string[]) => Promise<Map<string, Hold>>;
+  /**
+   * Takes a case for this request's reviewer, or takes it over from the
+   * reviewer who holds it. `over` is the confirmation the page asks for.
+   */
+  readonly takeHold: (
+    runId: string,
+    reviewer: string,
+    over: boolean,
+  ) => Promise<TakeOutcome>;
+  /** Lets go of a case this reviewer holds. */
+  readonly releaseHold: (
+    runId: string,
+    reviewer: string,
+  ) => Promise<ReleaseOutcome>;
+  /** Moves a case this reviewer holds to the teammate it names (DEC-46). */
+  readonly handoverHold: (
+    runId: string,
+    reviewer: string,
+    to: string,
+  ) => Promise<HandoverOutcome>;
 }
 
 const CSS_PATH = '/console.css';
+
+/**
+ * The shape of the reply digest the approval form carries (DEC-46).
+ *
+ * A SHA-256 in hex, and nothing else. A value of another shape is a request
+ * this console did not render, refused before the approval reads it — so a
+ * long or strange string never reaches a comparison, and never reaches the
+ * log whole either.
+ */
+const SHOWN_DIGEST = /^[0-9a-f]{64}$/;
 
 /**
  * What a request that named no reviewer is told, by both refusals.
@@ -636,6 +680,22 @@ async function route(
       return;
     }
     const waiting = await deps.listApprovals();
+    // DEC-46: who holds what, for the whole page in one read. A fault does
+    // not take the queue away — the queue is the work — so it draws without
+    // the holders and says which log line names the fault.
+    let holds: QueueHoldsRead;
+    try {
+      const live = await deps.readHolds(waiting.map((run) => run.runId));
+      const byRun = new Map<string, QueueHold>();
+      for (const [runId, hold] of live) {
+        byRun.set(runId, { reviewer: hold.reviewer, takenAt: hold.takenAt });
+      }
+      holds = { reviewer, holds: byRun };
+    } catch (error) {
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({ event: 'console_holds_unread', tag, error: describeFault(error) }));
+      holds = { unreadTag: tag };
+    }
     // Which gate rule the queue is narrowed to. Compared against what is
     // actually waiting rather than validated against a list: a value nothing
     // carries narrows to an empty queue, which is what it asked for and says
@@ -654,7 +714,7 @@ async function route(
     }
     send(res, 200, page(
       'Needs a person',
-      renderApprovals(waiting, rule, today),
+      renderApprovals(waiting, rule, today, holds),
       // Everything waiting, never the narrowed view. A rail badge that fell
       // because a filter was on would report a queue that had emptied.
       // The theme returns with the rule only when something waiting carries
@@ -723,9 +783,34 @@ async function route(
         customer = { kind: 'unread', tag };
       }
     }
+    // DEC-46: who holds this case, read for the bar. A fault reading it does
+    // not take the case away: the approval lands here, and the hold is
+    // advisory. But the page must not draw a holder it did not read, so the
+    // fault rides to the bar as its own answer, with the tag of the log line
+    // that names it — the shape the customer read uses one block above.
+    const taken = url.searchParams.get('taken') ?? '';
+    const handoverTo = url.searchParams.get('to') ?? '';
+    let hold: CaseHoldRead;
+    try {
+      const live = await deps.readHold(runId);
+      hold = {
+        kind: 'read',
+        hold: live === null ? null : {
+          reviewer: live.reviewer,
+          mine: live.reviewer === reviewer,
+          remainingMs: Math.max(0, live.lapsesAt.getTime() - Date.now()),
+        },
+      };
+    } catch (error) {
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({ event: 'console_hold_unread', tag, runId, error: describeFault(error) }));
+      hold = { kind: 'unread', tag };
+    }
     send(res, 200, page(
       `Case ${run.ticketId}`,
-      renderCase({ ...run, customer }, { outcome, rule, readBack: options.readBack }),
+      renderCase({ ...run, customer }, {
+        outcome, rule, readBack: options.readBack, hold, taken, handoverTo,
+      }),
       { ...shell(`/case/${runId}`), back: caseHref(runId, rule) },
     ));
     return;
@@ -794,6 +879,111 @@ async function route(
     return;
   }
 
+  if (req.method === 'POST' && path === '/take') {
+    const from = req.socket.remoteAddress ?? null;
+    let form;
+    try {
+      form = await readForm(req);
+    } catch (error) {
+      if (!(error instanceof OversizedForm)) {
+        if (req.destroyed || req.readableAborted) {
+          console.error(logLine({
+            event: 'console_refused', reason: 'client_aborted',
+            host: req.headers.host ?? null, from,
+          }));
+          return;
+        }
+        throw error;
+      }
+      req.destroy();
+      send(res, 413, bare('Refused', 'The form is larger than this console accepts.', theme));
+      return;
+    }
+    const runId = (form.get('runId') ?? '').trim();
+    if (!isRunId(runId)) {
+      console.error(logLine({
+        event: 'console_refused', reason: 'not_a_run_id',
+        runId: logged(runId), runIdLength: loggedLength(runId),
+        host: req.headers.host ?? null, from,
+      }));
+      send(res, 400, bare('Refused', 'That is not a run id, so nothing was taken.', theme));
+      return;
+    }
+    // One form, three actions, and the body decides which: release is the
+    // holder letting go, over is the confirmation that moves somebody
+    // else's hold, and neither is a take anyone makes by accident.
+    const action = form.has('release')
+      ? 'release'
+      : form.has('handover')
+        ? 'handover'
+        : form.has('over')
+          ? 'over'
+          : 'take';
+    const to = (form.get('to') ?? '').trim();
+    let outcome: string;
+    try {
+      if (action === 'release') {
+        outcome = (await deps.releaseHold(runId, reviewer)).outcome;
+      } else if (action === 'handover') {
+        outcome = (await deps.handoverHold(runId, reviewer, to)).outcome;
+      } else {
+        outcome = (await deps.takeHold(runId, reviewer, action === 'over')).outcome;
+      }
+    } catch (error) {
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({
+        event: 'console_take_failed',
+        tag,
+        runId,
+        action,
+        reviewer: logged(reviewer),
+        reviewerLength: loggedLength(reviewer),
+        host: req.headers.host ?? null,
+        from,
+        error: describeFault(error),
+      }));
+      // The same hedge the approval uses: a fault can arrive after the
+      // transaction committed and before this process read the answer, so the
+      // page does not claim the take did not happen.
+      send(res, 500, bare(
+        'Error',
+        `The take may or may not have committed, and the console log names the fault ${tag}.`,
+        theme,
+        { href: caseHref(runId, url.searchParams.get('rule')), text: 'Open the case to see its state.' },
+      ));
+      return;
+    }
+    // The hold changes who the console says is working, so it is recorded:
+    // the ledger keeps the hold and its history, and this line is the request
+    // that asked for it.
+    console.error(logLine({
+      event: 'console_took',
+      runId,
+      action,
+      outcome,
+      reviewer: logged(reviewer),
+      reviewerLength: loggedLength(reviewer),
+      host: req.headers.host ?? null,
+      from,
+    }));
+    const keptRule = url.searchParams.get('rule');
+    // A refused handover carries the identity back, so the page can leave it
+    // in the field: a person who typed a colleague's name should not have to
+    // type it again to fix a typo. One that moved the case does not, because
+    // the page it lands on has no field to fill.
+    const keptTo = action === 'handover' && to !== '' && outcome !== 'handed_over'
+      ? `&to=${encodeURIComponent(to)}`
+      : '';
+    res.writeHead(303, {
+      ...SAFETY_HEADERS,
+      location: `/case/${encodeURIComponent(runId)}?taken=${encodeURIComponent(outcome)}`
+        + keptTo
+        + (keptRule === null || keptRule === '' ? '' : `&rule=${encodeURIComponent(keptRule)}`),
+    });
+    res.end();
+    return;
+  }
+
   if (req.method === 'POST' && path === '/approve') {
     // Read before the body, and used by every line this route logs. A client
     // that hangs up destroys its socket, and a later read of the address may
@@ -843,14 +1033,37 @@ async function route(
       send(res, 400, bare('Refused', 'That is not a run id, so nothing was approved.', theme));
       return;
     }
-    // The run id is the whole request. Any other field is ignored, because
-    // the relay sends the parked draft verbatim and a body posted here would
-    // be recorded as the approved reply without ever reaching the customer.
+    // DEC-46: the digest of the reply the form's page drew. Required, because
+    // every console approval carries the guard — a request without one is a
+    // request this console did not render, and serving it would be an
+    // approval of a reply nobody was shown. Checked for shape, never echoed.
+    const shown = (form.get('shown') ?? '').trim();
+    if (!SHOWN_DIGEST.test(shown)) {
+      console.error(logLine({
+        event: 'console_refused',
+        reason: 'not_a_shown_digest',
+        runId,
+        shownLength: loggedLength(shown),
+        host: req.headers.host ?? null,
+        from,
+      }));
+      send(res, 400, bare(
+        'Refused',
+        'That request carries no reply digest, so this console will not approve it.' +
+        ' Open the case and approve it from there.',
+        theme,
+      ));
+      return;
+    }
+    // The run id and the digest are the whole request. Any other field is
+    // ignored, because the relay sends the parked draft verbatim and a body
+    // posted here would be recorded as the approved reply without ever
+    // reaching the customer.
     // DEC-45: who approved, as the identity the gate resolved. It is on the
     // roster and active, or this request never reached the route.
     let outcome;
     try {
-      outcome = await deps.approve(runId, reviewer);
+      outcome = await deps.approve(runId, reviewer, shown);
     } catch (error) {
       // The one request that writes. A fault here can come after the
       // transaction committed, so the page does not say the console was only
@@ -876,9 +1089,10 @@ async function route(
       ));
       return;
     }
-    // The one write this console makes. The ledger journals that a run was
-    // approved; it does not journal which client asked, so this line is the
-    // console-side evidence naming the reviewer (DEC-45).
+    // The approval, one of the writes this console makes. The ledger
+    // journals that a run was approved; it does not journal which client
+    // asked, so this line is the console-side evidence naming the reviewer
+    // (DEC-45).
     console.error(logLine({
       event: 'console_approved',
       runId,

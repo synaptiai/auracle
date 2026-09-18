@@ -120,6 +120,97 @@ describe('migrate', () => {
     }
   });
 
+  // And the one constraint a database that ran db/019 before the vocabulary
+  // was written keeps missing, because `CREATE TABLE IF NOT EXISTS` is a
+  // no-op there. db/020 installs it by name.
+  it('installs the release-kind constraint on an existing table (db/020, DEC-46)', async () => {
+    await migrate(client);
+
+    // The constraint is there whether or not db/019 created it.
+    const constraint = await client.query(
+      `SELECT conname FROM pg_constraint
+        WHERE conrelid = 'case_hold'::regclass AND conname = 'case_hold_release_kind_check'`,
+    );
+    expect(constraint.rows).toHaveLength(1);
+
+    const runId = await seedRun();
+    await client.query(
+      `INSERT INTO case_hold (run_id, reviewer, lapses_at)
+       VALUES ($1, 'anna@example.test', now() + interval '20 minutes')`,
+      [runId],
+    );
+    await expect(
+      client.query(
+        "UPDATE case_hold SET released_at = now(), release_kind = 'because' WHERE run_id = $1",
+        [runId],
+      ),
+    ).rejects.toThrow(/case_hold_release_kind_check/);
+
+    // Re-applying the file is a no-op rather than a duplicate-constraint
+    // error: it is forward-only and safe to run again.
+    await client.query('DELETE FROM schema_version WHERE version = 20');
+    await expect(migrate(client)).resolves.toBeDefined();
+    await client.query(
+      "UPDATE case_hold SET released_at = now(), release_kind = 'take_other' WHERE run_id = $1",
+      [runId],
+    );
+  });
+
+  // DEC-46: two tables, and the constraints that make them readable. The
+  // live table holds one row per case, so "who holds this" is one lookup; the
+  // history is append-only and keeps what happened after the row moves on.
+  it('installs the case hold and its history (db/019, DEC-46)', async () => {
+    await migrate(client);
+    const runId = await seedRun();
+
+    await client.query(
+      `INSERT INTO case_hold (run_id, reviewer, lapses_at)
+       VALUES ($1, 'anna@example.test', now() + interval '20 minutes')`,
+      [runId],
+    );
+    // One row per case: a second hold on the same run is the same row.
+    await expect(
+      client.query(
+        `INSERT INTO case_hold (run_id, reviewer, lapses_at)
+         VALUES ($1, 'bo@example.test', now() + interval '20 minutes')`,
+        [runId],
+      ),
+    ).rejects.toThrow(/case_hold_pkey/);
+
+    // The kinds are a closed set, on both tables. A release kind outside it
+    // is a row no reader can classify.
+    await expect(
+      client.query(
+        "UPDATE case_hold SET released_at = now(), release_kind = 'because' WHERE run_id = $1",
+        [runId],
+      ),
+    ).rejects.toThrow(/release_kind_check/);
+    await client.query(
+      "UPDATE case_hold SET released_at = now(), release_kind = 'lapse' WHERE run_id = $1",
+      [runId],
+    );
+    await expect(
+      client.query(
+        `INSERT INTO case_hold_event (run_id, reviewer, kind) VALUES ($1, 'anna@example.test', 'snooze')`,
+        [runId],
+      ),
+    ).rejects.toThrow(/kind_check/);
+
+    // The history is append-only, and it keeps its own order.
+    await client.query(
+      `INSERT INTO case_hold_event (run_id, reviewer, kind, from_reviewer)
+       VALUES ($1, 'bo@example.test', 'handover', 'anna@example.test')`,
+      [runId],
+    );
+    const events = await client.query(
+      'SELECT kind, reviewer, from_reviewer FROM case_hold_event WHERE run_id = $1 ORDER BY event_id',
+      [runId],
+    );
+    expect(events.rows).toEqual([
+      { kind: 'handover', reviewer: 'bo@example.test', from_reviewer: 'anna@example.test' },
+    ]);
+  });
+
   it('installs the reviewer roster and the approver provenance (db/018, DEC-45)', async () => {
     await migrate(client);
 

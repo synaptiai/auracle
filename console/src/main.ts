@@ -6,8 +6,9 @@
 // from bands, `readLatency` from latency — so a metric has one definition and
 // the console displays what those jobs publish rather than a second opinion.
 //
-// The one write is the approval `approvalFor` builds, which hands off to
-// `approveRun`.
+// The writes are the approval `approvalFor` builds, which hands off to
+// `approveRun`, and the four case-hold calls wired below (DEC-46).
+// `select-only.test.ts` names every one of them.
 //
 // Configuration:
 // - DATABASE_URL      the ledger (required; the console refuses to guess)
@@ -28,7 +29,11 @@
 // every request is refused unless the roster holds the reviewer it resolves.
 import { Pool } from 'pg';
 
-import { activeReviewer, approveRun, selectReadBackAdapter } from 'auracle/ledger-read';
+import {
+  activeReviewer, approveRun, handoverHold, readHold, readHolds, releaseHold,
+  selectReadBackAdapter, takeHold,
+} from 'auracle/ledger-read';
+import { requireHoldLapse } from './hold-lapse.js';
 import { reviewerResolver } from './reviewer.js';
 import { readDays } from 'auracle/ledger-read';
 import { evaluateMetric } from 'auracle/domain';
@@ -176,6 +181,14 @@ const QUEUE_TODAY_HOLD_MS = 30_000;
  */
 const QUEUE_TODAY_GIVE_UP_MS = 6_000;
 
+/**
+ * The hold period, in milliseconds (DEC-46).
+ *
+ * Twenty minutes unless the operator sets another. A value that is not a
+ * positive whole number of milliseconds is refused rather than clamped: the
+ * period decides when a case stops counting as held, and a console that
+ * silently rounded a typo would hold cases for a period nobody chose.
+ */
 function requirePort(raw: string | undefined): number {
   if (raw === undefined) return 8787;
   const port = Number(raw);
@@ -260,6 +273,8 @@ async function main(): Promise<void> {
   // Built here, so a name or a configuration the adapter refuses stops the
   // console before it opens the pool, rather than on the first approval.
   const readBack = readBackFor(process.env, selectReadBackAdapter, log);
+  // DEC-46: the period a case counts as held after its last take.
+  const lapseMs = requireHoldLapse(process.env['CONSOLE_HOLD_LAPSE_MS']);
   const connectionString = requireDbUrl('the operator console');
 
   const pool = new Pool(consolePoolConfig(connectionString));
@@ -507,6 +522,23 @@ async function main(): Promise<void> {
     // DEC-45: every request, read or write, is resolved against the roster
     // before any page is built. The header is the one the operator named,
     // and the roster is the ledger's.
+    // DEC-46: the case hold. The two reads serve the case bar and the queue;
+    // the three writes are the console's own, and `select-only.test.ts` names
+    // them.
+    readHold: async (runId: string) => readHold(pool, runId),
+    readHolds: async (runIds: readonly string[]) => readHolds(pool, runIds),
+    takeHold: async (runId: string, reviewer: string, over: boolean) =>
+      takeHold(pool, { runId, reviewer, lapseMs, force: over }),
+    releaseHold: async (runId: string, reviewer: string) =>
+      releaseHold(pool, { runId, reviewer, kind: 'release' }),
+    handoverHold: async (runId: string, reviewer: string, to: string) =>
+      handoverHold(pool, {
+        runId, from: reviewer, to, lapseMs,
+        // A case handed to somebody the console would refuse at their next
+        // request is a case nobody holds, so the roster decides here too.
+        isReviewer: async (identity: string) => activeReviewer(pool, identity),
+      }),
+
     reviewerFor: reviewerResolver({
       ...(identity === undefined ? {} : { identityHeader: identity }),
       ...(development === undefined ? {} : { devReviewer: development }),

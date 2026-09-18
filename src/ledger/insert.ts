@@ -340,6 +340,20 @@ export interface FencedTransitionInput {
    */
   fromState?: string;
   /**
+   * Optional precondition on a value the row itself cannot express, and the
+   * last thing checked before anything is written. Returning true refuses the
+   * transition: nothing is written, and the caller is handed
+   * `{ outcome: 'refused' }`.
+   *
+   * It is asked inside the transaction, under the row lock, and it is handed
+   * the state the row holds — so a caller can compare what it showed a person
+   * with what the ledger holds now. DEC-46's shown-text guard is this: the
+   * reply a reviewer read, against the reply an approval would send. A
+   * comparison made before this transaction has a window between the check
+   * and the write, and a comparison made after it has already written.
+   */
+  refuseIf?: (client: PoolClient, currentState: string) => Promise<boolean>;
+  /**
    * Optional extra writes committed in this same transaction, on the
    * accepted path only. A throw rolls the whole transition back. This is
    * how the approve entrypoint records the approval-edit distance with the
@@ -353,7 +367,13 @@ export type FencedTransitionResult =
   | { outcome: 'stale_epoch'; highestAcceptedEpoch: bigint }
   | { outcome: 'superseded' }
   | { outcome: 'unknown_run' }
-  | { outcome: 'wrong_state'; currentState: string };
+  | { outcome: 'wrong_state'; currentState: string }
+  /**
+   * The caller's own precondition refused the write (DEC-46's shown-text
+   * guard). The ledger decides nothing here: it reports what the caller
+   * answered, and the caller words the refusal.
+   */
+  | { outcome: 'refused' };
 
 /**
  * Moves an existing run forward under the same rules as `fencedInsert`:
@@ -462,6 +482,15 @@ export async function fencedTransition(
       if (highest !== null && runEpoch < highest && !parkedEscape) {
         await client.query('ROLLBACK');
         return { outcome: 'stale_epoch', highestAcceptedEpoch: highest };
+      }
+
+      // The caller's own precondition, last and before the first write. The
+      // ledger's own checks have already decided whether this caller may
+      // write at all; this decides whether the write is about the thing the
+      // caller showed a person.
+      if (t.refuseIf !== undefined && (await t.refuseIf(client, currentState))) {
+        await client.query('ROLLBACK');
+        return { outcome: 'refused' };
       }
 
       // V2 open item 7: a terminal state never changes again, so its commit

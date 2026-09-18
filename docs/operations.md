@@ -1267,13 +1267,24 @@ that decode as UTF-8 as UTF-8, and any other bytes as Latin-1. A Latin-1 name
 whose bytes also form valid UTF-8 therefore reads as UTF-8. Such a name is
 rare.
 
+A case holds one reviewer at a time. Taking it marks it held for twenty
+minutes. The queue shows the others who holds it, and how long is left. Set
+`CONSOLE_HOLD_LAPSE_MS` to another period.
+
+A hold lapses on its own when nobody acts on the case. Any reviewer may still
+approve a case somebody else holds, because the hold refuses no write.
+
+A second reviewer takes it over from the case page, after confirming. A holder
+may hand the case to a teammate on the roster, or release it. Taking another
+case releases the first.
+
 A case opens from its row on the queue. A conversation and a document open from
 the run that names them. The ledger orders conversations by when a problem
 opened. That is not when one last needed attention, so a listing would sort by
 the wrong thing.
 
 The console ships one script, and no more. It lights the document a claim
-cites. On the queue it moves on j and k, and c opens the focused case. Esc
+cites. On the queue it moves on j and k, and c takes the focused case. Esc
 leaves a case by its back link. Every surface works without it: a claim carries
 an anchor to its source, and a queue row is a link. The queue legend
 names only the keys that act, above the rows, where a long queue cannot
@@ -1635,9 +1646,15 @@ removes them.
 Clearing a draft does not reach the helpdesk. The draft parks there as well
 (DEC-11), and the adapter's own retention governs that copy.
 
-**The console makes one write, and it is the approval.** Every other statement it issues is a SELECT. So it is otherwise as safe against a live database as `pnpm run bands` and `pnpm run latency`. That claim is its own, not inherited. `console/src/select-only.test.ts` refuses any SQL keyword in
-the package, refuses a call to `pool.query`, and holds the approval to one
-module.
+**The console writes the ledger in five places, and it names each one.** It
+approves a reply, takes a case, and releases a case. It also hands a case to
+a teammate, and clears a hold whose period ran out.
+
+Every other statement it issues is a SELECT. So it is otherwise as safe
+against a live database as `pnpm run bands` and `pnpm run latency`. That
+claim is its own, not inherited. `console/src/select-only.test.ts` refuses
+any SQL keyword in the package, and a call to `pool.query`. It holds every
+write to the one module that makes it.
 
 Approving in the console calls the same function `pnpm run approve` calls.
 So the transaction and the fencing epoch are the same whichever path an

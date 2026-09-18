@@ -26,6 +26,7 @@ import {
 // which action is the permanent one.
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
 import type { PolicyReason } from 'auracle/policy';
+import { replyDigest } from 'auracle/ledger-read';
 import type { OutboxStatus } from 'auracle/ledger-read';
 import type { ConsoleApproveOutcome } from './approve.js';
 import { CONSOLE_SCRIPT } from './script.js';
@@ -1160,6 +1161,33 @@ export function narrowToRule(
   return runs.filter((run) => (run.gateReason ?? UNRULED) === rule);
 }
 
+/**
+ * Who holds one queued case, and since when (DEC-46).
+ *
+ * The row says how long ago they took it. A hold that lapsed or was released
+ * is not here: the queue reads the live rows only.
+ */
+export interface QueueHold {
+  readonly reviewer: string;
+  readonly takenAt: Date;
+}
+
+/**
+ * The holds on the queue's cases, or the tag of the fault that stopped the
+ * console reading them.
+ *
+ * Two answers, as the counts have. The queue draws either way, because the
+ * queue is the work — and a page that dropped the holders without saying so
+ * would read as a queue nobody is working.
+ */
+export type QueueHoldsRead =
+  | {
+    /** The reviewer behind this request, so their own hold is not somebody else's. */
+    readonly reviewer: string;
+    readonly holds: ReadonlyMap<string, QueueHold>;
+  }
+  | { readonly unreadTag: string };
+
 /** Today's counts, as the queue header states them. */
 export interface QueueTodayView {
   readonly arrived: number;
@@ -1189,7 +1217,26 @@ const GROUP_LABELS: Readonly<Record<QueueGroup, { readonly label: string; readon
       + ' Neither gate decided these cases. Another rule sent each one to a person, and its row names the rule.',
   },
   rest: { label: 'Everything else waiting', note: null },
+  // Always drawn: the group is the one thing that says a case on this page is
+  // somebody's, and the note says how a case leaves it.
+  held: {
+    label: 'Held by someone else',
+    note: 'Somebody is working each of these. A hold lapses after its period without activity,'
+      + ' and the case returns to its own group. To move a hold to you, open the case and confirm it.',
+  },
 };
+
+/**
+ * What the queue says when it could not read who holds what (DEC-46).
+ *
+ * The queue draws without the holders, and says which log line names the
+ * fault. Silent, it would read as a queue nobody has taken anything from.
+ */
+function holdsUnreadSays(holds: QueueHoldsRead): string {
+  if (!('unreadTag' in holds)) return '';
+  return '<p class="qaside">The holds were not read, so this queue does not say who is working a case.'
+    + ` The console log names the fault ${escapeHtml(holds.unreadTag)}.</p>`;
+}
 
 /**
  * The header's two counts, for the UTC day.
@@ -1243,16 +1290,24 @@ export function renderApprovals(
   runs: readonly RunDetail[],
   rule: string | null,
   today: QueueTodayRead,
+  holds: QueueHoldsRead,
 ): string {
   // `runs` is everything waiting. The chips and the count are read from it
   // rather than from the narrowed view, so a filter cannot make the queue
   // report that it has emptied — and so each chip can say how many it holds.
   const shownRuns = narrowToRule(runs, rule);
+  // "Held by someone else" is the whole meaning of the group: a case the
+  // reader holds is theirs to work, and stays where its gate facts put it.
+  const heldByAnother = (runId: string): QueueHold | null => {
+    if ('unreadTag' in holds) return null;
+    const hold = holds.holds.get(runId);
+    return hold === undefined || hold.reviewer === holds.reviewer ? null : hold;
+  };
   const header = head(
     'Needs a person',
     `${todaySays(today)} This list is not capped, so the oldest is on it.`,
     [chip(`${runs.length} waiting`)],
-  ) + gateFilters(runs, rule) + ESCALATED_ELSEWHERE;
+  ) + gateFilters(runs, rule) + ESCALATED_ELSEWHERE + holdsUnreadSays(holds);
   if (shownRuns.length === 0) {
     // For approval, not for a person. An escalated run waits for a person as
     // well, and the line above says where it is.
@@ -1262,8 +1317,16 @@ export function renderApprovals(
         : 'Nothing waiting carries that rule.',
     );
   }
-  const sections = groupQueue(shownRuns);
+  const sections = groupQueue(shownRuns, (run) => heldByAnother(run.runId) !== null);
   const keysLine = keyLegend();
+  // Who holds it and for how long, on the row. The group says somebody does;
+  // the row says who, because a queue of hundreds has more than one holder.
+  const heldSays = (runId: string): string => {
+    const hold = heldByAnother(runId);
+    return hold === null
+      ? ''
+      : `held by ${escapeHtml(hold.reviewer)} · ${escapeHtml(ageSays(hold.takenAt))} · `;
+  };
   const row = (run: RunDetail): string => [
     `<a class="item" href="${escapeHtml(caseHref(run.runId, rule))}">`,
     '<div class="itop">',
@@ -1276,6 +1339,7 @@ export function renderApprovals(
     // escalation reason sat here and is null for every waiting run by
     // construction, so the queue read "no reason journalled" 161 times.
     `<div class="m imeta">`,
+    `${heldSays(run.runId)}`,
     `${escapeHtml(run.intentId ?? 'intent unrecorded')}`,
     ` · ${escapeHtml(gateRuleSays(run.gateReason))}`,
     // Why a case sits where its rule does not put it. A compensation cannot be
@@ -1331,7 +1395,7 @@ export function renderApprovals(
  * the legend exists.
  */
 function keyLegend(): string {
-  return '<div class="keys">j / k move · enter opens · c opens the case</div>';
+  return '<div class="keys">j / k move · enter opens · c takes the case</div>';
 }
 
 /** The case page of a run, with a chosen queue rule kept for the way back. */
@@ -1375,6 +1439,48 @@ export interface CaseOptions {
    * approval records an edit distance.
    */
   readonly readBack: string | null;
+  /**
+   * Who holds this case, as this page must read it (DEC-46).
+   *
+   * The hold is advisory: a case held by somebody else still approves, and
+   * the bar says who holds it rather than refusing. The take is a second
+   * form beside the approval, never a condition on it.
+   *
+   * Three answers, as the customer read has: somebody, nobody, or a read
+   * that failed. A fault that drew "Nobody holds this case" would state a
+   * fact it could not establish.
+   */
+  readonly hold: CaseHoldRead;
+  /**
+   * The outcome of the take just posted, drawn in the hold bar: taken,
+   * held_by_other, not_waiting or unknown_run.
+   */
+  readonly taken: string;
+  /**
+   * The teammate a handover named, rendered back when the handover was
+   * refused. A refusal that dropped what was typed would ask a person to
+   * type a colleague's identity twice.
+   */
+  readonly handoverTo: string;
+}
+
+/**
+ * Who holds this case, or why the page cannot say.
+ *
+ * `unread` carries the tag of the log line that holds the fault, as the
+ * customer read does, so the page can name it without printing a fault.
+ */
+export type CaseHoldRead =
+  | { readonly kind: 'read'; readonly hold: CaseHold | null }
+  | { readonly kind: 'unread'; readonly tag: string };
+
+/** Who is working this case, for the bar at the foot of it. */
+export interface CaseHold {
+  readonly reviewer: string;
+  /** Whether the reviewer behind this request is that person. */
+  readonly mine: boolean;
+  /** Milliseconds until the hold lapses. Never negative. */
+  readonly remainingMs: number;
 }
 
 /**
@@ -1450,6 +1556,7 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
     '</div></div>',
     '</div>',
     '</div>',
+    holdBar(view, options),
     actionBar(view, act, options),
   ].join('');
 }
@@ -1555,6 +1662,167 @@ function customerBlock(view: CaseView): string {
   ].join('');
 }
 
+/** Minutes left on a hold, as a person reads it. Rounds up, so "1m" is never early. */
+function remainingSays(remainingMs: number): string {
+  const minutes = Math.max(0, Math.ceil(remainingMs / 60_000));
+  if (minutes === 0) return 'less than a minute left';
+  if (minutes === 1) return '1 minute left';
+  return `${minutes} minutes left`;
+}
+
+/**
+ * The hold on this case, above the approval bar (DEC-46).
+ *
+ * Three states, and each one says what the reviewer can do about it: take a
+ * free case, release their own, or take over somebody else's after the
+ * console has told them who holds it. The takeover is a second form on
+ * purpose — one press never moves another person's hold.
+ *
+ * A fourth answer says nothing about a holder: the read failed. The bar then
+ * draws no claim and no control, because every sentence it could draw would
+ * be a fact this page does not have.
+ */
+function holdBar(view: CaseView, options: CaseOptions): string {
+  // A hold this page could not read is a hold no sentence about a hold can be
+  // checked against, so those answers are dropped with it. The one exception
+  // is an outcome whose fit is the run's own state: `not_waiting` says the
+  // case is nobody's to take, and this page knows that from the state.
+  const readable = options.hold.kind !== 'unread' || options.taken === 'not_waiting';
+  const answered = options.taken === '' || !readable
+    ? ''
+    : `<p class="discl">${escapeHtml(takeSays(
+      options.taken,
+      options.hold.kind === 'unread' ? null : options.hold.hold,
+      view.state,
+    ))}</p>`;
+  // A case nobody can take answers nothing about a hold — but it still owes
+  // the reviewer the answer to the take they just posted. `not_waiting` and
+  // `unknown_run` are exactly the outcomes a case that left the queue
+  // produces, so the sentence is drawn whatever the state.
+  if (view.state !== 'awaiting_approval') {
+    return answered === '' ? '' : `<div class="holdbar">${answered}</div>`;
+  }
+  const read = options.hold;
+  if (read.kind === 'unread') {
+    // No claim, and no control that would rest on one. The approval bar is
+    // still drawn: a fault reading the hold says nothing about the approval.
+    return '<div class="holdbar"><p class="discl">The hold on this case was not read,'
+      + ' so this page does not say who has it.'
+      + ` The console log names the fault ${escapeHtml(read.tag)}.</p></div>`;
+  }
+  const hold = read.hold;
+  const said = answered;
+  const field = `<input type="hidden" name="runId" value="${escapeHtml(view.runId)}">`;
+  const action = `<form method="post" action="/take">`;
+
+  if (hold === null) {
+    return `<div class="holdbar"><p class="discl">Nobody holds this case.</p>`
+      + `<form method="post" action="/take">${field}`
+      + `<button class="btn" type="submit">Take this case</button></form>${said}</div>`;
+  }
+  if (hold.mine) {
+    return `<div class="holdbar"><p class="discl">Held by you · ${escapeHtml(remainingSays(hold.remainingMs))}.</p>`
+      + `<form method="post" action="/take">${field}<input type="hidden" name="release" value="1">`
+      + `<button class="btn" type="submit">Release it</button></form>`
+      // The handover names a teammate. The identity is text rather than a
+      // list of the team: the console shows no roster, and the core refuses
+      // a name that is not on it.
+      + `<form method="post" action="/take">${field}<input type="hidden" name="handover" value="1">`
+      + `<input class="identity" name="to" type="text" size="18" placeholder="teammate identity"`
+      + ` value="${escapeHtml(options.handoverTo)}">`
+      + `<button class="btn" type="submit">Hand it over</button></form>${said}</div>`;
+  }
+  return `<div class="holdbar"><p class="discl">Held by ${escapeHtml(hold.reviewer)}`
+    + ` · ${escapeHtml(remainingSays(hold.remainingMs))}.</p>`
+    + `${action}${field}<input type="hidden" name="over" value="1">`
+    + `<button class="btn" type="submit">Take it over</button></form>${said}</div>`;
+}
+
+/**
+ * What a take, release or handover answered, in the words the case shows.
+ *
+ * A refusal that lost the hold names whoever holds it now (DEC-46, criterion
+ * 6). "Somebody else holds this case" sends the reviewer looking for who, and
+ * this page has just read that — so it says the name, and an earlier holder
+ * learns of the move at their next action.
+ *
+ * The read finds nobody when the hold moved again, or lapsed in the instant
+ * between the refusal and this page. The sentence says that, rather than
+ * naming a holder who is gone or claiming a holder at all.
+ */
+function takeSays(outcome: string, hold: CaseHold | null, state: string): string {
+  if (outcome === 'held_by_other' || outcome === 'not_yours') {
+    if (hold === null) return 'The hold moved, and nobody holds this case now.';
+    if (!hold.mine) return `${hold.reviewer} holds this case now. Take it over to move it to you.`;
+  }
+  // `Object.hasOwn`, never a bare read, for the reason `renderOutcome` gives:
+  // a plain object literal inherits from `Object.prototype`, so `?taken=
+  // toString` resolved a function and `escapeHtml` threw on it — a 500 from a
+  // link anyone can send a reviewer. And a value this console does not know
+  // gets its own sentence rather than being echoed as the console's words.
+  const known = Object.hasOwn(TAKE_SAYS, outcome) ? TAKE_SAYS[outcome]! : UNKNOWN_TAKE;
+  // A sentence about a hold must fit the hold this page just read. `?taken=
+  // taken` on a page that reloaded after the hold lapsed drew "You hold this
+  // case now" beside "Nobody holds this case", and a link can carry any of
+  // these values — the approval outcome is checked the same way.
+  return takenFits(outcome, hold, state) ? known : UNKNOWN_TAKE;
+}
+
+/** What an outcome this console does not know is answered with. */
+const UNKNOWN_TAKE = 'That is not an answer this console knows.';
+
+/**
+ * Whether an outcome can be the answer about the hold this page read.
+ *
+ * Each one leaves a fact to check it against: a take ends with the taker
+ * holding the case, a release with nobody holding it, a handover with the
+ * teammate holding it. `held_by_other` and `not_yours` are about a hold
+ * somebody else has, and `takeSays` words them on the hold it read.
+ */
+function takenFits(outcome: string, hold: CaseHold | null, state: string): boolean {
+  switch (outcome) {
+    case 'taken':
+    case 'not_a_reviewer':
+    case 'already_yours':
+      return hold !== null && hold.mine;
+    case 'released':
+    case 'not_held':
+      return hold === null;
+    case 'handed_over':
+      return hold !== null && !hold.mine;
+    // The case is not one anybody takes, which is the state this page read.
+    case 'not_waiting':
+      return state !== 'awaiting_approval';
+    // A run the ledger does not hold has no page at all, so this is never the
+    // answer here.
+    case 'unknown_run':
+      return false;
+    // About a hold somebody else has. `takeSays` words them on the hold it
+    // read, and the sentence must not appear beside a hold that is the
+    // reader's own: "Somebody else holds this case" under "Held by you" is
+    // the same contradiction the other outcomes are checked for.
+    case 'held_by_other':
+    case 'not_yours':
+      return hold === null || !hold.mine;
+    default:
+      return false;
+  }
+}
+
+/** What a take answered, in the words the case shows. */
+const TAKE_SAYS: Readonly<Record<string, string>> = {
+  taken: 'You hold this case now.',
+  released: 'You released this case.',
+  held_by_other: 'Somebody else holds this case. Take it over to move it to you.',
+  not_waiting: 'This case is not waiting for a person, so nobody can take it.',
+  unknown_run: 'The ledger does not hold that case.',
+  handed_over: 'The case is theirs now.',
+  not_a_reviewer: 'That identity is not an active reviewer, so the case stayed yours.',
+  not_yours: 'Somebody else holds this case now, so it did not move.',
+  already_yours: 'You already hold this case, so it did not move.',
+  not_held: 'Nobody held this case, so there was nothing to hand over.',
+};
+
 /**
  * The bar at the foot of the case: the approval, or why there is none.
  *
@@ -1565,7 +1833,9 @@ function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
     ? `<p class="discl">This run is ${escapeHtml(view.state)}, so there is nothing here to approve.</p>`
     : act.kind === 'none'
       ? `<p class="discl">${escapeHtml(act.says)}</p>`
-      : approveForm(view.runId, act.label, act.says, options.rule)
+      // The digest is of the reply this page drew, which is the text the
+      // ledger parked and the text the approval will compare against.
+      : approveForm(view.runId, act.label, act.says, options.rule, replyDigest(view.evidence.draftBody ?? ''))
         + (act.kind === 'reply' ? `<p class="readback">${escapeHtml(readBackSays(options.readBack))}</p>` : '');
   return `<div class="actionbar">${inner}</div>`;
 }
@@ -1671,22 +1941,30 @@ function payloadBlock(payload: Readonly<Record<string, unknown>> | null): string
   ].join('');
 }
 
-/** The warning and the one button, which every approval path shares. */
+/**
+ * The warning and the one button, which every approval path shares.
+ *
+ * Two fields, and neither carries text: the run, and a digest of the reply
+ * this page drew (DEC-46). The approval recomputes the digest under the run's
+ * lock, so a reply rewritten after this page was built is refused rather than
+ * approved as shown. The digest is why no body is posted, and the relay sends
+ * the parked draft verbatim in any case.
+ */
 function approveForm(
   runId: string,
   label: string,
   says: string,
   rule: string | null = null,
+  shown: string | null = null,
 ): string {
   return [
     '<div class="warnbar"><span class="dot" style="color:var(--accent); margin-top:5px"></span>',
     `<div>${escapeHtml(says)}</div></div>`,
-    // The filter rides on the action, not in a field: this form's only field
-    // is the run id, and that is what stops a posted body being recorded as
-    // an approved reply.
+    // The filter rides on the action, not in a field.
     `<form method="post" action="/approve${
       rule === null ? '' : `?rule=${encodeURIComponent(rule)}`}">`,
     `<input type="hidden" name="runId" value="${escapeHtml(runId)}">`,
+    shown === null ? '' : `<input type="hidden" name="shown" value="${escapeHtml(shown)}">`,
     `<button class="btn primary" type="submit">${escapeHtml(label)}</button>`,
     '</form>',
   ].join('');
@@ -2191,6 +2469,15 @@ const DESIGN_NOTES: readonly { readonly token: Token; readonly title: string; re
       + ' They answer questions about the pipeline, and a person clearing a queue between'
       + ' two engineering tasks is not asking them.',
   },
+  {
+    token: 'accent',
+    title: 'A lock, because four people pull from one uncapped list',
+    says: 'The queue is not capped, so the same case can sit in front of four reviewers at once.'
+      + ' A reviewer takes a case before working it, so the others see who holds it and the time left.'
+      + ' The hold says who is working, and it refuses no write: any reviewer may still approve the case.'
+      + ' A hold lapses on its own without activity, twenty minutes by default.'
+      + ' Taking a second case releases the first, because a person reads one case at a time.',
+  },
 ];
 
 /** The design notes: what the console does, and why. */
@@ -2283,6 +2570,10 @@ const OUTCOMES = {
   superseded: 'Another action already holds this key, so nothing was sent.',
   stale_epoch: 'Another owner took this ticket. Nothing was sent.',
   draft_missing: 'The parked draft is gone, so nothing was sent.',
+  // DEC-46: the reply moved under the reviewer. The page that drew it is
+  // stale, so the answer says to read the case again rather than to retry.
+  shown_changed: 'The reply changed since this page was drawn, so nothing was sent.'
+    + ' Open the case again to read it as it is now.',
   read_back_failed: 'The helpdesk draft could not be read back, so nothing was sent. The console log holds the fault.',
 } as const satisfies Record<ConsoleApproveOutcome['outcome'], string>;
 
@@ -2315,6 +2606,9 @@ function outcomeFits(outcome: string, run: OutcomeRun | null): boolean {
       return run.approved;
     case 'draft_missing':
     case 'read_back_failed':
+    // DEC-46: the shown-text refusal commits nothing, so the run is still
+    // waiting. A run that is not is a sentence somebody wrote.
+    case 'shown_changed':
       return state === 'awaiting_approval';
     case 'not_awaiting_approval':
       return state !== 'awaiting_approval';
@@ -2328,6 +2622,22 @@ function outcomeFits(outcome: string, run: OutcomeRun | null): boolean {
 }
 
 /**
+ * The sentence for one known outcome, on the run it fits.
+ *
+ * `not_awaiting_approval` is the one outcome whose sentence depends on the
+ * run: DEC-46's guard refuses a case whose state changed under the reviewer,
+ * and the answer has to name the state it changed to. The state is the
+ * ledger's own, and `outcomeFits` has already established that it is not
+ * `awaiting_approval`, so a link cannot put words here.
+ */
+function outcomeSays(outcome: string, run: OutcomeRun | null): string {
+  if (outcome === 'not_awaiting_approval' && run !== null) {
+    return `That run is not waiting for approval. It is ${run.state} now, so nothing was sent.`;
+  }
+  return OUTCOMES[outcome as keyof typeof OUTCOMES];
+}
+
+/**
  * The outcome sentence for the approval just posted, on the run it concerns.
  *
  * `run` is the run as it stands now, or null on a page that has no run. An
@@ -2338,8 +2648,9 @@ export function renderOutcome(outcome: string, run: OutcomeRun | null): string {
   // Object.prototype, so `?outcome=toString` resolved a function, `escapeHtml`
   // called `.replace` on it and the approval queue became a 500 page. This is
   // the same defect the policy engine's per-intent map had, in a second place.
-  const said: string | undefined = Object.hasOwn(OUTCOMES, outcome) && outcomeFits(outcome, run)
-    ? OUTCOMES[outcome as keyof typeof OUTCOMES]
+  const known = Object.hasOwn(OUTCOMES, outcome) && outcomeFits(outcome, run);
+  const said: string | undefined = known
+    ? outcomeSays(outcome, run)
     : undefined;
   // Anything else still gets a sentence, because a silent fall-through would
   // be the defect this function exists to fix. It is never echoed. The outcome

@@ -40,7 +40,9 @@ import { recordApprovedReply } from '../ledger/conversation.js';
 import { fencedTransition } from '../ledger/insert.js';
 import { deriveIdemKey } from '../ledger/keys.js';
 import { UNATTRIBUTED, approverFrom } from './approver.js';
+import { releaseHoldIn } from '../holds/hold.js';
 import { recordApprovalEditDistance } from './measure.js';
+import { replyDigest } from './shown.js';
 
 export type ApproveOutcome =
   | { readonly outcome: 'approved'; readonly idemKey: string }
@@ -63,7 +65,14 @@ export type ApproveOutcome =
    * (section 4.10). The operator reconciles the draft by hand, then
    * approves again.
    */
-  | { readonly outcome: 'draft_missing'; readonly draftExternalId: string };
+  | { readonly outcome: 'draft_missing'; readonly draftExternalId: string }
+  /**
+   * DEC-46: the reply the caller was shown is not the reply the ledger holds.
+   * The console refuses to send a decision a person made on other text, and
+   * the change is the reply: a run that left `awaiting_approval` is refused
+   * above, as `not_awaiting_approval`, which names that state.
+   */
+  | { readonly outcome: 'shown_changed' };
 
 /** Optional inputs for one approval. */
 export interface ApproveOptions {
@@ -103,6 +112,20 @@ export interface ApproveOptions {
    * that names nobody records `none` whatever it passes here.
    */
   readonly approvedBySource?: 'roster' | 'header' | 'none';
+  /**
+   * DEC-46: the digest of the reply the reviewer was shown, when a page
+   * showed them one.
+   *
+   * The console draws a case from the parked reply and carries
+   * `replyDigest(body)` in its approval form. Supplied, it is recomputed
+   * under the run's row lock against the reply the ledger holds now, and a
+   * mismatch refuses the approval (`shown_changed`) — so the guard cannot be
+   * outrun by a reply rewritten between the page and the press.
+   *
+   * Absent means no page: `pnpm run approve` passes none and is exempt, and
+   * so is any caller that read the case itself.
+   */
+  readonly shown?: string;
 }
 
 /** What the coordinator's `park` step recorded in the journal. */
@@ -309,14 +332,42 @@ export async function approveRun(
       'UPDATE run SET approved_by = $2, approved_by_source = $3 WHERE run_id = $1',
       [runId, approver, approverSource],
     );
+    // DEC-46: sending ends the hold on the case, in this transaction.
+    // Released outside it, a hold would outlive an approval that rolled back
+    // — and the case would read as still being worked by somebody whose send
+    // never happened.
+    //
+    // Every approval releases, a caller that named nobody included: the case
+    // has left the queue either way, and a hold left on it would be recorded
+    // as a lapse twenty minutes later instead of the send that ended it.
+    // `released_by` carries the ledger's own word for a nameless approver,
+    // which is the same word `run.approved_by` records.
+    await releaseHoldIn(client, { runId, reviewer: approver, kind: 'send' });
   };
 
+  const shown = options?.shown;
   const moved = await fencedTransition(pool, {
     runId,
     state: 'resolved',
     costMicros: row.cost_micros as number,
     stepsUsed: row.steps_used as number,
     fromState: 'awaiting_approval',
+    // DEC-46: the reply the reviewer was shown, against the reply the ledger
+    // holds now — read here, inside the transaction that takes the row lock,
+    // and before anything is written. Read outside it, the guard has a window
+    // between the check and the write, which is the change it exists to catch.
+    ...(shown === undefined ? {} : {
+      refuseIf: async (client: PoolClient): Promise<boolean> => {
+        const held = await client.query(
+          "SELECT result->>'body' AS body FROM step_journal WHERE run_id = $1 AND step_id = 'park'",
+          [runId],
+        );
+        // A row that is gone, or a body that is not text, refuses: the
+        // approval cannot show what the reviewer read, so it does not send.
+        const body = held.rows[0]?.body as unknown;
+        return typeof body !== 'string' || replyDigest(body) !== shown;
+      },
+    }),
     outbox: {
       stepId: 'approve',
       idemKey,
@@ -334,9 +385,18 @@ export async function approveRun(
       // Lost a race with another approve call; it re-checked under the lock.
       return { outcome: 'not_awaiting_approval', state: moved.currentState };
     case 'superseded':
+      // Another run already holds this semantic key, so this run's send did
+      // not happen: it records no approver and nothing left the ledger for
+      // it. A hold left on the case ends by its period, which is the one
+      // record that is true of it — a `send` here would name somebody who
+      // sent nothing. The design record states the rule.
       return { outcome: 'superseded' };
     case 'stale_epoch':
       return { outcome: 'stale_epoch', highestAcceptedEpoch: moved.highestAcceptedEpoch };
+    case 'refused':
+      // The only precondition this entrypoint passes is the reply digest, so
+      // a refusal is the reply having changed under the reviewer.
+      return { outcome: 'shown_changed' };
     case 'unknown_run':
       // The row existed above; runs are never deleted.
       throw new Error(`run vanished between read and transition: ${runId}`);

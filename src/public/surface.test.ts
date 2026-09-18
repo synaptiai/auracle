@@ -170,6 +170,51 @@ describe('the public surface', () => {
     expect(missing).toEqual([]);
   });
 
+  // DEC-46. The console's write guard reads `LEDGER_WRITES`, so a name here
+  // that the barrel does not export would make that guard report on a write
+  // that is not there. Read as source: importing the barrel opens connections
+  // transitively, and this suite is pure.
+  it('names its writes to something the barrel actually exports', () => {
+    const source = readFileSync(join(PUBLIC_DIR, 'ledger-read.ts'), 'utf8');
+    const tree = ts.createSourceFile('ledger-read.ts', source, ts.ScriptTarget.ES2022, true);
+
+    /** The keys of the `LEDGER_WRITES` record literal. */
+    const declared: string[] = [];
+    for (const statement of tree.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || declaration.name.text !== 'LEDGER_WRITES') continue;
+        const initializer = declaration.initializer;
+        if (initializer === undefined || !ts.isObjectLiteralExpression(initializer)) continue;
+        for (const property of initializer.properties) {
+          if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name)) {
+            declared.push(property.name.text);
+          }
+        }
+      }
+    }
+
+    /** Every name the barrel exports, by either spelling. */
+    const exported = new Set<string>();
+    for (const statement of tree.statements) {
+      if (ts.isExportDeclaration(statement) && statement.exportClause !== undefined
+          && ts.isNamedExports(statement.exportClause)) {
+        for (const element of statement.exportClause.elements) exported.add(element.name.text);
+      }
+      if (ts.isVariableStatement(statement)
+          && statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
+        for (const declaration of statement.declarationList.declarations) {
+          if (ts.isIdentifier(declaration.name)) exported.add(declaration.name.text);
+        }
+      }
+    }
+
+    // The floor: a scan that found no writes would pass the loop below.
+    expect(declared.length).toBeGreaterThanOrEqual(4);
+    const missing = declared.filter((name) => !exported.has(name));
+    expect(missing).toEqual([]);
+  });
+
   it('reaches only into the core, never out of it', () => {
     // A barrel is the core describing itself. One importing a third-party
     // package would make that package part of the core's public contract

@@ -64,6 +64,17 @@ describe('the console as a long-running process', () => {
     expect(MAIN).not.toContain('approveFromConsole');
   });
 
+  // DEC-46: the entry point reads the hold period from the environment. The
+  // default and the refusals are `hold-lapse.test.ts`'s, behaviourally; what
+  // only this file can check is that the wiring reads it at startup, before
+  // the pool or any page exists.
+  it('reads the hold period from the environment', () => {
+    expect(MAIN).toMatch(/requireHoldLapse\(process\.env\['CONSOLE_HOLD_LAPSE_MS'\]\)/);
+    // The read is part of the configuration block: it must precede the pool,
+    // because a refusal has to land before a client keeps the loop alive.
+    expect(MAIN.indexOf('requireHoldLapse(')).toBeLessThan(MAIN.indexOf('new Pool('));
+  });
+
   // Two paths close the pool, and `pool.end()` rejects on the second call.
   // An unhandled rejection is fatal in Node, so it replaces the exit path it
   // was meant to take.
