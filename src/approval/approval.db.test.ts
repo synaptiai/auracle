@@ -11,7 +11,7 @@ import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { conversationHistory } from '../coordinator/consumer.js';
+import { claimPartition, conversationHistory } from '../coordinator/consumer.js';
 import { coordinateTicket } from '../coordinator/coordinator.js';
 import type { CoordinatorDeps } from '../coordinator/coordinator.js';
 import { enqueueTicket } from '../coordinator/intake.js';
@@ -288,6 +288,83 @@ describe('approval completion path (DEC-12 end to end)', () => {
     expect(await outboxRows(runId)).toHaveLength(1);
   });
 
+  // Issue #113, criterion 4: the record an approval writes before a
+  // deployment restart is sent after it, exactly once. The restart leaves
+  // the ticket's fence alone (the run has finished), and the record's DEC-24
+  // key is what makes the single send provable.
+  it('sends an approved record after a consumer restart, exactly once', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const { runId, draftExternalId, helpdesk } = await parkReply(ticketId);
+    const { rows } = await pool.query('SELECT partition FROM run WHERE run_id = $1', [runId]);
+
+    const idemKey = deriveIdemKey({
+      actionClass: CUSTOMER_REPLY_ACTION_CLASS,
+      ticketId,
+      conversationId: null,
+      payload: { draftExternalId },
+    });
+    expect(await approveRun(pool, runId)).toEqual({ outcome: 'approved', idemKey });
+    expect(await outboxRows(runId)).toMatchObject([{ status: 'pending' }]);
+
+    // The deployment restarts: the claim runs, and finds no in-flight run.
+    await claimPartition(pool, rows[0]!.partition as number);
+
+    expect(await relayPending(pool, helpdesk)).toEqual([{ idemKey, outcome: 'sent' }]);
+    expect(helpdesk.listDeliveries()).toHaveLength(1);
+    expect(await outboxRows(runId)).toMatchObject([{ status: 'sent' }]);
+
+    // The restart changed nothing about the record: a second scan sends none.
+    expect(await relayPending(pool, helpdesk)).toEqual([]);
+    expect(helpdesk.listDeliveries()).toHaveLength(1);
+  });
+
+  // Issue #113, criterion 3: a later run on the same ticket takes a higher
+  // epoch, and the reply parked before it must not wait forever. It stays
+  // approvable — the branch this case pins — and its record keeps its own
+  // epoch, which is what the relay reads.
+  it('approves a reply parked before a later run starts on its ticket', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const parked = await parkReplyOnTurnOne(ticketId, CUSTOMER_REPLY_ACTION_CLASS, true);
+
+    // The customer writes again. The follow-up is its own turn, so it parks
+    // its own draft at the ticket's next epoch.
+    const followUp = await enqueueTicket(
+      pool,
+      { ticketId, messageId: `m-2-${ticketId}@example.test`, ticketText: 'It still fails.' },
+      8,
+    );
+    const later = await coordinateTicket(makeDeps(helpdeskWith(ticketId)), {
+      ticketId,
+      ticketText: 'It still fails.',
+      epoch: 2n,
+      conversationId: followUp.conversationId,
+      turnNumber: followUp.turnNumber,
+      actionClass: CUSTOMER_REPLY_ACTION_CLASS,
+      actionPayload: { summary: 'the second answer' },
+      delivery: 'at_least_once',
+      isCustomerVisible: true,
+      disclosure: DISCLOSURE,
+    });
+    expect(later.outcome).toBe('awaiting_approval');
+    const fence = await pool.query(
+      'SELECT epoch::text AS epoch FROM ticket_epoch WHERE ticket_id = $1',
+      [ticketId],
+    );
+    expect(fence.rows[0]?.epoch).toBe('2');
+
+    // The first reply still commits, and its record keeps the first epoch.
+    expect(await approveRun(pool, parked.runId)).toMatchObject({ outcome: 'approved' });
+    expect(await runState(parked.runId)).toBe('resolved');
+    const outbox = await outboxRows(parked.runId);
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0]).toMatchObject({ epoch: '1', status: 'pending' });
+
+    // The later reply waits its own turn out: its run is untouched, and it
+    // has no record until a person approves it.
+    expect(await runState(later.runId)).toBe('awaiting_approval');
+    expect(await outboxRows(later.runId)).toHaveLength(0);
+  });
+
   it('reads the edited draft back and records the true distance (section 4.10)', async () => {
     const ticketId = 'T-' + randomUUID().slice(0, 8);
     const { runId, draftExternalId, helpdesk } = await parkReply(ticketId);
@@ -549,9 +626,45 @@ describe('approval completion path (DEC-12 end to end)', () => {
     });
   });
 
-  it('refuses a stale write when the fencing epoch moved on (DEC-28)', async () => {
+  // Issue #113, criterion 1: the defect through a real consumer start, not a
+  // hand-raised epoch. Every deployment claims its partitions, and a reply
+  // parked for a person is not in flight in any consumer — so the claim must
+  // leave it approvable. The count the claim returns is asserted in
+  // consumer.db.test.ts, beside the tickets it does and does not move.
+  it('approves a reply parked before a consumer start (issue #113)', async () => {
     const ticketId = 'T-' + randomUUID().slice(0, 8);
-    const { runId } = await parkReply(ticketId);
+    const { runId, draftExternalId } = await parkReply(ticketId);
+    const { rows } = await pool.query('SELECT partition FROM run WHERE run_id = $1', [runId]);
+
+    // The claim finds nothing in flight on this ticket, so it moves no fence.
+    expect(await claimPartition(pool, rows[0]!.partition as number)).toBe(0);
+
+    const idemKey = deriveIdemKey({
+      actionClass: CUSTOMER_REPLY_ACTION_CLASS,
+      ticketId,
+      conversationId: null,
+      payload: { draftExternalId },
+    });
+    expect(await approveRun(pool, runId)).toEqual({ outcome: 'approved', idemKey });
+    expect(await runState(runId)).toBe('resolved');
+    const outbox = await outboxRows(runId);
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0]).toMatchObject({
+      idem_key: idemKey,
+      epoch: '1',
+      status: 'pending',
+      action_class: CUSTOMER_REPLY_ACTION_CLASS,
+    });
+    expect(outbox[0]!.payload).toEqual({ draftExternalId });
+  });
+
+  // Issue #113 inverted this case. It pinned the refusal that stranded a
+  // reply: a person approving a parked draft has nothing to do with the
+  // fence another run raised. The record the approval writes still carries
+  // the parked run's own epoch, which is what the relay reads.
+  it('approves a parked run when the fencing epoch moved on (DEC-28)', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const { runId, draftExternalId } = await parkReply(ticketId);
 
     // A rebalance handed the ticket to another owner at a higher epoch.
     await pool.query('UPDATE ticket_epoch SET epoch = $2 WHERE ticket_id = $1', [
@@ -559,13 +672,21 @@ describe('approval completion path (DEC-12 end to end)', () => {
       '50',
     ]);
 
-    const approval = await approveRun(pool, runId);
-    expect(approval.outcome).toBe('stale_epoch');
-    if (approval.outcome === 'stale_epoch') {
-      expect(approval.highestAcceptedEpoch).toBe(50n);
-    }
-    expect(await runState(runId)).toBe('awaiting_approval');
-    expect(await outboxRows(runId)).toHaveLength(0);
+    const idemKey = deriveIdemKey({
+      actionClass: CUSTOMER_REPLY_ACTION_CLASS,
+      ticketId,
+      conversationId: null,
+      payload: { draftExternalId },
+    });
+    expect(await approveRun(pool, runId)).toEqual({ outcome: 'approved', idemKey });
+    expect(await runState(runId)).toBe('resolved');
+    const outbox = await outboxRows(runId);
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0]).toMatchObject({
+      idem_key: idemKey,
+      epoch: '1',
+      status: 'pending',
+    });
   });
 
   afterAll(async () => {

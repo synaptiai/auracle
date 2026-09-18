@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { dbUrl } from '../db/config.js';
 import {
   fencedInsert,
+  fencedTransition,
   type FencedOutboxInput,
   type FencedRunInput,
 } from './insert.js';
@@ -20,7 +21,7 @@ const pool = new Pool({ connectionString: dbUrl() });
 await pool.query('SELECT 1');
 
 
-function makeRun(epoch: bigint, state = 'queued'): FencedRunInput {
+function makeRun(epoch: bigint | 'next', state = 'queued'): FencedRunInput {
   return {
     runId: randomUUID(),
     ticketId: 'T-' + randomUUID().slice(0, 8),
@@ -152,6 +153,142 @@ describe('fencedInsert', () => {
     expect(outboxCount.rows[0]!.n).toBe(1);
   });
 
+  // Issue #113: the epoch is allocated under the ticket row lock, inside the
+  // insert's own transaction. A creation that read the fence first — outside
+  // that lock — hands two creations the same epoch, and the second then
+  // raises no fence at all.
+  it('allocates the next epoch under the ticket lock, and never twice', async () => {
+    const first = makeRun('next');
+    const second = makeRun('next');
+    second.ticketId = first.ticketId;
+    await pool.query('INSERT INTO ticket_epoch (ticket_id, epoch) VALUES ($1, 20)', [
+      first.ticketId,
+    ]);
+
+    // The plausible wrong version plans the epoch from a pool-level read,
+    // taken before the transaction that guards it. This wrapper counts one, so
+    // that version fails here whatever the interleaving. Any other wrong
+    // version is caught by the epochs below when the two calls interleave, and
+    // the interleaving is left to `Promise.all` here: the forced one is the
+    // case below, which is where a missing lock shows.
+    let readsOutsideTheLock = 0;
+    const watched = {
+      connect: pool.connect.bind(pool),
+      query: async (text: string, values?: unknown[]) => {
+        if (typeof text === 'string' && text.includes('FROM ticket_epoch')) {
+          readsOutsideTheLock += 1;
+        }
+        return pool.query(text, values as never);
+      },
+    } as unknown as Pool;
+
+    const [a, b] = await Promise.all([
+      fencedInsert(watched, first, makeOutbox(first, 'key-next-a')),
+      fencedInsert(watched, second, makeOutbox(second, 'key-next-b')),
+    ]);
+
+    expect([a.outcome, b.outcome]).toEqual(['accepted', 'accepted']);
+    const rows = await pool.query(
+      'SELECT epoch::text AS epoch FROM run WHERE ticket_id = $1 ORDER BY epoch',
+      [first.ticketId],
+    );
+    expect(rows.rows.map((row) => row['epoch'])).toEqual(['21', '22']);
+    const fence = await pool.query(
+      'SELECT epoch::text AS epoch FROM ticket_epoch WHERE ticket_id = $1',
+      [first.ticketId],
+    );
+    expect(fence.rows[0]!['epoch']).toBe('22');
+    expect(readsOutsideTheLock).toBe(0);
+  });
+
+  // The security review's finding (SEC-1): `FOR UPDATE` locks no row that is
+  // not there, so a ticket whose first write is this one had no lock at all.
+  // Two creations would each read no fence, each allocate 1, and one of them
+  // would raise nothing. The insert materialises the row before it locks.
+  //
+  // The interleaving is forced, because `Promise.all` alone is a coin flip:
+  // the first creation is held at its fence read while the second runs. A
+  // version that reads before it locks lets the second read first and land at
+  // the same epoch; this one holds the row, so the second waits and takes the
+  // next. The hold is bounded — waiting for the second would deadlock against
+  // the fixed code, which is holding the row the second needs.
+  //
+  // The window is this case's one timing assumption, and it cuts one way: a
+  // second read landing after the hold would let the unfixed version pass. The
+  // fixed version does not depend on it — its second creation blocks on the
+  // row lock and cannot read early, however long the hold runs.
+  it('allocates 1 and 2 for two concurrent first creations on one ticket', async () => {
+    const first = makeRun('next');
+    const second = makeRun('next');
+    second.ticketId = first.ticketId;
+
+    // Its own pool, so the wrapped clients never return to the shared one.
+    const held = new Pool({ connectionString: dbUrl(), max: 4 });
+    try {
+      let reads = 0;
+      const heldPool = {
+        query: pool.query.bind(pool),
+        connect: async (): Promise<unknown> => {
+          const client = await held.connect();
+          const real = client.query.bind(client);
+          (client as { query: unknown }).query = async (text: unknown, values?: unknown[]) => {
+            // The hold is after the read, so the first creation has already
+            // taken its fence value when the second one reads its own. Before
+            // it, the second would simply read the newer value and both would
+            // still land apart — a coin flip, not a discriminating check.
+            const result = await real(text as string, values as never);
+            if (typeof text === 'string' && text.includes('FROM ticket_epoch')) {
+              reads += 1;
+              if (reads === 1) {
+                await new Promise((resolve) => setTimeout(resolve, 300));
+              }
+              // Restored at the read, so a client that goes back to the pool
+              // is not left wrapped.
+              delete (client as { query?: unknown }).query;
+            }
+            return result;
+          };
+          return client;
+        },
+      } as unknown as Pool;
+
+      const [a, b] = await Promise.all([
+        fencedInsert(heldPool, first, makeOutbox(first, 'key-first-a')),
+        fencedInsert(heldPool, second, makeOutbox(second, 'key-first-b')),
+      ]);
+
+      expect([a.outcome, b.outcome]).toEqual(['accepted', 'accepted']);
+    } finally {
+      await held.end();
+    }
+
+    const rows = await pool.query(
+      'SELECT epoch::text AS epoch FROM run WHERE ticket_id = $1 ORDER BY epoch',
+      [first.ticketId],
+    );
+    expect(rows.rows.map((row) => row['epoch'])).toEqual(['1', '2']);
+    const fence = await pool.query(
+      'SELECT epoch::text AS epoch FROM ticket_epoch WHERE ticket_id = $1',
+      [first.ticketId],
+    );
+    expect(fence.rows[0]!['epoch']).toBe('2');
+  });
+
+  it("starts a ticket's first allocated epoch at 1, and creates its fence", async () => {
+    const run = makeRun('next');
+    expect((await fencedInsert(pool, run, null)).outcome).toBe('accepted');
+    const row = await pool.query(
+      'SELECT epoch::text AS epoch FROM run WHERE run_id = $1',
+      [run.runId],
+    );
+    expect(row.rows[0]!['epoch']).toBe('1');
+    const fence = await pool.query(
+      'SELECT epoch::text AS epoch FROM ticket_epoch WHERE ticket_id = $1',
+      [run.ticketId],
+    );
+    expect(fence.rows[0]!['epoch']).toBe('1');
+  });
+
   it('holds fencing across rebalance overlap: interleaved epochs in order', async () => {
     const ticketId = 'T-rebalance';
     const results: string[] = [];
@@ -173,8 +310,94 @@ describe('fencedInsert', () => {
     );
     expect(BigInt(epochRow.rows[0]!.epoch as string)).toBe(4n);
   });
+});
 
-  afterAll(async () => {
-    await pool.end();
+describe('fencedTransition and the runs the fence still governs', () => {
+  beforeEach(async () => {
+    await truncateLedger(pool);
   });
+
+  afterEach(async () => {
+    await truncateLedger(pool);
+  });
+
+  /** Creates a run in `state` at epoch 1, then raises the ticket's fence. */
+  async function runBehindARaisedFence(state: string): Promise<string> {
+    const run = makeRun(1n, state);
+    expect((await fencedInsert(pool, run, null)).outcome).toBe('accepted');
+    await pool.query('UPDATE ticket_epoch SET epoch = 50 WHERE ticket_id = $1', [
+      run.ticketId,
+    ]);
+    return run.runId;
+  }
+
+  // Issue #113: a parked run waits for a person, and no consumer holds it.
+  // The fence a later run raised says nothing about it, so the approval must
+  // still commit. Before this, the write was refused and the reply stayed
+  // parked with every approval bouncing.
+  it('accepts a parked run when the fence moved on (DEC-28)', async () => {
+    const runId = await runBehindARaisedFence('awaiting_approval');
+    const moved = await fencedTransition(pool, {
+      runId,
+      state: 'resolved',
+      costMicros: 0,
+      stepsUsed: 1,
+      fromState: 'awaiting_approval',
+    });
+    expect(moved).toEqual({ outcome: 'accepted' });
+  });
+
+  // The escape belongs to the write that requires the parked state (the
+  // security review's SEC-3). A caller that names no precondition keeps the
+  // comparison, so a sweep or a reject path added later inherits the guard
+  // rather than the escape.
+  it('refuses a parked run whose write names no precondition (DEC-28)', async () => {
+    const runId = await runBehindARaisedFence('awaiting_approval');
+    const moved = await fencedTransition(pool, {
+      runId,
+      state: 'resolved',
+      costMicros: 0,
+      stepsUsed: 1,
+    });
+    expect(moved).toEqual({ outcome: 'stale_epoch', highestAcceptedEpoch: 50n });
+  });
+
+  // The boundary of the escape, at its other end: a run that has finished is
+  // not parked either, so the fence still governs it. No production caller
+  // moves a terminal run today, which is why this is the fail-closed half of
+  // the pair rather than a behaviour any path relies on.
+  it('refuses a finished run at the raised fence (DEC-28)', async () => {
+    const runId = await runBehindARaisedFence('resolved');
+    const moved = await fencedTransition(pool, {
+      runId,
+      state: 'escalated',
+      costMicros: 0,
+      stepsUsed: 1,
+      fromState: 'resolved',
+    });
+    expect(moved).toEqual({ outcome: 'stale_epoch', highestAcceptedEpoch: 50n });
+  });
+
+  // The other half of the same fence: a run a consumer is still walking is
+  // exactly what DEC-28 refuses, and the exemption above must not reach it.
+  it('refuses a run in flight at the same raised fence (DEC-28)', async () => {
+    const runId = await runBehindARaisedFence('executing');
+    const moved = await fencedTransition(pool, {
+      runId,
+      state: 'resolved',
+      costMicros: 0,
+      stepsUsed: 1,
+      fromState: 'executing',
+    });
+    expect(moved).toEqual({ outcome: 'stale_epoch', highestAcceptedEpoch: 50n });
+    const row = await pool.query('SELECT state FROM run WHERE run_id = $1', [runId]);
+    expect(row.rows[0]!.state).toBe('executing');
+  });
+});
+
+// File scope, not inside a describe: a sibling describe's afterAll runs
+// before the next describe's tests, so ending the pool there would break
+// every suite after it in this file.
+afterAll(async () => {
+  await pool.end();
 });

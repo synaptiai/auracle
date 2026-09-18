@@ -91,8 +91,15 @@ export interface CoordinatorDeps {
 export interface CoordinateInput {
   ticketId: string;
   ticketText: string;
-  /** DEC-28: fencing token for this run's writes. Must not decrease per ticket. */
-  epoch: bigint;
+  /**
+   * DEC-28: fencing token for this run's writes. Must not decrease per ticket.
+   *
+   * `'next'` asks the ledger to allocate it inside the insert transaction,
+   * under the ticket row lock (issue #113). The consumer asks; a replay or a
+   * test supplies the value it means to write, and a value below the ticket's
+   * fence is refused.
+   */
+  epoch: bigint | 'next';
   actionClass: string;
   actionPayload: Record<string, unknown>;
   delivery: 'at_least_once' | 'at_most_once';

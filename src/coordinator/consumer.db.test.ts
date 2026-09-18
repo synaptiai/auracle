@@ -19,7 +19,6 @@ import {
   MAX_INTAKE_ATTEMPTS,
   claimPartition,
   conversationHistory,
-  nextEpoch,
   processQueuedTickets,
 } from './consumer.js';
 import type { ConsumerOptions } from './consumer.js';
@@ -140,27 +139,17 @@ function autoInput(ticketId: string, epoch: bigint): CoordinateInput {
 type QueryFn = (text: string | unknown, values?: unknown[]) => Promise<unknown>;
 
 /**
- * A pool view that runs `match`-triggered `hook` once around `query`.
- * Used to land a claimPartition bump at a precise point inside the
- * nextEpoch-read -> fenced-insert window, which is where a concurrent
- * rebalance would hit in production. Ledger writes themselves go through
- * pool.connect() and bypass the wrapper, so only coordinator-level queries
- * are intercepted.
+ * A pool view that runs `match`-triggered `hook` once, before the query that
+ * matches it. Used to land a claimPartition bump at a precise point inside a
+ * walk, which is where a concurrent rebalance would hit in production — and,
+ * since issue #113, to prove that no fence read happens outside the insert at
+ * all. Ledger writes themselves go through pool.connect() and bypass the
+ * wrapper, so only coordinator-level queries are intercepted.
  */
 function wrappedPool(real: Pool, match: string, hook: () => Promise<void>): Pool {
   let fired = false;
   const query: QueryFn = async (text, values) => {
-    const fire =
-      !fired && typeof text === 'string' && text.includes(match);
-    let result: unknown;
-    if (fire && typeof text === 'string' && text.includes('FROM ticket_epoch')) {
-      // Post-read hook: the SELECT must see the PRE-bump fence first.
-      result = await real.query(text, values);
-      fired = true;
-      await hook();
-      return result;
-    }
-    if (fire) {
+    if (!fired && typeof text === 'string' && text.includes(match)) {
       fired = true;
       await hook();
     }
@@ -322,8 +311,33 @@ describe('section 4.3 partition consumer', () => {
     expect(runPartition).toBe(filedUnder);
 
     // The proof that matters: the rebalance of the partition the ticket was
-    // filed under finds this ticket's fence and bumps it.
-    expect(await claimPartition(pool, filedUnder)).toBeGreaterThan(0);
+    // filed under finds this ticket's fence and bumps it. The run the scan
+    // just resolved is not in flight, so issue #113 leaves its fence alone:
+    // what a claim moves is a pickup still walking the ticket, which is what
+    // the run below stands for.
+    await fencedInsert(
+      pool,
+      {
+        runId: randomUUID(),
+        ticketId: ticket,
+        partition: filedUnder,
+        epoch: 2n,
+        state: 'received',
+        promptVer: 'old-owner',
+        modelVer: 'coord-test-model',
+        deadlineAt: new Date(Date.now() + 60_000),
+      },
+      null,
+    );
+    expect(await claimPartition(pool, filedUnder)).toBe(1);
+    // And the claim is scoped to the partition it was given: the same ticket,
+    // claimed from a neighbouring partition, keeps its fence.
+    expect(await claimPartition(pool, (filedUnder + 1) % PARTITION_COUNT)).toBe(0);
+    const untouched = await pool.query(
+      'SELECT epoch::text AS epoch FROM ticket_epoch WHERE ticket_id = $1',
+      [ticket],
+    );
+    expect(untouched.rows[0]?.epoch).toBe('3');
   });
 
   it('queues a follow-up on a thread that is still waiting (DEC-35)', async () => {
@@ -1165,7 +1179,25 @@ describe('section 4.3 partition consumer', () => {
       [ticketId],
     );
     expect(fence.rows[0]?.epoch).toBe('2');
-    expect(await nextEpoch(pool, ticketId)).toBe(3n);
+
+    // The next creation's epoch comes from the ledger, under the ticket row
+    // lock (issue #113), and it raises the fence with it.
+    const third = await fencedInsert(
+      pool,
+      {
+        runId: randomUUID(),
+        ticketId,
+        partition,
+        epoch: 'next',
+        state: 'received',
+        promptVer: 'third',
+        modelVer: 'coord-test-model',
+        deadlineAt: new Date(Date.now() + 60_000),
+      },
+      null,
+    );
+    expect(third.outcome).toBe('accepted');
+    expect((await runRowsFor(ticketId)).map((r) => Number(r.epoch))).toEqual([1, 2, 3]);
   });
 
   it('refuses a stale owner end to end after a rebalance (DEC-27 cost, DEC-28 safety)', async () => {
@@ -1175,44 +1207,186 @@ describe('section 4.3 partition consumer', () => {
     const partition = await seedTicket(ticketId);
     await processQueuedTickets(makeDeps(happyScript(), 'old-owner'), optionsFor([partition]));
 
+    // The customer replies, and that pickup is still walking when deployment
+    // moves ownership. Issue #113: the claim raises the fence of the tickets
+    // whose runs are in flight, and this ticket holds one.
+    await enqueueTicket(
+      pool,
+      { ticketId, messageId: `${ticketId}-follow-up`, ticketText: TICKET_TEXT },
+      PARTITION_COUNT,
+    );
+    const inFlightRun = randomUUID();
+    const started = await fencedInsert(
+      pool,
+      {
+        runId: inFlightRun,
+        ticketId,
+        partition,
+        epoch: 2n,
+        state: 'received',
+        promptVer: 'old-owner',
+        modelVer: 'coord-test-model',
+        deadlineAt: new Date(Date.now() + 60_000),
+      },
+      null,
+    );
+    expect(started.outcome).toBe('accepted');
+
     // Deployment moves ownership. The new owner claims the partition, which
-    // bumps every fence in it.
+    // bumps the fence of every ticket holding a run in flight.
     const bumped = await claimPartition(pool, partition);
     expect(bumped).toBe(1);
     let fence = await pool.query(
       'SELECT epoch::text AS epoch FROM ticket_epoch WHERE ticket_id = $1',
       [ticketId],
     );
-    expect(fence.rows[0]?.epoch).toBe('2');
+    expect(fence.rows[0]?.epoch).toBe('3');
 
-    // The old owner did not get the memo and re-runs its semantics with its
-    // pre-rebalance epoch. Every fenced write is refused.
+    // The old owner did not get the memo. Its next hop, and a run it creates
+    // at its pre-rebalance epoch, are both refused.
+    const hop = await fencedTransition(pool, {
+      runId: inFlightRun,
+      state: 'classified',
+      costMicros: 0,
+      stepsUsed: 1,
+      fromState: 'received',
+    });
+    expect(hop).toEqual({ outcome: 'stale_epoch', highestAcceptedEpoch: 3n });
     const stale = await coordinateTicket(makeDeps(happyScript(), 'old-owner'), autoInput(ticketId, 1n));
     expect(stale.outcome).toBe('stale_epoch');
-    if (stale.outcome === 'stale_epoch') expect(stale.highestAcceptedEpoch).toBe(2n);
+    if (stale.outcome === 'stale_epoch') expect(stale.highestAcceptedEpoch).toBe(3n);
 
-    // And the new owner, reading the bumped fence, gets through.
-    await enqueueTicket(pool, { ticketId, messageId: ticketId, ticketText: TICKET_TEXT }, PARTITION_COUNT);
+    // And the new owner, reading the bumped fence, gets through. The
+    // follow-up is a second turn, so its action carries its own DEC-24 key
+    // and the run resolves rather than colliding with run one's record.
     const fresh = await processQueuedTickets(makeDeps(happyScript(), 'new-owner'), optionsFor([partition]));
-    expect(fresh.map((r) => r.outcome)).toEqual(['superseded']); // same semantics as run one
+    expect(fresh.map((r) => r.outcome)).toEqual(['resolved']);
     fence = await pool.query(
       'SELECT epoch::text AS epoch FROM ticket_epoch WHERE ticket_id = $1',
       [ticketId],
     );
-    expect(fence.rows[0]?.epoch).toBe('3');
+    expect(fence.rows[0]?.epoch).toBe('4');
   });
 
-  it('an insert planned pre-bump may land at the equal fence; effects stay single-shot', async () => {
-    // The reviewer's exact interleave: the old owner reads fence=1, plans
-    // epoch 2; a rebalance bumps the fence to 2; the old owner's INSERT then
-    // lands AT the equal fence and passes, because the ledger guard is strict
-    // (`run.epoch < highest`). Refusing equality would break the
-    // serialized-writer semantics pinned in src/ledger/concurrency.db.test.ts,
-    // so this test pins instead why the window stays safe: even with both
-    // epochs alive, DEC-24 makes the second execution of the same semantics
-    // lose the outbox insert (superseded), so no second external effect is
-    // possible — and the relay's send-time fence check ('fenced') backs that
-    // up for any record already committed.
+  it('cuts off a run in every state a consumer drives, after a claim (DEC-28)', async () => {
+    // Criterion 5 of issue #113: narrowing the claim left the guarantee
+    // whole. A run in flight is exactly what a claim cuts off, wherever the
+    // walk stopped, and the ticket pays one fence for it. Each state gets its
+    // own partition, so the count proves the claim moved that ticket alone.
+    const nextHop: Readonly<Record<string, string>> = {
+      received: 'classified',
+      classified: 'retrieved',
+      retrieved: 'composed',
+      composed: 'gated',
+      gated: 'executing',
+      executing: 'resolved',
+    };
+    let partition = 2;
+    for (const [state, target] of Object.entries(nextHop)) {
+      const runId = randomUUID();
+      const ticketId = `T-${randomUUID().slice(0, 8)}`;
+      const started = await fencedInsert(
+        pool,
+        {
+          runId,
+          ticketId,
+          partition,
+          epoch: 1n,
+          state,
+          promptVer: 'old-owner',
+          modelVer: 'coord-test-model',
+          deadlineAt: new Date(Date.now() + 60_000),
+        },
+        null,
+      );
+      expect(started.outcome, state).toBe('accepted');
+
+      expect(await claimPartition(pool, partition), state).toBe(1);
+      const hop = await fencedTransition(pool, {
+        runId,
+        state: target,
+        costMicros: 0,
+        stepsUsed: 1,
+        fromState: state,
+      });
+      expect(hop, state).toEqual({ outcome: 'stale_epoch', highestAcceptedEpoch: 2n });
+      partition += 1;
+    }
+  });
+
+  it('leaves a parked ticket fence alone, so the person can still approve (issue #113)', async () => {
+    // A reply waiting for a person is in no consumer's hands. Raising its
+    // fence at a deployment would refuse the approval, which is the only
+    // thing left to do with that run.
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const partition = 4;
+    const runId = randomUUID();
+    const parked = await fencedInsert(
+      pool,
+      {
+        runId,
+        ticketId,
+        partition,
+        epoch: 1n,
+        state: 'awaiting_approval',
+        promptVer: 'old-owner',
+        modelVer: 'coord-test-model',
+        deadlineAt: new Date(Date.now() + 60_000),
+      },
+      null,
+    );
+    expect(parked.outcome).toBe('accepted');
+
+    expect(await claimPartition(pool, partition)).toBe(0);
+    const moved = await fencedTransition(pool, {
+      runId,
+      state: 'resolved',
+      costMicros: 0,
+      stepsUsed: 1,
+      fromState: 'awaiting_approval',
+    });
+    expect(moved).toEqual({ outcome: 'accepted' });
+  });
+
+  it('leaves a finished ticket fence alone too, so its record still sends (issue #113)', async () => {
+    // The other half of the narrowing, and the one the relay depends on: a
+    // ticket whose only run has finished is not in flight, so a claim must
+    // not touch it. Bumping it would leave the record below the fence, and
+    // the runbook says the relay still sends it.
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const partition = 6;
+    const runId = randomUUID();
+    const finished = await fencedInsert(
+      pool,
+      {
+        runId,
+        ticketId,
+        partition,
+        epoch: 1n,
+        state: 'resolved',
+        promptVer: 'old-owner',
+        modelVer: 'coord-test-model',
+        deadlineAt: new Date(Date.now() + 60_000),
+      },
+      null,
+    );
+    expect(finished.outcome).toBe('accepted');
+
+    expect(await claimPartition(pool, partition)).toBe(0);
+    const fence = await pool.query(
+      'SELECT epoch::text AS epoch FROM ticket_epoch WHERE ticket_id = $1',
+      [ticketId],
+    );
+    expect(fence.rows[0]?.epoch).toBe('1');
+  });
+
+  it('plans no epoch outside the insert, so the pre-bump window is closed (issue #113)', async () => {
+    // What this test used to pin: the old owner read the fence, planned an
+    // epoch, and a rebalance landed between that read and its insert — after
+    // which the insert could pass at an epoch equal to the bumped fence. The
+    // read is gone (the ledger allocates the epoch under the row lock it
+    // already takes), so the window is closed rather than merely survivable.
+    // The wrapper fires on a pool-level fence read, and there is none.
     const ticketId = `T-${randomUUID().slice(0, 8)}`;
 
     // Normal operation first: run at epoch 1, fence 1, outbox row committed.
@@ -1223,19 +1397,22 @@ describe('section 4.3 partition consumer', () => {
     );
     expect(setup.map((r) => r.outcome)).toEqual(['resolved']);
 
-    // Old owner re-runs the SAME semantics while a rebalance lands inside its
-    // read -> insert window.
+    // The old owner re-runs the SAME semantics, with a rebalance armed to
+    // fire on any fence read taken outside the insert.
     await enqueueTicket(pool, { ticketId, messageId: ticketId, ticketText: TICKET_TEXT }, PARTITION_COUNT);
+    let plannedOutsideTheInsert = false;
     const hookedDeps = {
       ...makeDeps(happyScript(), 'old-owner'),
       pool: wrappedPool(pool, 'FROM ticket_epoch', async () => {
+        plannedOutsideTheInsert = true;
         await claimPartition(pool, partition);
       }),
     };
     const oldOwner = await processQueuedTickets(hookedDeps, optionsFor([partition]));
 
-    // The equal-epoch insert passed (epoch 2 against fence 2), but the DEC-24
-    // key collided with the setup run's outbox row: superseded, no new send.
+    expect(plannedOutsideTheInsert).toBe(false);
+    // The run still commits, and the DEC-24 key collides with the setup run's
+    // outbox row: superseded, no new send.
     expect(oldOwner.map((r) => r.outcome)).toEqual(['superseded']);
     const outboxCount = await pool.query('SELECT count(*)::int AS n FROM outbox');
     expect(outboxCount.rows[0]?.n).toBe(1);
@@ -1257,9 +1434,9 @@ describe('section 4.3 partition consumer', () => {
     expect((await runRowsFor(ticketId)).map((r) => Number(r.epoch))).toEqual([1, 2, 3]);
   });
 
-  it('a rebalance landing after the epoch read cuts the old owner off and keeps the ticket queued', async () => {
+  it('a rebalance landing after the old owner wrote cuts it off and keeps the ticket queued', async () => {
     // Second half of the overlap window: the bump lands AFTER the old owner's
-    // fencedInsert accepted its pre-bump epoch. The new owner's raise must
+    // fencedInsert allocated its epoch and committed. The new owner's raise must
     // refuse every later hop of the old run — including its outbox insert —
     // before any external effect, and F1 keeps the ticket queued so the new
     // owner redoes the work.
@@ -1274,7 +1451,8 @@ describe('section 4.3 partition consumer', () => {
 
     await enqueueTicket(pool, { ticketId, messageId: ticketId, ticketText: TICKET_TEXT }, PARTITION_COUNT);
     // Hook fires just before the first step_journal write, i.e. right after
-    // the old owner's fencedInsert committed epoch 2 against fence 1.
+    // the old owner's fencedInsert allocated epoch 2 and raised the fence to
+    // 2 (issue #113: the ledger allocates under the row lock).
     const hookedDeps = {
       ...makeDeps(happyScript(), 'old-owner'),
       pool: wrappedPool(

@@ -16,7 +16,10 @@
  *
  * One transaction does all of:
  *   1. refuse the move unless the run sits in `awaiting_approval` (DEC-12)
- *   2. re-check the fencing epoch against ticket_epoch (DEC-28)
+ *   2. read the fencing epoch against ticket_epoch (DEC-28), under the same
+ *      row lock. A parked run passes it whatever the fence says (issue #113):
+ *      a person's write is not an old owner's write, and a deploy that raised
+ *      the fence was refusing the approval the reply needed
  *   3. commit the run's next state
  *   4. insert the relayable outbox record
  *   5. when a final body was captured or read back, record the
@@ -45,6 +48,14 @@ export type ApproveOutcome =
   | { readonly outcome: 'not_awaiting_approval'; readonly state: string }
   /** Section 4.2 rule 2: another semantic action already holds the key. */
   | { readonly outcome: 'superseded' }
+  /**
+   * The fence refused the write. Since issue #113 no caller reaches this arm
+   * from here: a run parked in `awaiting_approval` is outside the fence's
+   * reach (src/ledger/insert.ts), so a person's approval commits whatever
+   * the ticket's fence says. It stays in the union because the console maps
+   * every outcome by name, and removing it would leave that mapping to fail
+   * on a value it could still be handed by a later parked state.
+   */
   | { readonly outcome: 'stale_epoch'; readonly highestAcceptedEpoch: bigint }
   /**
    * Read-back found no draft in the target system. The approval refuses:

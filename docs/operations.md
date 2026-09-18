@@ -199,11 +199,17 @@ Every run on one conversation lands on the same consumer, so two runs never
 process one conversation at once. One consumer owns each partition across the
 whole deployment. Two consumers on one partition is a configuration error.
 
-At startup the consumer claims its partitions and bumps the fencing epoch.
+At startup the consumer claims its partitions and raises the fence.
 A rebalance can leave two owners for a short time.
-The epoch is a number that increases on each claim.
-The ledger refuses any write with an older epoch than the highest one it has seen (DEC-28).
-An old owner that still runs therefore fails its next write instead of corrupting the state.
+The epoch is a number that increases on each claim that moves it.
+The ledger refuses a write with an older epoch than the highest one it has seen (DEC-28).
+It makes one exception: the approval of a reply parked for a person.
+An old owner that is still walking a run fails its next write instead of corrupting the state.
+
+The claim raises the fence of a ticket only while a run of that ticket is in flight.
+A reply parked for a person and a record whose run has finished keep their fence.
+A restart therefore leaves both alone: the reply stays approvable, and the relay still sends the record.
+When the relay refuses a record, it moves the run to `escalated` with the reason, so an operator sees it.
 
 Optional settings: `CONSUMER_INTERVAL_MS` (default 5000) and
 `TICKET_DEADLINE_MS` (default 60000).
@@ -1016,6 +1022,11 @@ A status of `delivery_unknown` means the relay could not confirm the delivery.
 Do not resend the action by hand.
 The first copy may have arrived, so a resend can act twice.
 The run waits in the approval path (DEC-30).
+
+A status of `fenced` means the fence moved past a record whose run was still in flight.
+The relay sends nothing, and the record keeps the key a re-run would collide with.
+It moves the run to `escalated` with the cause, so a person decides what happens to that action.
+
 A state of `escalated` means the run stopped and waits for a person.
 
 The journal shows the partial work and names the cause. Every cause the

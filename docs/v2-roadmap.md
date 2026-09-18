@@ -371,9 +371,14 @@ the reasoning.
 
 ### What blocks it
 
-One defect blocks the rows that move a parked reply. A consumer start, or a
-later run on the same ticket, raises the fence over a reply already parked.
-No approval then accepts that reply, and issue 113 records it.
+Nothing on the fencing side. Issue 113 recorded one defect. A consumer
+start, or a later run on the same ticket, raised the fence over a reply
+already parked. No approval then accepted it.
+
+The fence now governs a run that is still in flight. A parked reply and a
+finished run keep their fence,
+so the rows that move a parked reply can proceed. What remains is their own
+work.
 
 ### The next step
 

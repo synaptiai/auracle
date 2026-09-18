@@ -49,8 +49,10 @@
 // startup when present. An explicit shell env always wins over .env.
 //
 // Startup performs the deployment-time rebalance step (claimPartition): each
-// claimed partition has its per-ticket fences bumped, so an old owner still
-// mid-run fails its next write with stale_epoch (DEC-28).
+// claimed partition has the fences of the tickets holding an in-flight run
+// bumped, so an old owner still mid-run fails its next write with
+// stale_epoch (DEC-28). A reply parked for a person and a record whose run
+// has finished keep their fence (issue #113), so a restart strands neither.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -211,8 +213,10 @@ async function main(): Promise<void> {
     intents: CoordinatorDeps['taxonomy']['intents'];
   };
 
-  // Deployment-time rebalance: bump every fence in the claimed partitions so
-  // the previous owner's writes are refused (DEC-27 cost, DEC-28 safety).
+  // Deployment-time rebalance: raise the fence of every ticket holding an
+  // in-flight run in the claimed partitions, so the previous owner's writes
+  // are refused (DEC-27 cost, DEC-28 safety). A reply parked for a person and
+  // a record whose run has finished keep their fence (issue #113).
   const pool = new Pool({ connectionString: requireDbUrl('the consumer'), max: 1 });
   let bumped = 0;
   for (const partition of partitions) {

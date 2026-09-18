@@ -34,6 +34,7 @@ import type {
 } from '../adapters/types.js';
 import { errorMessage } from '../errors.js';
 import { journalStep } from '../ledger/journal-write.js';
+import { runStateClass } from '../ledger/run-state.js';
 
 /** The delivery rule an action class declares for one record (DEC-29). */
 export type DeliveryRule = 'at_least_once' | 'at_most_once';
@@ -119,7 +120,7 @@ export interface RelayResult {
     | 'delivery_unknown_escalated' // DEC-30: no retry, approval path
     | 'malformed_escalated' // payload matches no known shape; no send attempted
     | 'left_pending_retry' // safe to retry on a later scan
-    | 'fenced'; // DEC-28: epoch stale at send time; this scan sends nothing
+    | 'fenced'; // DEC-28 at send time, for a run that has not finished
 }
 
 /** One pending outbox row as a scan reads it from the ledger. */
@@ -213,17 +214,40 @@ function dispatchFor(row: PendingOutboxRow): Dispatch {
   };
 }
 
-async function highestAcceptedEpoch(pool: Pool, runId: string): Promise<bigint | null> {
+/**
+ * What the send-time fence check needs about one record: the ticket's fence
+ * and the state of the run that wrote the record.
+ *
+ * `runState` is the empty string when the ledger holds no run row for the
+ * record, and `fence` is null with it. Nothing in `db/` declares a foreign
+ * key from `outbox.run_id`, so the ledger would accept such a row — but the
+ * scan's own query inner-joins `run` (`pendingRows`), so the relay never
+ * reads one. A hand-built row is sent, exactly as before this change:
+ * `fence === null` refuses nothing. The empty state still reads as in flight
+ * for every row the scan does return, which is the fail-closed reading where
+ * a state this code does not know is governed rather than licensed.
+ */
+interface FenceReading {
+  readonly fence: bigint | null;
+  readonly runState: string;
+}
+
+async function fenceFor(pool: Pool, runId: string): Promise<FenceReading> {
   const current = await pool.query(
-    `SELECT te.epoch FROM ticket_epoch te
-     JOIN run r ON r.ticket_id = te.ticket_id
+    `SELECT te.epoch, r.state FROM run r
+     LEFT JOIN ticket_epoch te ON te.ticket_id = r.ticket_id
      WHERE r.run_id = $1`,
     [runId],
   );
-  if (current.rows.length === 0) {
-    return null;
+  const row = current.rows[0];
+  if (row === undefined) {
+    return { fence: null, runState: '' };
   }
-  return BigInt(current.rows[0]!.epoch as string);
+  const epoch = row['epoch'] as string | null;
+  return {
+    fence: epoch === null ? null : BigInt(epoch),
+    runState: row['state'] as string,
+  };
 }
 
 /**
@@ -243,11 +267,29 @@ export async function relayOne(
   // DEC-28, second check: the fence at insert time does not cover a lease
   // that expired between insert and send. A fenced record can never become
   // valid again (epochs never decrease), so it leaves the pending scan.
-  const highest = await highestAcceptedEpoch(pool, row.run_id);
-  if (highest !== null && BigInt(row.epoch) < highest) {
-    await pool.query(
-      "UPDATE outbox SET status = 'fenced' WHERE run_id = $1 AND step_id = $2 AND status = 'pending'",
-      [row.run_id, row.step_id],
+  //
+  // Issue #113: the check sends a record whose run has finished, whatever the
+  // fence says. Such a record is settled by its DEC-24 key and its DEC-29
+  // delivery rule, and refusing it dropped an approved reply the relay had
+  // never sent — nothing escalated, and the run read `resolved` as if the
+  // customer had been answered. Every other run keeps the refusal: an
+  // in-flight run because the fence moved under it, and a parked one because
+  // nothing approved its record (DEC-12) — which is unreachable in this
+  // codebase, since a park inserts none, and refused all the same.
+  //
+  // A refusal escalates the run in the same transaction, because a person has
+  // to see a record that will never send. The escalation is also the recovery
+  // path, and not a hand-off to a re-run: the refused row keeps its key, so a
+  // later attempt at the same action collides with it and lands `superseded`.
+  // Nothing carries that action twice, and nothing else carries it at all.
+  const { fence, runState } = await fenceFor(pool, row.run_id);
+  if (fence !== null && BigInt(row.epoch) < fence && runStateClass(runState) !== 'terminal') {
+    await parkEscalated(
+      pool,
+      row,
+      'fenced',
+      `fenced_stale_epoch: the ticket fence (${fence.toString()}) rose above`
+        + ` this record's epoch (${row.epoch}) while its run was in flight`,
     );
     return { idemKey, outcome: 'fenced' };
   }
@@ -353,8 +395,12 @@ export async function relayOne(
 
 /**
  * Park one unrelayable record and its run in one transaction (DEC-04):
- * `status` states what went wrong on the record, the run moves to the
- * approval path. Terminal for the relay — a later scan finds nothing.
+ * `status` states what went wrong on the record, and the run stops in a state
+ * an operator reads. Terminal for the relay — a later scan finds nothing.
+ *
+ * Three cases reach it, and the reason names which: a send whose delivery
+ * state is unknown (DEC-30), a payload matching no known shape, and — since
+ * issue #113 — a record the fence refuses while its run is still in flight.
  *
  * `escalated` is a terminal state, so the move stamps `finished_at` exactly
  * as the ledger path does (db/005_run_timing.sql). Without the stamp the
@@ -370,10 +416,21 @@ async function parkEscalated(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(
+    // The record's own write is the token for this whole move. Two scans can
+    // hold the same row as pending — two relay processes, or a rolling
+    // restart — and the fence this decision rests on was read before this
+    // transaction opened. So a scan that finds nothing to mark must not move
+    // the run: the other scan either sent the record (the run stays as it
+    // was, and an escalation would report a reply that went out) or refused
+    // it and escalated the run itself.
+    const marked = await client.query(
       "UPDATE outbox SET status = $3 WHERE run_id = $1 AND step_id = $2 AND status = 'pending'",
       [row.run_id, row.step_id, status],
     );
+    if ((marked.rowCount ?? 0) === 0) {
+      await client.query('COMMIT');
+      return;
+    }
     await client.query(
       "UPDATE run SET state = 'escalated', finished_at = now() WHERE run_id = $1",
       [row.run_id],
@@ -401,7 +458,18 @@ async function parkEscalated(
     );
     await client.query('COMMIT');
   } catch (error) {
-    await client.query('ROLLBACK');
+    // As elsewhere in this codebase: a rollback that throws must not replace
+    // the cause, and is reported rather than dropped. The caller logs the
+    // cause, and the record stays pending for the next scan either way.
+    await client.query('ROLLBACK').catch((rollbackError: unknown) => {
+      console.error(
+        JSON.stringify({
+          event: 'rollback_failed',
+          at: new Date().toISOString(),
+          error: errorMessage(rollbackError),
+        }),
+      );
+    });
     throw error;
   } finally {
     client.release();

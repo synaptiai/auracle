@@ -8,20 +8,30 @@
 //     ticket still can, when one of them carries no conversation and hashes
 //     elsewhere; the ticket-keyed fencing epoch covers that case.
 //   - DEC-28: every write carries a fencing epoch that only increases per
-//     ticket. Each pickup reads ticket_epoch and uses highest + 1. The
-//     rebalance procedure (claimPartition) bumps every fence in a partition
-//     when ownership moves at deployment, so an old owner's writes — whose
-//     runs carry pre-bump epochs — are refused by the fenced ledger path
-//     (src/ledger/insert.ts).
+//     ticket. A pickup asks the ledger for the next one, and the ledger
+//     allocates highest + 1 under the ticket row lock, in the insert's own
+//     transaction (issue #113). The
+//     rebalance procedure (claimPartition) bumps the fence of every ticket
+//     whose run is in flight in a partition when ownership moves at
+//     deployment, so an old owner still walking one has its writes refused
+//     by the fenced ledger path (src/ledger/insert.ts).
+//
+//     The bump is scoped to runs in flight (issue #113). A run parked for a
+//     person and a run that finished are held by no consumer, so no owner is
+//     stale with respect to them: their fences stay, their approvals still
+//     commit, and the relay still sends their records. `runStateClass` in
+//     src/ledger/run-state.ts states which states are which.
 //
 // There is no lease: the partition gives exclusive access in normal
 // operation, the fencing epoch gives safety during a rebalance overlap.
 //
-// Why the overlap cannot double-process. A fresh run plans its epoch from a
-// pre-bump fence read (nextEpoch), so during a rebalance its INSERT can land
-// at an epoch EQUAL to the bumped fence: the ledger guard is strict
-// (`run.epoch < highest`, see src/ledger/insert.ts), because refusing
-// equality would break the serialized-writer semantics pinned in
+// Why the overlap cannot double-process. A fresh run asks the ledger for its
+// epoch, and the ledger allocates it under the ticket row lock — highest + 1
+// — in the same transaction as the insert (issue #113). Two creations on one
+// ticket therefore never share an epoch, and a creation either lands above
+// the fence the new owner raised or is refused by it. Equality is still
+// accepted for callers that supply a value (a replay, a test), because
+// refusing it would break the serialized-writer semantics pinned in
 // src/ledger/concurrency.db.test.ts. The window still resolves to a single
 // effective owner:
 //   - if the new owner picks the still-queued ticket up first, its commit
@@ -30,9 +40,8 @@
 //   - if the old run finishes first instead, it acks the ticket and the new
 //     owner never polls it.
 // Either way at most one run produces external work per ticket, and the
-// relay re-checks the fence at send time ('fenced'), so even an outbox row
-// from a since-refused run can never be sent (DEC-28: check at insert AND at
-// send).
+// relay checks the fence at send time for the records of runs still in
+// flight (DEC-28: check at insert AND at send).
 //
 // Known limitation, kept by design: head-of-line delay inside a partition is
 // NOT corrected in V1 (V2 open item 7). The poll reads oldest first, so one
@@ -50,27 +59,21 @@ import { errorMessage } from '../errors.js';
 import type { ArrivalSignal } from './arrival-signal.js';
 import { ackTicket, pollPartition } from './intake.js';
 import { journalStep } from '../ledger/journal-write.js';
-
-/**
- * The next fencing epoch for a ticket (DEC-28): one above the highest epoch
- * the ledger ever accepted for it, so this run's writes can never be refused
- * as stale by its own predecessor. Strictly increasing per ticket.
- */
-export async function nextEpoch(pool: Pool, ticketId: string): Promise<bigint> {
-  const rows = await pool.query(
-    'SELECT epoch::text AS epoch FROM ticket_epoch WHERE ticket_id = $1',
-    [ticketId],
-  );
-  const highest = rows.rows[0]?.['epoch'];
-  return highest === undefined ? 1n : BigInt(highest as string) + 1n;
-}
+import { PARKED_RUN_STATES, TERMINAL_RUN_STATE_NAMES } from '../ledger/run-state.js';
 
 /**
  * The rebalance procedure DEC-27 charges as the cost of partitions. At each
  * deployment ownership moves; the new owner calls this once per claimed
- * partition. One transaction bumps every per-ticket fence in the partition,
- * so any old owner still mid-run fails its next fenced write with
- * stale_epoch. Returns the number of fences bumped.
+ * partition. One transaction bumps the fence of every ticket that holds a
+ * run in flight in the partition, so any old owner still walking one fails
+ * its next fenced write with stale_epoch. Returns the number of fences
+ * bumped.
+ *
+ * Only an in-flight run is bumped (issue #113). A reply parked for a person
+ * and a record whose run has finished are not in flight in any consumer, so
+ * no owner is stale with respect to them: raising their fence would refuse
+ * an approval a person still has to make, and would drop a record the relay
+ * has not sent. `runStateClass` states which states those are.
  *
  * A ticket's fence exists only after its first fenced write, which always
  * also wrote a run row carrying the partition — hence the join through run.
@@ -80,12 +83,20 @@ export async function claimPartition(pool: Pool, partition: number): Promise<num
   try {
     await client.query('BEGIN');
     try {
+      // The condition is the predicate's own rule, inverted: everything the
+      // module does not read as parked or terminal is in flight, so a state
+      // from another release's vocabulary is bumped rather than skipped. The
+      // three callers then answer the same way — a run whose state nobody
+      // recognises is governed, not licensed.
       const bumped = await client.query(
         `UPDATE ticket_epoch te SET epoch = te.epoch + 1
          WHERE EXISTS (
-           SELECT 1 FROM run r WHERE r.ticket_id = te.ticket_id AND r.partition = $1
+           SELECT 1 FROM run r
+            WHERE r.ticket_id = te.ticket_id
+              AND r.partition = $1
+              AND NOT (r.state = ANY($2))
          )`,
-        [partition],
+        [partition, [...PARKED_RUN_STATES, ...TERMINAL_RUN_STATE_NAMES]],
       );
       await client.query('COMMIT');
       return bumped.rowCount ?? 0;
@@ -389,7 +400,10 @@ export async function processQueuedTickets(
       const input: CoordinateInput = {
         ticketId: polled.ticketId,
         ticketText: polled.ticketText,
-        epoch: await nextEpoch(deps.pool, polled.ticketId),
+        // The ledger allocates this one, under the ticket row lock it takes
+        // for the insert (issue #113). A value read here could go stale in
+        // the window before that lock.
+        epoch: 'next',
         // Open item 7: the arrival time rides from intake to the run row,
         // so queue wait survives the ack that follows.
         enqueuedAt: polled.enqueuedAt,
@@ -476,9 +490,11 @@ export interface ConsumerHandle {
  *
  * Claiming is split by role: the entrypoint (consumer-main.ts) calls
  * claimPartition once at startup, treating each process start as a
- * deployment — so every restart does bump the fences in its partitions,
- * which is safe because bumps are monotonic and only pre-restart epochs go
- * stale. The loop itself never re-claims mid-process.
+ * deployment — so every restart raises the fence of the tickets holding an
+ * in-flight run in its partitions, which is safe because bumps are monotonic
+ * and only pre-restart epochs go stale. A reply parked for a person and a run
+ * that finished keep theirs (issue #113), so a restart strands neither. The
+ * loop itself never re-claims mid-process.
  */
 export function startConsumer(
   deps: CoordinatorDeps,

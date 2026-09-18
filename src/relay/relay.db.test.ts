@@ -17,7 +17,7 @@ import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { dbUrl } from '../db/config.js';
 import { fencedInsert, type FencedOutboxInput, type FencedRunInput } from '../ledger/insert.js';
 import { COMPENSATION_ACTION_CLASS } from '../adapters/types.js';
-import { relayPending } from './relay.js';
+import { relayOne, relayPending } from './relay.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
@@ -90,13 +90,13 @@ class ScriptedEgress implements EgressAdapter {
   }
 }
 
-function makeRun(epoch: bigint, ticketId: string): FencedRunInput {
+function makeRun(epoch: bigint, ticketId: string, state = 'queued'): FencedRunInput {
   return {
     runId: randomUUID(),
     ticketId,
     partition: 0,
     epoch,
-    state: 'queued',
+    state,
     promptVer: 'p1',
     modelVer: 'm1',
     deadlineAt: new Date(Date.now() + 60_000),
@@ -121,8 +121,9 @@ async function seedPending(
   ticketId: string,
   epoch: bigint,
   delivery: 'at_least_once' | 'at_most_once',
+  state = 'queued',
 ): Promise<string> {
-  const run = makeRun(epoch, ticketId);
+  const run = makeRun(epoch, ticketId, state);
   const idemKey = `idem:${ticketId}`;
   const result = await fencedInsert(pool, run, replyOutbox(run, idemKey, delivery));
   expect(result).toEqual({ outcome: 'accepted' });
@@ -432,11 +433,14 @@ describe('section 4.4 outbox relay', () => {
     expect(await outboxStatus(idemKey)).toBe('sent');
   });
 
-  it('fences stale-epoch records at send time and never sends them', async () => {
+  it('fences a record whose run is in flight, and leaves that run visible', async () => {
     // DEC-28, the second check: the lease expired between insert and send,
     // ticket_epoch moved on, so the record leaves the pending queue unsent.
+    // Issue #113: the check refuses a record whose run is still mid-walk,
+    // because the new owner redoes the ticket — and the run it leaves behind
+    // is one an operator reads, never a silent drop.
     const ticket = 'T-' + randomUUID().slice(0, 8);
-    const idemKey = await seedPending(ticket, 10n, 'at_least_once');
+    const idemKey = await seedPending(ticket, 10n, 'at_least_once', 'executing');
     await pool.query('UPDATE ticket_epoch SET epoch = 11 WHERE ticket_id = $1', [ticket]);
 
     const adapter = new ScriptedEgress(
@@ -459,6 +463,252 @@ describe('section 4.4 outbox relay', () => {
     expect(results).toEqual([{ idemKey, outcome: 'fenced' }]);
     expect(adapter.sendCalls).toHaveLength(0);
     expect(await outboxStatus(idemKey)).toBe('fenced');
+    expect(await runState(idemKey)).toBe('escalated');
+    expect(await runFinishedAt(idemKey)).not.toBeNull();
+    const { rows } = await pool.query(
+      `SELECT sj.result->>'reason' AS reason FROM step_journal sj
+        JOIN outbox o ON o.run_id = sj.run_id
+       WHERE o.idem_key = $1 AND sj.step_id = 'escalate'`,
+      [idemKey],
+    );
+    expect(rows[0]!.reason).toMatch(/^fenced_stale_epoch:/);
+  });
+
+  // Issue #113, criterion 6: one scan, two records behind the same raised
+  // fence, and the branch keys on each record's own run. The finished run's
+  // record goes out; the in-flight run's record is refused and that run is
+  // moved where an operator reads it. The invariant query at the end is the
+  // criterion's own sentence.
+  it('refuses one record and moves only its run, in one scan', async () => {
+    const finishedTicket = 'T-' + randomUUID().slice(0, 8);
+    const inFlightTicket = 'T-' + randomUUID().slice(0, 8);
+    const finishedKey = await seedPending(finishedTicket, 10n, 'at_least_once', 'resolved');
+    const inFlightKey = await seedPending(inFlightTicket, 10n, 'at_least_once', 'executing');
+    await pool.query('UPDATE ticket_epoch SET epoch = 11 WHERE ticket_id = ANY($1)', [
+      [finishedTicket, inFlightTicket],
+    ]);
+
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: true,
+        supportsReadBack: false,
+        supportsDraftState: true,
+        supportsStructuredFields: true,
+        supportsThreading: true,
+      }),
+      async () => ({ externalId: 'ext-1' }),
+      async () => {
+        throw new Error('read-back must not run when the send succeeds');
+      },
+    );
+
+    const results = await relayPending(pool, adapter);
+    const byKey = new Map(results.map((result) => [result.idemKey, result.outcome]));
+    expect(byKey.get(finishedKey)).toBe('sent');
+    expect(byKey.get(inFlightKey)).toBe('fenced');
+    expect(adapter.sendCalls.map((call) => call.idemKey)).toEqual([finishedKey]);
+    expect(await runState(finishedKey)).toBe('resolved');
+    expect(await runState(inFlightKey)).toBe('escalated');
+    expect(await outboxStatus(inFlightKey)).toBe('fenced');
+
+    // The criterion, as a query: no record is fenced while its run reads
+    // resolved with nothing escalated.
+    const violation = await pool.query(
+      `SELECT 1 FROM outbox o JOIN run r ON r.run_id = o.run_id
+        WHERE o.status = 'fenced' AND r.state = 'resolved'`,
+    );
+    expect(violation.rows).toEqual([]);
+  });
+
+  // The two shapes the scan's inner join keeps out of the daemon's way, and
+  // which the check's comment therefore promised in prose alone. Both refuse
+  // nothing, exactly as before the change: a record whose ticket has no fence
+  // row, and a record whose run row is not there at all.
+  it('sends a record whose ticket has no fence row, and one whose run is gone', async () => {
+    const noFenceTicket = 'T-' + randomUUID().slice(0, 8);
+    const noFenceRun = randomUUID();
+    await pool.query(
+      `INSERT INTO run (run_id, ticket_id, partition, epoch, state,
+                        prompt_ver, model_ver, deadline_at)
+       VALUES ($1, $2, 0, 1, 'resolved', 'p1', 'm1', now() + interval '1 hour')`,
+      [noFenceRun, noFenceTicket],
+    );
+    await pool.query(
+      `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class, delivery, payload, status)
+       VALUES ($1, 's1', $2, 1, 'customer_reply', 'at_least_once', $3, 'pending')`,
+      [noFenceRun, 'key-no-fence', JSON.stringify({ draftExternalId: 'draft-x' })],
+    );
+    const orphanRun = randomUUID();
+    await pool.query(
+      `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class, delivery, payload, status)
+       VALUES ($1, 's1', $2, 1, 'customer_reply', 'at_least_once', $3, 'pending')`,
+      [orphanRun, 'key-no-run', JSON.stringify({ draftExternalId: 'draft-y' })],
+    );
+
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: true,
+        supportsReadBack: false,
+        supportsDraftState: true,
+        supportsStructuredFields: true,
+        supportsThreading: true,
+      }),
+      async () => ({ externalId: 'ext-1' }),
+      async () => {
+        throw new Error('read-back must not run when the send succeeds');
+      },
+    );
+
+    const results = await relayPending(pool, adapter);
+    const byKey = new Map(results.map((result) => [result.idemKey, result.outcome]));
+    expect(byKey.get('key-no-fence')).toBe('sent');
+
+    // The orphan never reaches a scan: `pendingRows` inner-joins `run`. So
+    // this one is handed to the relay directly, and it sends, as before.
+    const orphan = await relayOne(pool, adapter, {
+      run_id: orphanRun,
+      step_id: 's1',
+      ticket_id: 'T-' + randomUUID().slice(0, 8),
+      idem_key: 'key-no-run',
+      epoch: '1',
+      delivery: 'at_least_once',
+      action_class: 'customer_reply',
+      payload: { draftExternalId: 'draft-y' },
+    });
+    expect(orphan).toEqual({ idemKey: 'key-no-run', outcome: 'sent' });
+  });
+
+  // The refusal reaches every run that has not finished, and the parked one
+  // is no exception: such a record is unreachable from this codebase, since a
+  // park inserts none, and nothing approved this one (DEC-12). Handed to the
+  // relay directly, because the scan never produces it.
+  it('refuses a parked run\'s record too, and shows that run', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedPending(ticket, 10n, 'at_least_once', 'awaiting_approval');
+    const { rows } = await pool.query(
+      'SELECT run_id FROM outbox WHERE idem_key = $1',
+      [idemKey],
+    );
+    await pool.query('UPDATE ticket_epoch SET epoch = 11 WHERE ticket_id = $1', [ticket]);
+
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: true,
+        supportsReadBack: false,
+        supportsDraftState: true,
+        supportsStructuredFields: true,
+        supportsThreading: true,
+      }),
+      async () => {
+        throw new Error('a refused record must not reach the adapter');
+      },
+      async () => {
+        throw new Error('unreachable');
+      },
+    );
+
+    expect(
+      await relayOne(pool, adapter, {
+        run_id: rows[0]!.run_id as string,
+        step_id: 's1',
+        ticket_id: ticket,
+        idem_key: idemKey,
+        epoch: '10',
+        delivery: 'at_least_once',
+        action_class: 'customer_reply',
+        payload: { draftExternalId: `draft-${ticket}` },
+      }),
+    ).toEqual({ idemKey, outcome: 'fenced' });
+    expect(adapter.sendCalls).toHaveLength(0);
+    expect(await outboxStatus(idemKey)).toBe('fenced');
+    expect(await runState(idemKey)).toBe('escalated');
+  });
+
+  it('moves no run when it is handed a record another scan resolved', async () => {
+    // Two scans can hold one row as pending — two relay processes, or a
+    // rolling restart — and the fence this decision rests on was read before
+    // the transaction opened. The record's own write is the token: when it
+    // matches nothing, the run stays as it is, because the other scan either
+    // sent the record or escalated the run itself.
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedPending(ticket, 10n, 'at_least_once', 'executing');
+    const { rows } = await pool.query(
+      'SELECT run_id FROM outbox WHERE idem_key = $1',
+      [idemKey],
+    );
+    const runId = rows[0]!.run_id as string;
+    // The other scan sent it while this one still held it as pending.
+    await pool.query("UPDATE outbox SET status = 'sent' WHERE idem_key = $1", [idemKey]);
+    await pool.query('UPDATE ticket_epoch SET epoch = 11 WHERE ticket_id = $1', [ticket]);
+
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: true,
+        supportsReadBack: false,
+        supportsDraftState: true,
+        supportsStructuredFields: true,
+        supportsThreading: true,
+      }),
+      async () => {
+        throw new Error('a resolved record must not reach the adapter');
+      },
+      async () => {
+        throw new Error('unreachable');
+      },
+    );
+
+    expect(
+      await relayOne(pool, adapter, {
+        run_id: runId,
+        step_id: 's1',
+        ticket_id: ticket,
+        idem_key: idemKey,
+        epoch: '10',
+        delivery: 'at_least_once',
+        action_class: 'customer_reply',
+        payload: { draftExternalId: `draft-${ticket}` },
+      }),
+    ).toEqual({ idemKey, outcome: 'fenced' });
+    expect(adapter.sendCalls).toHaveLength(0);
+    // The record keeps the other scan's verdict, and its run is not moved:
+    // an escalation here would report a reply that went out.
+    expect(await outboxStatus(idemKey)).toBe('sent');
+    expect(await runState(idemKey)).toBe('executing');
+  });
+
+  // Issue #113, criterion 4: an approved record written before a consumer
+  // restart is sent after the restart. The restart leaves the fence alone
+  // (the run has finished), and even a fence another run raised does not
+  // drop the record: the run completed, so its DEC-24 key and DEC-29 rule
+  // decide the record, not the ticket's fence.
+  it('sends a finished run\'s record at a raised fence, exactly once', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedPending(ticket, 10n, 'at_least_once', 'resolved');
+    await pool.query('UPDATE ticket_epoch SET epoch = 11 WHERE ticket_id = $1', [ticket]);
+
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: true,
+        supportsReadBack: false,
+        supportsDraftState: true,
+        supportsStructuredFields: true,
+        supportsThreading: true,
+      }),
+      async (call) => {
+        expect(call.idemKey).toBe(idemKey);
+        return { externalId: 'ext-1' };
+      },
+      async () => {
+        throw new Error('read-back must not run when the send succeeds');
+      },
+    );
+
+    expect(await relayPending(pool, adapter)).toEqual([{ idemKey, outcome: 'sent' }]);
+    expect(adapter.sendCalls).toEqual([{ draftExternalId: `draft-${ticket}`, idemKey }]);
+    expect(await outboxStatus(idemKey)).toBe('sent');
+    expect(await runState(idemKey)).toBe('resolved');
+    // A second scan finds nothing: the record left the pending set.
+    expect(await relayPending(pool, adapter)).toEqual([]);
   });
 
   it('routes an automatic internal write through performAction exactly once under retry', async () => {

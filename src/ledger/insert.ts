@@ -8,6 +8,7 @@ import {
   type SeededFinishClock,
   type SeededInsertClock,
 } from './clock.js';
+import { runStateClass } from './run-state.js';
 
 // Re-exported so a caller of the fenced path imports the seam and the error
 // from the same module as the write itself.
@@ -22,8 +23,17 @@ export interface FencedRunInput {
   ticketId: string;
   /** DEC-36: hash(conversation_id) % N, or the ticket id when a run has none. */
   partition: number;
-  /** DEC-28: fencing token. Must not decrease per ticket. */
-  epoch: bigint;
+  /**
+   * DEC-28: fencing token. Must not decrease per ticket.
+   *
+   * `'next'` asks the ledger to allocate it — the ticket's highest accepted
+   * epoch plus one, read under the row lock this transaction already holds
+   * (issue #113). A caller that pre-reads the fence outside that lock hands
+   * two creations the same epoch, and the second then raises no fence at
+   * all. A supplied value keeps the refusal below, which is how an old
+   * owner's write is turned away.
+   */
+  epoch: bigint | 'next';
   /** The state to commit when the insert succeeds (for example 'queued'). */
   state: string;
   /**
@@ -174,6 +184,18 @@ export async function fencedInsert(
   try {
     await client.query('BEGIN');
     try {
+      // The fence row is materialised first, because `FOR UPDATE` locks no
+      // row that is not there. A ticket whose first write is this one has no
+      // fence yet, so two concurrent creations would each read no row, each
+      // allocate 1, and one of them would raise no fence at all. Zero is the
+      // floor the ledger already treats as "no epoch accepted yet", so
+      // creating it refuses nothing that was previously accepted. The same
+      // two steps open the abandonment path (src/coordinator/consumer.ts) and
+      // the enqueue (src/coordinator/intake.ts).
+      await client.query(
+        'INSERT INTO ticket_epoch (ticket_id, epoch) VALUES ($1, 0) ON CONFLICT DO NOTHING',
+        [run.ticketId],
+      );
       // Serialize writers on this ticket so the epoch check and the upsert
       // cannot interleave between two concurrent runs.
       const current = await client.query(
@@ -183,7 +205,16 @@ export async function fencedInsert(
       const highest =
         current.rows.length > 0 ? BigInt(current.rows[0]!.epoch as string) : null;
 
-      if (highest !== null && run.epoch < highest) {
+      // Issue #113: an allocation happens here, under the row lock taken
+      // above, so two creations on one ticket cannot take the same epoch.
+      // The null arm is unreachable, because this transaction materialised
+      // the row above; it stays so the arithmetic needs no assertion.
+      // A supplied epoch is subject to the refusal below, which is how an
+      // old owner — one whose value was read before the fence moved — is
+      // turned away. An allocated one is above the fence by construction.
+      const epoch = run.epoch === 'next' ? (highest ?? 0n) + 1n : run.epoch;
+
+      if (highest !== null && epoch < highest) {
         await client.query('ROLLBACK');
         return { outcome: 'stale_epoch', highestAcceptedEpoch: highest };
       }
@@ -191,14 +222,14 @@ export async function fencedInsert(
       await client.query(
         `INSERT INTO ticket_epoch (ticket_id, epoch) VALUES ($1, $2)
          ON CONFLICT (ticket_id) DO UPDATE SET epoch = EXCLUDED.epoch`,
-        [run.ticketId, run.epoch.toString()],
+        [run.ticketId, epoch.toString()],
       );
 
       const values: unknown[] = [
         run.runId,
         run.ticketId,
         run.partition,
-        run.epoch.toString(),
+        epoch.toString(),
         run.state,
         run.promptVer,
         run.modelVer,
@@ -236,7 +267,7 @@ export async function fencedInsert(
           run.runId,
           outbox.stepId,
           outbox.idemKey,
-          run.epoch.toString(),
+          epoch.toString(),
           outbox.actionClass,
           outbox.delivery,
           JSON.stringify(outbox.payload),
@@ -408,7 +439,27 @@ export async function fencedTransition(
       const highest =
         current.rows.length > 0 ? BigInt(current.rows[0]!.epoch as string) : null;
 
-      if (highest !== null && runEpoch < highest) {
+      // Issue #113: the fence governs a run a consumer is still walking. A
+      // run parked for a person is in no consumer's hands — the walk ended at
+      // the park, and the next write is a person's — so a fence another run
+      // raised says nothing about it. Refusing here stranded the reply: it
+      // stayed `awaiting_approval`, every approval bounced, and nothing moved
+      // it on. What guards this write instead is the row lock above, the
+      // `fromState` it requires, and the DEC-24 key the record carries.
+      //
+      // Every other state keeps the comparison, including a run that finished
+      // and any state this module does not know: `runStateClass` reads those
+      // as in flight, so an unknown state is governed rather than licensed.
+      //
+      // The escape is tied to the write it admits: the caller must require
+      // the parked state (`fromState`), and the run must be in it. A caller
+      // that names no precondition gets the comparison, so a sweep or a
+      // replay inherits the guard. A later reject path that names the parked
+      // state inherits the escape, for the reason an approval does: a
+      // person's write is not an old owner's write.
+      const parkedEscape =
+        runStateClass(currentState) === 'parked' && t.fromState === currentState;
+      if (highest !== null && runEpoch < highest && !parkedEscape) {
         await client.query('ROLLBACK');
         return { outcome: 'stale_epoch', highestAcceptedEpoch: highest };
       }
