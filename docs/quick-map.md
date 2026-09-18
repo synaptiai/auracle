@@ -50,6 +50,7 @@ surface. A pointer to a section that does not cover them is worse than a gap.
 | `relay` | DEC-04, DEC-28, DEC-29, DEC-30 | `src/relay/relay.db.test.ts` | 3. Running the processes |
 | `replay` | DEC-09, DEC-20, DEC-32, DEC-39 | `src/replay/replay.test.ts` | 5. Offline jobs |
 | `retriever` | DEC-21, DEC-22, DEC-23 | `src/retriever/retriever.db.test.ts` | none |
+| `reviewers` | DEC-42, DEC-45 | `src/reviewers/reviewers.db.test.ts` | 7.0 The operator console |
 | `seed` | DEC-12, DEC-18, DEC-43 | `src/seed/plan.test.ts` | 9. Every command this repository defines |
 | `test-support` | DEC-18 | `src/test-support/per-file-database.db.test.ts` | none |
 | `time` | none | `src/time/day.test.ts` | none |
@@ -57,8 +58,8 @@ surface. A pointer to a section that does not cover them is worse than a gap.
 
 ## Decisions no row names
 
-DEC-01, DEC-08, DEC-15, DEC-33, DEC-44, DEC-45, DEC-46, DEC-47, DEC-48, DEC-49,
-DEC-50, DEC-51.
+DEC-01, DEC-08, DEC-15, DEC-33, DEC-44, DEC-46, DEC-47, DEC-48, DEC-49, DEC-50,
+DEC-51.
 
 DEC-08 and DEC-15 hold across the repository, so no directory owns either.
 DEC-08 fixes the language this system is written in. DEC-15 states that no
@@ -68,7 +69,7 @@ DEC-01 and DEC-33 do belong to directories. `adapters` cites DEC-01 in four
 module headers, and `adapters` and `approval` both carry DEC-33. Neither made
 a cell that holds four decisions at most. Read the module headers for those.
 
-The eight rows the register gained on 2026-09-14 have no directory that
+The other seven rows the register gained on 2026-09-14 have no directory that
 implements them yet. Each joins the row of the directory that implements it,
 in the change that ships it. Until then a row names the decisions its code
 obeys today.

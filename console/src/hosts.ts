@@ -75,7 +75,7 @@ export function allowedHosts(host: string, port: number): string[] {
 }
 
 /**
- * The header a trusted proxy sets to name the approver, or undefined (DEC-42).
+ * The header a trusted proxy sets to name the reviewer, or undefined (DEC-42).
  *
  * One variable, and it says what it means. An earlier version read the header
  * whenever `CONSOLE_ALLOWED_HOSTS` was set, on the reasoning that naming a
@@ -83,15 +83,15 @@ export function allowedHosts(host: string, port: number): string[] {
  * reasons an operator names hosts with no proxy anywhere — an IPv6 bind that
  * sends `[::1]:8787`, and a default port the browser omits. An operator who
  * named hosts for either of those and also named a header got a console where
- * anyone reaching the port names themselves as the approver.
+ * anyone reaching the port names themselves as the reviewer.
  *
  * So the operator states the trust outright. `CONSOLE_IDENTITY_HEADER` means
  * "a proxy I trust sets this header, and strips any copy a client sent". A
  * console cannot check that from inside, and a variable that is only ever set
  * deliberately is the closest thing to a statement of it.
  *
- * The rest of the rule lives where it can be enforced: `claimedApprover` in
- * `server.ts` refuses a value that arrived more than once, because a proxy
+ * The rest of the rule lives where it can be enforced: `claimedIdentity` in
+ * `reviewer.ts` refuses a value that arrived more than once, because a proxy
  * that appends rather than replaces is the failure this cannot otherwise see.
  *
  * Here rather than in the server, and beside `allowedHosts` because both are
@@ -100,5 +100,64 @@ export function allowedHosts(host: string, port: number): string[] {
  */
 export function identityHeader(): string | undefined {
   const header = (process.env['CONSOLE_IDENTITY_HEADER'] ?? '').trim();
-  return header === '' ? undefined : header.toLowerCase();
+  if (header === '') return undefined;
+  const named = header.toLowerCase();
+  // A header a client sets and a proxy does not is not an identity. Naming
+  // one makes every value of it a claim this console keeps, so anyone who
+  // reaches the port names themselves as a reviewer — with no proxy in the
+  // path, and nothing in the log to say so. Refused here, where the operator
+  // is, rather than at the first request.
+  if (CLIENT_HEADERS.has(named)) {
+    throw new Error(
+      `CONSOLE_IDENTITY_HEADER names '${named}', which a client sets for itself,`
+        + ` so the console cannot treat it as a proxy's statement`,
+    );
+  }
+  // A credential is not a name either, and the ledger keeps what the console
+  // resolves here. A proxy that authenticates with one of these should name
+  // the identity in a header of its own — `X-Auth-Request-Email` and its kin.
+  if (CREDENTIAL_HEADERS.has(named)) {
+    throw new Error(
+      `CONSOLE_IDENTITY_HEADER names '${named}', which carries a credential`
+        + ` rather than a name; have the proxy name the reviewer in a header of its own`,
+    );
+  }
+  return named;
 }
+
+/**
+ * Headers a browser or an ordinary client sets for itself.
+ *
+ * The common ones, not a closed set: the fetch standard forbids a script to
+ * set some of them and the browser sets every one of them for its own
+ * purposes. An operator naming a header none of these covers still rests on
+ * DEC-42's statement — that a proxy they trust sets it and strips any copy a
+ * client sent — which is the part a console cannot check.
+ */
+const CLIENT_HEADERS: ReadonlySet<string> = new Set([
+  'host', 'cookie', 'user-agent', 'referer', 'origin',
+  'from', 'accept', 'accept-language', 'accept-encoding', 'dnt',
+  'x-requested-with', 'connection', 'content-type', 'content-length',
+  'sec-fetch-site', 'sec-fetch-mode', 'sec-fetch-dest', 'sec-fetch-user',
+  'upgrade-insecure-requests',
+]);
+
+/**
+ * Headers that carry a credential rather than an identity.
+ *
+ * Refused rather than redacted. The console resolves a *name* and the
+ * approval records it in the ledger, so a token read from one of these would
+ * be written into `run.approved_by` and into the log — a credential kept in
+ * two places reviewers read. A roster entry cannot be a token either: the
+ * ledger's own name rules exist to hold names.
+ *
+ * The common ones, not a closed set, for the reason `CLIENT_HEADERS` gives.
+ * The assertions here are the ones an authenticating proxy forwards as the
+ * request's identity: naming one would keep an encoded credential rather
+ * than a name, which is what the refusal exists to prevent.
+ */
+const CREDENTIAL_HEADERS: ReadonlySet<string> = new Set([
+  'authorization', 'proxy-authorization', 'x-api-key',
+  'x-goog-iap-jwt-assertion', 'cf-access-jwt-assertion',
+  'x-pomerium-jwt-assertion', 'x-amzn-oidc-data', 'x-ms-client-principal',
+]);

@@ -149,9 +149,10 @@ The overlay sets `DATABASE_URL` itself and ignores the one in `.env`. That
 file names `localhost:5433`, which is right for a checkout and is a
 container's own loopback inside one.
 
-Every published port binds `127.0.0.1`. The console authenticates nobody.
-The webhook ships with no secret and accepts every request. So a proxy
-authenticates anything that reaches either from another machine.
+Every published port binds `127.0.0.1`. The webhook ships with no secret and
+accepts every request. The console serves nothing without an active reviewer
+behind it, and a trusted proxy authenticates that reviewer (DEC-45). So a
+proxy authenticates anything that reaches either from another machine.
 
 The stack runs the migration first, as a service the daemons depend on. So no
 process opens a connection to a ledger missing a table. `AURACLE_IMAGE` selects

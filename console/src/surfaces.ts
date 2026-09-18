@@ -91,13 +91,14 @@ export interface Shell {
   /** Which ledger this console is bound to, without its credentials. */
   readonly ledger: string;
   /**
-   * The person a trusted proxy named for this request, as the ledger would
-   * record them (DEC-42), or null when nobody is named.
+   * The reviewer this request resolved to, as the ledger would record them
+   * (DEC-42, DEC-45).
    *
-   * Null rather than a placeholder. A rail that invented a name would claim
-   * an identity the approval would not record.
+   * Never null, and not a placeholder when nobody is named: the gate refuses
+   * such a request before any page is built, so a page that exists has a
+   * reviewer behind it.
    */
-  readonly reviewer: string | null;
+  readonly reviewer: string;
 }
 
 /**
@@ -156,20 +157,18 @@ function themeLink(shell: Shell): string {
 /**
  * Who is working, at the foot of the rail.
  *
- * The name a trusted proxy supplied, or a sentence saying nobody is named.
- * The sub-line says where the name came from, because DEC-42 records it as a
- * claim the proxy made and not as a login this console checked.
+ * The reviewer this request resolved to. The sub-line names what every value
+ * here has in common: the roster holds it and it is active (DEC-45). Where
+ * the name came from — a proxy header, a development stand-in — is the
+ * ledger's record, not the rail's.
  */
-function reviewerBlock(reviewer: string | null): string {
-  if (reviewer === null) {
-    return '<div class="reviewer"><span class="absent">no reviewer named</span></div>';
-  }
+function reviewerBlock(reviewer: string): string {
   return [
     '<div class="reviewer">',
     `<span class="avatar m">${escapeHtml(initialsOf(reviewer))}</span>`,
     '<div>',
     `<div class="rname">${escapeHtml(reviewer)}</div>`,
-    '<div class="rsub">named by the proxy</div>',
+    '<div class="rsub">on the reviewer roster</div>',
     '</div>',
     '</div>',
   ].join('');

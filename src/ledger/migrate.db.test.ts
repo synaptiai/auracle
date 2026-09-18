@@ -1,9 +1,10 @@
 // Integration suite for the V2 migration runner (src/ledger/migrate.ts).
 // Each case runs against an isolated Postgres schema, so the runner's
 // schema_version table and the migration DDL never leak between cases.
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 import type { PoolClient } from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -116,6 +117,116 @@ describe('migrate', () => {
           [runId, `s-${status}`, `k-${status}`, status],
         ),
       ).resolves.toBeDefined();
+    }
+  });
+
+  it('installs the reviewer roster and the approver provenance (db/018, DEC-45)', async () => {
+    await migrate(client);
+
+    // DEC-45: the roster decides who may review in the console. An identity
+    // is one row, active until a maintainer deactivates it.
+    await client.query("INSERT INTO reviewer (identity) VALUES ('anna@example.test')");
+    const added = await client.query(
+      'SELECT active, added_at, deactivated_at FROM reviewer WHERE identity = $1',
+      ['anna@example.test'],
+    );
+    expect(added.rows[0]).toMatchObject({ active: true, deactivated_at: null });
+    expect(added.rows[0]!.added_at).toBeInstanceOf(Date);
+    // One identity, one row: adding the same one twice is a conflict.
+    await expect(
+      client.query("INSERT INTO reviewer (identity) VALUES ('anna@example.test')"),
+    ).rejects.toThrow(/reviewer_pkey/);
+
+    // The provenance pair: the name and its source are set together or not
+    // at all, and the source is one of the three DEC-45 names.
+    const named = await seedRun();
+    await client.query(
+      "UPDATE run SET approved_by = 'anna@example.test', approved_by_source = 'roster' WHERE run_id = $1",
+      [named],
+    );
+    await expect(
+      client.query(
+        "UPDATE run SET approved_by = 'anna@example.test', approved_by_source = 'elsewhere' WHERE run_id = $1",
+        [named],
+      ),
+    ).rejects.toThrow(/approved_by_source_check/);
+    await expect(
+      client.query(
+        "UPDATE run SET approved_by = NULL, approved_by_source = 'roster' WHERE run_id = $1",
+        [named],
+      ),
+    ).rejects.toThrow(/approved_by_source_check/);
+    await expect(
+      client.query(
+        "UPDATE run SET approved_by = 'x@example.test', approved_by_source = NULL WHERE run_id = $1",
+        [named],
+      ),
+    ).rejects.toThrow(/approved_by_source_check/);
+
+    // A name and a source that disagree are refused in both directions.
+    // `none` says nobody was named, so a name beside it is a row no reader
+    // can classify; and `unattributed` is how nobody reads in the name
+    // column, so `roster` beside it claims a check that named no one.
+    await expect(
+      client.query(
+        "UPDATE run SET approved_by = 'anna@example.test', approved_by_source = 'none' WHERE run_id = $1",
+        [named],
+      ),
+    ).rejects.toThrow(/approved_by_source_check/);
+    await expect(
+      client.query(
+        "UPDATE run SET approved_by = 'unattributed', approved_by_source = 'roster' WHERE run_id = $1",
+        [named],
+      ),
+    ).rejects.toThrow(/approved_by_source_check/);
+    // And the pair that agrees is accepted, in both readings.
+    await client.query(
+      "UPDATE run SET approved_by = 'unattributed', approved_by_source = 'none' WHERE run_id = $1",
+      [named],
+    );
+    const named2 = await seedRun();
+    await client.query(
+      "UPDATE run SET approved_by = 'anna@example.test', approved_by_source = 'header' WHERE run_id = $1",
+      [named2],
+    );
+  });
+
+  // The one statement in db/018 that touches rows it did not create. It runs
+  // on an adopter's ledger, which holds approvals written before the column
+  // existed, and nothing else in this repository feeds it that input: every
+  // other case migrates first and writes afterwards.
+  it('backfills the source of an approval recorded before db/018', async () => {
+    // Every migration but 018, as an adopter's ledger would be.
+    const before = await copyMigrationsExcept(18);
+    try {
+      await migrate(client, before);
+      const named = await seedRun();
+      const nobody = await seedRun();
+      await client.query("UPDATE run SET approved_by = 'anna@example.test' WHERE run_id = $1", [named]);
+      await client.query("UPDATE run SET approved_by = 'unattributed' WHERE run_id = $1", [nobody]);
+      // A run no approval reached carries neither, and stays that way.
+      const untouched = await seedRun();
+
+      await migrate(client);
+      const { rows } = await client.query<{ run_id: string; approved_by: string | null; approved_by_source: string | null }>(
+        'SELECT run_id, approved_by, approved_by_source FROM run',
+      );
+      const byRun = new Map(rows.map((row) => [row.run_id, row]));
+      // A name a caller supplied was a claim, and by the same header the
+      // console read it through: DEC-42's rule, which is the only one that
+      // could have produced it.
+      expect(byRun.get(named)).toMatchObject({
+        approved_by: 'anna@example.test',
+        approved_by_source: 'header',
+      });
+      // `unattributed` is the name column's way of recording nobody.
+      expect(byRun.get(nobody)).toMatchObject({
+        approved_by: 'unattributed',
+        approved_by_source: 'none',
+      });
+      expect(byRun.get(untouched)).toMatchObject({ approved_by: null, approved_by_source: null });
+    } finally {
+      await rm(before, { recursive: true, force: true });
     }
   });
 
@@ -245,11 +356,42 @@ describe('discoverMigrations', () => {
   });
 });
 
+/**
+ * Every real migration below one version, copied into a temp directory.
+ *
+ * The migrations run in version order, so a ledger that stops before
+ * `excluded` is what an adopter's ledger holds on the day that migration
+ * ships. Strictly below, and not merely different: a later migration in the
+ * fixture would be applied first, and the runner then refuses the excluded
+ * one as out of order — a failure about the fixture rather than about the
+ * migration under test.
+ */
+async function copyMigrationsExcept(excluded: number): Promise<string> {
+  const source = path.dirname(fileURLToPath(import.meta.url));
+  const files = await discoverMigrations(path.join(source, '..', '..', 'db'));
+  const kept = files.filter((file) => file.version < excluded);
+  expect(files.filter((file) => file.version === excluded).length, 'the migration to leave out exists')
+    .toBe(1);
+  return await tempMigrations(
+    await Promise.all(kept.map(async (file) =>
+      [file.filename, await readFile(path.join(source, '..', '..', 'db', file.filename), 'utf8')] as [string, string],
+    )),
+  );
+}
+
 async function tempMigrations(files: Array<[string, string]>): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'auracle-migrate-'));
-  await mkdir(dir, { recursive: true });
-  for (const [name, sql] of files) {
-    await writeFile(path.join(dir, name), sql);
+  try {
+    await mkdir(dir, { recursive: true });
+    for (const [name, sql] of files) {
+      await writeFile(path.join(dir, name), sql);
+    }
+  } catch (error) {
+    // The caller's `finally` starts after this returns, so a failure in
+    // here would leave the directory behind: a full temporary filesystem is
+    // the way to reach it, and the leak outlives the run.
+    await rm(dir, { recursive: true, force: true });
+    throw error;
   }
   return dir;
 }

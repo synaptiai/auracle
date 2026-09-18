@@ -41,6 +41,7 @@
     "latency": "pnpm run build && node dist/latency/run.js",
     "bands": "pnpm run build && node dist/bands/run.js",
     "escalations": "pnpm run build && node dist/escalations/cli.js",
+    "reviewers": "pnpm run build && node dist/reviewers/cli.js",
     "approve": "pnpm run build && node dist/approval/cli.js",
     "calibrate": "pnpm run build && node dist/calibration/run.js",
     "replay": "pnpm run build && node dist/replay/cli.js",

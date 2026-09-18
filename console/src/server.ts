@@ -43,12 +43,10 @@ import type {
   ThreadView, Theme,
 } from './surfaces.js';
 import { describeFault } from 'auracle/cli';
-// The approval's own bound on a claimed name, so the rail names exactly who
-// the ledger would record.
-import { approverFrom, UNATTRIBUTED } from 'auracle/domain';
-// A host, an origin and a claimed approver all arrive from the request, and
+// A host, an origin and a reviewer identity all arrive from the request, and
 // JSON leaves several line breaks raw.
 import { logLine } from 'auracle/format';
+import type { ReviewerFor } from './reviewer.js';
 
 /**
  * Everything the console reads or writes, injected.
@@ -81,16 +79,38 @@ export interface ConsoleDeps {
   readonly readConversation: (conversationId: string) => Promise<ThreadView | null>;
   readonly readDocument: (docId: string) => Promise<DocumentPage | null>;
   /**
-   * The approval, with the approver a trusted proxy named (DEC-42).
+   * The approval, with the reviewer this request resolved to (DEC-45).
    *
-   * A claim rather than an authentication, and the caller decides whether one
-   * was supplied: `approveRun` bounds what it keeps and records
-   * `unattributed` for anything else.
+   * The identity has already passed the roster, so it is never undefined
+   * here: the gate refuses a request before this call when no reviewer
+   * stands behind it. `approveRun` bounds what it keeps all the same.
    */
-  readonly approve: (runId: string, approvedBy: string | undefined) => Promise<ConsoleApproveOutcome['outcome']>;
+  readonly approve: (
+    runId: string,
+    approvedBy: string,
+  ) => Promise<ConsoleApproveOutcome['outcome']>;
+  /**
+   * The reviewer behind this request, or the reason there is none (DEC-45).
+   *
+   * Resolved before any page is built, reads included. A throw is a fault in
+   * the roster read, and the request is refused exactly like one that named
+   * nobody: the console serves nothing it cannot attribute.
+   */
+  readonly reviewerFor: ReviewerFor;
 }
 
 const CSS_PATH = '/console.css';
+
+/**
+ * What a request that named no reviewer is told, by both refusals.
+ *
+ * One sentence rather than two. A page that distinguished a roster that could
+ * not be read from a request that named nobody would tell an unauthenticated
+ * caller whether this ledger answered, from a console that otherwise names
+ * neither its ledger nor its reviewer to anyone it refuses. The log carries
+ * the distinction; the operator reads the log.
+ */
+const NO_REVIEWER = 'This console serves nothing without an active reviewer identity.';
 
 /**
  * Refuses a request that did not come from this console's own pages.
@@ -346,68 +366,6 @@ function safeReturn(back: string | null, surfaces: readonly string[]): string {
   return '/';
 }
 
-/**
- * The approver a trusted proxy named, or undefined (DEC-42).
- *
- * One condition: the operator named the header. A console cannot guess which
- * of its request headers a proxy controls, and naming one is the operator's
- * statement that a proxy in front sets it and strips any copy a client sent.
- * `identityHeader()` in `hosts.ts` says why the hosts no longer decide this.
- *
- * Undefined rather than a fallback string. `approverFrom` decides what an
- * unnamed approver records, and it has two callers: the approval records its
- * answer, and the rail names the same answer. A third place deciding would
- * eventually disagree with both.
- */
-function claimedApprover(req: IncomingMessage, options: ConsoleOptions): string | undefined {
-  const header = options.identityHeader;
-  if (header === undefined) return undefined;
-  // A repeated header is two claims, and this console cannot say which one
-  // the proxy meant — so it names nobody rather than guessing. A proxy that
-  // sets this header once and does not strip an inbound copy produces exactly
-  // that, which is the forgeable audit trail DEC-42 refuses.
-  //
-  // Read from `headersDistinct`, which keeps every line. `headers` joins a
-  // repeated `x-forwarded-user` with a comma, but for some names, such as
-  // `From` and `Authorization`, it keeps the first value and drops the rest
-  // without a sign. The operator may name any header.
-  const values = req.headersDistinct[header.toLowerCase()];
-  if (values === undefined || values.length !== 1) return undefined;
-  const claimed = values[0]!;
-  // A comma cannot appear in a principal this console will keep, because it
-  // cannot tell one name containing a comma from two names a proxy folded
-  // into one line.
-  if (claimed === '' || claimed.includes(',')) return undefined;
-  return headerText(claimed);
-}
-
-/**
- * A header value as the text its sender meant.
- *
- * Node reads header bytes as Latin-1, one character per byte. A proxy that
- * sends a name as UTF-8 then arrives as `NystrÃ¶m`, and that is what the
- * ledger would record. So bytes that decode as UTF-8 are read as UTF-8.
- *
- * Bytes that do not decode stay as Node read them, because they are Latin-1
- * text. A lone byte from 0xF5 to 0xFF, for example, never occurs in UTF-8.
- * Plain ASCII reads the same either way. A comma never appears inside a
- * UTF-8 sequence, so the check above sees every one.
- *
- * One trade-off remains. A Latin-1 name whose bytes also form valid UTF-8
- * reads as UTF-8: the Latin-1 pair 0xC3 0xA9 records as one letter. Such a
- * name needs a byte from 0xC2 to 0xF4 followed by one from 0x80 to 0xBF,
- * which Latin-1 names rarely hold.
- */
-function headerText(value: string): string {
-  const bytes = Buffer.from(value, 'latin1');
-  if (bytes.every((byte) => byte < 0x80)) return value;
-  try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    return value;
-  }
-}
-
 /** A percent-escape that does not decode is a path nobody has, not a fault. */
 function decodeRunPath(raw: string): string | null {
   try {
@@ -418,15 +376,6 @@ function decodeRunPath(raw: string): string | null {
 }
 
 export interface ConsoleOptions {
-  /**
-   * The header a trusted proxy sets to name the approver (DEC-42).
-   *
-   * Undefined unless `CONSOLE_IDENTITY_HEADER` names it. Naming it is the
-   * operator's statement that a trusted proxy sets this header and strips any
-   * copy a client sent. The hosts do not decide this; `identityHeader()` in
-   * `hosts.ts` says why.
-   */
-  readonly identityHeader?: string;
   /**
    * The `Host` values this console answers to. Every other one is refused,
    * which is what closes DNS rebinding.
@@ -455,25 +404,81 @@ export function createConsole(
   options: ConsoleOptions,
 ): Server {
   const allowed = new Set(options.allowedHosts.map((h) => h.toLowerCase()));
-  return createServer((req, res) => {
+  return createServer(async (req, res) => {
     const theme = readTheme(req.headers.cookie);
     if (!sameOrigin(req, allowed)) {
       // Named, because the commonest cause is a proxy whose name nobody put
       // in `CONSOLE_ALLOWED_HOSTS`. Without the refused `Host` on record the
       // console looks healthy and answers nothing, which is the one failure
       // an operator cannot diagnose from the page.
+      // Bounded like every other request value this console logs. Each of
+      // these three arrives from a request that passed no allowlist, so its
+      // only bound would be Node's header-size limit — and a refusal is
+      // exactly the line an attacker can make this console write, as often
+      // as they like. `method` needs no bound: the parser refuses a token it
+      // does not know, so the value is one of a handful of words.
+      const host = req.headers.host ?? '';
+      const origin = req.headers.origin ?? '';
+      const site = req.headers['sec-fetch-site'] ?? '';
       console.error(logLine({
         event: 'console_refused',
         reason: 'not_same_origin',
         method: req.method ?? null,
-        host: req.headers.host ?? null,
-        secFetchSite: req.headers['sec-fetch-site'] ?? null,
-        origin: req.headers.origin ?? null,
+        host: logged(host),
+        hostLength: loggedLength(host),
+        secFetchSite: logged(site),
+        secFetchSiteLength: loggedLength(site),
+        origin: logged(origin),
+        originLength: loggedLength(origin),
       }));
       send(res, 403, bare('Refused', 'This request did not come from the console.', theme));
       return;
     }
-    void route(deps, css, options, theme, req, res).catch((error: unknown) => {
+    // DEC-45: no page without an active reviewer identity, reads included.
+    // The check runs here, before `route` sees the request, so no surface can
+    // render a row before the console knows who is asking. It is a property
+    // of the request rather than of what the request asks for, so the
+    // stylesheet goes through it as well. A refusal page draws unstyled.
+    let verdict;
+    try {
+      verdict = await deps.reviewerFor(req);
+    } catch (error) {
+      // A roster read that failed is not permission to serve. The log names
+      // the fault so an operator can tell a broken ledger from a stranger.
+      console.error(logLine({
+        event: 'console_refused',
+        reason: 'reviewer_unread',
+        method: req.method ?? null,
+        host: req.headers.host ?? null,
+        error: describeFault(error),
+      }));
+      send(res, 403, bare('Refused', NO_REVIEWER, theme));
+      return;
+    }
+    if ('refusal' in verdict) {
+      // Five conditions collapse into this one refusal, and the log says
+      // which it was, because each has a different fix: nothing arrived
+      // (check the proxy), a value arrived twice (the proxy appends), one
+      // line folded two names (the proxy joins them), the rules refuse the
+      // value (check what it sends), or the roster does not hold it
+      // (`pnpm run reviewers -- --add`). The page says only that nobody may
+      // read it.
+      console.error(logLine({
+        event: 'console_refused',
+        reason: 'no_reviewer',
+        detail: verdict.refusal.detail,
+        header: verdict.refusal.header,
+        claim: logged(verdict.refusal.said),
+        claimLength: loggedLength(verdict.refusal.said),
+        lines: verdict.refusal.lines,
+        method: req.method ?? null,
+        host: req.headers.host ?? null,
+      }));
+      send(res, 403, bare('Refused', NO_REVIEWER, theme));
+      return;
+    }
+    const reviewer = verdict.reviewer;
+    void route(deps, css, options, theme, req, res, reviewer).catch((error: unknown) => {
       const reason = describeFault(error);
       // A tag rather than the text. An earlier version put the message on the
       // page, arguing that anyone who can read a fault can already approve a
@@ -498,25 +503,13 @@ export function createConsole(
   });
 }
 
-/**
- * The reviewer the rail names: the approver this request would record, or
- * null when it would record nobody (DEC-42).
- *
- * Read through the approval's own bound rather than restated, so the rail can
- * never show a name the ledger would store as `unattributed`.
- */
-function reviewerFor(req: IncomingMessage, options: ConsoleOptions): string | null {
-  const recorded = approverFrom(claimedApprover(req, options));
-  return recorded === UNATTRIBUTED ? null : recorded;
-}
-
 /** The shell for a surface, given what this request knows. */
 function shellFor(
   options: ConsoleOptions,
   theme: Theme,
   path: string,
   approvals: number | null,
-  reviewer: string | null,
+  reviewer: string,
 ): Shell {
   return { theme, path, approvals, ledger: options.ledger, reviewer };
 }
@@ -528,6 +521,7 @@ async function route(
   theme: Theme,
   req: IncomingMessage,
   res: ServerResponse,
+  reviewer: string,
 ): Promise<void> {
   let url;
   try {
@@ -545,7 +539,6 @@ async function route(
   // theme route stays GET alone, because it writes a cookie.
   const reads = req.method === 'GET' || req.method === 'HEAD';
   const surfaces = ['/', '/runs', '/bands', '/latency', '/notes'];
-  const reviewer = reviewerFor(req, options);
   const shell = (at: string, approvals: number | null = null): Shell =>
     shellFor(options, theme, at, approvals, reviewer);
 
@@ -853,16 +846,11 @@ async function route(
     // The run id is the whole request. Any other field is ignored, because
     // the relay sends the parked draft verbatim and a body posted here would
     // be recorded as the approved reply without ever reaching the customer.
-    // DEC-42: who approved, when a trusted proxy named them.
-    //
-    // Read only when the operator named the header a trusted proxy sets.
-    // Anyone reaching the port can set a header, so with no header named this
-    // sends nothing and the approval records `unattributed` — a forgeable
-    // audit trail is worse than none.
-    const claimed = claimedApprover(req, options);
+    // DEC-45: who approved, as the identity the gate resolved. It is on the
+    // roster and active, or this request never reached the route.
     let outcome;
     try {
-      outcome = await deps.approve(runId, claimed);
+      outcome = await deps.approve(runId, reviewer);
     } catch (error) {
       // The one request that writes. A fault here can come after the
       // transaction committed, so the page does not say the console was only
@@ -874,8 +862,8 @@ async function route(
         event: 'console_approve_failed',
         tag,
         runId,
-        claimedBy: claimed === undefined ? null : logged(claimed),
-        claimedLength: claimed === undefined ? null : loggedLength(claimed),
+        reviewer: logged(reviewer),
+        reviewerLength: loggedLength(reviewer),
         host: req.headers.host ?? null,
         from,
         error: describeFault(error),
@@ -888,22 +876,18 @@ async function route(
       ));
       return;
     }
-    // The one write this console makes, and until now the only request it did
-    // not record. The ledger journals that a run was approved; it does not
-    // journal which client asked, and this console authenticates nobody, so
-    // reaching it is the whole access control. Without this line an incident
-    // has no console-side evidence separating the operator from anyone else
-    // who could reach the port.
+    // The one write this console makes. The ledger journals that a run was
+    // approved; it does not journal which client asked, so this line is the
+    // console-side evidence naming the reviewer (DEC-45).
     console.error(logLine({
       event: 'console_approved',
       runId,
       outcome,
-      // What was claimed, and what the ledger records. They differ when the
-      // approval would not keep the claim, and an incident reader must not
-      // see a name the ledger never held.
-      claimedBy: claimed === undefined ? null : logged(claimed),
-      claimedLength: claimed === undefined ? null : loggedLength(claimed),
-      approvedBy: outcome === 'approved' ? approverFrom(claimed) : null,
+      // The identity the roster accepted, and what the ledger records for it.
+      // They differ only when the approval did not commit.
+      reviewer: logged(reviewer),
+      reviewerLength: loggedLength(reviewer),
+      approvedBy: outcome === 'approved' ? reviewer : null,
       host: req.headers.host ?? null,
       from,
     }));

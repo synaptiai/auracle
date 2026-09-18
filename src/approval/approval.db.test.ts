@@ -713,10 +713,50 @@ describe('approval completion path (DEC-12 end to end)', () => {
     expect((await approveRun(pool, runId, { approvedBy: 'a'.repeat(300) })).outcome)
       .toBe('approved');
     const { rows } = await pool.query(
-      'SELECT approved_by FROM run WHERE run_id = $1',
+      'SELECT approved_by, approved_by_source FROM run WHERE run_id = $1',
       [runId],
     );
     expect(rows[0]?.approved_by).toBe('unattributed');
+    // DEC-45: a name nobody holds has no source, and 'none' says so — the
+    // same reading the migration gives every historical `unattributed` row.
+    expect(rows[0]?.approved_by_source).toBe('none');
+  });
+
+  // DEC-45: the name and where it came from are recorded together, because
+  // a reader who cannot tell a verified identity from a claim has neither.
+  it('records where the name came from, on each path', async () => {
+    const rosterTicket = `T-${randomUUID().slice(0, 8)}`;
+    const rosterPark = await parkReply(rosterTicket);
+    expect(
+      (await approveRun(pool, rosterPark.runId, {
+        approvedBy: 'anna@example.test',
+        approvedBySource: 'roster',
+      })).outcome,
+    ).toBe('approved');
+
+    const claimTicket = `T-${randomUUID().slice(0, 8)}`;
+    const claimPark = await parkReply(claimTicket);
+    expect(
+      (await approveRun(pool, claimPark.runId, { approvedBy: 'ops-oncall' })).outcome,
+    ).toBe('approved');
+
+    const bareTicket = `T-${randomUUID().slice(0, 8)}`;
+    const barePark = await parkReply(bareTicket);
+    expect((await approveRun(pool, barePark.runId)).outcome).toBe('approved');
+
+    const named = await pool.query(
+      `SELECT r.approved_by, r.approved_by_source FROM run r
+        WHERE r.run_id = ANY($1)`,
+      [[rosterPark.runId, claimPark.runId, barePark.runId]],
+    );
+    expect(named.rows.length).toBe(3);
+    const byRun = new Map<string, string>();
+    for (const row of named.rows) byRun.set(row.approved_by as string, row.approved_by_source as string);
+    // The console named a reviewer it verified; a caller named one it merely
+    // claimed, which is the default; nobody named one at all.
+    expect(byRun.get('anna@example.test')).toBe('roster');
+    expect(byRun.get('ops-oncall')).toBe('header');
+    expect(byRun.get('unattributed')).toBe('none');
   });
 
 });

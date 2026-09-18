@@ -936,7 +936,8 @@ describe('the four park shapes', () => {
     // over an amount that appeared nowhere on the page.
     //
     // This does name an account in a real deployment. `docs/operations.md`
-    // says so, beside the note that this console authenticates nobody.
+    // says so, beside the note that the console serves such a page to a
+    // reviewer only.
     expect(step?.park?.draftBody).toBe('the composed rationale a person reads');
     expect(step?.park?.payload).toEqual({ amount: 500 });
   });

@@ -89,6 +89,43 @@ describe('the header a trusted proxy names the approver in (DEC-42)', () => {
     expect(identityHeader()).toBeUndefined();
   });
 
+  // A header the client sets for itself is not a proxy's statement, and
+  // naming one makes every value of it a name this console keeps. An
+  // operator who named `cookie` got a console where `curl -H 'Cookie: ...'`
+  // from anywhere the port is reachable was a complete impersonation of any
+  // active reviewer, with nothing in the log to say so.
+  it('refuses a header a client sets for itself', () => {
+    for (const client of [
+      'Cookie', 'host', 'User-Agent', 'referer', 'origin',
+      'From', 'Accept-Language', 'X-Requested-With', 'Sec-Fetch-Site',
+    ]) {
+      process.env[HEADER] = client;
+      expect(() => identityHeader(), client).toThrow(/a client sets for itself/);
+    }
+    // A proxy header stays legal, including the identity headers an
+    // authenticating proxy forwards.
+    for (const proxy of ['x-forwarded-user', 'X-Auth-Request-Email', 'Remote-User']) {
+      process.env[HEADER] = proxy;
+      expect(identityHeader(), proxy).toBe(proxy.toLowerCase());
+    }
+    delete process.env[HEADER];
+  });
+
+  // A credential is not a name. The console resolves a name and the approval
+  // writes it into the ledger, so a token read from one of these would be
+  // kept in two places reviewers read.
+  it('refuses a header that carries a credential', () => {
+    for (const credential of [
+      'Authorization', 'Proxy-Authorization', 'X-Api-Key',
+      'X-Goog-Iap-Jwt-Assertion', 'Cf-Access-Jwt-Assertion',
+      'X-Pomerium-Jwt-Assertion', 'X-Amzn-Oidc-Data', 'X-Ms-Client-Principal',
+    ]) {
+      process.env[HEADER] = credential;
+      expect(() => identityHeader(), credential).toThrow(/carries a credential/);
+    }
+    delete process.env[HEADER];
+  });
+
   // It used to be gated on `CONSOLE_ALLOWED_HOSTS`, on the reasoning that
   // naming a host says a proxy is in front. It does not: the derived-name
   // comment above lists two reasons an operator names hosts with no proxy

@@ -369,6 +369,11 @@ ends. They also cover a new attempt, knowledge written from a case and a held
 send. `c8b2e42f-b76d-43ef-8010-f7e8932bde48.md` under `docs/design/` records
 the reasoning.
 
+The reviewed identity has shipped. A roster of reviewers decides who may use
+the console. A request with no active roster identity is refused. The ledger
+records where each approver's name came from. A maintainer changes the roster
+with `pnpm run reviewers`.
+
 ### What blocks it
 
 Nothing on the fencing side. Issue 113 recorded one defect. A consumer
@@ -385,6 +390,10 @@ work.
 Work the register already permitted proceeds: the visual design, the grouped
 queue and the case screen. Each row ships in its own change, and that change
 corrects the statements the proposal lists for it.
+
+One part of DEC-45 remains. The development stack publishes a console with no
+proxy in front of it. Such a console now serves nothing. So an operator puts a
+proxy in front and adds that proxy's reviewer to the roster.
 
 ---
 

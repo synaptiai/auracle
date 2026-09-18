@@ -551,13 +551,14 @@ Each customer reply must have three items:
 
 The bridge refuses to send a reply that does not have all three items.
 
-**Who approved it.** Obeys DEC-42. DEC-45 changes it for the console.
+**Who approved it.** Obeys DEC-42, and DEC-45 on the console.
 
-The ledger records that a person approved a reply. It did not record which
-person. Reaching the console is the whole access control. So an incident could
-not separate the operator from anyone else who reached the port.
+The ledger records that a person approved a reply. It recorded no source for
+the name it kept. An incident could not then separate the operator from anyone
+else who reached the port. The source is a column now. It says whether the
+roster, a header claim or nobody named the approver.
 
-The approval records an approver. Today the value is a claim, not an
+The approval records an approver. Off the console the value is a claim, not an
 authentication. A caller supplies it, and the approval bounds what it keeps.
 
 A name may hold letters, marks, numbers, punctuation, symbols and single ASCII
@@ -566,18 +567,20 @@ selector or a blank filler. A mark needs a character before it, and no
 character carries more than four stacking marks. A value that is too long, or
 that breaks one of these rules, names nobody.
 
-An approval that names nobody records `unattributed`. That is a recorded fact
-and not a missing row. A null in the column means no approval reached the run.
+An approval that names nobody records `unattributed`, and the source records
+`none`. That is a recorded fact and not a missing row. A null in the column
+means no approval reached the run.
 
 Only a trusted proxy may name an approver. Anyone reaching a console can set a
 header. So a console reads one only when the operator names the header its
-proxy sets. Until an operator does that, every approval records `unattributed`.
+proxy sets. The console then checks that name against a roster of reviewers
+before it builds a page. A request with no active roster identity is refused.
+An approval there records the source `roster`.
 
 DEC-42 grants no authority, and it changes no gate. DEC-45 moves the console to
-a roster a trusted proxy authenticates. The roster then decides who may review
-there. Until that ships, the console records the claim this section describes.
-DEC-12 still puts a person on every customer reply. DEC-40 still permits the
-console to be that person's interface.
+a roster a trusted proxy authenticates, and that roster decides who may review
+there. DEC-12 still puts a person on every customer reply. DEC-40 still permits
+the console to be that person's interface.
 
 **Why the park needs a key.**
 

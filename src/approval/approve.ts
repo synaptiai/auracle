@@ -39,7 +39,7 @@ import type { DraftReadBack } from '../adapters/types.js';
 import { recordApprovedReply } from '../ledger/conversation.js';
 import { fencedTransition } from '../ledger/insert.js';
 import { deriveIdemKey } from '../ledger/keys.js';
-import { approverFrom } from './approver.js';
+import { UNATTRIBUTED, approverFrom } from './approver.js';
 import { recordApprovalEditDistance } from './measure.js';
 
 export type ApproveOutcome =
@@ -85,15 +85,24 @@ export interface ApproveOptions {
    * DEC-42: who approved, as a claim rather than an authentication.
    *
    * A caller supplies this only when a trusted proxy named the approver. The
-   * console reads that header only when `CONSOLE_IDENTITY_HEADER` names it, and
-   * passes nothing otherwise — because anyone reaching the port can set a
-   * header, and a forgeable audit trail is worse than none.
+   * console reads that header only through its roster (DEC-45), and passes
+   * the identity it verified. A command-line approval names nobody and
+   * records `none`.
    *
    * Absent records `unattributed`, which is a statement that nobody was
    * named. It is not the same as the column's null, which is a run no
    * approval reached.
    */
   readonly approvedBy?: string;
+  /**
+   * DEC-45: how the name was established, recorded beside it.
+   *
+   * `roster` means a console checked the identity against the reviewer
+   * roster. `header` is DEC-42's claim, and it is the default, because a
+   * caller that names one at all is claiming rather than proving. A caller
+   * that names nobody records `none` whatever it passes here.
+   */
+  readonly approvedBySource?: 'roster' | 'header' | 'none';
 }
 
 /** What the coordinator's `park` step recorded in the journal. */
@@ -273,6 +282,11 @@ export async function approveRun(
   // recorded fact rather than a missing row. Trimmed, and a caller that
   // supplies only whitespace named nobody.
   const approver = approverFrom(options?.approvedBy);
+  // DEC-45: the source travels with the name, and a name nobody holds has
+  // no source to record. A refused name reads `none` beside `unattributed`,
+  // which is what the migration gives every historical row of that shape.
+  const approverSource =
+    approver === UNATTRIBUTED ? 'none' : (options?.approvedBySource ?? 'header');
 
   const afterWrite = async (client: PoolClient): Promise<void> => {
     if (finalBody !== undefined) {
@@ -287,12 +301,14 @@ export async function approveRun(
     if (reply !== undefined) {
       await recordApprovedReply(client, reply);
     }
-    // DEC-42, in the approval transaction for the same reason: an approver
-    // recorded outside it would name a person for a move that did not commit.
-    await client.query('UPDATE run SET approved_by = $2 WHERE run_id = $1', [
-      runId,
-      approver,
-    ]);
+    // DEC-42 and DEC-45, in the approval transaction for the same reason: an
+    // approver recorded outside it would name a person for a move that did
+    // not commit. The pair commits together, and the CHECK holds them
+    // together: a name without its source is a row no reader can classify.
+    await client.query(
+      'UPDATE run SET approved_by = $2, approved_by_source = $3 WHERE run_id = $1',
+      [runId, approver, approverSource],
+    );
   };
 
   const moved = await fencedTransition(pool, {

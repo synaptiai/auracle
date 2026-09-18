@@ -39,6 +39,11 @@ export { readDays } from '../bands/query.js';
 
 export { approveRun } from '../approval/approve.js';
 
+// DEC-45: whether an identity may review. A read, and the only part of the
+// roster the console reaches: the writers are a command-line tool's, so a
+// console can never add itself a reviewer.
+export { activeReviewer } from '../reviewers/roster.js';
+
 // The adapters an approval reads a parked draft back from. A read of the
 // helpdesk, not a write: the approval above is still the one write here.
 export { READ_BACK_ADAPTER_NAMES, selectReadBackAdapter } from '../adapters/read-back.js';

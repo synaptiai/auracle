@@ -147,11 +147,17 @@ services:
       # process listened on 8787, so the published port answered nothing
       # unless an operator happened to set the variable.
       CONSOLE_PORT: ${CONSOLE_PORT:-8787}
-      # The console authenticates nobody: reaching the port is the whole of
-      # its access control, and it lists every gated run with its draft text
-      # and releases customer replies (DEC-12). Setting this to the dev
-      # host's name is what a proxy in front needs; without it the console
-      # derives loopback names only and refuses that Host.
+      # The console serves nothing to a request with no active reviewer
+      # behind it, and a trusted proxy authenticates that reviewer (DEC-45).
+      # It lists every gated run with its draft text and releases customer
+      # replies (DEC-12), so nothing but a proxy belongs in front of it.
+      # Setting this to the dev host's name is what a proxy in front needs;
+      # without it the console derives loopback names only and refuses that
+      # Host. A console in this stack runs from the image. So it takes no
+      # development reviewer, and refuses CONSOLE_DEV_REVIEWER.
+      #
+      # Add the reviewer the proxy names to the roster first.
+      #   pnpm run reviewers -- --add <identity>
       CONSOLE_ALLOWED_HOSTS: ${CONSOLE_ALLOWED_HOSTS:-}
     # Loopback, for the reason above. Reaching it from another machine goes
     # through a proxy that authenticates the approver and sets the header

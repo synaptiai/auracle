@@ -54,14 +54,29 @@ async function run(
   approvedBy: string | null = null,
 ): Promise<string> {
   const id = randomUUID();
+  // DEC-45: the name and its source travel together, and the ledger holds
+  // that with a CHECK — including that `unattributed` pairs with `none`,
+  // because that name is the column's way of recording nobody. This helper
+  // writes the pair the shipped writers write, so a case that models an
+  // approval models a row the ledger accepts.
   await pool.query(
     `INSERT INTO run (run_id, ticket_id, partition, epoch, state, prompt_ver, model_ver,
                       cost_micros, steps_used, deadline_at, conversation_id, turn_number,
-                      approved_by)
-     VALUES ($1, 'SYN-1', 0, 1, $2, 'p', 'm', 0, 0, now(), $3, $4, $5)`,
-    [id, state, conversationId, turnNumber, approvedBy],
+                      approved_by, approved_by_source)
+     VALUES ($1, 'SYN-1', 0, 1, $2, 'p', 'm', 0, 0, now(), $3, $4, $5, $6)`,
+    [id, state, conversationId, turnNumber, approvedBy, sourceFor(approvedBy)],
   );
   return id;
+}
+
+/**
+ * The source that goes with a name a case names: `none` when the name records
+ * nobody, and a claim when a caller passed one. A real console row reads
+ * `roster`, and `approval.db.test.ts` holds that path.
+ */
+function sourceFor(approvedBy: string | null): 'header' | 'none' | null {
+  if (approvedBy === null) return null;
+  return approvedBy === 'unattributed' ? 'none' : 'header';
 }
 
 /**

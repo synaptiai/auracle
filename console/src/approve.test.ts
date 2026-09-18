@@ -14,6 +14,9 @@ import { describe, expect, it, vi } from 'vitest';
 // Real run ids, because a run id is a UUID the ledger minted and a toy string
 // would not exercise the check that stands between a form post and the write.
 const RUN_A = '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34';
+
+// DEC-45: the identity the console resolved and checked against the roster.
+const REVIEWER = 'synthetic-reviewer@example.test';
 const RUN_B = '7a2d5c19-3e64-4b8f-9c02-1d7e4a6b3c85';
 const RUN_C = '9e4b1f07-2c58-4d3a-8f61-0b2c7d5e9a13';
 
@@ -29,14 +32,17 @@ describe('approving from the console', () => {
 
     const result = await approveFromConsole(
       { pool: pool as never, approveRun },
-      { runId: RUN_A },
+      { runId: RUN_A, approvedBy: REVIEWER },
     );
 
     expect(approveRun).toHaveBeenCalledTimes(1);
     // No options. A body passed here would be recorded as the approved reply
     // and never sent: the outbox payload for a draft-backed park is
     // `{ draftExternalId }`, and the relay sends that draft verbatim.
-    expect(approveRun).toHaveBeenCalledWith(pool, RUN_A, {});
+    expect(approveRun).toHaveBeenCalledWith(pool, RUN_A, {
+      approvedBy: REVIEWER,
+      approvedBySource: 'roster',
+    });
     expect(result.outcome).toBe('approved');
     // The console issues no statement of its own for the write. If it did,
     // the transaction would not be the one the command line commits.
@@ -50,7 +56,7 @@ describe('approving from the console', () => {
     const approveRun = vi.fn().mockResolvedValue({ outcome: 'draft_missing' });
     const result = await approveFromConsole(
       { pool: {} as never, approveRun },
-      { runId: RUN_B },
+      { runId: RUN_B, approvedBy: REVIEWER },
     );
     expect(result.outcome).toBe('draft_missing');
   });
@@ -62,7 +68,7 @@ describe('approving from the console', () => {
   it('reads the draft back through the adapter it was given', async () => {
     const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved' });
     const readDraft: DraftReadBack = { readDraft: async () => ({ body: 'Hello.' }) };
-    await approveFromConsole({ pool: {} as never, approveRun, readDraft }, { runId: RUN_A });
+    await approveFromConsole({ pool: {} as never, approveRun, readDraft }, { runId: RUN_A, approvedBy: REVIEWER });
     const options = approveRun.mock.calls[0]![2] as Record<string, unknown>;
     expect(options['readDraft']).toBe(readDraft);
     expect(Object.hasOwn(options, 'finalBody')).toBe(false);
@@ -75,7 +81,11 @@ describe('approving from the console', () => {
       { pool: {} as never, approveRun, readDraft },
       { runId: RUN_A, approvedBy: 'synthetic-reviewer' },
     );
-    expect(approveRun).toHaveBeenCalledWith({}, RUN_A, { approvedBy: 'synthetic-reviewer', readDraft });
+    expect(approveRun).toHaveBeenCalledWith({}, RUN_A, {
+      approvedBy: 'synthetic-reviewer',
+      approvedBySource: 'roster',
+      readDraft,
+    });
   });
 
   // A read that failed is not a missing draft. `approveRun` reads before its
@@ -85,7 +95,7 @@ describe('approving from the console', () => {
     const approveRun = vi.fn().mockRejectedValue(new ReadBackFailed('FreeScout answered 502'));
     const result = await approveFromConsole(
       { pool: {} as never, approveRun, readDraft: { readDraft: async () => null } },
-      { runId: RUN_A },
+      { runId: RUN_A, approvedBy: REVIEWER },
     );
     expect(result).toEqual({ outcome: 'read_back_failed', fault: 'read-back failed: FreeScout answered 502' });
   });
@@ -97,11 +107,11 @@ describe('approving from the console', () => {
     const failing = vi.fn().mockRejectedValue(new ReadBackFailed('FreeScout answered 502'));
     await approveFromConsole(
       { pool: {} as never, approveRun: failing, readDraft: { readDraft: async () => null }, onReadBackFailed },
-      { runId: RUN_A },
+      { runId: RUN_A, approvedBy: REVIEWER },
     );
     expect(onReadBackFailed.mock.calls).toEqual([[RUN_A, 'read-back failed: FreeScout answered 502', null]]);
     const passing = vi.fn().mockResolvedValue({ outcome: 'draft_missing', draftExternalId: 'D' });
-    await approveFromConsole({ pool: {} as never, approveRun: passing, onReadBackFailed }, { runId: RUN_B });
+    await approveFromConsole({ pool: {} as never, approveRun: passing, onReadBackFailed }, { runId: RUN_B, approvedBy: REVIEWER });
     expect(onReadBackFailed).toHaveBeenCalledTimes(1);
   });
 
@@ -112,29 +122,30 @@ describe('approving from the console', () => {
     const onReadBackFailed = vi.fn();
     await expect(approveFromConsole(
       { pool: {} as never, approveRun, readDraft: { readDraft: async () => null }, onReadBackFailed },
-      { runId: RUN_A },
+      { runId: RUN_A, approvedBy: REVIEWER },
     )).rejects.toThrow('connection terminated');
     expect(onReadBackFailed).not.toHaveBeenCalled();
   });
 
   it('never passes approved text, so no distance is recorded from here', async () => {
     const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved' });
-    await approveFromConsole({ pool: {} as never, approveRun }, { runId: RUN_C });
+    await approveFromConsole({ pool: {} as never, approveRun }, { runId: RUN_C, approvedBy: REVIEWER });
     const options = approveRun.mock.calls[0]![2] as Record<string, unknown>;
-    expect(options).toEqual({});
+    expect(options).toEqual({ approvedBy: REVIEWER, approvedBySource: 'roster' });
     // Stated over the key rather than the value: `finalBody: undefined` would
     // satisfy a value check and still be a body the caller meant to pass.
     expect(Object.hasOwn(options, 'finalBody')).toBe(false);
   });
 
   // The reason there is no text box, held as a rule rather than as a habit.
-  // `ApproveRequest` has one field; a second one would be a body reaching
-  // `approveRun`, which records it and never sends it.
-  it('takes a run id and nothing else', async () => {
+  // `ApproveRequest` holds the run and the reviewer the gate resolved; a
+  // third field would be a body reaching `approveRun`, which records it and
+  // never sends it.
+  it('takes a run id and a reviewer, and nothing else', async () => {
     const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved' });
-    const request = { runId: RUN_C };
+    const request = { runId: RUN_C, approvedBy: REVIEWER };
     await approveFromConsole({ pool: {} as never, approveRun }, request);
-    expect(Object.keys(request)).toEqual(['runId']);
+    expect(Object.keys(request)).toEqual(['runId', 'approvedBy']);
   });
 
   // A run id arrives from a form post, so it is not trusted.
@@ -152,7 +163,7 @@ describe('approving from the console', () => {
       '------', 'abcdef', 'deadbeefcafe', '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b3',
     ]) {
       await expect(
-        approveFromConsole({ pool: {} as never, approveRun }, { runId: bad }),
+        approveFromConsole({ pool: {} as never, approveRun }, { runId: bad, approvedBy: REVIEWER }),
       ).rejects.toThrow(/run id/);
     }
     expect(approveRun).not.toHaveBeenCalled();
@@ -170,7 +181,11 @@ describe('approvalFor', () => {
       pool: {} as never, approveRun, readBack: { name: 'freescout', readDraft }, log: (record) => { records.push(record); },
     });
     await expect(approve(RUN_A, 'Synthetic Reviewer')).resolves.toBe('read_back_failed');
-    expect(approveRun).toHaveBeenCalledWith({}, RUN_A, { approvedBy: 'Synthetic Reviewer', readDraft });
+    expect(approveRun).toHaveBeenCalledWith({}, RUN_A, {
+      approvedBy: 'Synthetic Reviewer',
+      approvedBySource: 'roster',
+      readDraft,
+    });
     expect(records).toEqual([
       { event: 'console_read_back_failed', runId: RUN_A, draftExternalId: '4:12', fault: 'read-back failed: refused' },
     ]);
@@ -180,8 +195,11 @@ describe('approvalFor', () => {
     const records: Record<string, unknown>[] = [];
     const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved', idemKey: 'k' });
     const approve = approvalFor({ pool: {} as never, approveRun, readBack: null, log: (record) => { records.push(record); } });
-    await expect(approve(RUN_B, undefined)).resolves.toBe('approved');
-    expect(approveRun).toHaveBeenCalledWith({}, RUN_B, {});
+    await expect(approve(RUN_B, REVIEWER)).resolves.toBe('approved');
+    expect(approveRun).toHaveBeenCalledWith({}, RUN_B, {
+      approvedBy: REVIEWER,
+      approvedBySource: 'roster',
+    });
     expect(records).toEqual([]);
   });
 });

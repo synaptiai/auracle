@@ -33,8 +33,8 @@ const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
  * Exported because the read path needs the same answer. `run_id` is a `uuid`
  * column, so an id of any other shape makes Postgres raise rather than return
  * no rows: `GET /run/abc` answered 500 where the route promises 404, and each
- * one cost a pool connection and a round trip on an endpoint that
- * authenticates nobody. One definition, so the read and the write agree.
+ * one cost a pool connection and a round trip on a page a reviewer was reading.
+ * One definition, so the read and the write agree.
  */
 export function isRunId(value: string): boolean {
   return RUN_ID.test(value);
@@ -92,11 +92,12 @@ export interface ApproveRequest {
   /**
    * DEC-42: the approver a trusted proxy named, when one did.
    *
-   * Passed through rather than defaulted. `approveRun` bounds what it keeps
-   * and records `unattributed` for anything else, and two places deciding
-   * that would eventually disagree about which one an operator is reading.
+   * Required, because the console serves no write without one (DEC-45). It
+   * is the identity the gate resolved against the roster, so the ledger
+   * records it with the source `roster`. `approveRun` bounds what it keeps
+   * all the same, and a value it refuses records nobody.
    */
-  readonly approvedBy?: string;
+  readonly approvedBy: string;
 }
 
 export async function approveFromConsole(
@@ -112,7 +113,10 @@ export async function approveFromConsole(
   // against it. Without one it is the manual path, and the distance stays
   // null, which is the truthful reading when nobody captured what was sent.
   const options: ApproveOptions = {
-    ...(request.approvedBy === undefined ? {} : { approvedBy: request.approvedBy }),
+    approvedBy: request.approvedBy,
+    // DEC-45: the console only serves an identity it checked against the
+    // roster, so the ledger records where this name came from.
+    approvedBySource: 'roster',
     ...(deps.readDraft === undefined ? {} : { readDraft: deps.readDraft }),
   };
   try {
@@ -138,7 +142,7 @@ export function approvalFor(deps: {
   readonly approveRun: ApproveDeps['approveRun'];
   readonly readBack: ConsoleReadBack | null;
   readonly log: (record: Readonly<Record<string, unknown>>) => void;
-}): (runId: string, approvedBy: string | undefined) => Promise<ConsoleApproveOutcome['outcome']> {
+}): (runId: string, approvedBy: string) => Promise<ConsoleApproveOutcome['outcome']> {
   return async (runId, approvedBy) => {
     const outcome = await approveFromConsole(
       {
@@ -149,7 +153,7 @@ export function approvalFor(deps: {
           deps.log({ event: 'console_read_back_failed', runId: failedRun, draftExternalId, fault });
         },
       },
-      approvedBy === undefined ? { runId } : { runId, approvedBy },
+      { runId, approvedBy },
     );
     return outcome.outcome;
   };

@@ -95,15 +95,20 @@ missing rather than failing:
 Two optional repository variables: `DEV_APP_DIR` and
 `DEV_COMPOSE_PROFILES`. Set the second to `mail` to run the IMAP intake.
 
-Every published port binds the loopback of the host. The console
-authenticates nobody. The webhook accepts every request while
-`WEBHOOK_SECRET` is empty.
+Every published port binds the loopback of the host. The webhook accepts
+every request while `WEBHOOK_SECRET` is empty.
 
-So a proxy authenticates anything that reaches them from another machine.
-That proxy sets the header `CONSOLE_IDENTITY_HEADER` names, and strips any
-copy a client sent (DEC-42).
-`CONSOLE_ALLOWED_HOSTS` must then name the host. Without it the console
-refuses the `Host` the browser sends.
+So a proxy authenticates anything that reaches the console or the webhook from
+another machine. That proxy sets the header `CONSOLE_IDENTITY_HEADER` names,
+and strips any copy a client sent (DEC-42). `CONSOLE_ALLOWED_HOSTS` must then
+name the host. Without it the console refuses the `Host` the browser sends.
+
+Add each reviewer the proxy names to the roster before the console serves
+them:
+
+```sh
+pnpm run reviewers -- --add reviewer@example.com
+```
 
 ## 2. Schema migrations
 
@@ -1188,9 +1193,16 @@ post to a loopback port. A name an attacker controls can resolve to
 reverse proxy that authenticates does not help either, because the browser
 it is being used through is already authenticated.
 
-The console authenticates nobody. Anyone who reaches it can approve a
-reply. So treat reaching it as the whole access control, and place it
-accordingly.
+The console holds no credential of its own. It serves nothing to a request
+with no active reviewer behind it, and a trusted proxy authenticates that
+reviewer (DEC-45).
+
+The header it reads is a bearer credential. So keep the port unreachable
+except through the proxy. Have the proxy set that header on every request and
+strip any copy a client sent.
+
+A client that reaches the port directly is served when it sends the header
+itself. The console cannot tell that request from a proxied one.
 
 Eight surfaces read live data. The queue, one case, the runs and one run in
 detail. One conversation and one document. The control bands and the partition
@@ -1212,11 +1224,43 @@ its query. `/approvals` redirects to `/` and keeps the queue filter.
 A queue link that names a run, `/?run=<run>` or `/approvals?run=<run>`, opens
 that case in one redirect. A value that is not a run id opens the queue.
 
-A reviewer is an operator who approves a reply. The foot of the rail names the
-reviewer. The name is the one a trusted proxy supplies, bounded the way the
-approval bounds it (DEC-42). So the rail shows
-the name the ledger would record. When the approval would record
-`unattributed`, the rail says that no reviewer is named.
+A reviewer is an operator who approves a reply, and the roster holds the ones
+that may. Every request resolves to one before the console builds any page, a
+read included. The foot of the rail names the reviewer this request resolved
+to. So the rail shows the name the ledger records (DEC-45).
+
+A request resolves a reviewer from the header `CONSOLE_IDENTITY_HEADER` names.
+The roster decides whether that name may review. A name that is absent,
+inactive or not on the roster names nobody, and the console refuses the
+request. A deactivated reviewer is refused exactly like a stranger.
+
+The console refuses to start if the header you name is one a client sets for
+itself, such as `cookie`. A name read from it proves nothing, because the
+client writes it.
+
+It also refuses a header that carries a credential, such as `authorization`.
+The ledger records the name the console resolves, and a credential is not a
+name. `hosts.ts` holds both lists.
+
+Each list holds the common names, not every possible name. So have the proxy
+name the reviewer in a header of its own: `X-Auth-Request-Email`, for
+instance.
+
+It also refuses a variable holding both that header and a development
+reviewer, because those are two topologies.
+
+Three commands change the roster. `pnpm run reviewers -- --add <identity>`
+adds a reviewer, and reactivates a deactivated one. `--deactivate <identity>`
+deactivates one. `--list` prints the roster with each date.
+
+A console run from source on loopback may serve as one identity instead, named
+by `CONSOLE_DEV_REVIEWER`. It is for working on the surfaces without a proxy.
+The console refuses that variable from compiled output and off loopback. So an
+image never serves it.
+
+The console also refuses to start when the roster does not hold that identity.
+It names the command that adds it. The two variables describe two topologies,
+so a console holding both refuses to start as well.
 
 The proxy may send the name as UTF-8 or as Latin-1. The console reads bytes
 that decode as UTF-8 as UTF-8, and any other bytes as Latin-1. A Latin-1 name
@@ -1371,8 +1415,8 @@ A run that parked an action shows that action's payload, field by field. An
 approver reads what they approve (DEC-40), and such a run has no drafted reply
 to read. The payload names the amount and the target.
 
-That payload can name an account. This console authenticates nobody, so put it
-behind a proxy before an operator approves a compensation through it.
+That payload can name an account. The console serves it to an active reviewer
+only, so put the console behind a proxy that authenticates one (DEC-45).
 
 The warning says whether the act can be undone. A sent reply cannot be
 recalled. A compensation cannot be undone either, because the coordinator
@@ -1487,14 +1531,14 @@ Edit the draft in the helpdesk, which is where DEC-11 keeps it. This console
 captures no reply text. It measures an edit only by reading the draft back.
 
 The console records the approval it makes. The line names the run, the
-outcome, the `Host` and the address it came from. The ledger records that a
-run was approved and never which client asked. Reaching this console is the
-whole access control, so the console keeps that record itself.
+outcome, the reviewer, the `Host` and the address it came from. The ledger
+records that a run was approved, and the source that named the approver. The
+console keeps the client's own record itself.
 
 A fault answers a tag, not a reason. The log carries the reason under the same
 tag. An adapter or a driver message can quote a customer address, and this
-console authenticates nobody. Every other read here withholds such text, and
-the fault page now does the same.
+console serves pages to a reviewer alone. Every other read here withholds such
+text, and the fault page does the same.
 
 A refused request answers as a refusal. An oversized approval form answers
 413. An address the console cannot read answers 400. Neither reports the
@@ -1536,8 +1580,10 @@ The sentences are the reply. So a run that composed holds a drafted reply,
 whether or not a person saw one. An automatic run holds one although it sent
 nothing to a customer.
 
-`run.approved_by` holds an operator's own identifier, not a customer's. It is
-what a header claimed and never an authenticated identity (DEC-42).
+`run.approved_by` holds an operator's own identifier, not a customer's. The
+column beside it says what the name proves. `roster` is a name a console
+checked against the reviewer roster. `header` is a claim a caller supplied
+(DEC-42). `none` says nobody was named.
 
 **This repository ships no retention job and no purge job.** You are the data
 controller, so you own the retention period and the erasure path. The
@@ -1844,6 +1890,7 @@ explains why Node's own type stripping cannot run this tree.
 | `pnpm run db:migrate` | Applies the SQL files under `db/` in order. |
 | `pnpm run escalations` | Lists what needs a person, and why. |
 | `pnpm run approve` | Approves or rejects one parked reply. |
+| `pnpm run reviewers` | Adds, deactivates and lists the reviewers who may use the console. |
 | `pnpm run latency` | Reports queue wait and service time per partition. |
 | `pnpm run bands` | Reports the four `bands.yaml` metrics for one day. |
 | `pnpm run dev:console` | Starts the operator console from source. |

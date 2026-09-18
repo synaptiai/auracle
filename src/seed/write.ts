@@ -392,10 +392,13 @@ async function writeJournal(client: PoolClient, run: PlannedRun): Promise<void> 
     // history has no proxy in front of it, so it records what a console on an
     // unnamed bind records — which is the value an adopter reading a seeded
     // ledger should expect to see, rather than an invented operator name.
-    await client.query('UPDATE run SET approved_by = $2 WHERE run_id = $1', [
-      run.runId,
-      UNATTRIBUTED,
-    ]);
+    // DEC-45: the source travels with the name. A seeded approval names
+    // nobody, and 'none' is the value that says so — the same one the
+    // migration gives every historical row that reads `unattributed`.
+    await client.query(
+      'UPDATE run SET approved_by = $2, approved_by_source = $3 WHERE run_id = $1',
+      [run.runId, UNATTRIBUTED, 'none'],
+    );
   }
 }
 

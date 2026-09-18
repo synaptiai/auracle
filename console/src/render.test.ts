@@ -220,7 +220,8 @@ describe('what reaches the page from a query string', () => {
 describe('an escalation reason on an operator surface', () => {
   // The `escalate` row's reason key is not a closed vocabulary. The relay
   // interpolates whatever the adapter threw, and an SMTP rejection quotes the
-  // recipient. This console authenticates nobody (DEC-18).
+  // recipient. This console serves such a reason to a reviewer only
+  // (DEC-18, DEC-45).
   it('keeps a reason the coordinator chose, whole', () => {
     for (const reason of [
       'policy_escalated', 'egress_refused', 'composer_abstained', 'limit_cost',

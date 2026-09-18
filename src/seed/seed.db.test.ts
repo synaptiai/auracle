@@ -410,6 +410,26 @@ describe('what the ledger holds about a claim and an approver', () => {
     // captured — and the console captures none. `approve.db.test.ts` holds
     // that shape, which is the one an adopter will actually read.
   });
+
+  // DEC-18, DEC-45. A seeded ledger is a demo ledger, and a reviewer identity
+  // in it would read as a real person's name in an audit column. The roster
+  // ships empty for the same reason: only an adopter adds one, and a seeded
+  // one would be a name nobody in that deployment recognises.
+  it('seeds no reviewer identity at all', async () => {
+    const roster = await pool.query('SELECT identity FROM reviewer');
+    expect(roster.rows).toEqual([]);
+    // And every recorded approver is the absence DEC-42 defines, which is
+    // the value that means nobody rather than somebody.
+    const named = await pool.query(
+      `SELECT count(*)::int AS n FROM run
+        WHERE approved_by IS NOT NULL AND approved_by <> 'unattributed'`,
+    );
+    expect(named.rows[0]?.n).toBe(0);
+    const sources = await pool.query(
+      `SELECT DISTINCT approved_by_source AS source FROM run WHERE approved_by IS NOT NULL`,
+    );
+    expect(sources.rows).toEqual([{ source: 'none' }]);
+  });
 });
 
 describe('the journal a seeded run leaves', () => {

@@ -1,8 +1,9 @@
 // What the rail is allowed to say about the ledger (issue #27).
 //
-// The console authenticates nobody and `DATABASE_URL` carries a password.
-// Those two facts together are how a connection string ends up on a screen
-// someone else is reading, so the redaction is asserted rather than trusted.
+// The console draws pages for a reviewer, and `DATABASE_URL` carries a
+// password. Those two facts together are how a connection string ends up on a
+// screen someone else is reading, so the redaction is asserted rather than
+// trusted.
 import { describe, expect, it } from 'vitest';
 
 import { ledgerName } from './ledger-name.js';

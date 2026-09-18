@@ -16,14 +16,20 @@
 // - APPROVE_ADAPTER   the adapter an approval reads the parked draft back
 //                     through: imap-smtp or freescout, with that adapter's
 //                     own variables. Unset or helpdesk reads nothing back.
+// - CONSOLE_IDENTITY_HEADER  the header a trusted proxy sets to name the
+//                     reviewer. Unset means no proxy names anyone.
+// - CONSOLE_DEV_REVIEWER     an identity to serve as, run from source on
+//                     loopback (see `dev-reviewer.ts`). Never in an image.
 //
 // The default bind is loopback on purpose. This console approves customer
 // replies, and DEC-11's boundary is about what an adopter installs, not about
 // who can reach it; an operator who wants it on a network puts it behind
-// something that authenticates.
+// something that authenticates. DEC-45 makes that something load-bearing:
+// every request is refused unless the roster holds the reviewer it resolves.
 import { Pool } from 'pg';
 
-import { approveRun, selectReadBackAdapter } from 'auracle/ledger-read';
+import { activeReviewer, approveRun, selectReadBackAdapter } from 'auracle/ledger-read';
+import { reviewerResolver } from './reviewer.js';
 import { readDays } from 'auracle/ledger-read';
 import { evaluateMetric } from 'auracle/domain';
 import { lastCompleteDay } from 'auracle/format';
@@ -41,6 +47,7 @@ import { humanMs } from 'auracle/format';
 import { logLine } from 'auracle/format';
 
 import { approvalFor } from './approve.js';
+import { developmentReviewer } from './dev-reviewer.js';
 import { readBackFor } from './read-back.js';
 import { SHUTDOWN_GRACE_MS } from './shutdown.js';
 import { CONSOLE_CSS } from './css.js';
@@ -208,10 +215,47 @@ async function main(): Promise<void> {
   const port = requirePort(process.env['CONSOLE_PORT']);
   const host = process.env['CONSOLE_HOST'] ?? '127.0.0.1';
   const hosts = allowedHosts(host, port);
-  // The header a trusted proxy sets to name the approver (DEC-42). Naming it
+  // The header a trusted proxy sets to name the reviewer (DEC-42). Naming it
   // is the operator stating that a proxy they trust sets it and strips any
   // copy a client sent — `hosts.ts` says why that cannot be inferred.
   const identity = identityHeader();
+  // The identity a console run from source on loopback may name instead
+  // (DEC-45). Refused before the pool opens, so a console that cannot honour
+  // it never serves a request.
+  const development = developmentReviewer({
+    wanting: process.env['CONSOLE_DEV_REVIEWER'],
+    host,
+    moduleUrl: import.meta.url,
+    // The two describe different topologies, and the module refuses both at
+    // once. Passed in rather than read there, so the refusal is testable.
+    identityHeader: identity,
+  });
+  // DEC-45: a console with no identity source at all serves nothing. It
+  // starts and refuses every request with that reason, and this line is what
+  // says so before the first one arrives: a console that only logged
+  // refusals would look like a proxy problem to whoever reads the log.
+  if (identity === undefined && development === undefined) {
+    log({
+      event: 'console_no_identity',
+      host,
+      port,
+      says: 'no identity source: every request is refused until CONSOLE_IDENTITY_HEADER'
+        + ' names a proxy header, or CONSOLE_DEV_REVIEWER names one for local use',
+    });
+  } else if (development !== undefined) {
+    // Named at startup, so an incident reader who finds approvals recorded
+    // for this identity knows what wrote them: a console on this machine,
+    // serving as one reviewer, with no proxy in front of it. Worded as the
+    // intent, because the roster read below and the checks after it can
+    // still refuse this start, and this line is written before them.
+    log({
+      event: 'console_dev_reviewer',
+      host,
+      port,
+      reviewer: development,
+      says: 'configured to serve every request as this reviewer, from source on loopback',
+    });
+  }
   // The adapter an approval reads the draft back through (section 4.10).
   // Built here, so a name or a configuration the adapter refuses stops the
   // console before it opens the pool, rather than on the first approval.
@@ -265,6 +309,16 @@ async function main(): Promise<void> {
   // same way. One `catch` over the whole span rather than one per statement.
   try {
     await probeLedger(pool, 'the operator console');
+    // DEC-45: a development reviewer nobody added refuses every request, and
+    // a console that listened anyway would look configured and serve nobody.
+    // The roster decides, so this is the same question the gate asks, asked
+    // once at startup where the operator is present to read the answer.
+    if (development !== undefined && !(await activeReviewer(pool, development))) {
+      throw new Error(
+        `CONSOLE_DEV_REVIEWER names '${development}', which the reviewer roster`
+          + ` does not hold; add it with: pnpm run reviewers -- --add ${development}`,
+      );
+    }
   } catch (error) {
     await endPool();
     throw error;
@@ -449,13 +503,17 @@ async function main(): Promise<void> {
     // The page says a read-back failed and nothing was sent. The fault is
     // logged beside the run and the draft it stopped.
     approve: approvalFor({ pool, approveRun, readBack, log }),
+
+    // DEC-45: every request, read or write, is resolved against the roster
+    // before any page is built. The header is the one the operator named,
+    // and the roster is the ledger's.
+    reviewerFor: reviewerResolver({
+      ...(identity === undefined ? {} : { identityHeader: identity }),
+      ...(development === undefined ? {} : { devReviewer: development }),
+      active: async (id) => activeReviewer(pool, id),
+    }),
   }, CONSOLE_CSS, {
     allowedHosts: hosts,
-    // DEC-42: read only when `CONSOLE_IDENTITY_HEADER` names the header.
-    // Naming it is the operator's statement that a trusted proxy sets it and
-    // strips any copy a client sent. `identityHeader()` says why the hosts no
-    // longer decide this.
-    ...(identity === undefined ? {} : { identityHeader: identity }),
     // The whole closed set. The filter offers every state the ledger can
     // hold, so a state with no runs today still has a link that says so —
     // an operator checking for escalations needs the empty answer too.

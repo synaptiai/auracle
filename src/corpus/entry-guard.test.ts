@@ -123,4 +123,34 @@ describe('a CLI module does not run when it is imported', () => {
       process.exitCode = savedExit;
     }
   });
+
+  // The fifth of this class, and the one this branch added. `cli.test.ts`
+  // imports this module for its parsers and its outcome sentences, which is
+  // the shape this suite's header describes: unguarded, that import opens a
+  // pool and queries the roster inside the test process.
+  //
+  // The rule it needs is not the local one this file used to carry — a suffix
+  // test on `process.argv[1]` — but `startedAsCommand`, and the two differ
+  // exactly where a linked path runs nothing and exits 0.
+  //
+  // The observable is a printed line rather than a fault, because every path
+  // through this command prints: the roster, what it changed, or why it
+  // refused. So the case spies on both streams. Watching an error alone would
+  // hold vacuously where the ledger answers, which is the trap the latency
+  // case's comment describes.
+  it('does not start the reviewer roster command', async () => {
+    const savedExit = process.exitCode;
+    const out = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await import('../reviewers/cli.js');
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(out, 'importing the reviewers CLI ran the command').not.toHaveBeenCalled();
+      expect(errors, 'importing the reviewers CLI ran the command').not.toHaveBeenCalled();
+    } finally {
+      out.mockRestore();
+      errors.mockRestore();
+      process.exitCode = savedExit;
+    }
+  });
 });

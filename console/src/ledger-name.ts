@@ -14,8 +14,8 @@
  * seeded runs reaching the queue exactly like produced ones.
  *
  * The credentials never reach the page. `DATABASE_URL` carries a password,
- * this console authenticates nobody, and those two facts together are how a
- * connection string ends up on a screen someone else is reading.
+ * this console draws every page for a reviewer, and those two facts together
+ * are how a connection string ends up on a screen someone else is reading.
  */
 export function ledgerName(connectionString: string): string {
   try {

@@ -40,10 +40,15 @@ describe('the console as a long-running process', () => {
     // key refuses where it is built, and built after the pool that refusal
     // would hang the same way.
     expect(MAIN.indexOf('readBackFor(')).toBeGreaterThan(-1);
+    // The development reviewer as well (DEC-45). It refuses a console that
+    // cannot honour the variable — a compiled entry, or a bind off loopback —
+    // and the same idle client would outlive that refusal.
+    expect(MAIN.indexOf('developmentReviewer(')).toBeGreaterThan(-1);
     const config = Math.max(
       MAIN.indexOf('requirePort('),
       MAIN.indexOf('allowedHosts(host, port)'),
       MAIN.indexOf('readBackFor('),
+      MAIN.indexOf('developmentReviewer('),
     );
     expect(config).toBeGreaterThan(-1);
     expect(config).toBeLessThan(MAIN.indexOf('new Pool('));
@@ -77,6 +82,28 @@ describe('the console as a long-running process', () => {
     // Before, not after. A probe that ran once the socket was open would let
     // the console report itself listening on a database it cannot reach.
     expect(MAIN.indexOf('probeLedger(')).toBeLessThan(MAIN.indexOf('server.listen('));
+  });
+
+  // DEC-45. The roster decides whether the development reviewer may serve,
+  // and a console that listened without asking would look configured and
+  // refuse every request. The question is asked after the probe, because it
+  // is the ledger's to answer, and before the socket, so the operator reads
+  // the refusal instead of a console that serves nobody.
+  it('asks the roster about the development reviewer before it listens', () => {
+    expect(MAIN.indexOf('activeReviewer(pool, development)')).toBeGreaterThan(-1);
+    expect(MAIN.indexOf('activeReviewer(pool, development)'))
+      .toBeLessThan(MAIN.indexOf('server.listen('));
+  });
+
+  // DEC-45, and the argument the dev-reviewer suite cannot see. Its cases
+  // pass `identityHeader` themselves, so deleting the one `main.ts` passes
+  // would restore the fail-open this branch closed — a console that serves
+  // as the developer for every request a proxy did not name — while every
+  // unit case stayed green.
+  it('tells the development reviewer which header a proxy would use', () => {
+    const call = /developmentReviewer\(\{([\s\S]*?)\}\)/.exec(MAIN);
+    expect(call, 'main.ts calls developmentReviewer').not.toBeNull();
+    expect(call![1]).toMatch(/identityHeader: identity/);
   });
 
   // `listen` reports a bind failure by event, after `main`'s promise has
