@@ -226,13 +226,16 @@ describe('approvalFor', () => {
     const readDraft = { readDraft: async () => null };
     const approveRun = vi.fn().mockRejectedValue(new ReadBackFailed('refused', { draftExternalId: '4:12' }));
     const approve = approvalFor({
-      pool: {} as never, approveRun, ledgerReply: false, readBack: { name: 'freescout', readDraft, supportsLedgerReply: false }, log: (record) => { records.push(record); },
+      pool: {} as never, approveRun, ledgerReply: false, readBack: { name: 'freescout', readDraft, supportsLedgerReply: false }, sendHoldMs: 12_000, log: (record) => { records.push(record); },
     });
     await expect(approve(RUN_A, 'Synthetic Reviewer', SHOWN)).resolves.toBe('read_back_failed');
     expect(approveRun).toHaveBeenCalledWith({}, RUN_A, {
       approvedBy: 'Synthetic Reviewer',
       approvedBySource: 'roster',
       shown: SHOWN,
+      // DEC-51: the hold this console carries travels with every approval it
+      // makes, so a batch can be undone inside it.
+      sendHoldMs: 12_000,
       readDraft,
     });
     expect(records).toEqual([
@@ -247,7 +250,7 @@ describe('approvalFor', () => {
   it('carries an acknowledgement only when the page sent one', async () => {
     const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved', idemKey: 'k' });
     const approve = approvalFor({
-      pool: {} as never, approveRun, ledgerReply: true, readBack: null,
+      pool: {} as never, approveRun, ledgerReply: true, readBack: null, sendHoldMs: 12_000,
       log: () => undefined,
     });
     const ack = 'b'.repeat(64);
@@ -266,21 +269,44 @@ describe('approvalFor', () => {
       permanent: true,
     }));
     const approve = approvalFor({
-      pool: {} as never, approveRun, ledgerReply: true, readBack: null, log: () => undefined,
+      pool: {} as never, approveRun, ledgerReply: true, readBack: null, sendHoldMs: 12_000, log: () => undefined,
     });
 
     await expect(approve(RUN_A, REVIEWER, SHOWN)).resolves.toBe('read_back_not_a_note');
   });
 
+  // DEC-51: the hold reaches the approval, or no send would be held and the
+  // undo button would promise a window nothing kept. The suite's other cases
+  // stub the approval's answer, so without this one the wiring could vanish.
+  it('passes the hold the console read, and no hold when it read none', async () => {
+    const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved', idemKey: 'k' });
+    const withHold = approvalFor({
+      pool: {} as never, approveRun, ledgerReply: true, readBack: null, sendHoldMs: 12_000,
+      log: () => undefined,
+    });
+    await withHold(RUN_A, REVIEWER, SHOWN);
+    expect(approveRun.mock.calls[0]![2]).toMatchObject({ sendHoldMs: 12_000 });
+
+    const withoutHold = approvalFor({
+      pool: {} as never, approveRun, ledgerReply: true, readBack: null, sendHoldMs: 0,
+      log: () => undefined,
+    });
+    await withoutHold(RUN_B, REVIEWER, SHOWN);
+    // Zero is a decision, not an absence: it travels, so the core holds
+    // nothing and the page draws no undo.
+    expect(approveRun.mock.calls[1]![2]).toMatchObject({ sendHoldMs: 0 });
+  });
+
   it('passes no read-back when the console reads none, and logs nothing on an approval', async () => {
     const records: Record<string, unknown>[] = [];
     const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved', idemKey: 'k' });
-    const approve = approvalFor({ pool: {} as never, approveRun, ledgerReply: false, readBack: null, log: (record) => { records.push(record); } });
+    const approve = approvalFor({ pool: {} as never, approveRun, ledgerReply: false, readBack: null, sendHoldMs: 12_000, log: (record) => { records.push(record); } });
     await expect(approve(RUN_B, REVIEWER, SHOWN)).resolves.toBe('approved');
     expect(approveRun).toHaveBeenCalledWith({}, RUN_B, {
       approvedBy: REVIEWER,
       approvedBySource: 'roster',
       shown: SHOWN,
+      sendHoldMs: 12_000,
     });
     expect(records).toEqual([]);
   });

@@ -56,4 +56,4 @@ ALTER TABLE outbox DROP CONSTRAINT IF EXISTS outbox_status_check;
 ALTER TABLE outbox ADD CONSTRAINT outbox_status_check
   CHECK (status IN ('pending', 'sent', 'fenced', 'delivery_unknown', 'malformed'));
 
-COMMENT ON COLUMN outbox.status IS 'Relay scan state, one of pending, sent, fenced, delivery_unknown, malformed. The relay reads pending; the escalations query reads delivery_unknown.';
+COMMENT ON COLUMN outbox.status IS 'Relay scan state, one of pending, sent, fenced, delivery_unknown, malformed. The relay reads pending, and skips a pending row whose not_before is ahead (DEC-51); the escalations query reads delivery_unknown.';

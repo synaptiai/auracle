@@ -208,6 +208,17 @@ export interface ApproveOptions {
    * has to be of the copy this approval read.
    */
   readonly copyAcknowledged?: string;
+  /**
+   * DEC-51: this caller's send waits this many milliseconds before the relay
+   * may post it, when the ledger holds the reply.
+   *
+   * The console's batch sets it, so a reviewer who confirmed by mistake can
+   * undo. Absent is no hold: the command line, and every caller that offers
+   * no undo, send immediately. It applies to the ledger-held path alone — a
+   * reply on the DEC-40 draft path can be sent from the helpdesk by hand at
+   * any moment, so a hold there would promise nothing.
+   */
+  readonly sendHoldMs?: number;
 }
 
 /** What the coordinator's `park` step recorded in the journal. */
@@ -319,6 +330,11 @@ function throwMalformedPark(actionClass: string): never {
  * The run moves to `resolved`: the person's work here is done, exactly as
  * the automatic path resolves once its outbox record commits. If the send
  * later fails into an unknown state, the relay escalates the run (DEC-30).
+ *
+ * DEC-51 is the one write that moves a run back out of a terminal state: a
+ * caller that asked for a hold may undo it inside that window, and
+ * `src/approval/undo.ts` returns the run to `awaiting_approval` and clears
+ * everything this function wrote.
  */
 export async function approveRun(
   pool: Pool,
@@ -397,6 +413,8 @@ export async function approveRun(
   let outboxReply: Record<string, unknown> | undefined;
   /** DEC-44: the reply the ledger holds, when this approval sends it. */
   let ledgerText: string | undefined;
+  /** DEC-51: how long the record is held, when this caller holds it. */
+  let holdMs: number | undefined;
   // DEC-44 governs a customer reply, and only a customer reply: that is the
   // park which carries a handle into the target system. A ledger-only park
   // (DEC-34 compensation) holds no reply and journals no disclosure, so it
@@ -421,6 +439,23 @@ export async function approveRun(
       disclosure: park.disclosure,
       provenance: park.provenance,
     };
+    // DEC-51: the console's batch holds its sends, so an undo inside the
+    // window can return the run to approval. The moment is resolved here, at
+    // the approval, and written onto the record: the relay reads the record.
+    if (options?.sendHoldMs !== undefined) {
+      // A value that is not whole milliseconds at or above zero is a caller
+      // defect. It would reach the insert as `$9::bigint` and raise a driver
+      // error naming neither the option nor a range — the outcome this check
+      // exists to prevent. A safe integer is the widest value that survives
+      // that cast without a precision loss the caller did not ask for.
+      if (!Number.isSafeInteger(options.sendHoldMs) || options.sendHoldMs < 0) {
+        throw new TypeError(
+          `sendHoldMs must be whole milliseconds at or above zero, `
+            + `got ${String(options.sendHoldMs)}`,
+        );
+      }
+      holdMs = options.sendHoldMs;
+    }
   } else if (
     finalBody === undefined
     && options?.readDraft !== undefined
@@ -579,6 +614,7 @@ export async function approveRun(
       delivery: park.delivery,
       payload: outboxPayload,
       ...(outboxReply === undefined ? {} : { reply: outboxReply }),
+      ...(holdMs === undefined ? {} : { holdMs }),
     },
     afterWrite,
   });

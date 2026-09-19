@@ -313,6 +313,21 @@ tbody tr:hover { background:var(--panel); }
 /* The keys line above the queue, inset like the rows it annotates. */
 .keys { font-size:11px; color:var(--dim); padding:10px 16px 12px; }
 
+/* DEC-51: a row the batch can pick, and the panel a batch answers with.
+ *
+ * The box rides beside the row's anchor rather than inside it, and the row is
+ * the flex container: the anchor keeps the full width it had, so a queue with
+ * a checkbox column reads exactly like one without. */
+.qrow { display:flex; align-items:flex-start; gap:9px; padding-left:14px; }
+.qrow > .item { flex:1 1 auto; min-width:0; }
+.qrow > input[type=checkbox] { margin-top:17px; accent-color:var(--ok); }
+.qgroup .btn { margin-left:10px; }
+/* The batch's answer: what was sent, what came back, and the undo. */
+.panel { border:1px solid var(--rule2); border-radius:6px; padding:18px 20px; margin:18px 0; }
+.panel.ok { border-left:2px solid var(--ok); }
+.panel .big { display:block; margin-bottom:6px; }
+.panel form { display:inline-block; margin-top:10px; }
+
 /* One claim of a draft. The mark is the point: an unsupported claim is the
  * sentence an approver came to find. */
 .claim { border-radius: 2px; padding: 0 1px;

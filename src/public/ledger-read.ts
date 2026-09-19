@@ -33,6 +33,10 @@ export const LEDGER_WRITES: Readonly<Record<string, string>> = {
   // moves with it.
   saveReply: 'the reply a reviewer saved: it writes the text the approval will send',
   takeHold: 'takes a case for one reviewer, and releases the taker\'s others',
+  // DEC-51: the way back inside a held send. It removes every effect of the
+  // approval — the record, the approver, the distance, the approved text and
+  // the finish time — so a batch confirmed by mistake can be taken back.
+  undoApproval: 'reverses an approval inside its hold period, and refuses outside it',
 };
 
 export { LEDGER_STATES, listEscalations, listRuns, readRun } from '../escalations/query.js';
@@ -114,3 +118,10 @@ export type { ApproveOptions, ApproveOutcome } from '../approval/approve.js';
 // the approval sends.
 export { saveReply } from '../approval/save-reply.js';
 export type { SaveOutcome, SaveReplyOptions } from '../approval/save-reply.js';
+
+// DEC-51: the way back inside a held send. The console's third write.
+export { undoApproval } from '../approval/undo.js';
+export type { UndoOptions, UndoOutcome } from '../approval/undo.js';
+// and the read that draws it: whether a send is still held, and for how long.
+export { readApprovalHold } from '../approval/undo.js';
+export type { ApprovalHold } from '../approval/undo.js';

@@ -366,6 +366,33 @@ describe('the IMAP connection a draft read opens (issue #102)', () => {
     }
   });
 
+  // The SMTP bounds, which the send path sets from the same configuration as
+  // the IMAP ones. A send runs inside the relay's transaction, so a server
+  // that stops answering mid-send holds the run's row lock for as long as
+  // this takes: left unset, nodemailer's own defaults allow ten minutes.
+  it('bounds a send to a server that never answers, rather than waiting', async () => {
+    const imap = await fakeImap();
+    // Accepts the connection and says nothing: no greeting, ever.
+    const silent = createServer((sock: Socket) => {
+      sock.on('error', () => undefined);
+    });
+    await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve));
+    const port = (silent.address() as AddressInfo).port;
+    try {
+      const started = Date.now();
+      const failure = await egressOn(imap.port, 1_000, port)
+        .sendDraft('7', 'refund:41:v1')
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(Error);
+      // Bounded by the configuration and not by nodemailer's ten-minute
+      // default, which would hold the relay's transaction for the same span.
+      expect(Date.now() - started).toBeLessThan(IMAP_OPERATION_TIMEOUT_MS);
+    } finally {
+      silent.close();
+      imap.server.close();
+    }
+  });
+
   // SMTP has no read-back, so a send reported as failed is escalated as an
   // unknown delivery. A send that completed stays a send, whatever the IMAP
   // connection does while the draft is marked seen afterwards. And it returns

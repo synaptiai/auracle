@@ -86,6 +86,28 @@ describe('the console as a long-running process', () => {
     expect(MAIN.indexOf('requireHoldLapse(')).toBeLessThan(MAIN.indexOf('new Pool('));
   });
 
+  // DEC-51: the period a batch's sends wait, and the same rule: read at
+  // startup, before the pool, so a value the console refuses stops it before
+  // it serves a page rather than on the first confirm.
+  it('reads the send-hold period from the environment', () => {
+    expect(MAIN).toMatch(/requireSendHold\(process\.env\['CONSOLE_SEND_HOLD_MS'\]\)/);
+    expect(MAIN.indexOf('requireSendHold(')).toBeLessThan(MAIN.indexOf('new Pool('));
+    // Counted, and not merely found, for the reason the declaration above is:
+    // the one value has two readers — the approval that stamps the hold, and
+    // the pages that promise it — and the failure this guards is the two
+    // disagreeing. A page counting twelve seconds over an approval that holds
+    // for sixty is a lie a `toMatch` would pass.
+    expect([...MAIN.matchAll(/^\s*sendHoldMs,$/gm)]).toHaveLength(2);
+  });
+
+  // DEC-51: the read the case page counts the window with. Wired by hand in
+  // `main.ts` alone — no unit suite imports it — so a deleted line would
+  // leave every approved case drawn as one with no way back.
+  it('wires the window a case counts to the ledger read', () => {
+    expect(MAIN).toMatch(/readApprovalHold: async \(runId: string\) => readApprovalHold\(pool, runId\)/);
+    expect(MAIN).toMatch(/undo: undoFor\(\{ pool, undoApproval \}\)/);
+  });
+
   // Two paths close the pool, and `pool.end()` rejects on the second call.
   // An unhandled rejection is fatal in Node, so it replaces the exit path it
   // was meant to take.

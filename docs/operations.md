@@ -2027,3 +2027,40 @@ explains why Node's own type stripping cannot run this tree.
 | `pnpm run fit-groundedness` | Fits the two coverage thresholds. |
 | `pnpm run report-groundedness` | Reports coverage against the fitted pair. |
 | `pnpm run seed-history` | Writes a backdated synthetic history for a demo. It pins `seed` as the prompt version, so the queue shows which runs it wrote (DEC-18). |
+
+### Confirming a group, and taking it back (DEC-51)
+
+The queue's clean group carries a checkbox per case and one confirm button.
+The button posts the picked cases to a confirmation screen, and that screen
+draws every reply in full. Confirming approves each case in turn.
+
+Each send waits `CONSOLE_SEND_HOLD_MS` before the relay may post it. The
+default is twelve seconds, and the success panel counts it down on an undo
+button. Nothing has reached a customer inside that window.
+
+The panel says what the ledger holds, and not what the approval asked for. A
+batch is called sent only where the records are sent. Otherwise the panel
+says the relay has sent none of them. A hold the console cannot read draws
+the undo without a countdown.
+
+The console refuses a value above five minutes, and says so at startup. The
+bound keeps a mistyped millisecond count from parking replies with nobody
+told. The relay skips a held record and picks it up later. A record held for
+a day therefore waits in silence.
+
+The undo removes every effect of the approval, and returns the run to the
+waiting queue. It refuses once the window has passed, and once the relay
+has sent. It refuses a case that holds no approval too. Each refusal has its
+own words, and nothing was sent.
+
+A batch and its undo each write one line: `console_confirmed` and
+`console_undone`. A case that failed on its own gets its own line,
+`console_confirm_case_failed` or `console_undo_case_failed`, naming the run.
+A page that could not read a window says so, and logs `console_sendhold_unread`.
+
+A reply on the helpdesk-draft path gets no hold and no undo. A person can send that
+draft from the helpdesk at any moment. So no undo could promise that nothing
+was sent.
+
+Set the period to `0` to send at once. The panel then offers no undo, and it
+says so rather than drawing a button that cannot work.

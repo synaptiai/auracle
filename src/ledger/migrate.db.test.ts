@@ -327,6 +327,38 @@ describe('migrate', () => {
     expect(row.rows[0]?.reply?.disclosure).toBe('Sent by Auracle.');
   });
 
+  // DEC-51: the moment a held outbox record may be sent. Nullable, because
+  // null is no hold: every record written before this column existed, every
+  // record on the DEC-40 draft path, and every record the command line
+  // writes. Separate from `payload`, because the payload is hashed into the
+  // idempotency key and a hold is a timing rather than action semantics.
+  it('installs the moment a held record may be sent (db/026, DEC-51)', async () => {
+    await migrate(client);
+
+    const column = await client.query<{ is_nullable: string; data_type: string; column_default: string | null }>(
+      `SELECT is_nullable, data_type, column_default FROM information_schema.columns
+        WHERE table_schema = 'migrate_test' AND table_name = 'outbox'
+          AND column_name = 'not_before'`,
+    );
+    expect(column.rows).toEqual([
+      { is_nullable: 'YES', data_type: 'timestamp with time zone', column_default: null },
+    ]);
+
+    const runId = await seedRun();
+    await client.query(
+      `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class, delivery, payload, not_before)
+       VALUES ($1, 'approve', 'customer_reply:T-2:abc', 1, 'customer_reply', 'at_most_once',
+               '{"draftExternalId": "hd-draft-0002"}',
+               now() + interval '12 seconds')`,
+      [runId],
+    );
+    const row = await client.query<{ held: boolean }>(
+      "SELECT not_before > now() AS held FROM outbox WHERE run_id = $1 AND step_id = 'approve'",
+      [runId],
+    );
+    expect(row.rows[0]?.held).toBe(true);
+  });
+
   it('installs the products a document serves (db/022, DEC-47)', async () => {
     await migrate(client);
 

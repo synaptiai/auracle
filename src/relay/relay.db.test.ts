@@ -612,6 +612,7 @@ describe('section 4.4 outbox relay', () => {
       action_class: 'customer_reply',
       payload: { draftExternalId: 'draft-y' },
       reply: null,
+      not_before: null,
     });
     expect(orphan).toEqual({ idemKey: 'key-no-run', outcome: 'sent' });
   });
@@ -657,6 +658,7 @@ describe('section 4.4 outbox relay', () => {
         action_class: 'customer_reply',
         payload: { draftExternalId: `draft-${ticket}` },
         reply: null,
+        not_before: null,
       }),
     ).toEqual({ idemKey, outcome: 'fenced' });
     expect(adapter.sendCalls).toHaveLength(0);
@@ -709,6 +711,7 @@ describe('section 4.4 outbox relay', () => {
         action_class: 'customer_reply',
         payload: { draftExternalId: `draft-${ticket}` },
         reply: null,
+        not_before: null,
       }),
     ).toEqual({ idemKey, outcome: 'fenced' });
     expect(adapter.sendCalls).toHaveLength(0);
@@ -1118,6 +1121,206 @@ describe('DEC-44: the relay sends the reply the ledger holds', () => {
     expect(results.map((r) => r.outcome)).toEqual(['sent']);
     expect(adapter.sendCalls).toHaveLength(1);
     expect(adapter.ledgerSends).toEqual([]);
+  });
+});
+
+describe('DEC-51: the relay and a send the ledger holds back', () => {
+  /**
+   * An adapter that can send the record this block seeds.
+   *
+   * The draft path, which is the record `replyOutbox` writes. A declaration
+   * of `supportsLedgerReply` would make that record malformed instead: on
+   * such an adapter a record carrying no reply is one the ledger cannot
+   * send, and this block is about the hold rather than about that refusal.
+   */
+  const DRAFT_PATH: AdapterCapabilities = Object.freeze({
+    supportsIdempotencyKey: true,
+    supportsReadBack: false,
+    supportsDraftState: true,
+    supportsStructuredFields: false,
+    supportsThreading: true,
+    supportsLedgerReply: false,
+  });
+
+  beforeEach(async () => {
+    await truncateLedger(pool);
+  });
+
+  afterEach(async () => {
+    await truncateLedger(pool);
+  });
+
+  /** Seed one pending draft-path record with a hold ahead of it. */
+  async function seedHeld(ticketId: string, holdMs: number): Promise<string> {
+    const run = makeRun(10n, ticketId);
+    const idemKey = `idem:${ticketId}`;
+    const result = await fencedInsert(pool, run, {
+      ...replyOutbox(run, idemKey, 'at_least_once'),
+      holdMs,
+    });
+    expect(result).toEqual({ outcome: 'accepted' });
+    return idemKey;
+  }
+
+  /** The scanned row for one record, as a scan would have read it. */
+  async function scannedRow(idemKey: string): Promise<{
+    run_id: string; step_id: string; ticket_id: string; idem_key: string;
+    epoch: string; delivery: string; action_class: string; payload: unknown;
+    reply: unknown; not_before: Date | null;
+  }> {
+    const { rows } = await pool.query(
+      `SELECT o.run_id, o.step_id, r.ticket_id, o.idem_key, o.epoch, o.delivery,
+              o.action_class, o.payload, o.reply, o.not_before
+         FROM outbox o JOIN run r ON r.run_id = o.run_id
+        WHERE o.idem_key = $1`,
+      [idemKey],
+    );
+    return rows[0] as never;
+  }
+
+  // A connection that is not given back is a pool that empties. The
+  // escalation path takes a client of its own, so a release missing from one
+  // of its paths leaks one per escalation: the pool here holds ten, and this
+  // walks twelve records through it. Before the fix this case did not fail —
+  // it stopped, on the eleventh `connect()`, which is what the daemon would
+  // do in production.
+  it('gives its connection back on every escalation, so the pool does not empty', async () => {
+    const keys: string[] = [];
+    for (let i = 0; i < 12; i += 1) {
+      const ticket = 'T-' + randomUUID().slice(0, 8);
+      await seedPending(ticket, 10n, 'at_least_once', 'queued');
+      keys.push(`idem:${ticket}`);
+    }
+    // Every record carries a payload that matches no known shape, so each one
+    // takes the escalation path.
+    await pool.query("UPDATE outbox SET payload = '{\"noDraftHere\": true}'::jsonb");
+
+    const adapter = new ScriptedEgress(
+      DRAFT_PATH,
+      async () => { throw new Error('a malformed record must not reach the adapter'); },
+      async () => { throw new Error('unreachable'); },
+    );
+
+    const results = await relayPending(pool, adapter);
+
+    expect(results).toHaveLength(12);
+    expect(results.every((one) => one.outcome === 'malformed_escalated')).toBe(true);
+    // And the pool is still usable: a leaked client would leave ten of the
+    // twelve escalations holding one each.
+    expect(await pool.query('SELECT 1 AS ok')).toBeDefined();
+  });
+
+  it('skips a record whose moment is still ahead, and leaves it to a later scan', async () => {
+    // The scan's own predicate excludes a held record. This case hands the
+    // row in anyway, which is the other way it is reached: a scan that read
+    // the row as ready while an approval's hold was being stamped, or a
+    // second relay process whose clock is a moment behind. The send must not
+    // happen, and the record must stay sendable.
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedHeld(ticket, 60_000);
+    const adapter = new ScriptedEgress(
+      DRAFT_PATH,
+      async () => { throw new Error('a held record must not reach the adapter'); },
+      async () => { throw new Error('unreachable'); },
+    );
+
+    expect(await relayOne(pool, adapter, await scannedRow(idemKey)))
+      .toEqual({ idemKey, outcome: 'held' });
+    expect(adapter.sendCalls).toHaveLength(0);
+    expect(adapter.ledgerSends).toEqual([]);
+    expect(await outboxStatus(idemKey)).toBe('pending');
+    // Nothing moved the run either: a skipped send leaves the run where the
+    // scan found it, which for a held record is wherever it was parked.
+    expect(await runState(idemKey)).toBe('queued');
+  });
+
+  it('sends the held record once its period has passed, and the scan sees it again', async () => {
+    // The hold is a delay, not a refusal: the same record the case above
+    // skipped is sent by the next scan after its moment.
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedHeld(ticket, 30);
+    const adapter = new ScriptedEgress(
+      DRAFT_PATH,
+      async () => ({ externalId: 'e-1' }),
+      async () => ({ state: 'not_found' }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const results = await relayPending(pool, adapter);
+
+    expect(results.map((r) => r.outcome)).toEqual(['sent']);
+    expect(adapter.sendCalls).toHaveLength(1);
+    expect(await outboxStatus(idemKey)).toBe('sent');
+  });
+
+  // T-3: the third way the locked row can differ from the scanned one. The
+  // first is a removed row (the undo did it), the second a settled status
+  // (another scan did it), and this is the one the undo makes reachable: the
+  // row is present and pending, and it is not the row this scan read.
+  it('sends nothing when the record under the lock is not the one scanned', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedHeld(ticket, 0);
+    const row = await scannedRow(idemKey);
+    // The undo deleted this record and a second approval wrote a new one at
+    // the same key: same run, same step, different text.
+    await pool.query(
+      `UPDATE outbox SET payload = jsonb_build_object('draftExternalId', 'a-different-draft')
+        WHERE idem_key = $1`,
+      [idemKey],
+    );
+    const adapter = new ScriptedEgress(
+      DRAFT_PATH,
+      async () => { throw new Error('a row that is not the scanned one must not reach the adapter'); },
+      async () => { throw new Error('unreachable'); },
+    );
+
+    expect(await relayOne(pool, adapter, row))
+      .toEqual({ idemKey, outcome: 'already_settled' });
+    expect(adapter.sendCalls).toHaveLength(0);
+  });
+
+  // The same, for the fence: a re-approval at a raised epoch carries a
+  // different epoch, and sending the scanned copy would send text the second
+  // approval never carried.
+  it('sends nothing when the record under the lock carries another epoch', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedHeld(ticket, 0);
+    const row = await scannedRow(idemKey);
+    await pool.query("UPDATE outbox SET epoch = epoch + 1 WHERE idem_key = $1", [idemKey]);
+    const adapter = new ScriptedEgress(
+      DRAFT_PATH,
+      async () => { throw new Error('a row that is not the scanned one must not reach the adapter'); },
+      async () => { throw new Error('unreachable'); },
+    );
+
+    expect(await relayOne(pool, adapter, row))
+      .toEqual({ idemKey, outcome: 'already_settled' });
+    expect(adapter.sendCalls).toHaveLength(0);
+  });
+
+  it('sends nothing and moves nothing when the record settled under the lock', async () => {
+    // Another scan sent this record between this scan's read and its locks —
+    // two relay processes, or a rolling restart. The record is not pending
+    // any more, and the check happens under the lock that made it so: a
+    // second delivery here would be a second copy to the customer.
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedHeld(ticket, 0);
+    const row = await scannedRow(idemKey);
+    await pool.query("UPDATE outbox SET status = 'sent' WHERE idem_key = $1", [idemKey]);
+    const adapter = new ScriptedEgress(
+      DRAFT_PATH,
+      async () => { throw new Error('a settled record must not reach the adapter'); },
+      async () => { throw new Error('unreachable'); },
+    );
+
+    expect(await relayOne(pool, adapter, row))
+      .toEqual({ idemKey, outcome: 'already_settled' });
+    expect(adapter.sendCalls).toHaveLength(0);
+    expect(adapter.ledgerSends).toEqual([]);
+    // The other scan's verdict stands, and the run it moved is not moved a
+    // second time.
+    expect(await outboxStatus(idemKey)).toBe('sent');
+    expect(await runState(idemKey)).toBe('queued');
   });
 });
 

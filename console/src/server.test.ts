@@ -19,6 +19,8 @@ import { escapeHtml, renderGates } from './render.js';
 
 import { allowedHosts } from './hosts.js';
 import { createConsole } from './server.js';
+import { CONSOLE_SCRIPT } from './script.js';
+import { UNDO_SAYS } from './surfaces.js';
 import type { ReviewerRefusal, ReviewerVerdict } from './reviewer.js';
 import { cachedDaily } from './daily-cache.js';
 import type { ConsoleDeps } from './server.js';
@@ -152,6 +154,33 @@ function caseOf(over: Record<string, unknown>): ConsoleDeps['readRun'] {
   return async () => ({ ...WAITING, ...over }) as never;
 }
 
+/**
+ * Whether the control a form carries is inside the form itself.
+ *
+ * The queue's own case reads one action; this reads any, so a second screen
+ * that emits a button after its `</form>` fails here rather than in a browser.
+ */
+function buttonInForm(html: string, action: string): boolean {
+  const open = html.indexOf(`<form method="post" action="${action}"`);
+  const close = html.indexOf('</form>', open);
+  const button = html.indexOf('type="submit"', open);
+  return open >= 0 && close > open && button > open && button < close;
+}
+
+/**
+ * Whether the batch's confirm button is inside the form it submits.
+ *
+ * Parsed, not matched: the defect this guards is an ordering one, and a
+ * substring check for `<form` beside the button is true of both orders. The
+ * walk counts open and close tags, so it reads the nesting a browser reads.
+ */
+function buttonOwnsItsForm(html: string): boolean {
+  const open = html.indexOf('<form method="post" action="/confirm"');
+  const close = html.indexOf('</form>', open);
+  const button = html.indexOf('data-batch-confirm', open);
+  return open >= 0 && close > open && button > open && button < close;
+}
+
 function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
   return {
     listRuns: async () => [
@@ -240,6 +269,12 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
       },
     ],
     approve: async () => 'approved',
+    // DEC-51: the batch's way back. The window and the row lock are the core
+    // suite's subject; here the harness answers that a case was taken back.
+    undo: async () => ({ outcome: 'undone' }),
+    // DEC-51: the window a page counts. The harness answers that a send is
+    // held for the configured period, unless a case overrides it.
+    readApprovalHold: async () => ({ held: true, remainingMs: 12_000, status: 'pending' }),
     // DEC-45: the gate resolves this before any page is built. The default is
     // an active reviewer, so a case about a surface is not also a case about
     // the gate; the gate's own cases override it.
@@ -296,6 +331,13 @@ const REVIEWER = 'synthetic-reviewer@example.test';
 const SHOWN = 'c'.repeat(64);
 
 /**
+ * DEC-51: the hold this harness's console applies to a batch. The default
+ * period, so a case asserting the words the page promises reads the shipped
+ * number rather than one this suite invented.
+ */
+const SEND_HOLD_MS = 12_000;
+
+/**
  * A refusal from the gate, for a case about what the console does with one.
  *
  * The resolver's own cases live in `reviewer.test.ts`; here the gate only has
@@ -330,6 +372,7 @@ async function startGuarded(
 ): Promise<string> {
   const probe = createConsole(d, '.root{}', {
     allowedHosts: [], readBack: null, states: [...STATES], ledger: LEDGER, ledgerReply,
+    sendHoldMs: SEND_HOLD_MS,
   });
   await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
   const { port } = probe.address() as AddressInfo;
@@ -347,6 +390,7 @@ async function startGuarded(
     states: [...STATES],
     ledger: LEDGER,
     ledgerReply,
+    sendHoldMs: SEND_HOLD_MS,
   });
   opened.push(server);
   await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
@@ -3715,14 +3759,17 @@ describe('the queue a reviewer lands on (issue #101)', () => {
   ];
 
   // Issue #105. The legend names only the keys that act on this page: j and
-  // k move, Enter follows the focused row natively, and c opens it. `a` is
-  // not bound until a batch confirm exists, so the legend omits it.
+  // k move, Enter follows the focused row natively, c opens it, and `a`
+  // activates the batch confirm DEC-51 added.
   it('lists only the keys that act on it, and rows stay links', async () => {
     const base = await startGuarded(deps({ listApprovals: async () => queue() }));
     const html = await (await fetch(base + '/')).text();
-    // The whole line, so a key can join it only by failing this test.
-    expect(html).toContain('<div class="keys">j / k move · enter opens · c takes the case</div>');
-    expect(html).not.toContain('a confirms');
+    // The whole line, so a key can join it only by failing this test. `a` is
+    // on it because DEC-51 gives the batch confirm a key, and the legend
+    // names the keys that act.
+    expect(html).toContain(
+      '<div class="keys">j / k move · enter opens · c takes the case · a confirms the clean cases</div>',
+    );
     // Above the rows, where an uncapped queue cannot push it under the fold.
     expect(html.indexOf('<div class="keys">')).toBeLessThan(html.indexOf('<div class="list">'));
     // Degraded, the keys lose nothing: every row is still an anchor.
@@ -4012,10 +4059,20 @@ describe('the queue a reviewer lands on (issue #101)', () => {
       '/case/22222222-2222-4222-8222-222222222222',
       '/case/11111111-1111-4111-8111-111111111111',
     ]);
-    expect(html).not.toContain('name="runId"');
-    expect(html).not.toContain('<form');
+    // DEC-51: the queue now carries one form — the batch confirm of the
+    // clean group — and one checkbox per clean row. What it still does not
+    // draw is a case: no reply text, no per-case approval form.
     expect(html).not.toContain('class="pane"');
     expect(html).not.toContain('The reply, as the system drafted it');
+    expect(html).toContain('<form method="post" action="/confirm">');
+    expect([...html.matchAll(/<form/g)]).toHaveLength(1);
+    expect([...html.matchAll(/name="runId"/g)]).toHaveLength(1);
+    expect([...html.matchAll(/type="checkbox"/g)]).toHaveLength(1);
+    // The control owns its form. Emitted after the form opened, the button
+    // had no owner and submitted nothing, and every other assertion here
+    // passed: the button's text, the form's presence, and the row's checkbox
+    // are all true of inert markup.
+    expect(buttonOwnsItsForm(html)).toBe(true);
   });
 
   // A high-risk intent on a customer reply is gated as `customer_visible`.
@@ -4218,7 +4275,12 @@ describe('the approval queue', () => {
     expect(html).toContain('SYN-2');
     expect(html).not.toContain('D-1');
     expect(html).not.toContain('D-2');
-    expect(html).not.toContain('type="submit"');
+    // The one control on the page is the batch confirm of the clean group
+    // (DEC-51). What it does not draw is a case: no reply text, and no
+    // control that sends one on its own.
+    expect([...html.matchAll(/<form/g)]).toHaveLength(1);
+    expect(html).toContain('Confirm all');
+    expect(html).not.toContain('The reply, as the system drafted it');
   });
 
   // A link that named a run on the queue now opens that run's case.
@@ -6252,5 +6314,623 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('DEC-51: the batch confirm and its undo', () => {
+  const CLEAN_A = '22222222-2222-4222-8222-222222222222';
+  const CLEAN_B = '44444444-4444-4444-8444-444444444444';
+  const FIRST_REPLY = 'We refunded the duplicate charge.';
+  const SECOND_REPLY = 'Your subscription is unchanged, and the bank posts within five minutes.';
+
+  const cleanRun = (runId: string, ticketId: string, reply: string, approved = false) => ({
+    runId, ticketId, state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+    riskTier: 'medium', reason: null, stepsUsed: 4, draftExternalId: 'D-1',
+    coverage: null, agreement: 0.91, agreementThreshold: 0.8,
+    gateCoverage: 0.86, coverageReviewThreshold: 0.8, approved,
+    evidence: { ...EVIDENCE, draftBody: reply },
+    request: { ...REQUEST, savedReplyText: reply },
+  });
+
+  /** Both cases, and a reader that answers each by id. */
+  function batchDeps(over: Partial<ConsoleDeps> = {}): Partial<ConsoleDeps> {
+    const runs: Record<string, unknown> = {
+      [CLEAN_A]: cleanRun(CLEAN_A, 'SYN-A', FIRST_REPLY),
+      [CLEAN_B]: cleanRun(CLEAN_B, 'SYN-B', SECOND_REPLY),
+    };
+    return {
+      readRun: (async (runId: string) => runs[runId] ?? null) as ConsoleDeps['readRun'],
+      ...over,
+    };
+  }
+
+  function digestOf(text: string): string {
+    return createHash('sha256').update(text).digest('hex');
+  }
+
+  async function post(base: string, path: string, fields: Record<string, string | string[]>): Promise<Response> {
+    const body = new URLSearchParams();
+    for (const [name, value] of Object.entries(fields)) {
+      for (const one of Array.isArray(value) ? value : [value]) body.append(name, one);
+    }
+    return fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: body.toString(),
+      redirect: 'manual',
+    });
+  }
+
+  it('draws each reply in full before anything sends, with its own digest', async () => {
+    // A capable console: the ledger holds the reply, so a send is held and
+    // the screen promises the window the undo needs.
+    const base = await startGuarded(deps(batchDeps()), undefined, undefined, true);
+
+    const page = await post(base, '/confirm', { runId: [CLEAN_A, CLEAN_B] });
+    expect(page.status).toBe(200);
+    const html = await page.text();
+
+    // Criterion 1: the confirm shows each reply in full.
+    expect(html).toContain(FIRST_REPLY);
+    expect(html).toContain(SECOND_REPLY);
+    // And each case carries the digest of the text drawn above it (DEC-46),
+    // which is what makes a changed case refuse rather than send.
+    expect(html).toContain(`name="shown" value="${digestOf(FIRST_REPLY)}"`);
+    expect(html).toContain(`name="shown" value="${digestOf(SECOND_REPLY)}"`);
+    expect(html).toContain('Confirm 2 · send each reply');
+    // The button is inside the form it submits. Emitted outside, it has no
+    // form owner and the whole screen is inert — the defect the queue's own
+    // case found, which the second screen could have shipped again.
+    expect(buttonInForm(html, '/confirm/apply')).toBe(true);
+    // Nothing was approved by drawing the page.
+    expect(html).toContain('12 seconds');
+  });
+
+  // DEC-51 and DEC-40: a reply on the draft path is never held, so that
+  // console must not promise a window or an undo it cannot offer.
+  it('promises no window on a console whose parked copy is what sends', async () => {
+    const base = await startGuarded(deps(batchDeps()));
+
+    const page = await (await post(base, '/confirm', { runId: [CLEAN_A] })).text();
+
+    expect(page).toContain('nothing is held here, so there is no undo');
+    expect(page).not.toContain('holds each one for');
+  });
+
+  it('approves each case with its digest and the hold, and offers the undo', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(deps(batchDeps({ approve })), undefined, undefined, true);
+
+    const res = await post(base, '/confirm/apply', {
+      runId: [CLEAN_A, CLEAN_B],
+      shown: [digestOf(FIRST_REPLY), digestOf(SECOND_REPLY)],
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(approve).toHaveBeenCalledWith(CLEAN_A, REVIEWER, digestOf(FIRST_REPLY));
+    expect(approve).toHaveBeenCalledWith(CLEAN_B, REVIEWER, digestOf(SECOND_REPLY));
+    // The handoff's own words, where they are true: the ledger holds the two
+    // records pending, so nothing has been sent, and the panel says so.
+    expect(html).toContain('2 replies approved.');
+    expect(html).toContain('The relay has sent none of them yet');
+    expect(html).toContain('Nothing clean is waiting.');
+    expect(html).toContain('Undo · 12s');
+    // The undo carries the runs it approved, and nothing else.
+    const undoForm = /<form method="post" action="\/undo">(.*?)<\/form>/s.exec(html)?.[1];
+    // Read, not merely present: the ids below are the assertion, and a form
+    // that drew no field at all once passed a bare `toBeDefined` here.
+    expect(undoForm).toBeTypeOf('string');
+    expect([...undoForm!.matchAll(/name="runId" value="([^"]+)"/g)].map((m) => m[1]))
+      .toEqual([CLEAN_A, CLEAN_B]);
+  });
+
+  it('undoes the runs the panel names, and says what came back', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const undo = vi.fn().mockResolvedValue({ outcome: 'undone' });
+    const base = await startGuarded(deps(batchDeps({ approve, undo })), undefined, undefined, true);
+
+    const res = await post(base, '/undo', { runId: [CLEAN_A, CLEAN_B] });
+
+    expect(res.status).toBe(200);
+    expect(undo.mock.calls).toEqual([[CLEAN_A, REVIEWER], [CLEAN_B, REVIEWER]]);
+    expect(await res.text()).toContain('2 replies were taken back');
+  });
+
+  // One case that can no longer be undone does not stop the others, and its
+  // answer is drawn in the undo's own words.
+  it('draws a refusal per case, in the sentence that case has', async () => {
+    const undo = vi.fn()
+      .mockResolvedValueOnce({ outcome: 'undone' })
+      .mockResolvedValueOnce({ outcome: 'window_passed' });
+    const base = await startGuarded(deps(batchDeps({ undo })), undefined, undefined, true);
+
+    const html = await (await post(base, '/undo', { runId: [CLEAN_A, CLEAN_B] })).text();
+
+    expect(html).toContain('One reply was taken back');
+    expect(html).toContain('The hold period has passed');
+  });
+
+  // A case whose reply moved since the page was drawn refuses while its
+  // neighbours send. A batch that reported both sent would be a lie.
+  it('sends what it can and names the case that refused', async () => {
+    const approve = vi.fn()
+      .mockResolvedValueOnce('approved')
+      .mockResolvedValueOnce('shown_changed');
+    const base = await startGuarded(deps(batchDeps({ approve })), undefined, undefined, true);
+
+    const html = await (await post(base, '/confirm/apply', {
+      runId: [CLEAN_A, CLEAN_B],
+      shown: [digestOf(FIRST_REPLY), digestOf(SECOND_REPLY)],
+    })).text();
+
+    expect(html).toContain('1 reply approved.');
+    expect(html).not.toContain('Nothing clean is waiting.');
+    expect(html).toContain('The reply changed since this page was drawn');
+  });
+
+  // Criterion 1's last clause, and the handoff's own words: a primary control
+  // acting on zero objects is a defect. The button is drawn only where the
+  // clean group has rows, so a queue whose clean cases are gone draws none.
+  // SEC-8: a single approval holds its send too, and the case it approved is
+  // where a reviewer looks for the way back. Before this bar, that page said
+  // "Approved. The relay performs it next." while the relay was waiting.
+  it('offers the undo on the case a single approval just resolved', async () => {
+    const readApprovalHold = vi
+      .fn()
+      .mockResolvedValue({ held: true, remainingMs: 9_400, status: 'pending' });
+    const base = await startGuarded(deps(resolvedCase({ readApprovalHold })), undefined, undefined, true);
+
+    const html = await (await fetch(`${base}/case/${RUN}?outcome=approved`)).text();
+
+    expect(readApprovalHold).toHaveBeenCalledWith(RUN);
+    expect(html).toContain('This reply is held · 9s');
+    expect(html).toContain('Undo · 9s');
+    expect(html).toContain(`name="runId" value="${RUN}"`);
+    // The window is the one left, read from the ledger, and not the twelve
+    // seconds the console is configured with.
+    expect(html).not.toContain('Undo · 12s');
+  });
+
+  // Not held is an answer: a case whose window has passed draws the outcome
+  // and nothing else, and no control that would refuse.
+  it('offers no undo on a case whose window has passed', async () => {
+    const base = await startGuarded(
+      deps(resolvedCase({
+        readApprovalHold: async () => ({ held: false, remainingMs: 0, status: 'sent' }),
+      })),
+      undefined, undefined, true,
+    );
+
+    const html = await (await fetch(`${base}/case/${RUN}?outcome=approved`)).text();
+
+    // The rendered control, not the words: the page's one inline script holds
+    // the countdown's own 'Undo · ' and its [data-undo-seconds] selector, so
+    // a document-wide check for either is true of every page this console
+    // serves. The form's action is in the markup alone.
+    expect(html).not.toContain('This reply is held');
+    expect(html).not.toContain('action="/undo"');
+  });
+
+  // A fault reading the window is its own answer. A page that drew neither
+  // the bar nor a word about it would read as a case with no way back.
+  it('says the window on the case was not read, rather than that none is held', async () => {
+    const base = await startGuarded(
+      deps(resolvedCase({
+        readApprovalHold: async () => { throw new Error('the ledger is unreachable'); },
+      })),
+      undefined, undefined, true,
+    );
+
+    const html = await (await fetch(`${base}/case/${RUN}?outcome=approved`)).text();
+
+    expect(html).toContain('The hold on this approval was not read');
+    expect(html).toContain('The console log names the fault');
+  });
+
+  it('offers no confirm button when no clean case is waiting', async () => {
+    const base = await startGuarded(deps({
+      // Every case here is held by somebody else, so the clean group is empty.
+      listApprovals: async () => [
+        { ...cleanRun(CLEAN_A, 'SYN-A', FIRST_REPLY), runId: CLEAN_B },
+      ],
+      readHolds: async () => new Map([[CLEAN_B, {
+        reviewer: 'sam@example.test',
+        takenAt: new Date(Date.now() - 60_000),
+        lapsesAt: new Date(Date.now() + 1_140_000),
+      }]]),
+    }));
+    const html = await (await fetch(base + '/')).text();
+
+    expect(html).toContain('Held by someone else');
+    expect(html).not.toContain('Confirm all');
+    expect(html).not.toContain('type="checkbox"');
+    expect(html).not.toContain('action="/confirm"');
+  });
+
+  /**
+   * The one waiting run as the case page reads it after its approval: the
+   * same fixture the case's own suite uses, left the queue and approved.
+   */
+  function resolvedCase(over: Partial<ConsoleDeps> = {}): Partial<ConsoleDeps> {
+    return {
+      ...batchDeps({
+        readRun: caseOf({ runId: RUN, ticketId: 'SYN-1', state: 'resolved', approved: true }),
+      }),
+      ...over,
+    };
+  }
+
+  // T-11: the cases a batch leaves out. A page that drew four rows for five
+  // ticked boxes would send a smaller batch than the reviewer asked for and
+  // say nothing about it.
+  it('names each case a batch left out, and why', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const missing = '55555555-5555-4555-8555-555555555555';
+    const wordless = '66666666-6666-4666-8666-666666666666';
+    const unreadable = '77777777-7777-4777-8777-777777777777';
+    const base = await startGuarded(
+      deps(batchDeps({
+        approve,
+        readRun: (async (runId: string) => {
+          if (runId === CLEAN_A) return cleanRun(CLEAN_A, 'SYN-A', FIRST_REPLY);
+          if (runId === missing) return null;
+          if (runId === unreadable) throw new Error('the ledger is unreachable');
+          // A run the console can read, holding no reply it can send: a
+          // turn nobody edited and a park whose draft body is absent.
+          return {
+            ...cleanRun(wordless, 'SYN-W', FIRST_REPLY),
+            request: { ...REQUEST, savedReplyText: null },
+            evidence: { ...EVIDENCE, draftBody: null },
+          };
+        }) as ConsoleDeps['readRun'],
+      })),
+      undefined, undefined, true,
+    );
+
+    const html = await (await post(base, '/confirm', {
+      runId: [CLEAN_A, missing, wordless, unreadable],
+    })).text();
+
+    expect(html).toContain('Confirm 1 · send each reply');
+    expect(html).toContain(`${missing.slice(0, 8)}: the ledger does not hold this case`);
+    expect(html).toContain(`${wordless.slice(0, 8)}: this case holds no reply this console can send`);
+    expect(html).toContain(`${unreadable.slice(0, 8)}: this case could not be read`);
+    // And the batch that remains is the one case that could be drawn.
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  // Every picked case unreadable is its own refusal, with its own sentence:
+  // "nothing was sent" would be true, and saying the cases hold no reply
+  // would state a fact nobody established.
+  it('refuses a batch whose every case could not be read', async () => {
+    const approve = vi.fn();
+    const base = await startGuarded(
+      deps(batchDeps({
+        approve,
+        readRun: (async () => { throw new Error('the ledger is unreachable'); }) as ConsoleDeps['readRun'],
+      })),
+      undefined, undefined, true,
+    );
+
+    const res = await post(base, '/confirm', { runId: [CLEAN_A] });
+
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    expect(html).toContain('None of those cases could be read, so nothing was sent.');
+    expect(html).toContain('Open the queue to pick the cases again.');
+  });
+
+  // A run the result page could not read is drawn as its own callout rather
+  // than with a sentence about a state nobody read. This route takes its run
+  // ids off the form and reads each run once, to fit the outcome: the read
+  // here is that one.
+  it('names a run the result page could not read', async () => {
+    const approve = vi.fn()
+      .mockResolvedValueOnce('approved')
+      .mockResolvedValueOnce('shown_changed');
+    const runs: Record<string, unknown> = {
+      [CLEAN_A]: cleanRun(CLEAN_A, 'SYN-A', FIRST_REPLY),
+      [CLEAN_B]: cleanRun(CLEAN_B, 'SYN-B', SECOND_REPLY),
+    };
+    const base = await startGuarded(
+      deps(batchDeps({
+        approve,
+        readRun: (async (runId: string) => {
+          if (runId === CLEAN_B) throw new Error('the ledger stopped answering');
+          return runs[runId] ?? null;
+        }) as ConsoleDeps['readRun'],
+      })),
+      undefined, undefined, true,
+    );
+
+    const html = await (await post(base, '/confirm/apply', {
+      runId: [CLEAN_A, CLEAN_B],
+      shown: [digestOf(FIRST_REPLY), digestOf(SECOND_REPLY)],
+    })).text();
+
+    // The refused case's run could not be read, so its callout draws no
+    // sentence about a state nobody read, and the page names the fault
+    // instead. A sentence here would be the fallback wording for an outcome
+    // the console cannot fit.
+    expect(html).not.toContain('The reply changed since this page was drawn');
+    expect(html).toContain(`${CLEAN_B.slice(0, 8)}: the run could not be read, so this console`);
+    expect(html).toContain('what became of it. The console log holds the fault.');
+    // And the fault did not stop the page: the panel is drawn, with the
+    // count of what was approved.
+    expect(html).toContain('1 reply approved.');
+  });
+
+  // T-2: the panel counts the window the ledger holds, not the period the
+  // console is configured with. Both are 12 000 ms in the default harness, so
+  // this case moves the ledger's answer away from it.
+  // T-10: the countdown is a contract between the markup and the page's one
+  // inline script. Renaming the attribute on either side stops the countdown
+  // silently, and nothing asserted it.
+  it('pins the countdown to the attribute the script reads', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(deps(batchDeps({ approve })), undefined, undefined, true);
+
+    const html = await (await post(base, '/confirm/apply', {
+      runId: [CLEAN_A],
+      shown: [digestOf(FIRST_REPLY)],
+    })).text();
+
+    // The markup carries the window, and the script reads that attribute.
+    expect(html).toContain('data-undo-seconds="12"');
+    expect(CONSOLE_SCRIPT).toContain('[data-undo-seconds]');
+    expect(CONSOLE_SCRIPT).toContain("getAttribute('data-undo-seconds')");
+    // The note the script writes into is on the page, hidden until it does.
+    expect(html).toContain('data-undo-note hidden');
+    expect(CONSOLE_SCRIPT).toContain('[data-undo-note]');
+    // The queue's key handler and the button it activates, the same way.
+    const queue = await (await fetch(`${base}/`)).text();
+    expect(queue).toContain('data-batch-confirm');
+    expect(CONSOLE_SCRIPT).toContain('[data-batch-confirm]');
+  });
+
+  it('counts the window the ledger holds, not the period that was set', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(
+      deps(batchDeps({
+        approve,
+        readApprovalHold: async () => ({ held: true, remainingMs: 9_400, status: 'pending' }),
+      })),
+      undefined, undefined, true,
+    );
+
+    const html = await (await post(base, '/confirm/apply', {
+      runId: [CLEAN_A],
+      shown: [digestOf(FIRST_REPLY)],
+    })).text();
+
+    expect(html).toContain('Undo · 9s');
+    expect(html).not.toContain('Undo · 12s');
+    // And the panel says what the ledger holds: a pending record is not sent.
+    expect(html).toContain('1 reply approved.');
+    expect(html).toContain('The relay has sent none of them yet');
+  });
+
+  // The handoff's own words, and only where the ledger backs them: a batch
+  // whose records the ledger reports sent draws them.
+  it('calls the replies sent only where the ledger says they were', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(
+      deps(batchDeps({
+        approve,
+        readApprovalHold: async () => ({ held: false, remainingMs: 0, status: 'sent' }),
+      })),
+      undefined, undefined, true,
+    );
+
+    const html = await (await post(base, '/confirm/apply', {
+      runId: [CLEAN_A, CLEAN_B],
+      shown: [digestOf(FIRST_REPLY), digestOf(SECOND_REPLY)],
+    })).text();
+
+    expect(html).toContain('2 replies sent.');
+    // With every window closed and nothing left to take back.
+    expect(html).toContain('These sends were not held, so there is nothing to undo.');
+  });
+
+  // A ready window and a sent record in one batch: the panel says both.
+  it('says how many of a mixed batch the relay has sent', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const readApprovalHold = vi.fn(async (runId: string) => (runId === CLEAN_A
+      ? { held: false, remainingMs: 0, status: 'sent' }
+      : { held: true, remainingMs: 5_000, status: 'pending' }));
+    const base = await startGuarded(
+      deps(batchDeps({ approve, readApprovalHold })), undefined, undefined, true,
+    );
+
+    const html = await (await post(base, '/confirm/apply', {
+      runId: [CLEAN_A, CLEAN_B],
+      shown: [digestOf(FIRST_REPLY), digestOf(SECOND_REPLY)],
+    })).text();
+
+    expect(html).toContain('2 replies approved.');
+    expect(html).toContain('The relay has sent 1 of them');
+    expect(html).toContain('Undo · 5s');
+  });
+
+  // A hold this console could not read is not a window that is absent: the
+  // undo is still drawn, without a countdown this page did not earn, and the
+  // sentence names the log line rather than claiming nothing is held.
+  it('draws the undo without a countdown when a window could not be read', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(
+      deps(batchDeps({
+        approve,
+        readApprovalHold: async () => { throw new Error('the ledger is unreachable'); },
+      })),
+      undefined, undefined, true,
+    );
+
+    const html = await (await post(base, '/confirm/apply', {
+      runId: [CLEAN_A],
+      shown: [digestOf(FIRST_REPLY)],
+    })).text();
+
+    expect(html).toContain('The window on at least one of these cases was not read');
+    expect(html).toContain('The console log names the fault');
+    // The way back is still offered, and it promises no window.
+    expect(html).toContain('action="/undo"');
+    expect(html).toContain('>Undo</button>');
+    // The attribute with a value, which is the markup: the page's one inline
+    // script names the bare attribute in its selector on every page it serves.
+    expect(html).not.toContain('data-undo-seconds="');
+    expect(html).not.toContain('These sends were not held');
+  });
+
+  // A case whose approval faulted is offered to the undo too: the fault can
+  // arrive after the approval committed, and that case is the one that may
+  // hold a live send.
+  it('offers the undo for a case whose approval faulted', async () => {
+    const approve = vi.fn()
+      .mockResolvedValueOnce('approved')
+      .mockRejectedValueOnce(new Error('the ledger stopped answering'));
+    const base = await startGuarded(deps(batchDeps({ approve })), undefined, undefined, true);
+
+    const html = await (await post(base, '/confirm/apply', {
+      runId: [CLEAN_A, CLEAN_B],
+      shown: [digestOf(FIRST_REPLY), digestOf(SECOND_REPLY)],
+    })).text();
+
+    // The fault says what it knows, and points at the case.
+    expect(html).toContain('this case could not be approved, and this console cannot say whether it was');
+    expect(html).toContain('Open the case to read whether a reply is held.');
+    const undoForm = /<form method="post" action="\/undo">(.*?)<\/form>/s.exec(html)?.[1];
+    expect([...undoForm!.matchAll(/name="runId" value="([^"]+)"/g)].map((m) => m[1]))
+      .toEqual([CLEAN_A, CLEAN_B]);
+  });
+
+  // Every refusal the ledger can give is drawn in its own sentence, and every
+  // one of them says nothing was undone. A map entry the page never reaches
+  // is a sentence a reviewer never reads — and until this case, three of the
+  // six were in that state.
+  it('draws every undo answer the ledger can give, in its own words', async () => {
+    // The literal each sentence must be, spelled here rather than read from
+    // the table the renderer writes from: a case that asserts the same
+    // constant proves the routing and not the words, and a table entry
+    // rewritten into nonsense would pass it.
+    const SAYS = {
+      unknown_run: 'That run is not in the ledger.',
+      nothing_to_undo: 'That case holds no approval to undo.',
+      busy: 'Another write holds that case, so nothing was undone. Try again in a moment.',
+      already_sent: 'The reply was sent, so there is nothing to undo.',
+    } as const;
+    for (const [outcome, says] of Object.entries(SAYS) as [keyof typeof SAYS, string][]) {
+      const undo = vi.fn().mockResolvedValue({ outcome });
+      const base = await startGuarded(deps(batchDeps({ undo })), undefined, undefined, true);
+
+      const html = await (await post(base, '/undo', { runId: [CLEAN_A] })).text();
+
+      // The sentence, attached to the case it answers about: a swap between
+      // two cases would pass a check that only asked whether both appear.
+      expect(html, outcome).toContain(`${CLEAN_A.slice(0, 8)}: ${says}`);
+      expect(UNDO_SAYS[outcome], outcome).toBe(says);
+      // The panel is drawn as a refusal, not as a success.
+      expect(html, outcome).toContain('Nothing was undone.');
+      expect(html, outcome).not.toContain('was taken back');
+    }
+  });
+
+  // T4: the way back is a form like any other, so the batch it does not read
+  // is refused before any case is touched — and the page says where to go.
+  it('refuses an undo batch it does not read, and undoes nothing', async () => {
+    const undo = vi.fn();
+    const base = await startGuarded(deps(batchDeps({ undo })), undefined, undefined, true);
+
+    for (const fields of [
+      {},
+      { runId: ['not-a-run-id'] },
+      { runId: Array.from({ length: 51 }, () => CLEAN_A) },
+    ]) {
+      const res = await post(base, '/undo', fields);
+      expect(res.status, JSON.stringify(fields).slice(0, 40)).toBe(400);
+      expect(await res.text()).toContain('Open the queue to pick the cases again.');
+    }
+    expect(undo).not.toHaveBeenCalled();
+  });
+
+  // T4, the screen's half: the confirmation page carries its own bound, and a
+  // batch past it never reaches a reply.
+  it('refuses a confirmation batch it does not read, and sends nothing', async () => {
+    const approve = vi.fn();
+    const base = await startGuarded(deps(batchDeps({ approve })), undefined, undefined, true);
+
+    for (const fields of [
+      {},
+      { runId: Array.from({ length: 51 }, () => CLEAN_A) },
+    ]) {
+      const res = await post(base, '/confirm', fields);
+      expect(res.status, JSON.stringify(fields).slice(0, 40)).toBe(400);
+      expect(await res.text()).toContain('Open the queue to pick the cases again.');
+    }
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  // A body past the bound is refused before the route reads a field, and the
+  // page says what was not done. The three sentences differ: an oversized
+  // confirmation did not send, an oversized undo did not undo.
+  it('refuses an oversized batch form, and names what was not done', async () => {
+    const approve = vi.fn();
+    const undo = vi.fn();
+    const base = await startGuarded(
+      deps(batchDeps({ approve, undo })), undefined, undefined, true,
+    );
+
+    // Every route that reads a batch, not only the one that draws a screen:
+    // the bound is the body's, and a route that reached a write before it
+    // would make the refusal a lie.
+    for (const [path, form] of [
+      ['/confirm', 'confirmation'],
+      ['/confirm/apply', 'confirmation'],
+      ['/undo', 'undo'],
+    ]) {
+      const body = new URLSearchParams();
+      body.append('runId', CLEAN_A);
+      body.append('pad', 'x'.repeat(70_000));
+
+      const res = await fetch(base + path, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          'sec-fetch-site': 'same-origin',
+          origin: base,
+        },
+        body: body.toString(),
+        redirect: 'manual',
+      });
+
+      expect(res.status, path).toBe(413);
+      const html = await res.text();
+      expect(html, path).toContain(`The ${form} form is larger than this console accepts.`);
+      expect(html, path).toContain('Nothing was changed.');
+      // And the way on, which every refusal carries.
+      expect(html, path).toContain('Open the queue to pick the cases again.');
+    }
+    expect(approve).not.toHaveBeenCalled();
+    expect(undo).not.toHaveBeenCalled();
+  });
+
+  it('refuses a batch this console does not read, and sends nothing', async () => {
+    const approve = vi.fn();
+    const base = await startGuarded(deps(batchDeps({ approve })));
+
+    for (const fields of [
+      {},
+      { runId: ['not-a-run-id'] },
+      { runId: [CLEAN_A], shown: [] },
+      { runId: Array.from({ length: 51 }, () => CLEAN_A), shown: Array.from({ length: 51 }, () => SHOWN) },
+    ]) {
+      const res = await post(base, '/confirm/apply', fields);
+      expect(res.status, JSON.stringify(fields).slice(0, 40)).toBe(400);
+    }
+    expect(approve).not.toHaveBeenCalled();
   });
 });

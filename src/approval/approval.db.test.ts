@@ -401,6 +401,21 @@ describe('approval completion path (DEC-12 end to end)', () => {
     );
   });
 
+  // T-12: the hold is an option's value, and a caller that gets it wrong
+  // hears about the option rather than a driver error about a bigint cast.
+  it('refuses a hold that is not whole milliseconds at or above zero', async () => {
+    const { runId, helpdesk } = await parkReply('T-' + randomUUID().slice(0, 8));
+
+    for (const sendHoldMs of [1.5, -1, Number.NaN, Number.POSITIVE_INFINITY, 1e21]) {
+      await expect(
+        approveRun(pool, runId, { ledgerReply: true, readDraft: helpdesk, sendHoldMs }),
+        String(sendHoldMs),
+      ).rejects.toThrow(/sendHoldMs must be whole milliseconds at or above zero/);
+    }
+    // Nothing committed on the way to any of those refusals.
+    expect(await runState(runId)).toBe('awaiting_approval');
+  });
+
   it('records a distance of exactly 0 when read-back finds no edit', async () => {
     const ticketId = 'T-' + randomUUID().slice(0, 8);
     const { runId, helpdesk } = await parkReply(ticketId);

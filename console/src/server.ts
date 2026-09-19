@@ -38,12 +38,19 @@ import {
   renderConversation,
   renderDocument,
   renderRunDetail,
+  renderConfirm,
+  renderConfirmResult,
   renderOutcome,
   renderRuns,
+  renderUndoResult,
+  replyTextOf,
 } from './surfaces.js';
 import type { ConsoleApproveOutcome, ConsoleSaveOutcome } from './approve.js';
+import { confirmBatch, isFault, undoBatch, MAX_BATCH } from './confirm.js';
+import type { BatchOutcome } from './confirm.js';
+import type { ConfirmCase, OutcomeRun } from './surfaces.js';
 import type {
-  BandRow, CaseHoldRead, CopyRead, CustomerRead, DocumentPage, LatencyRow,
+  BandRow, CaseHoldRead, CaseSendHoldRead, CopyRead, CustomerRead, DocumentPage, LatencyRow,
   QueueHold, QueueHoldsRead, QueueTodayRead, QueueTodayView,
   RunDetail, RunRow, RunView, Shell,
   ThreadView, Theme,
@@ -53,8 +60,10 @@ import { describeFault } from 'auracle/cli';
 // JSON leaves several line breaks raw.
 import { logLine } from 'auracle/format';
 import type { ReviewerFor } from './reviewer.js';
-import { copyHoldsText } from 'auracle/ledger-read';
-import type { HandoverOutcome, Hold, ReleaseOutcome, TakeOutcome } from 'auracle/ledger-read';
+import { copyHoldsText, replyDigest } from 'auracle/ledger-read';
+import type {
+  ApprovalHold, HandoverOutcome, Hold, ReleaseOutcome, TakeOutcome, UndoOutcome,
+} from 'auracle/ledger-read';
 
 /**
  * Everything the console reads or writes, injected.
@@ -112,6 +121,16 @@ export interface ConsoleDeps {
    * ledger's reply has moved since: the guard is DEC-46's, applied one step
    * earlier.
    */
+  /**
+   * DEC-51: the way back inside a hold. The core owns the transaction, the
+   * row lock and the window; this route reads a form and draws the answer.
+   */
+  readonly undo: (runId: string, reviewer: string) => Promise<UndoOutcome>;
+  /**
+   * DEC-51: whether an approval's send is still held, and for how long. The
+   * pages count the window that is left rather than the period that was set.
+   */
+  readonly readApprovalHold: (runId: string) => Promise<ApprovalHold | null>;
   readonly saveReply: (
     runId: string,
     text: string,
@@ -403,6 +422,20 @@ function bare(
   ].join('');
 }
 
+/**
+ * The queue a reviewer came from, as the refusals' own link back to it.
+ *
+ * The filters ride on it (DEC-47), as they do on every other way back: a
+ * reviewer who narrowed the queue and posted a batch it refused returns to
+ * the queue they were reading, not to the whole of it.
+ */
+function backToQueue(url: URL): { readonly href: string; readonly text: string } {
+  return {
+    href: queueHref(url.searchParams.get('rule'), url.searchParams.get('product')),
+    text: 'Open the queue to pick the cases again.',
+  };
+}
+
 /** The form post body, which is the only input this console takes. */
 /**
  * A form larger than the bound.
@@ -412,6 +445,240 @@ function bare(
  * request was refused rather than failed, and the two say different things
  * to whoever sent it.
  */
+/**
+ * The form on a write route, or the refusal that route answers with.
+ *
+ * Null means the response is already sent: a client that hung up mid-body, or
+ * a body past the bound. The three batch routes share this, and each names
+ * its own form in the refusal.
+ */
+async function formOrRefusal(
+  req: IncomingMessage,
+  res: ServerResponse,
+  theme: Theme,
+  what: string,
+  /**
+   * Where a reader goes next. A refusal is a page like any other, and one
+   * that names no way on leaves a reviewer at a dead end with a form they
+   * cannot resend: the browser's own back button returns to a form whose
+   * POST they have already made.
+   */
+  link: { readonly href: string; readonly text: string },
+): Promise<URLSearchParams | null> {
+  const from = req.socket.remoteAddress ?? null;
+  try {
+    return await readForm(req);
+  } catch (error) {
+    if (!(error instanceof OversizedForm)) {
+      if (req.destroyed || req.readableAborted) {
+        console.error(logLine({
+          event: 'console_refused',
+          reason: 'client_aborted',
+          host: req.headers.host ?? null,
+          from,
+        }));
+        return null;
+      }
+      throw error;
+    }
+    // Refused, not failed. The stream is destroyed rather than drained,
+    // because reading the rest of a body past the bound is work done for
+    // whoever sent it.
+    req.destroy();
+    send(res, 413, bare(
+      'Refused',
+      // Not "nothing was sent": this route reads a form before it knows
+      // which act it was for, and an undo page that said "sent" would state
+      // the opposite of what it was asked to do.
+      `The ${what} form is larger than this console accepts. Nothing was changed.`,
+      theme,
+      link,
+    ));
+    return null;
+  }
+}
+
+/**
+ * The cases a confirmation names, each with the reply the approval would send
+ * (DEC-51).
+ *
+ * A refusal is a reason code and a sentence, so the route draws what this
+ * console knows rather than what a request said. A case whose reply the page
+ * cannot read is left out of the batch rather than guessed at: a row nothing
+ * can show is a row nobody read.
+ */
+async function confirmCases(
+  deps: ConsoleDeps,
+  picked: readonly string[],
+  options: ConsoleOptions,
+  url: URL,
+): Promise<{
+  refusal: string | null;
+  says: string;
+  cases: ConfirmCase[];
+  /** The picked cases the batch left out, each with the reason it says. */
+  dropped: { runId: string; says: string }[];
+  /** How many were left out because they could not be read at all. */
+  unread: number;
+}> {
+  if (picked.length === 0) {
+    return {
+      refusal: 'no_cases',
+      says: 'That request names no case, so nothing was sent. Go back to the queue and pick one.',
+      cases: [],
+      dropped: [],
+      unread: 0,
+    };
+  }
+  if (picked.length > MAX_BATCH) {
+    return {
+      refusal: 'too_many_cases',
+      says: `This console confirms at most ${MAX_BATCH} cases at once, and that request names`
+        + ` ${picked.length}. Nothing was sent. Confirm them in smaller groups.`,
+      cases: [],
+      dropped: [],
+      unread: 0,
+    };
+  }
+  if (!picked.every(isRunId)) {
+    return {
+      refusal: 'not_a_run_id',
+      says: 'One of those cases is not a run id, so nothing was sent.'
+        + ' Go back to the queue and pick the cases again.',
+      cases: [],
+      dropped: [],
+      unread: 0,
+    };
+  }
+  const cases: ConfirmCase[] = [];
+  const dropped: { runId: string; says: string }[] = [];
+  let unread = 0;
+  for (const runId of picked) {
+    try {
+      const run = await deps.readRun(runId);
+      if (run === null) {
+        dropped.push({ runId, says: 'the ledger does not hold this case, so it is not in the batch.' });
+        continue;
+      }
+      const text = replyTextOf(run, options.ledgerReply);
+      if (text === null) {
+        dropped.push({
+          runId,
+          says: 'this case holds no reply this console can send, so it is not in the batch.',
+        });
+        continue;
+      }
+      cases.push({ runId, ticketId: run.ticketId, shown: replyDigest(text), text });
+    } catch (error) {
+      // The queue's own rule: one case that cannot be read does not take the
+      // batch away. The case is named on the page, and the log line under its
+      // run id holds the fault.
+      unread += 1;
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({
+        event: 'console_confirm_unread', tag, runId,
+        host: logged(url.host), error: describeFault(error),
+      }));
+      dropped.push({
+        runId,
+        says: 'this case could not be read, so it is not in the batch.'
+          + ' The console log holds the fault under this run id.',
+      });
+    }
+  }
+  if (cases.length === 0) {
+    // A fault is not a fact about the case. Every case that failed to read is
+    // a fault, and saying it holds no reply would state something this
+    // console did not establish.
+    return {
+      refusal: 'no_cases',
+      says: unread === picked.length
+        ? 'None of those cases could be read, so nothing was sent.'
+          + ' The console log holds the faults; open the queue and try again.'
+        : 'None of those cases holds a reply this console can send, so nothing was sent.'
+          + ' Open the queue and pick a case that does.',
+      cases: [],
+      dropped,
+      unread,
+    };
+  }
+  return { refusal: null, says: '', cases, dropped, unread };
+}
+
+/**
+ * What a batch's approved cases still hold, as this page may draw it (DEC-51).
+ *
+ * The shortest window, because one undo button answers for every case in the
+ * batch: the window it may promise is the one that closes first.
+ *
+ * `unread` is the log tag of a hold read that failed, and it is its own
+ * answer rather than a zero. Zero is a fact — no case is held — and it draws
+ * "there is nothing to undo". A read that failed established nothing, so a
+ * page that drew that sentence would be stating what it did not read, and
+ * withholding the undo from the one case whose window it could not see.
+ */
+async function remainingHolds(
+  deps: ConsoleDeps,
+  outcomes: readonly BatchOutcome<ConsoleApproveOutcome['outcome']>[],
+): Promise<{ remainingMs: number | null; holdUnread: string | null; delivered: number }> {
+  let shortest: number | null = null;
+  let holdUnread: string | null = null;
+  let delivered = 0;
+  for (const one of outcomes) {
+    if (isFault(one) || one.outcome !== 'approved') continue;
+    try {
+      const hold = await deps.readApprovalHold(one.runId);
+      if (hold?.status === 'sent') delivered += 1;
+      if (hold === null || !hold.held) continue;
+      shortest = shortest === null ? hold.remainingMs : Math.min(shortest, hold.remainingMs);
+    } catch (error) {
+      if (holdUnread === null) holdUnread = randomUUID().slice(0, 8);
+      console.error(logLine({
+        event: 'console_sendhold_unread', tag: holdUnread, runId: one.runId,
+        error: describeFault(error),
+      }));
+    }
+  }
+  return { remainingMs: shortest, holdUnread, delivered };
+}
+
+/**
+ * Each run as an outcome's fit check reads it (DEC-51).
+ *
+ * A batch's refusal sentence names the run's state, so the page has to read
+ * it. A fault reading one is that run's absence from the map: its sentence
+ * falls back to the fixed wording rather than claiming a state nobody read.
+ */
+async function outcomeRuns(
+  deps: ConsoleDeps,
+  runIds: readonly string[],
+): Promise<{ runs: Map<string, OutcomeRun>; unread: ReadonlySet<string> }> {
+  const runs = new Map<string, OutcomeRun>();
+  const unread = new Set<string>();
+  for (const runId of runIds) {
+    try {
+      const run = await deps.readRun(runId);
+      if (run === null) continue;
+      runs.set(runId, {
+        state: run.state,
+        approved: run.approved,
+        savedReply: run.request?.savedReplyText != null,
+        ledgerReply: false,
+      });
+    } catch (error) {
+      // Named as unread rather than left out: an outcome drawn against no run
+      // fails its fit check and reads as an outcome this console does not
+      // know, which is a different fact from a case it could not read.
+      unread.add(runId);
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({
+        event: 'console_outcome_run_unread', tag, runId, error: describeFault(error),
+      }));
+    }
+  }
+  return { runs, unread };
+}
+
 class OversizedForm extends Error {
   constructor() {
     super('the approval form is larger than 64 KiB');
@@ -544,6 +811,14 @@ export interface ConsoleOptions {
    * send the ledger's text, and the two must answer about the same adapter.
    */
   readonly ledgerReply: boolean;
+  /**
+   * DEC-51: the milliseconds a batch's sends are held before the relay may
+   * post them. Zero is allowed and means the send goes at once.
+   *
+   * Passed in rather than read here, for the reason `states` is: this module
+   * reaches nothing, and the entry point reads the environment once.
+   */
+  readonly sendHoldMs: number;
 }
 
 export function createConsole(
@@ -931,6 +1206,23 @@ async function route(
       console.error(logLine({ event: 'console_hold_unread', tag, runId, error: describeFault(error) }));
       hold = { kind: 'unread', tag };
     }
+    // DEC-51: the way back from a single approval, which holds its send the
+    // same way the batch's does. Read only where a window can exist: a run
+    // still waiting has none, and this page is drawn in every state. A fault
+    // is its own answer, as the take hold's is — a page that read nothing
+    // must not draw the case as one with no way back.
+    let sendHold: CaseSendHoldRead = { kind: 'read', hold: null };
+    if (options.ledgerReply && run.state !== 'awaiting_approval') {
+      try {
+        sendHold = { kind: 'read', hold: await deps.readApprovalHold(runId) };
+      } catch (error) {
+        const tag = randomUUID().slice(0, 8);
+        console.error(logLine({
+          event: 'console_sendhold_unread', tag, runId, error: describeFault(error),
+        }));
+        sendHold = { kind: 'unread', tag };
+      }
+    }
     // DEC-44: the helpdesk's copy is read only for the refusal that names it,
     // so an ordinary case reads nothing back. A fault here does not take the
     // case away: the refusal is still drawn, and the copy with a tag.
@@ -956,7 +1248,7 @@ async function route(
       `Case ${run.ticketId}`,
       renderCase({ ...run, customer }, {
         outcome, edit, why, rule, product, readBack: options.readBack, hold, taken, handoverTo,
-        ledgerReply: options.ledgerReply, writing, copy,
+        ledgerReply: options.ledgerReply, writing, copy, sendHold,
       }),
       { ...shell(`/case/${runId}`), back: caseHref(runId, rule, product) },
     ));
@@ -1043,7 +1335,12 @@ async function route(
         throw error;
       }
       req.destroy();
-      send(res, 413, bare('Refused', 'The form is larger than this console accepts.', theme));
+      send(res, 413, bare(
+        'Refused',
+        'The form is larger than this console accepts. Nothing was changed.',
+        theme,
+        backToQueue(url),
+      ));
       return;
     }
     const runId = (form.get('runId') ?? '').trim();
@@ -1170,7 +1467,12 @@ async function route(
       // because reading the rest of a body already past the bound is work
       // done on behalf of whoever sent it.
       req.destroy();
-      send(res, 413, bare('Refused', 'The approval form is larger than this console accepts.', theme));
+      send(res, 413, bare(
+        'Refused',
+        'The approval form is larger than this console accepts. Nothing was sent.',
+        theme,
+        backToQueue(url),
+      ));
       return;
     }
     const runId = (form.get('runId') ?? '').trim();
@@ -1319,6 +1621,200 @@ async function route(
     return;
   }
 
+  // DEC-51: the batch a reviewer confirms from the queue. The queue's clean
+  // group posts the cases it has picked, and this draws each reply in full
+  // before anything sends.
+  if (req.method === 'POST' && path === '/confirm') {
+    const from = req.socket.remoteAddress ?? null;
+    const form = await formOrRefusal(req, res, theme, 'confirmation', backToQueue(url));
+    if (form === null) return;
+    const picked = form.getAll('runId').map((value) => value.trim());
+    const chosen = await confirmCases(deps, picked, options, url);
+    if (chosen.refusal !== null) {
+      console.error(logLine({
+        event: 'console_refused', reason: chosen.refusal, runId: null,
+        host: req.headers.host ?? null, from,
+      }));
+      send(res, 400, bare('Refused', chosen.says, theme, backToQueue(url)));
+      return;
+    }
+    send(res, 200, page(
+      'Confirm replies',
+      renderConfirm(chosen.cases, {
+        rule: url.searchParams.get('rule'),
+        product: url.searchParams.get('product'),
+        // The effective hold: a reply on the DEC-40 draft path is never held,
+        // so the screen must not promise a window there.
+        holdMs: options.ledgerReply ? options.sendHoldMs : 0,
+        dropped: chosen.dropped,
+      }),
+      { ...shell('/'), back: queueHref(url.searchParams.get('rule'), url.searchParams.get('product')) },
+    ));
+    return;
+  }
+
+  // The batch itself: every picked case goes through the one approval this
+  // console has, each with its own digest, so a case whose reply moved since
+  // the page was drawn refuses while its neighbours send.
+  if (req.method === 'POST' && path === '/confirm/apply') {
+    const from = req.socket.remoteAddress ?? null;
+    const form = await formOrRefusal(req, res, theme, 'confirmation', backToQueue(url));
+    if (form === null) return;
+    const runIds = form.getAll('runId').map((value) => value.trim());
+    const digests = form.getAll('shown').map((value) => value.trim());
+    if (runIds.length === 0 || runIds.length !== digests.length
+        || !runIds.every(isRunId) || !digests.every((value) => SHOWN_DIGEST.test(value))) {
+      console.error(logLine({
+        event: 'console_refused', reason: 'not_a_confirmable_batch', runId: null,
+        runs: runIds.length, digests: digests.length,
+        host: req.headers.host ?? null, from,
+      }));
+      send(res, 400, bare(
+        'Refused',
+        'That is not a batch this console confirms: every case needs its own run id and the'
+          + ' reply digest the page drew. Nothing was sent.',
+        theme,
+        backToQueue(url),
+      ));
+      return;
+    }
+    if (runIds.length > MAX_BATCH) {
+      send(res, 400, bare(
+        'Refused',
+        `This console confirms at most ${MAX_BATCH} cases at once, and that request carries`
+          + ` ${runIds.length}. Nothing was sent.`,
+        theme,
+        backToQueue(url),
+      ));
+      return;
+    }
+    const cases = runIds.map((runId, index) => ({ runId, shown: digests[index]! }));
+    let outcomes;
+    try {
+      outcomes = await confirmBatch(
+        {
+          approve: (runId, approvedBy, shown) => deps.approve(runId, approvedBy, shown),
+          undo: deps.undo,
+        },
+        cases,
+        reviewer,
+      );
+    } catch (error) {
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({
+        event: 'console_confirm_failed', tag, runs: runIds.length,
+        reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+        host: req.headers.host ?? null, from, error: describeFault(error),
+      }));
+      send(res, 500, bare(
+        'Error',
+        `Something failed during the batch, and some of it may have committed.`
+          + ` The console log names it ${tag}.`,
+        theme,
+        { href: queueHref(url.searchParams.get('rule'), url.searchParams.get('product')), text: 'Open the queue to see the cases.' },
+      ));
+      return;
+    }
+    // Every fault is its own line, naming the case: the panel says a case
+    // failed and this is where a reader finds which and why.
+    for (const one of outcomes.filter(isFault)) {
+      console.error(logLine({
+        event: 'console_confirm_case_failed', runId: one.runId,
+        reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+        host: req.headers.host ?? null, from, error: one.fault,
+      }));
+    }
+    console.error(logLine({
+      event: 'console_confirmed',
+      runs: runIds.length,
+      sent: outcomes.filter((one) => !isFault(one) && one.outcome === 'approved').length,
+      reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+      host: req.headers.host ?? null, from,
+    }));
+    const read = await outcomeRuns(deps, runIds);
+    // DEC-51: the window that is left, not the period that was configured. A
+    // slow batch outlives the period, and a page counting twelve seconds down
+    // over a window the ledger has closed promises time nobody has.
+    send(res, 200, page(
+      'Replies sent',
+      renderConfirmResult(outcomes, {
+        rule: url.searchParams.get('rule'),
+        product: url.searchParams.get('product'),
+        holdMs: options.ledgerReply ? options.sendHoldMs : 0,
+        ...await remainingHolds(deps, outcomes),
+        runs: read.runs,
+        unread: read.unread,
+      }),
+      { ...shell('/'), back: queueHref(url.searchParams.get('rule'), url.searchParams.get('product')) },
+    ));
+    return;
+  }
+
+  // The way back inside the hold (DEC-51). One case that can no longer be
+  // undone does not stop the rest, so the answer is a list.
+  if (req.method === 'POST' && path === '/undo') {
+    const from = req.socket.remoteAddress ?? null;
+    const form = await formOrRefusal(req, res, theme, 'undo', backToQueue(url));
+    if (form === null) return;
+    const runIds = form.getAll('runId').map((value) => value.trim());
+    if (runIds.length === 0 || runIds.length > MAX_BATCH || !runIds.every(isRunId)) {
+      console.error(logLine({
+        event: 'console_refused', reason: 'not_an_undoable_batch', runId: null,
+        runs: runIds.length, host: req.headers.host ?? null, from,
+      }));
+      send(res, 400, bare(
+        'Refused',
+        'That is not a batch this console undoes: every case needs its own run id.'
+          + ' Nothing was undone.',
+        theme,
+        backToQueue(url),
+      ));
+      return;
+    }
+    let outcomes;
+    try {
+      outcomes = await undoBatch({ undo: deps.undo }, runIds, reviewer);
+    } catch (error) {
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({
+        event: 'console_undo_failed', tag, runs: runIds.length,
+        reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+        host: req.headers.host ?? null, from, error: describeFault(error),
+      }));
+      send(res, 500, bare(
+        'Error',
+        `Something failed during the undo, and some of it may have committed.`
+          + ` The console log names it ${tag}.`,
+        theme,
+        { href: queueHref(url.searchParams.get('rule'), url.searchParams.get('product')), text: 'Open the queue to see the cases.' },
+      ));
+      return;
+    }
+    for (const one of outcomes.filter(isFault)) {
+      console.error(logLine({
+        event: 'console_undo_case_failed', runId: one.runId,
+        reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+        host: req.headers.host ?? null, from, error: one.fault,
+      }));
+    }
+    console.error(logLine({
+      event: 'console_undone',
+      runs: runIds.length,
+      undone: outcomes.filter((one) => !isFault(one) && one.outcome.outcome === 'undone').length,
+      reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 200, page(
+      'Undone',
+      renderUndoResult(outcomes, {
+        rule: url.searchParams.get('rule'),
+        product: url.searchParams.get('product'),
+      }),
+      { ...shell('/'), back: queueHref(url.searchParams.get('rule'), url.searchParams.get('product')) },
+    ));
+    return;
+  }
+
   // A path no rail link names. A method this console does not serve on a
   // surface's own path, such as a POST to `/`, is not that surface, and the
   // rail must not mark it as the page being read.
@@ -1381,7 +1877,12 @@ async function editRoute(
       throw error;
     }
     req.destroy();
-    send(res, 413, bare('Refused', 'The edit is larger than this console accepts.', theme));
+    send(res, 413, bare(
+      'Refused',
+      'The edit is larger than this console accepts. Nothing was saved.',
+      theme,
+      backToQueue(url),
+    ));
     return;
   }
 

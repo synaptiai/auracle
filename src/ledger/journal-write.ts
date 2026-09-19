@@ -144,9 +144,32 @@ function values(row: JournalRow): unknown[] {
 export async function journalStep(
   db: JournalDb,
   row: JournalRow,
-  options: { ifAbsent?: boolean } = {},
+  options: { ifAbsent?: boolean; replace?: boolean } = {},
 ): Promise<void> {
-  await db.query(journalInsertStatement(options.ifAbsent ?? false), values(row));
+  await db.query(journalStatement(options), values(row));
+}
+
+/**
+ * The statement one `journalStep` call runs, from its option.
+ *
+ * `replace` writes the row the step already has, and it exists for one
+ * writer: the undo (DEC-51). A reviewer confirms, undoes, confirms again, and
+ * undoes again, and the row has to name the latest person who took a send
+ * back. The columns the key does not hold are the outcome's, so replacing
+ * them changes the record and never the step's identity.
+ *
+ * The relay keeps `ifAbsent` and not this: an escalation's reason is the
+ * record of what happened, and a later scan must not rewrite it.
+ */
+function journalStatement(options: { ifAbsent?: boolean; replace?: boolean }): string {
+  if (options.replace === true) {
+    return journalInsertStatement()
+      + ' ON CONFLICT (run_id, step_id) DO UPDATE SET'
+      + ' status = EXCLUDED.status, result = EXCLUDED.result,'
+      + ' prompt_ver = EXCLUDED.prompt_ver, model_ver = EXCLUDED.model_ver,'
+      + ' cost_micros = EXCLUDED.cost_micros';
+  }
+  return journalInsertStatement(options.ifAbsent ?? false);
 }
 
 /**

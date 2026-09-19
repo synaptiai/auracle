@@ -1,5 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 
+import { errorMessage } from '../errors.js';
+
 import {
   LedgerClockError,
   assertFinishClock,
@@ -80,6 +82,23 @@ export interface FencedOutboxInput {
    * edited reply would then derive a second key and send twice.
    */
   reply?: unknown;
+  /**
+   * DEC-51: how long this record is held before it may be sent, in
+   * milliseconds. Absent is no hold: the draft path, the command line, and
+   * every record written before this column existed. The relay skips a
+   * pending row whose `not_before` is in the future, and an undo inside that
+   * window deletes the row.
+   *
+   * A duration and not a moment, because the moment is the ledger's. Both
+   * readers compare against `clock_timestamp()`, and a caller's own clock
+   * would move the window with its host's skew: a console a few seconds
+   * behind the ledger would promise twelve seconds and hold none.
+   *
+   * Its own field and not part of `payload`, because the hold is a timing
+   * rather than action semantics (DEC-24): a held send and an immediate send
+   * of one action must derive one key.
+   */
+  holdMs?: number;
 }
 
 /**
@@ -123,11 +142,23 @@ export type FencedInsertResult =
  * one error here a caller matches on, so a masked rollback failure would
  * turn a caller bug into an unclassifiable connection error.
  */
-async function rollbackQuietly(client: PoolClient): Promise<void> {
+async function rollbackQuietly(client: PoolClient): Promise<unknown | null> {
   try {
     await client.query('ROLLBACK');
-  } catch {
-    // The original error is the one that matters.
+    return null;
+  } catch (rollbackError: unknown) {
+    // The original error is the one the caller throws, and it is not
+    // replaced here. The rollback's own error is returned, because a
+    // connection whose rollback failed has a transaction state nobody read,
+    // and the caller destroys it rather than returning it to the pool.
+    console.error(
+      JSON.stringify({
+        event: 'rollback_failed',
+        at: new Date().toISOString(),
+        error: errorMessage(rollbackError),
+      }),
+    );
+    return rollbackError;
   }
 }
 
@@ -203,6 +234,9 @@ export async function fencedInsert(
   }
 
   const client = await pool.connect();
+  // Tracked here rather than by the client, which exposes no such state: a
+  // release with an error destroys the connection, and releasing twice throws.
+  let rollbackError: unknown | null = null;
   try {
     await client.query('BEGIN');
     try {
@@ -283,8 +317,12 @@ export async function fencedInsert(
 
     const inserted = await client.query(
         `INSERT INTO outbox (
-           run_id, step_id, idem_key, epoch, action_class, delivery, payload, reply, status
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
+           run_id, step_id, idem_key, epoch, action_class, delivery, payload, reply,
+           not_before, status
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+                   CASE WHEN $9::bigint IS NULL THEN NULL
+                        ELSE clock_timestamp() + ($9::bigint * interval '1 millisecond') END,
+                   'pending')
          ON CONFLICT (idem_key) DO NOTHING`,
         [
           run.runId,
@@ -295,6 +333,7 @@ export async function fencedInsert(
           outbox.delivery,
           JSON.stringify(outbox.payload),
           outbox.reply === undefined ? null : JSON.stringify(outbox.reply),
+          outbox.holdMs ?? null,
         ],
       );
 
@@ -337,11 +376,15 @@ export async function fencedInsert(
       await client.query('COMMIT');
       return { outcome: 'accepted' };
     } catch (error) {
-      await rollbackQuietly(client);
+      rollbackError = await rollbackQuietly(client);
       throw error;
     }
   } finally {
-    client.release();
+    // A connection whose rollback failed is a connection whose transaction
+    // state nobody read. It is destroyed rather than returned to the pool,
+    // where the next request would inherit an aborted transaction.
+    if (rollbackError === null) client.release();
+    else client.release(rollbackError as Error);
   }
 }
 
@@ -437,6 +480,9 @@ export async function fencedTransition(
   }
 
   const client = await pool.connect();
+  // Tracked here rather than by the client, which exposes no such state: a
+  // release with an error destroys the connection, and releasing twice throws.
+  let rollbackError: unknown | null = null;
   try {
     await client.query('BEGIN');
     try {
@@ -518,7 +564,10 @@ export async function fencedTransition(
       }
 
       // V2 open item 7: a terminal state never changes again, so its commit
-      // also stamps the finish time. One transaction, one truth.
+      // also stamps the finish time. One transaction, one truth. DEC-51 is
+      // the one exception, and it is not this write: an undo inside a held
+      // send moves a resolved run back to `awaiting_approval` and clears the
+      // finish, in `src/approval/undo.ts`, where the hold is read.
       if (TERMINAL_RUN_STATES.has(t.state)) {
         await client.query(
           'UPDATE run SET state = $2, cost_micros = $3, steps_used = $4,'
@@ -541,8 +590,12 @@ export async function fencedTransition(
       if (t.outbox !== undefined) {
         const inserted = await client.query(
           `INSERT INTO outbox (
-             run_id, step_id, idem_key, epoch, action_class, delivery, payload, reply, status
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
+             run_id, step_id, idem_key, epoch, action_class, delivery, payload, reply,
+             not_before, status
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+                     CASE WHEN $9::bigint IS NULL THEN NULL
+                          ELSE clock_timestamp() + ($9::bigint * interval '1 millisecond') END,
+                     'pending')
            ON CONFLICT (idem_key) DO NOTHING`,
           [
             t.runId,
@@ -553,6 +606,7 @@ export async function fencedTransition(
             t.outbox.delivery,
             JSON.stringify(t.outbox.payload),
             t.outbox.reply === undefined ? null : JSON.stringify(t.outbox.reply),
+            t.outbox.holdMs ?? null,
           ],
         );
         if ((inserted.rowCount ?? 0) === 0) {
@@ -577,10 +631,14 @@ export async function fencedTransition(
       await client.query('COMMIT');
       return { outcome: 'accepted' };
     } catch (error) {
-      await rollbackQuietly(client);
+      rollbackError = await rollbackQuietly(client);
       throw error;
     }
   } finally {
-    client.release();
+    // A connection whose rollback failed is a connection whose transaction
+    // state nobody read. It is destroyed rather than returned to the pool,
+    // where the next request would inherit an aborted transaction.
+    if (rollbackError === null) client.release();
+    else client.release(rollbackError as Error);
   }
 }

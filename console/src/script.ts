@@ -149,5 +149,49 @@ export const CONSOLE_SCRIPT = `
     rows[at].focus();
     rows[at].scrollIntoView({ block: 'nearest' });
   });
+
+  // DEC-51: the undo button counts down the hold the ledger already holds.
+  // The count is display only. The window is checked on the server, after the
+  // row lock, so a frozen tab, a throttled timer or a moved clock on this
+  // machine changes nothing that matters.
+  var undos = document.querySelectorAll('[data-undo-seconds]');
+  for (var u = 0; u < undos.length; u += 1) {
+    (function (button) {
+      var left = parseInt(button.getAttribute('data-undo-seconds'), 10);
+      if (isNaN(left)) return;
+      var note = button.parentNode === null
+        ? null
+        : button.parentNode.querySelector('[data-undo-note]');
+      var tick = window.setInterval(function () {
+        left -= 1;
+        if (left > 0) {
+          button.textContent = 'Undo · ' + left + 's';
+          return;
+        }
+        window.clearInterval(tick);
+        button.disabled = true;
+        button.textContent = 'Undo';
+        if (note !== null) {
+          note.textContent = 'The window has passed, so the relay may post these replies now.';
+          note.removeAttribute('hidden');
+        }
+      }, 1000);
+      button.addEventListener('click', function () { window.clearInterval(tick); });
+    })(undos[u]);
+  }
+
+  // The 'a' key activates the batch confirm, which is the one control on the
+  // queue that acts on several cases at once. It clicks the button rather
+  // than posting anything itself: the button carries the checked rows, and a
+  // second copy of that rule would be a second way to send.
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'a' || event.metaKey || event.ctrlKey || event.altKey) return;
+    var target = event.target;
+    if (target !== null && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+    var confirm = document.querySelector('[data-batch-confirm]');
+    if (confirm === null) return;
+    event.preventDefault();
+    confirm.click();
+  });
 })();
 `;

@@ -395,6 +395,7 @@ describe('relay daemon scan-level resilience', () => {
       action_class: 'customer_reply',
       payload: { draftExternalId: 'draft-bad' },
       reply: null,
+      not_before: null,
     };
     const goodRow: PendingOutboxRow = {
       run_id: goodRun,
@@ -406,19 +407,44 @@ describe('relay daemon scan-level resilience', () => {
       action_class: 'customer_reply',
       payload: { draftExternalId: 'draft-good' },
       reply: null,
+      not_before: null,
     };
 
     // Any query bound to the bad run's id fails; everything else succeeds.
+    //
+    // DEC-51: the send runs inside a transaction, so this fake answers a
+    // client's queries too. The record re-read (the outbox select that names
+    // a run) answers the row the scan handed in: a stub that returned nothing
+    // would model an undone record rather than this one.
+    const scriptedQuery = async (
+      text: string,
+      values?: unknown[],
+    ): Promise<{ rows: unknown[] }> => {
+      if (values !== undefined && values.includes(badRun)) {
+        throw new Error('ledger write failed for the bad record');
+      }
+      if (text.includes('FROM outbox') && values !== undefined) {
+        // The send's re-read, under the lock. It answers the row itself,
+        // because the send compares what it locked against what it scanned:
+        // a stub that answered a bare status would read as a different row.
+        const row = [badRow, goodRow].find(
+          (one) => one.run_id === values[0] && one.step_id === values[1],
+        );
+        // `status` is not on a scan row: the scan's own WHERE clause is what
+        // makes it pending, and the locked re-read has to answer it.
+        return { rows: row === undefined ? [] : [{ ...row, status: 'pending', held: false }] };
+      }
+      if (values === undefined && text.includes('FROM outbox')) {
+        return { rows: [badRow, goodRow] }; // the pending scan
+      }
+      return { rows: [] }; // epoch lookups and status updates
+    };
     const scriptedPool = {
-      query: async (text: string, values?: unknown[]): Promise<{ rows: unknown[] }> => {
-        if (values !== undefined && values.includes(badRun)) {
-          throw new Error('ledger write failed for the bad record');
-        }
-        if (values === undefined && text.includes('FROM outbox')) {
-          return { rows: [badRow, goodRow] }; // the pending scan
-        }
-        return { rows: [] }; // epoch lookups and status updates
-      },
+      query: scriptedQuery,
+      connect: async (): Promise<unknown> => ({
+        query: scriptedQuery,
+        release: (): void => undefined,
+      }),
     } as unknown as Pool;
 
     const adapter = new ScriptedEgress(

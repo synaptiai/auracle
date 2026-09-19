@@ -17,7 +17,7 @@
 // names every write it makes.
 import type { Pool } from 'pg';
 import type {
-  ApproveOptions, ApproveOutcome, DraftReadBack, SaveOutcome, SaveReplyOptions,
+  ApproveOptions, ApproveOutcome, DraftReadBack, SaveOutcome, SaveReplyOptions, UndoOutcome,
 } from 'auracle/ledger-read';
 
 import { ReadBackFailed } from './read-back.js';
@@ -71,6 +71,15 @@ export interface ApproveDeps {
    * every adapter that keeps the DEC-40 path.
    */
   readonly ledgerReply: boolean;
+  /**
+   * DEC-51: the period this console's sends wait before the relay may post
+   * them. Absent is no hold, which is what the command line does.
+   *
+   * It reaches the approval as an option and not from the environment again:
+   * the console read `CONSOLE_SEND_HOLD_MS` once at startup, and a second read
+   * here could disagree with the period the pages promise.
+   */
+  readonly sendHoldMs?: number;
 }
 
 /**
@@ -206,6 +215,8 @@ export async function approveFromConsole(
     ...(request.copyAcknowledged === undefined
       ? {}
       : { copyAcknowledged: request.copyAcknowledged }),
+    // DEC-51: the hold every console send waits, so a batch can be undone.
+    ...(deps.sendHoldMs === undefined ? {} : { sendHoldMs: deps.sendHoldMs }),
     ...(deps.readDraft === undefined ? {} : { readDraft: deps.readDraft }),
   };
   try {
@@ -233,6 +244,8 @@ export function approvalFor(deps: {
   readonly approveRun: ApproveDeps['approveRun'];
   readonly readBack: ConsoleReadBack | null;
   readonly ledgerReply: boolean;
+  /** DEC-51: the hold each send this console makes waits. */
+  readonly sendHoldMs: number;
   readonly log: (record: Readonly<Record<string, unknown>>) => void;
 }): (
   runId: string,
@@ -246,6 +259,7 @@ export function approvalFor(deps: {
         pool: deps.pool,
         approveRun: deps.approveRun,
         ledgerReply: deps.ledgerReply,
+        sendHoldMs: deps.sendHoldMs,
         ...(deps.readBack === null ? {} : { readDraft: deps.readBack.readDraft }),
         onReadBackFailed: (failedRun, fault, draftExternalId) => {
           deps.log({ event: 'console_read_back_failed', runId: failedRun, draftExternalId, fault });
@@ -260,6 +274,25 @@ export function approvalFor(deps: {
     );
     return outcome.outcome;
   };
+}
+
+/**
+ * The undo the console's entry point hands its server (DEC-51).
+ *
+ * The same shape as `saveFor` and for the same reason: the entry point owns
+ * the pool, and the server takes functions so it can be driven without one.
+ * The window, the row lock and the refusal are the core's; this adds nothing
+ * but the pool.
+ */
+export function undoFor(deps: {
+  readonly pool: Pool;
+  readonly undoApproval: (
+    pool: Pool,
+    runId: string,
+    options: { readonly reviewer: string },
+  ) => Promise<UndoOutcome>;
+}): (runId: string, reviewer: string) => Promise<UndoOutcome> {
+  return async (runId, reviewer) => deps.undoApproval(deps.pool, runId, { reviewer });
 }
 
 /**

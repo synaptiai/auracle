@@ -150,6 +150,9 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   LEDGER_STATES: 'read',
   listEscalations: 'read',
   listRuns: 'read',
+  // DEC-51: whether an approval's send is still held, and for how long. A
+  // read of the record the approval wrote, and no statement.
+  readApprovalHold: 'read',
   // DEC-30: the class of egress fault a retry cannot clear, read to tell the
   // two read-back faults apart. A class, and no statement.
   PermanentEgressError: 'read',
@@ -178,6 +181,9 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   saveReply: 'write',
   selectReadBackAdapter: 'read',
   takeHold: 'write',
+  // DEC-51: the way back inside a held send. It removes the record, the
+  // approver, the distance, the approved text and the finish time.
+  undoApproval: 'write',
   turnAnsweredBy: 'read',
 };
 

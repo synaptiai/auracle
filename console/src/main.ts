@@ -35,6 +35,7 @@ import {
 } from 'auracle/ledger-read';
 import { productCatalogueFromEnv } from 'auracle/ledger-read';
 import { requireHoldLapse } from './hold-lapse.js';
+import { requireSendHold } from './send-hold.js';
 import { reviewerResolver } from './reviewer.js';
 import { readDays } from 'auracle/ledger-read';
 import { evaluateMetric } from 'auracle/domain';
@@ -46,14 +47,14 @@ import { LEDGER_STATES, listEscalations, listRuns, readQueueToday, readRun } fro
 import { readRunJournal } from 'auracle/ledger-read';
 import { conversationOfRun, readConversation, turnAnsweredBy } from 'auracle/ledger-read';
 import { readDocument } from 'auracle/ledger-read';
-import { saveReply } from 'auracle/ledger-read';
+import { readApprovalHold, saveReply, undoApproval } from 'auracle/ledger-read';
 import { readLatency } from 'auracle/ledger-read';
 import { humanMs } from 'auracle/format';
 // Every log line this process writes, so a value from a request cannot break
 // one line into two.
 import { logLine } from 'auracle/format';
 
-import { approvalFor, saveFor } from './approve.js';
+import { approvalFor, saveFor, undoFor } from './approve.js';
 import { developmentReviewer } from './dev-reviewer.js';
 import { readBackFor } from './read-back.js';
 import { SHUTDOWN_GRACE_MS } from './shutdown.js';
@@ -279,6 +280,10 @@ async function main(): Promise<void> {
   const readBack = readBackFor(process.env, selectReadBackAdapter, log);
   // DEC-46: the period a case counts as held after its last take.
   const lapseMs = requireHoldLapse(process.env['CONSOLE_HOLD_LAPSE_MS']);
+  // DEC-51: the period a batch's sends wait before the relay may post them.
+  // Read here, so a value the console refuses stops it before it opens the
+  // pool rather than on the first confirm.
+  const sendHoldMs = requireSendHold(process.env['CONSOLE_SEND_HOLD_MS']);
   const connectionString = requireDbUrl('the operator console');
 
   const pool = new Pool(consolePoolConfig(connectionString));
@@ -527,6 +532,9 @@ async function main(): Promise<void> {
     readCopy: async (draftExternalId) =>
       readBack === null ? null : (await readBack.readDraft.readDraft(draftExternalId))?.body ?? null,
     saveReply: saveFor({ pool, saveReply }),
+    undo: undoFor({ pool, undoApproval }),
+    // DEC-51: the read the pages use to count the window that is left.
+    readApprovalHold: async (runId: string) => readApprovalHold(pool, runId),
 
     // The page says a read-back failed and nothing was sent. The fault is
     // logged beside the run and the draft it stopped.
@@ -535,6 +543,9 @@ async function main(): Promise<void> {
       // DEC-44: read off the adapter, so the editor is offered exactly where
       // the approval will send the text the ledger holds.
       ledgerReply: readBack?.supportsLedgerReply ?? false,
+      // DEC-51: the hold every send this console makes waits, so a batch can
+      // be undone inside it.
+      sendHoldMs,
     }),
 
     // DEC-45: every request, read or write, is resolved against the roster
@@ -583,6 +594,7 @@ async function main(): Promise<void> {
     // DEC-44: the page draws the editor from this, and the approval sends
     // from the same declaration.
     ledgerReply: readBack?.supportsLedgerReply ?? false,
+    sendHoldMs,
   });
 
   // `listen` reports a bind failure by event, after `main`'s promise has

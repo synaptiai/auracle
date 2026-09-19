@@ -29,6 +29,9 @@ import type { PolicyReason } from 'auracle/policy';
 import { replyDigest } from 'auracle/ledger-read';
 import type { OutboxStatus } from 'auracle/ledger-read';
 import type { ConsoleApproveOutcome, ConsoleSaveOutcome } from './approve.js';
+import { isFault } from './confirm.js';
+import type { BatchOutcome } from './confirm.js';
+import type { ApprovalHold, UndoOutcome } from 'auracle/ledger-read';
 import type { HandoverOutcome, ReleaseOutcome, TakeOutcome } from 'auracle/ledger-read';
 import { CONSOLE_SCRIPT } from './script.js';
 import { groupQueue } from './queue.js';
@@ -1704,7 +1707,14 @@ export function renderApprovals(
       ? ''
       : `held by ${escapeHtml(hold.reviewer)} · ${escapeHtml(ageSays(hold.takenAt))} · `;
   };
-  const row = (run: RunDetail): string => [
+  const row = (run: RunDetail, pickable = false): string => [
+    // DEC-51: the batch picks cases from this group. The box rides beside the
+    // anchor rather than inside it, because a checkbox inside a link is not a
+    // checkbox a browser draws.
+    pickable
+      ? `<div class="qrow"><input type="checkbox" name="runId" value="${escapeHtml(run.runId)}"`
+        + ` id="pick-${escapeHtml(run.runId)}" checked>`
+      : '',
     `<a class="item" href="${escapeHtml(caseHref(run.runId, keptRule, keptProduct))}">`,
     '<div class="itop">',
     `<span class="m isubj">${escapeHtml(run.ticketId)}</span>`,
@@ -1743,6 +1753,7 @@ export function renderApprovals(
     `${coverageSays(run.gateCoverage, run.gateReason)}`,
     '</div>',
     '</a>',
+    pickable ? '</div>' : '',
   ].join('');
   return [
     header,
@@ -1757,12 +1768,30 @@ export function renderApprovals(
       + '</span></div>',
     ...sections.map((section) => {
       const { label, note } = GROUP_LABELS[section.group];
+      // DEC-51: the group a reviewer confirms together is the one whose cases
+      // both gates cleared, and only that one. Its rows are checkboxes and
+      // its header carries the button; every other group is a list.
+      const pickable = section.group === 'clean';
+      // The form opens before the header, so the confirm button is inside it.
+      // Emitted after, the button has no form owner and submits nothing: the
+      // whole batch was unreachable from the page while every case here
+      // passed, because none of them asserted the nesting.
+      const open = pickable
+        ? `<form method="post" action="/confirm${escapeHtml(filtersQuery(keptRule, keptProduct))}">`
+        : '';
+      const close = pickable ? '</form>' : '';
       return [
+        open,
         `<div class="qgroup"><span class="lbl">${escapeHtml(label)}`
-          + `<span class="dim"> ${escapeHtml(String(section.runs.length))}</span></span>`,
+          + `<span class="dim"> ${escapeHtml(String(section.runs.length))}</span></span>`
+          + (pickable && section.runs.length > 0
+            ? `<button class="btn primary" type="submit" data-batch-confirm>Confirm all ${
+              escapeHtml(String(section.runs.length))} · read each first</button>`
+            : '')
+          + '</div>',
         note === null ? '' : `<p class="qnote">${escapeHtml(note)}</p>`,
-        '</div>',
-        ...section.runs.map(row),
+        section.runs.map((run) => row(run, pickable)).join(''),
+        close,
       ].join('');
     }),
     '</div>',
@@ -1780,7 +1809,7 @@ export function renderApprovals(
  * the legend exists.
  */
 function keyLegend(): string {
-  return '<div class="keys">j / k move · enter opens · c takes the case</div>';
+  return '<div class="keys">j / k move · enter opens · c takes the case · a confirms the clean cases</div>';
 }
 
 /**
@@ -1794,6 +1823,292 @@ function keyLegend(): string {
  */
 export function caseHref(runId: string, rule: string | null, product: string | null = null): string {
   return `/case/${encodeURIComponent(runId)}${filtersQuery(rule, product)}`;
+}
+
+/**
+ * One case on the confirm screen: the reply in full, and the digest the
+ * approval will carry (DEC-46, DEC-51).
+ *
+ * The text is what the approval would send — the reply a reviewer saved, or
+ * the body the park journaled — and it is drawn whole. A batch that sent what
+ * it did not show would be the defect this screen exists to prevent.
+ */
+export interface ConfirmCase {
+  readonly runId: string;
+  readonly ticketId: string;
+  readonly shown: string;
+  readonly text: string;
+}
+
+/** The seconds an undo button counts down, from the hold the console holds. */
+function holdSeconds(holdMs: number): number {
+  return Math.max(0, Math.round(holdMs / 1000));
+}
+
+/**
+ * The screen a reviewer reads before a batch sends (DEC-51).
+ *
+ * The handoff's own words: the group's button says "read each first", and
+ * this is where that reading happens. Every reply is drawn in full, and the
+ * confirm button carries each case's digest, so a case whose reply moved
+ * since this page was drawn refuses rather than sending text nobody read.
+ */
+export function renderConfirm(
+  cases: readonly ConfirmCase[],
+  options: {
+    readonly rule: string | null;
+    readonly product: string | null;
+    /**
+     * DEC-51: the hold a send of these replies waits. Zero on the draft path
+     * and where an operator set no window, and the screen says so rather than
+     * promising a way back that does not exist.
+     */
+    readonly holdMs: number;
+    /**
+     * The cases the reviewer picked that are not in the batch, each with the
+     * reason it was left out. Drawn, because a page that drew four of the
+     * five boxes the reviewer checked would send a smaller batch than the one
+     * they asked for and say nothing about it.
+     */
+    readonly dropped?: readonly { readonly runId: string; readonly says: string }[];
+  },
+): string {
+  const seconds = holdSeconds(options.holdMs);
+  const dropped = options.dropped ?? [];
+  return [
+    '<div class="wrap">',
+    '<h2 class="m">Confirm these replies</h2>',
+    '<form method="post" action="/confirm/apply'
+      + escapeHtml(filtersQuery(options.rule, options.product)) + '">',
+    '<p class="discl">Each reply is below in full. Confirming sends them together, and '
+      + (seconds > 0
+        ? `holds each one for ${escapeHtml(String(seconds))} seconds from its own approval before`
+          + ' the relay may post it, so a mistake can be undone.'
+        : 'sends each one at once: nothing is held here, so there is no undo.') + '</p>',
+    ...cases.map((one) => [
+      '<div class="card"><header>',
+      `<span class="lbl">${escapeHtml(one.ticketId)}</span>`,
+      `<span class="chip">run ${escapeHtml(one.runId.slice(0, 8))}</span>`,
+      '</header><div class="body">',
+      `<div class="prose">${escapeHtml(one.text)}</div>`,
+      `<input type="hidden" name="runId" value="${escapeHtml(one.runId)}">`,
+      `<input type="hidden" name="shown" value="${escapeHtml(one.shown)}">`,
+      '</div></div>',
+    ].join('')),
+    ...dropped.map((one) => '<div class="callout"><p>'
+      + `${escapeHtml(one.runId.slice(0, 8))}: ${escapeHtml(one.says)}</p></div>`),
+    '<div class="actionbar">'
+      + `<button class="btn primary" type="submit">Confirm ${
+        escapeHtml(String(cases.length))} · send each reply</button>`
+      + (seconds > 0
+        ? `<p class="discl">Each send waits ${escapeHtml(String(seconds))} seconds before the relay`
+          + ' may post it.</p>'
+        : '<p class="discl">These sends are not held.</p>')
+      + '</div>',
+    '</form>',
+    '</div>',
+  ].join('');
+}
+
+/**
+ * What a batch did, in the group's own words (DEC-51).
+ *
+ * The handoff's success state: a sentence naming what was sent, what remains,
+ * and an undo while the hold stands. A case that refused is drawn with its
+ * own sentence from the approval's vocabulary, because a batch that reported
+ * "six sent" while one refused would be a lie about a customer reply.
+ */
+export function renderConfirmResult(
+  outcomes: readonly BatchOutcome<ConsoleApproveOutcome['outcome']>[],
+  options: {
+    readonly rule: string | null;
+    readonly product: string | null;
+    readonly holdMs: number;
+    /**
+     * DEC-51: the shortest window still held among the cases the caller read,
+     * or null when none of them is held. Never a fallback to the configured
+     * period: a page counting twelve seconds over a window the ledger reports
+     * closed promises a way back that is not there.
+     */
+    readonly remainingMs: number | null;
+    /**
+     * The log tag of the hold read that failed, when one did. Null is every
+     * hold read. The undo is still drawn — a window nobody read is not a
+     * window that is absent — and the page says the count is missing rather
+     * than drawing a countdown it did not earn.
+     */
+    readonly holdUnread: string | null;
+    /**
+     * DEC-51: how many of the approved cases the ledger reports as `sent`.
+     *
+     * The panel says what the ledger holds, not what the approval asked for.
+     * An approval leaves a record `pending`, and the relay sends it after the
+     * hold: a panel that called that "sent" would tell a reviewer a customer
+     * was answered while nothing had left.
+     */
+    readonly delivered: number;
+    /** The run's state and approval, per run, for the fit check. */
+    readonly runs: ReadonlyMap<string, OutcomeRun>;
+    /** Approved cases whose run could not be read, named rather than guessed. */
+    readonly unread?: ReadonlySet<string>;
+  },
+): string {
+  // The console's approval answers with the outcome's name, so this reads the
+  // name and not an arm of the union. The predicate is declared rather than
+  // inline so a fault is off the table for the two filters below: a filter
+  // cannot narrow the array's element type on its own, and without this every
+  // reader below carries a check for a fault that cannot be there.
+  const answered = outcomes.filter(
+    (one): one is { readonly runId: string; readonly outcome: ConsoleApproveOutcome['outcome'] } =>
+      !isFault(one),
+  );
+  const sent = answered.filter((one) => one.outcome === 'approved');
+  const refused = answered.filter((one) => one.outcome !== 'approved');
+  const faulted = outcomes.filter(isFault);
+  const count = sent.length;
+  // The handoff's own words, and only where they are true: with a hold, the
+  // records are pending for the length of the window.
+  const headline = options.delivered === count && count > 0
+    ? `${count} ${count === 1 ? 'reply sent.' : 'replies sent.'}`
+    : `${count} ${count === 1 ? 'reply approved.' : 'replies approved.'}`;
+  // What the page may promise: the window that is left, and nothing where the
+  // caller read none.
+  const seconds = options.remainingMs === null ? 0 : holdSeconds(options.remainingMs);
+  const offered = options.remainingMs !== null || options.holdUnread !== null;
+  // A fault is not an answer, so a case whose approval faulted is offered to
+  // the undo as well: the fault can arrive after the approval committed (a
+  // lost COMMIT acknowledgement), and that case is exactly the one that may
+  // hold a live send. The undo refuses safely when there is nothing to take
+  // back, so offering it to a case that committed nothing costs one request.
+  const undoable = [...sent, ...faulted];
+  return [
+    '<div class="wrap">',
+    `<div class="panel ok"><span class="big">${escapeHtml(headline)}</span>`,
+    // What became of the send, in the ledger's own words: `pending` is a send
+    // still to come, and only `sent` is one that happened.
+    count === 0
+      ? ''
+      : options.delivered === count
+        ? ''
+        : options.delivered === 0
+          ? '<p class="discl">The relay has sent none of them yet: each waits for its window.</p>'
+          : `<p class="discl">The relay has sent ${escapeHtml(String(options.delivered))} of them,`
+            + ' and the rest are still waiting for their window.</p>',
+    refused.length === 0 ? '<p class="discl">Nothing clean is waiting.</p>' : '',
+    undoable.length > 0 && offered
+      ? '<form method="post" action="/undo' + escapeHtml(filtersQuery(options.rule, options.product)) + '">'
+        + undoable.map((one) => `<input type="hidden" name="runId" value="${escapeHtml(one.runId)}">`).join('')
+        // The countdown is written only where a window was read. Without one
+        // the button is drawn bare, because the undo answers either way and a
+        // button that counts nothing is better than one counting a guess.
+        + (seconds > 0
+          ? `<button class="btn" type="submit" data-undo-seconds="${escapeHtml(String(seconds))}">`
+            + `Undo · ${escapeHtml(String(seconds))}s</button>`
+          : '<button class="btn" type="submit">Undo</button>')
+        // Hidden until the countdown writes into it: an empty paragraph of
+        // this class draws the rule beside it, and a rule with no sentence
+        // under a button reads as a fault.
+        + '<p class="discl" data-undo-note hidden></p>'
+        + '</form>'
+      : '',
+    // One hold could not be read, so this page does not count down. The undo
+    // is drawn above all the same: the ledger answers it.
+    offered && options.holdUnread !== null
+      ? '<p class="discl">The window on at least one of these cases was not read, so this page'
+        + ` does not count it down. The console log names the fault ${escapeHtml(options.holdUnread)}.</p>`
+      : '',
+    undoable.length > 0 && !offered
+      ? '<p class="discl">These sends were not held, so there is nothing to undo.</p>'
+      : '',
+    ...refused.map((one) => [
+      '<div class="callout"><p>',
+      `${escapeHtml(one.runId.slice(0, 8))}: `,
+      // A run the console could not read draws its own callout below, and
+      // the fallback sentence here would state a fact nobody established.
+      escapeHtml(options.unread?.has(one.runId) === true
+        ? ''
+        : renderOutcome(one.outcome, options.runs.get(one.runId) ?? null).replace(/<[^>]*>/g, '')),
+      '</p></div>',
+    ].join('')),
+    // A run the console could not read is not a run with an unknown outcome:
+    // drawing the fallback sentence would state a fact nobody established.
+    ...(options.unread === undefined
+      ? []
+      : [...options.unread].map((runId) => '<div class="callout"><p>'
+        + `${escapeHtml(runId.slice(0, 8))}: the run could not be read, so this console cannot say`
+        + ' what became of it. The console log holds the fault.</p></div>')),
+    // A case whose approval faulted. Not "nothing was sent": a fault can
+    // arrive after the approval committed, when the ledger's acknowledgement
+    // was lost. So this says what it knows, and points at the one page that
+    // can answer — a case holding a reply draws its own undo.
+    ...faulted.map((one) => '<div class="callout"><p>'
+      + `${escapeHtml(one.runId.slice(0, 8))}: this case could not be approved, and this console`
+      + ' cannot say whether it was. The undo above is offered for it. Open the case to read'
+      + ' whether a reply is held.</p></div>'),
+    '</div>',
+  ].join('');
+}
+
+/**
+ * What one undo answered, in words a reviewer reads (DEC-51).
+ *
+ * Closed with `satisfies`, so a new undo outcome fails the build rather than
+ * drawing "not an answer this console knows" — the discipline the approval's
+ * own table states.
+ */
+export const UNDO_SAYS = {
+  undone: 'Undone. The case is waiting again, and nothing was sent.',
+  unknown_run: 'That run is not in the ledger.',
+  nothing_to_undo: 'That case holds no approval to undo.',
+  window_passed: 'The hold period has passed, so the relay may post the reply at any moment.'
+    + ' Nothing was undone.',
+  already_sent: 'The reply was sent, so there is nothing to undo.',
+  busy: 'Another write holds that case, so nothing was undone. Try again in a moment.',
+} as const satisfies Record<UndoOutcome['outcome'], string>;
+
+/**
+ * What a batch of undos did (DEC-51).
+ *
+ * The same shape as the confirm's answer, and for the same reason: one case
+ * that can no longer be undone does not stop the others, and each answer is
+ * drawn with its own sentence.
+ */
+export function renderUndoResult(
+  outcomes: readonly BatchOutcome<UndoOutcome>[],
+  options: { readonly rule: string | null; readonly product: string | null },
+): string {
+  const answered = outcomes.filter(
+    (one): one is { readonly runId: string; readonly outcome: UndoOutcome } => !isFault(one),
+  );
+  const undone = answered.filter((one) => one.outcome.outcome === 'undone');
+  const refused = answered.filter((one) => one.outcome.outcome !== 'undone');
+  const faulted = outcomes.filter(isFault);
+  const returned = undone.length === 0
+    ? 'Nothing was undone.'
+    : undone.length === 1
+      ? 'One reply was taken back, and its case is waiting again.'
+      : `${undone.length} replies were taken back, and their cases are waiting again.`;
+  return [
+    '<div class="wrap">',
+    `<div class="panel${undone.length > 0 ? ' ok' : ''}"><span class="big">`
+      + `${escapeHtml(returned)}</span>`,
+    undone.length === 0
+      ? ''
+      : '<p class="discl"><a href="' + escapeHtml(queueHref(options.rule, options.product))
+        + '">Back to the queue</a>.</p>',
+    ...refused.map((one) => '<div class="callout"><p>'
+      + `${escapeHtml(one.runId.slice(0, 8))}: `
+      + escapeHtml(UNDO_SAYS[one.outcome.outcome])
+      + '</p></div>'),
+    // The same hedge as the confirm result's: the undo can commit and then
+    // fail to hear the answer, so a fault here is not a case that was left
+    // alone. The case page reads the run and says which it is.
+    ...faulted.map((one) => '<div class="callout"><p>'
+      + `${escapeHtml(one.runId.slice(0, 8))}: this case could not be undone, and this console`
+      + ' cannot say whether it was. Open the case to read what became of it.'
+      + ' The console log holds the fault under its run id.</p></div>'),
+    '</div>',
+  ].join('');
 }
 
 /** The queue, with the chosen filters kept. */
@@ -1861,6 +2176,12 @@ export interface CaseOptions {
    * the console rather than offering an editor whose text never sends.
    */
   readonly ledgerReply: boolean;
+  /**
+   * DEC-51: the window this case's approval still has. Read as not held on
+   * every console whose adapter keeps the draft path, where no send is
+   * held and nothing is owed back.
+   */
+  readonly sendHold: CaseSendHoldRead;
   /** The queue rule a person came from, kept on the way back. */
   readonly rule: string | null;
   /** DEC-47: the queue product a person came from, kept the same way. */
@@ -1925,7 +2246,7 @@ export interface CaseOptions {
  * Null is a run that composed no reply, which the card says in words rather
  * than drawing an editor over nothing.
  */
-function replyTextOf(view: CaseView, ledgerReply: boolean): string | null {
+export function replyTextOf(view: RunView, ledgerReply: boolean): string | null {
   // A run that has left the queue sends what the approval recorded (DEC-37).
   // The saved reply is what a reviewer was working on, and a second run on
   // the turn could have written one after the send: drawing it as the reply
@@ -2148,6 +2469,18 @@ export type CaseHoldRead =
   | { readonly kind: 'read'; readonly hold: CaseHold | null }
   | { readonly kind: 'unread'; readonly tag: string };
 
+/**
+ * The send hold this case's own approval still has, or why the page cannot
+ * say (DEC-51).
+ *
+ * `unread` carries the tag of the log line that holds the fault, as the take
+ * hold does: a fault must not read as "not held", which would draw the case
+ * as one with no way back while the relay still owes it a send.
+ */
+export type CaseSendHoldRead =
+  | { readonly kind: 'read'; readonly hold: ApprovalHold | null }
+  | { readonly kind: 'unread'; readonly tag: string };
+
 /** Who is working this case, for the bar at the foot of it. */
 export interface CaseHold {
   readonly reviewer: string;
@@ -2202,6 +2535,7 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       savedReply: view.request?.savedReplyText != null,
       ledgerReply: options.ledgerReply,
     }),
+    sendHoldBar(options.sendHold, view.runId, options),
     options.outcome === 'copy_changed'
       ? copyChoice(
         options.copy,
@@ -2372,6 +2706,37 @@ function remainingSays(remainingMs: number): string {
   if (minutes === 0) return 'less than a minute left';
   if (minutes === 1) return '1 minute left';
   return `${minutes} minutes left`;
+}
+
+/**
+ * The way back from a send this page's own approval put on hold (DEC-51).
+ *
+ * The batch has its panel with an undo on it. A single approval has this
+ * page, and until this bar existed the case it approved said "Approved. The
+ * relay performs it next." while the relay was in fact waiting — a sentence
+ * with no way back and no way to tell there was one.
+ */
+function sendHoldBar(read: CaseSendHoldRead, runId: string, options: CaseOptions): string {
+  if (read.kind === 'unread') {
+    return '<div class="holdbar"><p class="discl">The hold on this approval was not read,'
+      + ' so this page does not say whether the reply can still be taken back.'
+      + ` The console log names the fault ${escapeHtml(read.tag)}.</p></div>`;
+  }
+  if (read.hold === null || !read.hold.held) return '';
+  // The window that is left rather than the period that was configured: the
+  // reviewer arrives here seconds after the approval, and a page counting
+  // twelve seconds over a window the ledger has nearly closed would promise
+  // time nobody has.
+  const seconds = holdSeconds(read.hold.remainingMs);
+  return '<div class="holdbar">'
+    + `<p class="discl">This reply is held · ${escapeHtml(String(seconds))}s</p>`
+    + '<form method="post" action="/undo'
+    + escapeHtml(filtersQuery(options.rule, options.product)) + '">'
+    + `<input type="hidden" name="runId" value="${escapeHtml(runId)}">`
+    + `<button class="btn" type="submit" data-undo-seconds="${escapeHtml(String(seconds))}">`
+    + `Undo · ${escapeHtml(String(seconds))}s</button>`
+    + '<p class="discl" data-undo-note hidden></p>'
+    + '</form></div>';
 }
 
 /**

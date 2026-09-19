@@ -654,10 +654,18 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
       throw new PermanentEgressError(`draft '${draftExternalId}' has no To address to send to`);
     }
 
+    // The same three bounds the IMAP client gets, and for a sharper reason
+    // than symmetry: a send runs inside the relay's transaction, so a server
+    // that stops answering mid-send holds the run's row lock for as long as
+    // this takes. Left unset, nodemailer's own defaults allow ten minutes.
+    const timeoutMs = this.config.timeoutMs ?? IMAP_OPERATION_TIMEOUT_MS;
     const transport = createTransport({
       host: this.config.smtp.host,
       port: this.config.smtp.port,
       secure: this.config.smtp.secure,
+      connectionTimeout: timeoutMs,
+      greetingTimeout: timeoutMs,
+      socketTimeout: timeoutMs,
     });
     const info = await transport.sendMail({
       envelope: {

@@ -315,6 +315,10 @@ The relay is a different process. It reads the records in the outbox that have
 the `pending` status. It calls the adapter with the `idem_key` and the `epoch`.
 Then it sets the status to `sent`.
 
+A record may name a moment before which it is not sent (DEC-51). The relay
+skips such a record while that moment is ahead. It holds the run's row lock
+across a send too. So an undo cannot take back a reply in flight.
+
 Send first. Set the status second. Do not set the status first.
 
 The relay reads the delivery rule from the record. It does not read a global

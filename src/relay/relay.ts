@@ -21,7 +21,7 @@
  * When the adapter supports read-back, the relay reconciles instead of
  * escalating.
  */
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 // The relay routes by negation: only a customer reply takes the draft
 // path, so it never names the other classes.
@@ -121,7 +121,13 @@ export interface RelayResult {
     | 'delivery_unknown_escalated' // DEC-30: no retry, approval path
     | 'malformed_escalated' // payload matches no known shape; no send attempted
     | 'left_pending_retry' // safe to retry on a later scan
-    | 'fenced'; // DEC-28 at send time, for a run that has not finished
+    | 'fenced' // DEC-28 at send time, for a run that has not finished
+    // DEC-51: nothing was sent, and nothing is wrong. The record is held, or
+    // a person undid the approval while this scan walked up to it.
+    | 'held'
+    | 'undone'
+    // Another scan settled the record between this scan's read and the lock.
+    | 'already_settled';
 }
 
 /** One pending outbox row as a scan reads it from the ledger. */
@@ -140,6 +146,12 @@ export interface PendingOutboxRow {
    * is what sends.
    */
   reply: unknown;
+  /**
+   * DEC-51: the moment this record may be sent. Null is no hold. The scan
+   * does not select a row whose `not_before` is in the future, and the send
+   * re-reads it under the run's lock, so the boundary is checked twice.
+   */
+  not_before: Date | null;
 }
 
 /**
@@ -149,9 +161,10 @@ export interface PendingOutboxRow {
 export async function pendingRows(pool: Pool): Promise<PendingOutboxRow[]> {
   const rows = await pool.query(
     `SELECT o.run_id, o.step_id, r.ticket_id, o.idem_key, o.epoch,
-            o.delivery, o.action_class, o.payload, o.reply
+            o.delivery, o.action_class, o.payload, o.reply, o.not_before
      FROM outbox o JOIN run r ON r.run_id = o.run_id
      WHERE o.status = 'pending'
+       AND (o.not_before IS NULL OR o.not_before <= clock_timestamp())
      ORDER BY o.idem_key`,
   );
   return rows.rows as PendingOutboxRow[];
@@ -332,6 +345,26 @@ async function fenceFor(pool: Pool, runId: string): Promise<FenceReading> {
 }
 
 /**
+ * Whether the row read under the lock is the row this scan read.
+ *
+ * Identity, action semantics and content: the fields that decide what would
+ * be sent. The undo deletes a record, so a re-approval can insert a new one
+ * at the same key, and a payload compared only by key would be sent as if it
+ * were the row the scan selected.
+ */
+function sameRecord(scanned: PendingOutboxRow, locked: {
+  idem_key: string; epoch: string; action_class: string; delivery: string;
+  payload: unknown; reply: unknown;
+}): boolean {
+  return locked.idem_key === scanned.idem_key
+    && locked.epoch === scanned.epoch
+    && locked.action_class === scanned.action_class
+    && locked.delivery === scanned.delivery
+    && JSON.stringify(locked.payload ?? null) === JSON.stringify(scanned.payload ?? null)
+    && JSON.stringify(locked.reply ?? null) === JSON.stringify(scanned.reply ?? null);
+}
+
+/**
  * Relay one record to its terminal or retry outcome. This is the unit the
  * daemon isolates errors around: a throw here (malformed payload, ledger
  * error) fails that record only, never the scan around it. The delivery
@@ -404,15 +437,109 @@ export async function relayOne(
   let resolution: FailureResolution;
   let sendFailure: string | null = null;
   let readBackFailure: string | null = null;
+  // Whether an adapter call was reached (DEC-51, DEC-30). Declared out here
+  // because the catch below reads it, and a `let` inside the try block is not
+  // in scope in the catch that block pairs with. Every fault before the call
+  // — the pool handing out no connection, BEGIN, a `FOR UPDATE` read, the
+  // status check, the record comparison — is a fault of this process, and
+  // DEC-30's matrix must not be asked about a delivery that was never
+  // attempted: for an adapter with no idempotency key and no read-back it
+  // answers `escalate`, so the record would leave the pending scan and a
+  // person would reconcile a reply the ledger can still send.
+  let attempted = false;
   try {
-    await deliver();
-    // Send first. Only now, with the send resolved, set the status second.
-    await pool.query(
-      "UPDATE outbox SET status = 'sent' WHERE run_id = $1 AND step_id = $2 AND status = 'pending'",
-      [row.run_id, row.step_id],
-    );
+    // DEC-51: the send runs under the record's row lock and the run's, and the
+    // record is read again inside them. An undo takes the same locks, so the
+    // two cannot interleave: whoever holds them first decides, and the other
+    // finds the record gone (the undo deleted it) or settled. The scan
+    // already excludes a record whose moment is ahead; the re-read refuses one
+    // whose moment is still ahead when the locks are finally taken.
+    //
+    // The locks are held across the send. That is the cost of an undo that can
+    // promise nothing was sent, and it is bounded by the adapter's own
+    // timeouts: fifteen seconds for FreeScout, and for the mail adapter the
+    // ones it now sets from its configuration.
+    let settled: 'held' | 'undone' | 'already_settled' | null = null;
+    const client = await pool.connect();
+    let rollbackError: unknown = null;
+    try {
+      await client.query('BEGIN');
+      // The outbox row first, then the run. `parkEscalated` takes the outbox
+      // row first too, and so does the undo: one order for every writer that
+      // touches both, or two of them deadlock.
+      const record = await client.query<{
+        status: string;
+        held: boolean;
+        idem_key: string;
+        epoch: string;
+        action_class: string;
+        delivery: string;
+        payload: unknown;
+        reply: unknown;
+      }>(
+        `SELECT status, idem_key, epoch, action_class, delivery, payload, reply,
+                (not_before IS NOT NULL AND not_before > clock_timestamp()) AS held
+           FROM outbox WHERE run_id = $1 AND step_id = $2 FOR UPDATE`,
+        [row.run_id, row.step_id],
+      );
+      const held = record.rows[0];
+      if (held === undefined) {
+        await client.query('COMMIT');
+        settled = 'undone';
+      } else {
+        // No row for a run that is gone, and no lock either. Such a record
+        // still sends: nothing holds it, and no undo can name a run the
+        // ledger does not hold.
+        await client.query('SELECT run_id FROM run WHERE run_id = $1 FOR UPDATE', [row.run_id]);
+        if (held.status !== 'pending') {
+          // Another scan sent it, or refused it, between this scan's read and
+          // these locks. Sending again would deliver a second copy.
+          await client.query('COMMIT');
+          settled = 'already_settled';
+        } else if (held.held) {
+          await client.query('COMMIT');
+          settled = 'held';
+        } else if (!sameRecord(row, held)) {
+          // The row under the lock is not the row this scan read. The undo
+          // deletes a record, so a re-approval can insert a new one at the
+          // same key: sending this scan's copy would deliver text that
+          // approval never carried.
+          await client.query('COMMIT');
+          settled = 'already_settled';
+        } else {
+          attempted = true;
+          await deliver();
+          // Send first. Only now, with the send resolved, set the status
+          // second, in the same transaction that held both locks.
+          await client.query(
+            "UPDATE outbox SET status = 'sent' WHERE run_id = $1 AND step_id = $2 AND status = 'pending'",
+            [row.run_id, row.step_id],
+          );
+          await client.query('COMMIT');
+        }
+      }
+    } catch (error) {
+      await client.query('ROLLBACK').catch((failed: unknown) => {
+        rollbackError = failed;
+        console.error(
+          JSON.stringify({
+            event: 'rollback_failed',
+            at: new Date().toISOString(),
+            error: errorText(failed),
+          }),
+        );
+      });
+      throw error;
+    } finally {
+      destroyIfRollbackFailed(client, rollbackError);
+    }
+    if (settled !== null) return { idemKey, outcome: settled };
     return { idemKey, outcome: 'sent' };
   } catch (sendError) {
+    // Nothing was attempted, so there is no delivery to reconcile. The throw
+    // goes to the daemon, which logs this record and leaves it pending: the
+    // next scan sends it.
+    if (!attempted) throw sendError;
     // The throw leaves the delivery state unknown unless the adapter can
     // read it back (DEC-30). A read-back that itself throws leaves the
     // state unknown too: pass null so the matrix escalates instead of
@@ -500,7 +627,9 @@ async function parkEscalated(
   status: string,
   reason?: string,
 ): Promise<void> {
-  const client = await pool.connect();
+  
+  let rolledBack: unknown = null;
+const client = await pool.connect();
   try {
     await client.query('BEGIN');
     // The record's own write is the token for this whole move. Two scans can
@@ -549,6 +678,7 @@ async function parkEscalated(
     // the cause, and is reported rather than dropped. The caller logs the
     // cause, and the record stays pending for the next scan either way.
     await client.query('ROLLBACK').catch((rollbackError: unknown) => {
+      rolledBack = rollbackError;
       console.error(
         JSON.stringify({
           event: 'rollback_failed',
@@ -559,6 +689,22 @@ async function parkEscalated(
     });
     throw error;
   } finally {
-    client.release();
+    // Every path, including the one that commits: a client released only in
+    // the catch is one the successful path never gives back, and a pool of
+    // those hangs on the next `connect()`.
+    destroyIfRollbackFailed(client, rolledBack);
   }
+}
+
+/**
+ * Give the connection back, or destroy it.
+ *
+ * A connection whose rollback failed is a connection whose transaction state
+ * nobody read: pg destroys one released with an error rather than returning
+ * it to the pool, where the next borrower would inherit an aborted
+ * transaction — and, worse, the row locks this one still holds.
+ */
+function destroyIfRollbackFailed(client: PoolClient, rollbackError: unknown): void {
+  if (rollbackError === null) client.release();
+  else client.release(rollbackError as Error);
 }
