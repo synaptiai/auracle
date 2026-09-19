@@ -162,6 +162,115 @@ describe('migrate', () => {
     );
   });
 
+  // DEC-48: a close ends the hold on the case it finishes, and the history
+  // has to say it was a close. `send` would record an event that did not
+  // happen — a close sends nothing — and naming nothing would leave the
+  // close reading as the lapse it is not.
+  it('installs the close release kind on the hold and its history (db/027, DEC-48)', async () => {
+    await migrate(client);
+
+    // Both vocabularies, by name. db/019 wrote the history's CHECK inline, so
+    // Postgres named it; db/027 replaces both constraints by name.
+    // Named per table rather than by constraint name alone: this database
+    // holds the same tables once in `public` and once in this case's schema,
+    // and a name-only query counts both.
+    const constraints = await client.query<{ conname: string }>(
+      `SELECT conname FROM pg_constraint
+        WHERE conrelid = 'case_hold'::regclass AND conname = 'case_hold_release_kind_check'
+        UNION ALL
+       SELECT conname FROM pg_constraint
+        WHERE conrelid = 'case_hold_event'::regclass
+          AND conname = 'case_hold_event_kind_check'`,
+    );
+    expect(constraints.rows.map((row) => row.conname).sort()).toEqual([
+      'case_hold_event_kind_check',
+      'case_hold_release_kind_check',
+    ]);
+
+    const runId = await seedRun();
+    await client.query(
+      `INSERT INTO case_hold (run_id, reviewer, lapses_at)
+       VALUES ($1, 'anna@example.test', now() + interval '20 minutes')`,
+      [runId],
+    );
+    // The widened value, on both columns this change writes. The row counts
+    // are asserted, not just that the statements resolved: a zero-row UPDATE
+    // resolves too, and would let this case pass with no row left to widen.
+    const widened = await client.query(
+      `UPDATE case_hold
+          SET released_at = now(), released_by = 'anna@example.test', release_kind = 'close'
+        WHERE run_id = $1`,
+      [runId],
+    );
+    expect(widened.rowCount).toBe(1);
+    const event = await client.query(
+      "INSERT INTO case_hold_event (run_id, reviewer, kind) VALUES ($1, 'anna@example.test', 'close')",
+      [runId],
+    );
+    expect(event.rowCount).toBe(1);
+
+    // And the vocabulary is still closed: a kind nobody writes is refused on
+    // both, so this migration widens a CHECK rather than removing one.
+    await expect(
+      client.query(
+        "UPDATE case_hold SET release_kind = 'because' WHERE run_id = $1",
+        [runId],
+      ),
+    ).rejects.toThrow(/case_hold_release_kind_check/);
+    await expect(
+      client.query(
+        "INSERT INTO case_hold_event (run_id, reviewer, kind) VALUES ($1, 'anna@example.test', 'because')",
+        [runId],
+      ),
+    ).rejects.toThrow(/case_hold_event_kind_check/);
+
+    // Forward-only and safe to re-apply, as db/020 is: the constraint is
+    // dropped by name first, so a second run installs it rather than raising
+    // a duplicate-constraint error.
+    await client.query('DELETE FROM schema_version WHERE version >= 27');
+    await expect(migrate(client)).resolves.toBeDefined();
+    const reapplied = await client.query(
+      `UPDATE case_hold
+          SET release_kind = 'close'
+        WHERE run_id = $1`,
+      [runId],
+    );
+    expect(reapplied.rowCount).toBe(1);
+
+    // The table comment enumerates the kinds, so it is part of the vocabulary
+    // this migration widens.
+    const comment = await client.query<{ description: string }>(
+      `SELECT obj_description('case_hold_event'::regclass) AS description`,
+    );
+    expect(comment.rows[0]?.description).toContain('close');
+  });
+
+  // DEC-48: the column comment names the terminal states, and a reader asks
+  // the database what `finished_at` means. A list that stops at four answers
+  // with a state the ledger no longer holds apart, and db/005 may not be
+  // edited — a database has applied it.
+  it('names the closed state in the finish-time comment (db/028, DEC-48)', async () => {
+    await migrate(client);
+
+    const comment = await client.query<{ description: string }>(
+      `SELECT col_description('run'::regclass, attnum) AS description
+         FROM pg_attribute
+        WHERE attrelid = 'run'::regclass AND attname = 'finished_at'`,
+    );
+    expect(comment.rows[0]?.description).toContain('closed');
+    expect(comment.rows[0]?.description).toContain('resolved');
+
+    // Re-applying the file is a no-op rather than an error.
+    await client.query('DELETE FROM schema_version WHERE version >= 28');
+    await expect(migrate(client)).resolves.toBeDefined();
+    const again = await client.query<{ description: string }>(
+      `SELECT col_description('run'::regclass, attnum) AS description
+         FROM pg_attribute
+        WHERE attrelid = 'run'::regclass AND attname = 'finished_at'`,
+    );
+    expect(again.rows[0]?.description).toContain('closed');
+  });
+
   // DEC-47: the product of the channel a message arrived on, recorded at
   // arrival and copied onto the run. Nullable on both tables, because a
   // channel the map does not name is a real answer and not a gap.

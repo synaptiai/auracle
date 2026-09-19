@@ -46,9 +46,10 @@ describe('the runs SELECT', () => {
   // — they are a union type — so this is where they are written down. The
   // `satisfies` clause makes a typo a compile error; this makes a missing one
   // a test failure.
-  it('names all four terminal states', () => {
+  it('names all five terminal states', () => {
     expect([...TERMINAL_RUN_STATES].sort()).toEqual(
-      ['abandoned', 'escalated', 'resolved', 'superseded'],
+      // `closed` is DEC-48's: a reviewer finished the case with no reply.
+      ['abandoned', 'closed', 'escalated', 'resolved', 'superseded'],
     );
   });
 

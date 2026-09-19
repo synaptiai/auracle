@@ -110,7 +110,7 @@ async function record(
   event: {
     runId: string;
     reviewer: string;
-    kind: 'take' | 'handover' | 'release' | 'send' | 'lapse';
+    kind: 'take' | 'handover' | 'release' | 'send' | 'close' | 'lapse';
     reason?: string;
     fromReviewer?: string;
   },
@@ -259,17 +259,21 @@ export type ReleaseOutcome =
 /**
  * Lets go of a case the reviewer holds.
  *
- * `kind` is why: a deliberate release, or the send that ends the work on it.
- * On a release, a reviewer who does not hold the case is told who does,
- * because that means somebody took it over while they were reading. A send
- * ends the hold on the case it resolved whoever holds it — see `releaseHoldIn`.
+ * `kind` is why: a deliberate release, the send that ends the work on a
+ * resolved case, or the close that ends it on one finished with no reply. On
+ * a release, a reviewer who does not hold the case is told who does, because
+ * that means somebody took it over while they were reading. A send and a
+ * close end the hold on the case they finish whoever holds it — see
+ * `releaseHoldIn`. Neither is a word the other can borrow: a close sends
+ * nothing, so a close recorded as a send would name an event that did not
+ * happen.
  */
 export async function releaseHold(
   pool: Pool,
   release: {
     readonly runId: string;
     readonly reviewer: string;
-    readonly kind: 'release' | 'send';
+    readonly kind: 'release' | 'send' | 'close';
   },
 ): Promise<ReleaseOutcome> {
   if (!UUID.test(release.runId)) return { outcome: 'unknown_run' };
@@ -301,7 +305,10 @@ export async function releaseHold(
  * A send ends the hold whoever holds it (maintainer's ruling, 2026-09-18).
  * The case has left the queue, so a hold on it claims somebody is still
  * working it, and the history would read as a lapse twenty minutes later
- * rather than the send that ended it. A deliberate release stays the
+ * rather than the send that ended it. A close ends it the same way (DEC-48):
+ * the case leaves the queue with no reply, and the holder's work on it is
+ * over. The two keep their own names, because the history is what a team
+ * reads for the time a case held a person. A deliberate release stays the
  * holder's own: a reviewer who does not hold the case is told who does,
  * because that means somebody took it over while they were reading.
  */
@@ -310,7 +317,7 @@ export async function releaseHoldIn(
   release: {
     readonly runId: string;
     readonly reviewer: string;
-    readonly kind: 'release' | 'send';
+    readonly kind: 'release' | 'send' | 'close';
   },
 ): Promise<ReleaseOutcome> {
   if (!UUID.test(release.runId)) return { outcome: 'unknown_run' };

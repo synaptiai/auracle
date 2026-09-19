@@ -156,7 +156,7 @@ Earlier versions kept that text only until the queue row was acked.
 **The step journal stores drafted replies and cited documents (DEC-17, DEC-19).**
 `step_journal.result` holds the claims of each draft on every run that composed one. The claims joined are the drafted reply. So the journal holds that reply, whether or not a person saw it.
 
-It also holds the body of each document a claim cited. It holds the title, owner and review date of every document the run retrieved. A run that parks holds the draft a second time, under the park step. An erasure path that clears the two `turn` columns alone leaves all of this behind.
+It also holds the body of each document a claim cited. It holds the title, owner and review date of every document the run retrieved. A run that parks holds the draft a second time, under the park step. A closed case holds the reason its reviewer gave. The name beside it is an operator's and not a customer's. An erasure path that clears the `turn` columns alone leaves all of this behind.
 
 This repository ships no retention job and no purge job.
 You are the data controller, so you own the retention period and the erasure

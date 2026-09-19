@@ -171,6 +171,14 @@ export function stepSays(step: JournalStep, journal: RunJournal): string | null 
     }
     case 'execute':
       return step.idemKey === null ? null : `idempotency key ${step.idemKey}`;
+    case 'close': {
+      // DEC-48: the record of who finished the case, and why. The reason is
+      // what the team reads afterwards, so it is drawn rather than counted —
+      // and never invented: a row holding none says nothing.
+      const closed = step.close;
+      if (closed === null || closed.reason === null) return null;
+      return `closed by ${closed.reviewer ?? 'nobody named'} · ${closed.reason}`;
+    }
     case 'escalate':
       return escalationHead(step.escalationReason);
     default:

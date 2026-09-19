@@ -42,6 +42,7 @@ import {
   renderConfirmResult,
   renderOutcome,
   renderRuns,
+  renderCloseOutcome,
   renderUndoResult,
   replyTextOf,
 } from './surfaces.js';
@@ -62,7 +63,7 @@ import { logLine } from 'auracle/format';
 import type { ReviewerFor } from './reviewer.js';
 import { copyHoldsText, replyDigest } from 'auracle/ledger-read';
 import type {
-  ApprovalHold, HandoverOutcome, Hold, ReleaseOutcome, TakeOutcome, UndoOutcome,
+  ApprovalHold, CloseOutcome, HandoverOutcome, Hold, ReleaseOutcome, TakeOutcome, UndoOutcome,
 } from 'auracle/ledger-read';
 
 /**
@@ -136,6 +137,19 @@ export interface ConsoleDeps {
     text: string,
     shown: string,
   ) => Promise<ConsoleSaveOutcome['outcome']>;
+  /**
+   * DEC-48: the case a reviewer finishes with no reply.
+   *
+   * The console's fourth write, and the only one that ends a case without
+   * sending anything. The reason, its bound, the DEC-46 guard and the journal
+   * row are the core's; this hands it the form and draws the answer.
+   */
+  readonly close: (
+    runId: string,
+    reviewer: string,
+    reason: string,
+    shown: string,
+  ) => Promise<CloseOutcome['outcome']>;
   /**
    * The copy the helpdesk holds for one parked draft (DEC-44), read when an
    * approval refused because a person edited it. Null when there is nothing
@@ -1132,6 +1146,10 @@ async function route(
     // Shape first, as the run route does: `run_id` is a `uuid` column, and an
     // id of another shape would make Postgres raise rather than match nothing.
     const outcome = url.searchParams.get('outcome') ?? '';
+    // DEC-48: what the close route answered, drawn beside the case it closed.
+    // Read here rather than beside the other outcome blocks, because the
+    // branch below answers for a run this ledger does not hold.
+    const closed = url.searchParams.get('closed') ?? '';
     const { rule, product } = queueFilters(url);
     if (runId === null || !isRunId(runId)) {
       send(res, 404, page('Case', nothingFound(), shell(NOT_A_SURFACE)));
@@ -1158,11 +1176,14 @@ async function route(
       return;
     }
     if (run === null) {
-      // An approval of a run the ledger does not hold lands here, and its
-      // answer is still the ledger's to give.
+      // An approval or a close of a run the ledger does not hold lands here,
+      // and its answer — `unknown_run` — is still the ledger's to give. Drawn
+      // because it is checked against the run this page read, which is none.
       send(res, 404, page(
         'Case',
-        (outcome === '' ? '' : renderOutcome(outcome, null)) + nothingFound(),
+        (outcome === '' ? '' : renderOutcome(outcome, null))
+          + (closed === '' ? '' : renderCloseOutcome(closed, null))
+          + nothingFound(),
         shell(NOT_A_SURFACE),
       ));
       return;
@@ -1247,8 +1268,8 @@ async function route(
     send(res, 200, page(
       `Case ${run.ticketId}`,
       renderCase({ ...run, customer }, {
-        outcome, edit, why, rule, product, readBack: options.readBack, hold, taken, handoverTo,
-        ledgerReply: options.ledgerReply, writing, copy, sendHold,
+        outcome, edit, why, closed, rule, product, readBack: options.readBack, hold, taken,
+        handoverTo, ledgerReply: options.ledgerReply, writing, copy, sendHold,
       }),
       { ...shell(`/case/${runId}`), back: caseHref(runId, rule, product) },
     ));
@@ -1435,6 +1456,14 @@ async function route(
 
   if (req.method === 'POST' && path === '/edit') {
     await editRoute(req, res, deps, reviewer, url, theme, options.ledgerReply);
+    return;
+  }
+
+  // DEC-48: the case a reviewer finishes with no reply. Its own route, for
+  // the reason every other outcome has one: nothing is sent, so a review of
+  // this console's writes should read a name that says so.
+  if (req.method === 'POST' && path === '/close') {
+    await closeRoute(req, res, deps, reviewer, url, theme);
     return;
   }
 
@@ -2045,6 +2074,130 @@ async function editRoute(
       },
     ));
   }
+}
+
+/**
+ * The close a reviewer posts from a case (DEC-48).
+ *
+ * Two things are checked here and nothing else: the run id, and the digest of
+ * the reply the page drew. The reason's own rules — that it says something,
+ * and that it fits the ledger's bound — belong to `closeRun`, which refuses
+ * before it writes and answers with a code. One set of rules about a reason,
+ * and the page words the answer.
+ */
+async function closeRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ConsoleDeps,
+  reviewer: string,
+  url: URL,
+  theme: Theme,
+): Promise<void> {
+  const from = req.socket.remoteAddress ?? null;
+  let form;
+  try {
+    form = await readForm(req);
+  } catch (error) {
+    // The same three answers the other writes give a body they cannot read.
+    if (!(error instanceof OversizedForm)) {
+      if (req.destroyed || req.readableAborted) {
+        console.error(logLine({
+          event: 'console_refused', reason: 'client_aborted',
+          host: req.headers.host ?? null, from,
+        }));
+        return;
+      }
+      throw error;
+    }
+    req.destroy();
+    send(res, 413, bare(
+      'Refused',
+      'The close is larger than this console accepts. Nothing was closed.',
+      theme,
+      backToQueue(url),
+    ));
+    return;
+  }
+
+  const runId = (form.get('runId') ?? '').trim();
+  if (!isRunId(runId)) {
+    console.error(logLine({
+      event: 'console_refused', reason: 'not_a_run_id',
+      runId: logged(runId), runIdLength: loggedLength(runId),
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 400, bare('Refused', 'That is not a run id, so nothing was closed.', theme));
+    return;
+  }
+  // DEC-46: the digest of the reply the form's page drew, required for the
+  // reason the approval requires one — a close from a page this console did
+  // not render would apply to a case its reviewer never read. Shape-checked,
+  // and never echoed.
+  const shown = (form.get('shown') ?? '').trim();
+  if (!SHOWN_DIGEST.test(shown)) {
+    console.error(logLine({
+      event: 'console_refused', reason: 'not_a_shown_digest',
+      runId, shownLength: loggedLength(shown),
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 400, bare(
+      'Refused',
+      'That request carries no reply digest, so this console will not close the case.'
+        + ' Open the case and close it there.',
+      theme,
+    ));
+    return;
+  }
+
+  let outcome: string;
+  try {
+    // The reason travels as the reviewer typed it. Its rules are the core's:
+    // an empty one and one past the bound are refused there, before any
+    // write, and each has its own sentence on the page.
+    outcome = await deps.close(runId, reviewer, form.get('reason') ?? '', shown);
+  } catch (error) {
+    // One sentence, because a fault here cannot be told apart from one that
+    // committed. The route's own checks run before the call, but the call
+    // itself does work before it writes — the run read, the connection, the
+    // park row — and nothing in the answer says which step threw. So the page
+    // says the close may have committed rather than claiming it did not.
+    const tag = randomUUID().slice(0, 8);
+    console.error(logLine({
+      event: 'console_close_failed', tag, runId,
+      reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+      host: req.headers.host ?? null, from, error: describeFault(error),
+    }));
+    send(res, 500, bare(
+      'Error',
+      `Something failed during the close, and it may or may not have committed.`
+        + ` The console log names it ${tag}.`,
+      theme,
+      {
+        href: caseHref(runId, url.searchParams.get('rule'), url.searchParams.get('product')),
+        text: 'Open the case to see its state.',
+      },
+    ));
+    return;
+  }
+  // The console's own evidence line, as the approval's and the save's are.
+  // The reason is not repeated here: it is the reviewer's text and the ledger
+  // holds it, so this names who asked and what the ledger answered.
+  console.error(logLine({
+    event: 'console_closed',
+    runId,
+    outcome,
+    reviewer: logged(reviewer),
+    reviewerLength: loggedLength(reviewer),
+    host: req.headers.host ?? null,
+    from,
+  }));
+  const kept = filtersQuery(url.searchParams.get('rule'), url.searchParams.get('product'))
+    .replace(/^\?/, '&');
+  res.writeHead(303, {
+    ...SAFETY_HEADERS,
+    location: `/case/${encodeURIComponent(runId)}?closed=${encodeURIComponent(outcome)}${kept}`,
+  });
+  res.end();
 }
 
 /**

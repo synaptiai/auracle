@@ -538,8 +538,8 @@ describe('the case hold (DEC-46)', () => {
   });
 
   // Criterion 7. Every way a hold begins and ends is a row in the history,
-  // with the reviewer and the time. All five kinds on one case, in order: a
-  // take, a takeover, a deliberate release, a send, and a lapse.
+  // with the reviewer and the time. Every kind on one case, in order: a take,
+  // a takeover, a deliberate release, a send, a close, and a lapse.
   it('records every kind in order, each with its reviewer and time', async () => {
     const runId = await runIn();
     await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: LAPSE_MS });
@@ -559,6 +559,19 @@ describe('the case hold (DEC-46)', () => {
       client.release();
     }
 
+    // The close (DEC-48), which is the same in-transaction shape as a send
+    // and its own word: a case finished with no reply sends nothing.
+    await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: LAPSE_MS });
+    const closing = await pool.connect();
+    try {
+      await closing.query('BEGIN');
+      expect(await releaseHoldIn(closing, { runId, reviewer: 'anna@example.test', kind: 'close' }))
+        .toEqual({ outcome: 'released' });
+      await closing.query('COMMIT');
+    } finally {
+      closing.release();
+    }
+
     // And a lapse nobody acted on, cleared by the next read of the case.
     await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: LAPSE_MS });
     await pool.query('UPDATE case_hold SET lapses_at = now() WHERE run_id = $1', [runId]);
@@ -571,6 +584,8 @@ describe('the case hold (DEC-46)', () => {
       ['release', 'bo@example.test', null],
       ['take', 'bo@example.test', null],
       ['send', 'bo@example.test', null],
+      ['take', 'anna@example.test', null],
+      ['close', 'anna@example.test', null],
       ['take', 'anna@example.test', null],
       ['lapse', 'anna@example.test', null],
     ]);

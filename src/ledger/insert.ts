@@ -112,6 +112,10 @@ export const TERMINAL_RUN_STATES: ReadonlySet<string> = new Set([
   'escalated',
   'superseded',
   'abandoned',
+  // DEC-48: a reviewer closed the case with no reply. Nothing sends for it,
+  // so the commit that lands it there stamps the finish and no outbox row
+  // follows it.
+  'closed',
 ]);
 
 /**

@@ -12,7 +12,7 @@ import { request } from 'node:http';
 import { createHash } from 'node:crypto';
 
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
-import { replyDigest } from 'auracle/ledger-read';
+import { MAX_CLOSE_REASON_CHARS, replyDigest } from 'auracle/ledger-read';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { escapeHtml, renderGates } from './render.js';
@@ -269,6 +269,10 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
       },
     ],
     approve: async () => 'approved',
+    // DEC-48: the case a reviewer finishes with no reply. The transaction,
+    // the reason's rules and the hold are the core suite's subject; here the
+    // harness answers that a case was closed.
+    close: async () => 'closed',
     // DEC-51: the batch's way back. The window and the row lock are the core
     // suite's subject; here the harness answers that a case was taken back.
     undo: async () => ({ outcome: 'undone' }),
@@ -1270,6 +1274,10 @@ describe('the reply an approver reads before they send it', () => {
     const html = await (await fetch(base + CASE)).text();
     expect(html).toContain('neither a helpdesk draft nor an action payload');
     expect(html).not.toContain('action="/approve"');
+    // DEC-48: the close is still offered. This is the dead end the outcome
+    // exists to end — nobody can approve it, and somebody has to finish it.
+    expect(buttonInForm(html, '/close')).toBe(true);
+    expect(html).toContain('Close, no reply');
   });
 
   // `compensate` is the class the policy engine judges irreversible, and a
@@ -1818,6 +1826,28 @@ describe('the conversation a responder reads', () => {
     expect(blocks.get(7)).toContain('color:var(--warn)');
   });
 
+  // DEC-48: a case a person closed with no reply. Its own chip and its own
+  // sentence, because the two labels beside it are both wrong about this
+  // turn: the system did not answer it, and nobody approved an action on it.
+  it('draws a closed case as its own absence, in its own words', async () => {
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        ...THREAD,
+        turns: [turnOf(1, { replyAbsence: 'closed_without_reply', runState: 'closed', outboxStatus: null })],
+      }) as never,
+    }));
+    const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
+    const block = blocks.get(1)!;
+    expect(block).toContain('<span class="chip" style="color:var(--dim)">closed, no reply</span>');
+    expect(block).toMatch(
+      /<p class="absent">a person closed this case without replying to the customer<\/p>/,
+    );
+    // Not the two sentences that would each be untrue here.
+    expect(block).not.toContain('no reply was sent to the customer');
+    expect(block).not.toContain('approved an action here');
+    expect(block).not.toContain('the system replied');
+  });
+
   // A stopped run names its state. Only an escalation, or a row that confirms
   // nothing, asks a person to look, so only those draw hot.
   // `abandoned` is in the ledger's terminal set, though no writer sets it
@@ -2217,6 +2247,8 @@ describe('the design notes', () => {
       ['ok', 'Product is a first-class column'],
       // DEC-44: the reply a reviewer edits where it will be sent.
       ['accent', 'The reply is edited here, and sent from here'],
+      // DEC-48: the case a reviewer finishes with no reply.
+      ['accent', 'A case can end without a reply'],
       // DEC-46: the case hold, which the console keeps now.
       ['accent', 'A lock, because four people pull from one uncapped list'],
     ]);
@@ -2233,7 +2265,7 @@ describe('the design notes', () => {
     const base = await startGuarded(deps());
     const html = await (await fetch(base + '/notes')).text();
     const cards = cardsOf(html);
-    expect(cards).toHaveLength(6);
+    expect(cards).toHaveLength(7);
     for (const card of cards) {
       for (const source of ['was:', '.ts', 'approveControl', 'MESSAGE_ABSENCE', 'gateValue', 'Instrument']) {
         expect(card.says, `${card.title}: ${source}`).not.toContain(source);
@@ -2283,6 +2315,10 @@ describe('the design notes', () => {
         + ' every customer reply carries.'
         + ' Where the helpdesk can send its own parked copy, the case says so and offers no editor:'
         + ' two texts that may both send is the one thing this console will not build.',
+      'Some cases need no answer. A duplicate, a message from a machine, or a'
+        + ' question somebody settled on the telephone.'
+        + ' A reviewer closes such a case on its page, with a reason the team reads afterwards.'
+        + ' The customer is sent nothing, and the conversation says the case was closed with no reply.',
       'The queue is not capped, so the same case can sit in front of four reviewers at once.'
         + ' A reviewer takes a case before working it, so the others see who holds it and the time left.'
         + ' The hold says who is working, and it refuses no write: any reviewer may still approve the case.'
@@ -2459,6 +2495,43 @@ describe('the design notes', () => {
     expect(heldCase).toContain('Take it over');
     expect(heldCase).toContain('action="/approve');
     expect(heldCase).toContain('Approve and send');
+  });
+
+  // Card 6, claimed on the screens it describes (DEC-48). The case offers the
+  // close and the reason it records, and the conversation names the absence
+  // in its own words rather than borrowing the two beside it.
+  it('makes the close card true of the console it describes', async () => {
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        conversationId: CONVERSATION,
+        primaryTicketId: 'SYN-1',
+        state: 'open',
+        openedAt: new Date('2026-09-06T08:00:00.000Z'),
+        participantNamed: true,
+        turns: [{
+          turnNumber: 1, ticketId: 'SYN-1',
+          createdAt: new Date('2026-09-07T14:32:00.000Z'),
+          bodyText: 'This is the same as my other ticket.',
+          messageAbsence: null,
+          replyText: null,
+          replyAbsence: 'closed_without_reply',
+          runId: RUN, runState: 'closed', runAttempts: 1, outboxStatus: null,
+        }],
+      }) as never,
+    }));
+
+    // The case offers the close, with the field the reason is written in.
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).toContain('Close, no reply');
+    expect(html).toMatch(/<input[^>]*name="reason"/);
+    expect(html).toContain('The customer is sent nothing.');
+
+    // The conversation says the case was closed with no reply, and not that
+    // the system answered it or that a person approved an action on it.
+    const thread = await (await fetch(`${base}/conversation/${CONVERSATION}`)).text();
+    expect(thread).toContain('a person closed this case without replying to the customer');
+    expect(thread).not.toContain('answered by an internal write');
+    expect(thread).not.toContain('a person approved an action here');
   });
 
   // Card 5, claimed on the queue it describes (DEC-47). Every sentence of
@@ -5110,12 +5183,17 @@ describe('the case a reviewer decides on (issue #102)', () => {
   it('approves from a bar at the foot of the case, with the warning worded as before', async () => {
     const base = await startGuarded(deps());
     const html = await (await fetch(base + CASE)).text();
-    const bar = html.slice(html.indexOf('class="actionbar"'));
+    const bar = html.slice(
+      html.indexOf('class="actionbar"'),
+      html.indexOf('class="closebar"'),
+    );
     expect(bar).toContain('Approve and send');
     expect(bar).toContain('a sent reply cannot be recalled');
     expect(bar).toContain(`name="runId" value="${RUN}"`);
-    // One submit in the approval's own bar. The case carries the hold bar's
-    // submit beside it since DEC-46, which is not the approval.
+    // One submit in the approval's own bar. The close beside it is a second
+    // form with a submit of its own (DEC-48), and the slice above stops where
+    // that one starts.
+    expect(bar).not.toBe('');
     expect(bar.match(/type="submit"/g) ?? []).toHaveLength(1);
   });
 
@@ -6932,5 +7010,259 @@ describe('DEC-51: the batch confirm and its undo', () => {
       expect(res.status, JSON.stringify(fields).slice(0, 40)).toBe(400);
     }
     expect(approve).not.toHaveBeenCalled();
+  });
+});
+
+describe('DEC-48: the console closes a case with no reply', () => {
+  /** The digest of the reply this harness's page draws (DEC-46). */
+  const DRAWN = createHash('sha256').update(EVIDENCE.draftBody).digest('hex');
+
+  async function postClose(base: string, fields: Record<string, string>): Promise<Response> {
+    return fetch(`${base}/close`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: new URLSearchParams(fields).toString(),
+      redirect: 'manual',
+    });
+  }
+
+  it('offers the close on a waiting case, with the reason field inside its own form', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + CASE)).text();
+
+    expect(buttonInForm(html, '/close')).toBe(true);
+    // The button the handoff names, and the field the record needs.
+    expect(html).toContain('Close, no reply');
+    expect(html).toMatch(/<input[^>]*name="reason"/);
+    // DEC-46: the digest of the reply this page drew, so a close from a page
+    // drawn against other text refuses.
+    expect(html).toContain(`name="shown" value="${DRAWN}"`);
+    // What closing does, and what it does not: nothing is sent.
+    expect(html).toContain('The customer is sent nothing.');
+  });
+
+  it('closes the case and lands on the page that says so', async () => {
+    const close = vi.fn(async () => 'closed' as const);
+    // The state the ledger holds once the close committed. The page reads the
+    // run it landed on, and the sentence it draws is checked against it.
+    const base = await startGuarded(deps({ close, readRun: caseOf({ state: 'closed' }) }));
+    const res = await postClose(base, { runId: RUN, shown: DRAWN, reason: 'Duplicate of T-4471.' });
+
+    // See other, so a refresh cannot close a second time.
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(`${CASE}?closed=closed`);
+    // The identity is the one the gate resolved, and the digest is the page's.
+    expect(close).toHaveBeenCalledWith(RUN, REVIEWER, 'Duplicate of T-4471.', DRAWN);
+
+    const after = await (await fetch(`${base}${CASE}?closed=closed`, {
+      headers: { 'sec-fetch-site': 'same-origin' },
+    })).text();
+    expect(after).toContain('The case is closed with no reply.');
+  });
+
+  it('draws a closed case as finished, with no approval left on it', async () => {
+    const base = await startGuarded(deps({
+      readRun: caseOf({ state: 'closed', approved: false }),
+    }));
+    const html = await (await fetch(base + CASE)).text();
+
+    expect(html).toContain('<span class="chip" style="color:var(--dim)">closed</span>');
+    expect(html).toContain('This run is closed, so there is nothing here to approve.');
+    // No way to approve or close a case that has left the queue, and no form
+    // offering one.
+    expect(buttonInForm(html, '/approve')).toBe(false);
+    expect(buttonInForm(html, '/close')).toBe(false);
+  });
+
+  it('writes nothing for a request this console did not render', async () => {
+    const close = vi.fn(async () => 'closed' as const);
+    const base = await startGuarded(deps({ close }));
+
+    // No digest: a request that never came from this page.
+    const noDigest = await postClose(base, { runId: RUN, reason: 'Duplicate.' });
+    expect(noDigest.status).toBe(400);
+    expect(await noDigest.text()).toContain('will not close the case');
+    // A digest of another shape, which is the same answer.
+    const badDigest = await postClose(base, { runId: RUN, shown: 'x'.repeat(64), reason: 'D.' });
+    expect(badDigest.status).toBe(400);
+    // A run id of another shape, refused before the ledger is asked.
+    const badRun = await postClose(base, { runId: 'not-a-run', shown: DRAWN, reason: 'D.' });
+    expect(badRun.status).toBe(400);
+    expect(await badRun.text()).toContain('nothing was closed');
+
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it('draws each answer the ledger gives about a close, in its own words', async () => {
+    // The console does not judge the reason: the core refuses an empty one and
+    // one past its bound, before any write, and answers with a code. Each
+    // sentence is drawn beside the case whose state that answer describes.
+    const answers = [
+      ['closed', 'The case is closed with no reply.', { state: 'closed' }],
+      ['empty_reason', 'A close records the reason, and that one was empty', {}],
+      ['reason_too_long', 'That reason is longer than a close records', {}],
+      ['shown_changed', 'The reply changed since this page was drawn, so nothing was closed.', {}],
+      ['not_awaiting_approval', 'That run is not waiting for approval. It is resolved now, so nothing was closed.', { state: 'resolved' }],
+      ['unknown_run', 'That run is not in the ledger.', null],
+    ] as const;
+    for (const [outcome, said, over] of answers) {
+      const base = await startGuarded(deps(
+        over === null
+          ? { readRun: async () => null }
+          : { readRun: caseOf(over as Record<string, unknown>) },
+      ));
+      const html = await (await fetch(`${base}${CASE}?closed=${outcome}`, {
+        headers: { 'sec-fetch-site': 'same-origin' },
+      })).text();
+      expect(html, outcome).toContain(said);
+    }
+  });
+
+  it('draws the sentence a close that lost a race is given', async () => {
+    // A second close on one case answers `not_awaiting_approval` with the
+    // state the first one left — `closed`. The page reads a closed case, so
+    // the sentence is true of it and is drawn.
+    const base = await startGuarded(deps({ readRun: caseOf({ state: 'closed' }) }));
+    const html = await (await fetch(`${base}${CASE}?closed=not_awaiting_approval`, {
+      headers: { 'sec-fetch-site': 'same-origin' },
+    })).text();
+    // The state is named, so a page showing a closed case cannot read as
+    // "this case is still open".
+    expect(html).toContain(
+      'That run is not waiting for approval. It is closed now, so nothing was closed.',
+    );
+  });
+
+  it('draws every outcome the ledger can answer, each against a case that fits it', async () => {
+    // The whole table, so a row added without a reachable state fails here
+    // rather than on a page nobody looked at.
+    for (const [outcome, run] of [
+      ['closed', { state: 'closed' }],
+      ['empty_reason', {}],
+      ['reason_too_long', {}],
+      ['unprintable_reason', {}],
+      ['shown_changed', {}],
+      ['stale_epoch', {}],
+      ['not_awaiting_approval', { state: 'resolved' }],
+    ] as const) {
+      const base = await startGuarded(deps({ readRun: caseOf(run as Record<string, unknown>) }));
+      const html = await (await fetch(`${base}${CASE}?closed=${outcome}`, {
+        headers: { 'sec-fetch-site': 'same-origin' },
+      })).text();
+      expect(html, outcome).toContain(`data-close="${outcome}"`);
+      expect(html, outcome).not.toContain('That is not an answer this console knows.');
+    }
+  });
+
+  it('refuses to draw a close outcome the case contradicts', async () => {
+    // Every outcome is checked against the state the page read, so a link
+    // anyone can send cannot make the console say a waiting case was closed.
+    // The waiting run is the harness's own: `closed` claims a state it is not
+    // in, and `not_awaiting_approval` claims one it is.
+    for (const outcome of ['closed', 'not_awaiting_approval']) {
+      const base = await startGuarded(deps());
+      const html = await (await fetch(`${base}${CASE}?closed=${outcome}`, {
+        headers: { 'sec-fetch-site': 'same-origin' },
+      })).text();
+      expect(html, outcome).toContain('That is not an answer this console knows.');
+      expect(html, outcome).not.toContain('data-close=');
+    }
+
+    // A name this console does not know is never echoed, nor is one inherited
+    // from the prototype: `?closed=toString` resolved a function and threw on
+    // an older version of this page.
+    for (const outcome of ['toString', 'because']) {
+      const base = await startGuarded(deps());
+      const html = await (await fetch(`${base}${CASE}?closed=${outcome}`, {
+        headers: { 'sec-fetch-site': 'same-origin' },
+      })).text();
+      expect(html, outcome).toContain('That is not an answer this console knows.');
+      expect(html, outcome).not.toContain(`data-close="${outcome}"`);
+    }
+  });
+
+  // The reason is a reviewer's own text, and it can quote a customer. It
+  // reaches the case page's timeline through `stepSays`, so it goes through
+  // the same escape as every other ledger value this console draws.
+  it('draws a hostile reason as text, never as markup', async () => {
+    const hostile = '"><script>alert(1)</script>';
+    const base = await startGuarded(deps({
+      readRun: caseOf({
+        state: 'closed',
+        steps: [{
+          stepId: 'close', status: 'done', awaitingOutcome: false, malformed: false,
+          says: `closed by anna@example.test · ${hostile}`,
+        }],
+      }),
+    }));
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).not.toContain(hostile);
+    expect(html).toContain('closed by anna@example.test · &quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;');
+    // The one script this console ships, and no second one from the reason.
+    expect(html.split('<script>')).toHaveLength(2);
+  });
+
+  it('refuses a close form larger than the console accepts', async () => {
+    const close = vi.fn(async () => 'closed' as const);
+    const base = await startGuarded(deps({ close }));
+
+    const res = await fetch(`${base}/close`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: `runId=${RUN}&shown=${DRAWN}&reason=${'x'.repeat(70 * 1024)}`,
+    });
+
+    expect(res.status).toBe(413);
+    expect(await res.text()).toContain('The close is larger than this console accepts.');
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it('answers a failed close without claiming it did not commit', async () => {
+    // The write was reached and its answer never read, so the page says the
+    // close may have committed rather than denying it. A fault before the
+    // call is impossible here: every check this route makes returns first.
+    const close = vi.fn(async () => { throw new Error('the pool is gone'); });
+    const base = await startGuarded(deps({ close }));
+    const res = await postClose(base, { runId: RUN, shown: DRAWN, reason: 'Duplicate.' });
+
+    expect(close).toHaveBeenCalled();
+    expect(res.status).toBe(500);
+    const body = await res.text();
+    expect(body).toContain('may or may not have committed');
+    expect(body).not.toContain('nothing was closed');
+  });
+
+  it('returns a close to the queue the reviewer narrowed to', async () => {
+    const close = vi.fn(async () => 'closed' as const);
+    const base = await startGuarded(deps({ close }));
+    // The filters ride on the action, never in a field (DEC-47), as the
+    // approval's do.
+    const res = await fetch(`${base}/close?rule=customer_visible&product=aurora`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: new URLSearchParams({ runId: RUN, shown: DRAWN, reason: 'Duplicate.' }).toString(),
+      redirect: 'manual',
+    });
+    expect(res.headers.get('location')).toBe(
+      `${CASE}?closed=closed&rule=customer_visible&product=aurora`,
+    );
+  });
+
+  it('bounds the reason in the form, so the field cannot post one the ledger refuses', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).toContain(`maxlength="${MAX_CLOSE_REASON_CHARS}"`);
   });
 });

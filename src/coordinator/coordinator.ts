@@ -7,7 +7,7 @@
 //   received -> classified -> retrieved -> composed -> gated
 //     -> executing          (automatic path, internal writes only)
 //     -> awaiting_approval  (customer replies, DEC-12)
-//     -> resolved | escalated | superseded | abandoned
+//     -> resolved | escalated | superseded | abandoned | closed
 //
 // Three tasks per section 4.3:
 //   1. Each step is journaled before it acts (step_journal).

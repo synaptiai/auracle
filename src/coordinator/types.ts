@@ -23,7 +23,17 @@ export const RUN_STATES = [
 ] as const;
 
 export type ActiveRunState = (typeof RUN_STATES)[number];
-export type TerminalRunState = 'resolved' | 'escalated' | 'superseded' | 'abandoned';
+/**
+ * A state a run never leaves. `closed` is DEC-48's: a reviewer finished the
+ * case with no reply. The coordinator never walks a run there — a person
+ * does, through `src/outcomes/close.ts`.
+ */
+export type TerminalRunState =
+  | 'resolved'
+  | 'escalated'
+  | 'superseded'
+  | 'abandoned'
+  | 'closed';
 
 /**
  * DEC-36: hash(partition key) % N gives the partition. One consumer owns each

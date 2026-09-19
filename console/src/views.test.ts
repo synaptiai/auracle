@@ -12,6 +12,19 @@ import type { JournalStep, RunJournal } from 'auracle/ledger-read';
 
 const RUN = '11111111-2222-4333-8444-555555555555';
 
+/**
+ * A close step, as `src/outcomes/close.ts` writes it (DEC-48).
+ *
+ * The row is complete when written and carries no outcome to wait for, which
+ * is why the defaults here have no `awaitingOutcome`.
+ */
+function close(fields: Record<string, unknown>): { step: JournalStep; journal: RunJournal } {
+  return journal({
+    stepId: 'close',
+    close: { reason: null, reviewer: null, reviewerSource: null, ...fields },
+  } as Partial<JournalStep>);
+}
+
 function journal(step: Partial<JournalStep>): { step: JournalStep; journal: RunJournal } {
   const full = {
     stepId: 'park', recognized: true, status: 'done',
@@ -114,6 +127,34 @@ describe('what a park step says', () => {
 
   it('says nothing at all about a park step the reader could not read', () => {
     const { step, journal: j } = journal({ stepId: 'park', park: null });
+    expect(stepSays(step, j)).toBeNull();
+  });
+});
+
+// DEC-48: the case a person closed with no reply. The reason is the whole
+// point of the record — it is what the team reads afterwards — so the run
+// detail draws it, beside the name of whoever closed it.
+describe('what a close step says', () => {
+  it('names the reviewer and the reason', () => {
+    const { step, journal: j } = close({ reason: 'Duplicate of T-4471.', reviewer: 'anna@example.test' });
+    expect(stepSays(step, j)).toBe('closed by anna@example.test · Duplicate of T-4471.');
+  });
+
+  it('names nobody when the row named nobody, rather than leaving a gap', () => {
+    const { step, journal: j } = close({ reason: 'Spam.' });
+    expect(stepSays(step, j)).toBe('closed by nobody named · Spam.');
+  });
+
+  // A row with no reason cannot happen through the close path, which refuses
+  // an empty one — so it is a ledger written by something else, and the
+  // sentence says what it holds rather than inventing a reason.
+  it('says nothing it cannot support when the row recorded no reason', () => {
+    const { step, journal: j } = close({ reviewer: 'anna@example.test' });
+    expect(stepSays(step, j)).toBeNull();
+  });
+
+  it('says nothing at all about a close step the reader could not read', () => {
+    const { step, journal: j } = journal({ stepId: 'close', close: null });
     expect(stepSays(step, j)).toBeNull();
   });
 });

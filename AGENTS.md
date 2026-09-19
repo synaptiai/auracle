@@ -273,7 +273,7 @@ result. So a step runs in a unit suite with no database behind it.
 received -> classified -> retrieved -> composed -> gated
   -> executing          (automatic path, reversible internal writes)
   -> awaiting_approval  (customer replies, DEC-12)
-  -> resolved | escalated | superseded | abandoned
+  -> resolved | escalated | superseded | abandoned | closed
 ```
 
 Each step writes to `step_journal` before it acts.

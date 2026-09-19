@@ -26,8 +26,10 @@ import {
 // which action is the permanent one.
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
 import type { PolicyReason } from 'auracle/policy';
-import { replyDigest } from 'auracle/ledger-read';
-import type { OutboxStatus } from 'auracle/ledger-read';
+import { MAX_CLOSE_REASON_CHARS, replyDigest } from 'auracle/ledger-read';
+import type {
+  CloseOutcome, MessageAbsence, OutboxStatus, ReplyAbsence,
+} from 'auracle/ledger-read';
 import type { ConsoleApproveOutcome, ConsoleSaveOutcome } from './approve.js';
 import { isFault } from './confirm.js';
 import type { BatchOutcome } from './confirm.js';
@@ -2163,6 +2165,14 @@ export interface CaseOptions {
    */
   readonly edit: string;
   /**
+   * The outcome of the close just posted, drawn above the case (DEC-48).
+   *
+   * Its own field for the reason `edit` has one: nothing was sent, nothing
+   * was saved, and nothing was closed are three answers, and one name —
+   * `shown_changed` — means all three.
+   */
+  readonly closed: string;
+  /**
    * Why an edit did not apply, off the query string. A code this console
    * knows, looked up rather than printed.
    */
@@ -2551,6 +2561,12 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       savedReply: view.request?.savedReplyText != null,
       ledgerReply: options.ledgerReply,
     }, options.why),
+    options.closed === '' ? '' : renderCloseOutcome(options.closed, {
+      state: view.state,
+      approved: view.approved,
+      savedReply: view.request?.savedReplyText != null,
+      ledgerReply: options.ledgerReply,
+    }),
     '<div class="case">',
     '<div class="casemain">',
     evidenceBlock(view.evidence, view.draftExternalId, view.request, {
@@ -2885,6 +2901,111 @@ function takenFits(outcome: string, hold: CaseHold | null, state: string): boole
   }
 }
 
+/**
+ * What a close answered, in the words the case shows (DEC-48).
+ *
+ * Every outcome gets a sentence, and the compiler holds the set closed. The
+ * one that matters most is `closed` itself: a case a person finished with no
+ * reply has to say so, and say that the customer was sent nothing.
+ */
+const CLOSE_SAYS = {
+  closed: 'The case is closed with no reply. The customer is sent nothing.',
+  // DEC-48: the record names a reason, so a close that carried none closed
+  // nothing. The bound is the ledger's own, printed rather than restated.
+  empty_reason: 'A close records the reason, and that one was empty, so nothing was closed.',
+  reason_too_long: `That reason is longer than a close records (${MAX_CLOSE_REASON_CHARS} characters),`
+    + ' so nothing was closed.',
+  unprintable_reason: 'That reason holds a character this ledger cannot store, so nothing was closed.',
+  // DEC-46: the reply moved under the reviewer. The page that drew the case
+  // is stale, so the answer says to read it again rather than to retry.
+  shown_changed: 'The reply changed since this page was drawn, so nothing was closed.'
+    + ' Open the case again to read it as it is now.',
+  // A floor, for the one caller that has no run to name a state from. The
+  // page draws `closeSays`'s version wherever it read one.
+  not_awaiting_approval: 'That run is not waiting for approval, so nothing was closed.',
+  unknown_run: 'That run is not in the ledger.',
+  stale_epoch: 'Another owner took this ticket, so nothing was closed.',
+} as const satisfies Record<CloseOutcome['outcome'], string>;
+
+/** What a close outcome this page cannot vouch for is answered with. */
+const UNKNOWN_CLOSE = 'That is not an answer this console knows.';
+
+/**
+ * The sentence for one known close outcome, on the run it fits.
+ *
+ * `not_awaiting_approval` is the one close outcome whose sentence depends on
+ * the run. A close that lost a race is answered with the state the winning
+ * close left — `closed` — and a page that said only "nothing was closed"
+ * beside a closed case would read as "this case is still open". The state is
+ * the ledger's own, and `closeOutcomeFits` has already established that it is
+ * not `awaiting_approval`, so a link cannot put words here.
+ */
+function closeSays(outcome: string, run: OutcomeRun | null): string {
+  if (outcome === 'not_awaiting_approval' && run !== null) {
+    return `That run is not waiting for approval. It is ${run.state} now, so nothing was closed.`;
+  }
+  return CLOSE_SAYS[outcome as keyof typeof CLOSE_SAYS];
+}
+
+/**
+ * Whether a close outcome can be the ledger's answer about `run`.
+ *
+ * A close is terminal, so the claim `closed` makes — this case is finished —
+ * is checked against the state the page read. A link anyone can send must not
+ * make the console say a waiting case was closed.
+ *
+ * Every row names the state its sentence needs, and a state that contradicts
+ * it refuses the row: a case that still waits was not closed, and
+ * `unknown_run` is a case the ledger does not hold at all. The test is
+ * contradiction, not reachability — a forged `?closed=` link can name an
+ * outcome no close of that case could return, and the sentence it would draw
+ * is still true of the case the page read. That is the same bar the approval
+ * and the save set for their own tables.
+ */
+function closeOutcomeFits(outcome: string, run: OutcomeRun | null): boolean {
+  switch (outcome) {
+    case 'closed':
+      return run !== null && run.state === 'closed';
+    case 'empty_reason':
+    case 'reason_too_long':
+    case 'unprintable_reason':
+    case 'shown_changed':
+      return run !== null && run.state === 'awaiting_approval';
+    case 'not_awaiting_approval':
+      // Any state that is not waiting, `closed` included: it is the answer a
+      // close that lost a race is given, and the sentence beside it is true
+      // of the case the page then reads.
+      return run !== null && run.state !== 'awaiting_approval';
+    case 'stale_epoch':
+      return run !== null && run.state === 'awaiting_approval';
+    case 'unknown_run':
+      return run === null;
+    default:
+      return false;
+  }
+}
+
+/**
+ * What the ledger said about the close just posted, or that it said nothing
+ * this page can vouch for.
+ *
+ * The same discipline as `renderOutcome`: a known name whose fact the page
+ * contradicts is not printed as the ledger's answer, and a name this console
+ * does not know is never echoed.
+ */
+export function renderCloseOutcome(outcome: string, run: OutcomeRun | null): string {
+  const known = Object.hasOwn(CLOSE_SAYS, outcome) && closeOutcomeFits(outcome, run);
+  const said = known ? closeSays(outcome, run) : UNKNOWN_CLOSE;
+  return [
+    '<div class="wrap" style="padding-bottom:0">',
+    known
+      ? `<p class="outcome${outcome === 'closed' ? ' ok' : ' refused'}" data-close="${escapeHtml(outcome)}">`
+      : '<p class="outcome">',
+    escapeHtml(said),
+    '</p></div>',
+  ].join('');
+}
+
 /** What a take answered, in the words the case shows. */
 const TAKE_SAYS = {
   taken: 'You hold this case now.',
@@ -2908,7 +3029,12 @@ const TAKE_SAYS = {
  * The warnings are worded by `actOf`, and say whether the act can be undone.
  */
 function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
-  const inner = view.state !== 'awaiting_approval'
+  // DEC-48: the other way out of the queue, on every waiting case. That
+  // includes a run whose park holds nothing to approve: a case nobody can
+  // approve is exactly the dead end this outcome exists to end, and a close
+  // needs nothing from the park but the text the page drew.
+  const close = view.state === 'awaiting_approval' ? closeForm(view, options) : '';
+  const approval = view.state !== 'awaiting_approval'
     ? `<p class="discl">This run is ${escapeHtml(view.state)}, so there is nothing here to approve.</p>`
     : act.kind === 'none'
       ? `<p class="discl">${escapeHtml(act.says)}</p>`
@@ -2924,7 +3050,34 @@ function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
         replyDigest(replyTextOf(view, options.ledgerReply) ?? ''),
       )
         + (act.kind === 'reply' ? `<p class="readback">${escapeHtml(readBackSays(options.readBack, options.ledgerReply))}</p>` : '');
-  return `<div class="actionbar">${inner}</div>`;
+  return `<div class="actionbar">${approval}${close}</div>`;
+}
+
+/**
+ * The close, beside the approval (DEC-48).
+ *
+ * Deliberately not the primary control, and deliberately not one press: it
+ * sends nothing to the customer, and the reason it records is what the team
+ * reads afterwards. The field is required here as well as in the ledger,
+ * because a reviewer who submits it empty should be told before a round trip.
+ */
+function closeForm(view: CaseView, options: CaseOptions): string {
+  return [
+    '<div class="closebar">',
+    '<p class="discl">Closing finishes this case with no reply. The customer is sent nothing.</p>',
+    // The filters ride on the action, never in a field (DEC-47), as the
+    // approval's do.
+    `<form method="post" action="/close${escapeHtml(filtersQuery(options.rule, options.product))}">`,
+    `<input type="hidden" name="runId" value="${escapeHtml(view.runId)}">`,
+    // DEC-46: the digest of the reply this page drew, on the same rule as the
+    // approval's. A close from a page drawn against other text refuses.
+    `<input type="hidden" name="shown" value="${
+      escapeHtml(replyDigest(replyTextOf(view, options.ledgerReply) ?? ''))}">`,
+    `<input class="identity" name="reason" type="text" size="40" maxlength="${MAX_CLOSE_REASON_CHARS}"`
+      + ' placeholder="why this case needs no reply" required>',
+    '<button class="btn" type="submit">Close, no reply</button>',
+    '</form></div>',
+  ].join('');
 }
 
 /** What an approval here does with the parked copy (section 4.10, DEC-44). */
@@ -3116,28 +3269,33 @@ export interface ThreadView {
 /**
  * What each absence means, in the words a responder needs.
  *
- * Six codes and six sentences. They are what the reader distinguishes, and a
- * surface that rendered two of them alike would send an operator to the wrong
- * place — which is the whole reason the reader distinguishes them.
- * `replyAbsenceSays` replaces the `no_reply_sent` sentence on a turn whose row
- * the relay did not refuse.
+ * Seven codes and seven sentences, and the compiler holds the set closed: the
+ * table satisfies the reader's own union, so an eighth code fails the build
+ * here rather than drawing its own name on the page. They are what the reader
+ * distinguishes, and a surface that rendered two of them alike would send an
+ * operator to the wrong place — which is the whole reason the reader
+ * distinguishes them. `replyAbsenceSays` replaces the `no_reply_sent`
+ * sentence on a turn whose row the relay did not refuse.
  */
-const REPLY_ABSENCE: Readonly<Record<string, string>> = {
+const REPLY_ABSENCE = {
   handled_automatically: 'answered by an internal write; no reply was sent to the customer',
   approved_without_reply: 'a person approved an action here; no reply text was recorded',
+  // DEC-48. A person decided the case needs no answer. Neither sentence above
+  // is true of it: the system did not answer it, and no approval ran on it.
+  closed_without_reply: 'a person closed this case without replying to the customer',
   // Not "a reply is drafted": an internal write parks with no draft (DEC-34).
   awaiting_approval: 'this turn waits for a person to approve it',
   in_flight: 'this run has not finished',
   no_reply_sent: 'the run stopped without sending a reply',
   not_retained: 'no run joins this turn, so nothing here can say what happened',
-};
+} as const satisfies Record<ReplyAbsence, string>;
 
-const MESSAGE_ABSENCE: Readonly<Record<string, string>> = {
+const MESSAGE_ABSENCE = {
   not_retained: 'the text of this message was not kept',
   empty_message: 'the customer sent no text',
-};
+} as const satisfies Record<MessageAbsence, string>;
 
-/** A named absence, or the id itself when the reader learns a seventh. */
+/** A named absence, or the id itself when a code arrives this table lacks. */
 function absenceSays(table: Readonly<Record<string, string>>, code: string): string {
   return Object.hasOwn(table, code) ? table[code]! : code;
 }
@@ -3223,6 +3381,11 @@ function turnOutcome(turn: TurnView): { readonly says: string; readonly token: T
   switch (turn.replyAbsence) {
     case 'handled_automatically': return delivered('auto-answered', turn.outboxStatus);
     case 'approved_without_reply': return delivered('approved', turn.outboxStatus);
+    // DEC-48: a person closed the case with no reply. Named rather than drawn
+    // as the state's own word, because the point of the chip is what became
+    // of the turn, and a reader who saw `closed` alone would have to guess
+    // whether anything went out.
+    case 'closed_without_reply': return { says: 'closed, no reply', token: 'dim' };
     case 'in_flight': return withRow('in flight', 'dim', turn.outboxStatus);
     case 'not_retained': return { says: 'no run', token: 'dim' };
     default:
@@ -3608,6 +3771,14 @@ const DESIGN_NOTES: readonly { readonly token: Token; readonly title: string; re
       + ' every customer reply carries.'
       + ' Where the helpdesk can send its own parked copy, the case says so and offers no editor:'
       + ' two texts that may both send is the one thing this console will not build.',
+  },
+  {
+    token: 'accent',
+    title: 'A case can end without a reply',
+    says: 'Some cases need no answer. A duplicate, a message from a machine, or a'
+      + ' question somebody settled on the telephone.'
+      + ' A reviewer closes such a case on its page, with a reason the team reads afterwards.'
+      + ' The customer is sent nothing, and the conversation says the case was closed with no reply.',
   },
   {
     token: 'accent',

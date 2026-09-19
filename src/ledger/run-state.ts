@@ -46,12 +46,18 @@ export const IN_FLIGHT_RUN_STATES: readonly string[] = [
  */
 export const PARKED_RUN_STATES: readonly string[] = ['awaiting_approval'];
 
-/** The states a run never leaves (V2 open item 7). */
+/**
+ * The states a run never leaves (V2 open item 7).
+ *
+ * `closed` is DEC-48's: a reviewer finished the case with no reply, so the
+ * run never sends and never returns to a person.
+ */
 export const TERMINAL_RUN_STATE_NAMES: readonly string[] = [
   'resolved',
   'escalated',
   'superseded',
   'abandoned',
+  'closed',
 ];
 
 /**

@@ -283,7 +283,7 @@ control flow from the model.
 received -> classified -> retrieved -> composed -> gated
   -> executing          (automatic path, internal writes only)
   -> awaiting_approval  (customer replies, DEC-12)
-  -> resolved | escalated | superseded | abandoned
+  -> resolved | escalated | superseded | abandoned | closed
 ```
 
 The coordinator does these tasks:

@@ -156,6 +156,19 @@ describe('the latency report (V2 open item 7)', () => {
     expect(report.partitions[1]!.wait.maxMs).toBe(30 * MINUTE);
   });
 
+  // DEC-48: a case a person closed with no reply is finished work. Its
+  // service time is real — the case waited for a person, and a person ended
+  // it — so it belongs in the distribution rather than in `unfinished`, which
+  // is the count an operator reads as a partition that is stalling.
+  it('counts a closed case as finished work, not as a run still going', async () => {
+    await seedRun({ partition: 0, waitMs: 1_000, serviceMs: 4 * MINUTE, state: 'closed' });
+
+    const [row] = (await readLatency(pool)).partitions;
+    expect(row!.service.unfinished).toBe(0);
+    expect(row!.service.count).toBe(1);
+    expect(row!.service.maxMs).toBe(4 * MINUTE);
+  });
+
   it('reports no partitions over an empty ledger, rather than failing', async () => {
     const report = await readLatency(pool);
     expect(report.partitions).toEqual([]);

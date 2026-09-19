@@ -33,6 +33,9 @@ import type { Pool } from 'pg';
  */
 export const TERMINAL_STATE_LIST: readonly string[] = [
   'abandoned',
+  // DEC-48: a reviewer closed the case with no reply. The run is finished,
+  // and its service time is real: the wait to close it was work on the case.
+  'closed',
   'escalated',
   'resolved',
   'superseded',

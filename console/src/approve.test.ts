@@ -27,7 +27,7 @@ const SHOWN = 'a'.repeat(64);
 
 import type { DraftReadBack } from 'auracle/ledger-read';
 
-import { approvalFor, approveFromConsole, saveFor, saveFromConsole } from './approve.js';
+import { approvalFor, approveFromConsole, closeFor, saveFor, saveFromConsole } from './approve.js';
 import { ReadBackFailed } from './read-back.js';
 
 describe('approving from the console', () => {
@@ -183,6 +183,54 @@ describe('approving from the console', () => {
 // and `src/approval/save-reply.db.test.ts` proves the core — so nothing
 // failed if `shown` stopped being forwarded, which silently disables the
 // DEC-46 guard on every console save.
+// DEC-48: the close, and the glue the case page reaches it through. The route
+// is proved against a fake `deps.close`, and `src/outcomes/close.db.test.ts`
+// proves the core — so without this nothing fails if the digest stops being
+// forwarded, which silently disables the DEC-46 guard on every console close,
+// or if the adapter's declaration stops travelling, which decides which text
+// the guard compares (DEC-44).
+describe('closing from the console', () => {
+  it('delegates to closeRun with the reason, the reviewer and the digest', async () => {
+    const closeRun = vi.fn().mockResolvedValue({ outcome: 'closed' });
+    const pool = { query: vi.fn() };
+
+    const close = closeFor({ pool: pool as never, closeRun, ledgerReply: true });
+    const outcome = await close(RUN_B, REVIEWER, 'Duplicate of T-4471.', SHOWN);
+
+    expect(outcome).toBe('closed');
+    expect(closeRun).toHaveBeenCalledWith(pool, RUN_B, {
+      reason: 'Duplicate of T-4471.',
+      closedBy: REVIEWER,
+      closedBySource: 'roster',
+      ledgerReply: true,
+      shown: SHOWN,
+    });
+    // The digest is the whole of DEC-46 on this path, and the adapter's
+    // declaration is what decides which text it is compared against.
+    const options = closeRun.mock.calls[0]![2] as Record<string, unknown>;
+    expect(Object.hasOwn(options, 'shown')).toBe(true);
+    expect(Object.hasOwn(options, 'ledgerReply')).toBe(true);
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('carries the draft path through, so the guard compares what the page drew', async () => {
+    const closeRun = vi.fn().mockResolvedValue({ outcome: 'closed' });
+    const close = closeFor({ pool: {} as never, closeRun, ledgerReply: false });
+
+    await close(RUN_C, REVIEWER, 'Settled by telephone.', SHOWN);
+
+    expect((closeRun.mock.calls[0]![2] as Record<string, unknown>)['ledgerReply']).toBe(false);
+  });
+
+  it('refuses a run id that is not a run id, and closes nothing', async () => {
+    const closeRun = vi.fn();
+    const close = closeFor({ pool: {} as never, closeRun, ledgerReply: false });
+
+    await expect(close('not-a-run', REVIEWER, 'Duplicate.', SHOWN)).rejects.toThrow(/run id/);
+    expect(closeRun).not.toHaveBeenCalled();
+  });
+});
+
 describe('saving from the console', () => {
   it('delegates to saveReply with the digest the page drew', async () => {
     const saveReply = vi.fn().mockResolvedValue({ outcome: 'saved' });

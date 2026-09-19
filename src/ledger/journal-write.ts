@@ -13,9 +13,9 @@
 //   journalStart   the write-before-act row: the step says what it is about
 //                  to do, and `result` stays null until it knows.
 //   journalFinish  the outcome of a step `journalStart` opened.
-//   journalStep    one row, complete when written. The three writers outside
-//                  the coordinator never journal an intent: each records a
-//                  step that already happened, inside a transaction that is
+//   journalStep    one row, complete when written. The callers outside the
+//                  coordinator never journal an intent: each records a step
+//                  that already happened, inside a transaction that is
 //                  committing the rest of it.
 //
 // Forcing those three into start-then-finish would put a second statement
@@ -32,9 +32,10 @@ import type { Pool, PoolClient } from 'pg';
 /**
  * A pool, or a client already inside a transaction.
  *
- * Three of the four writers journal inside an open transaction and must not
+ * Five of the six callers journal inside an open transaction and must not
  * take a second connection: a `Pool` would deadlock against rows their own
- * uncommitted transaction holds.
+ * uncommitted transaction holds. `src/ledger/journal-writers.test.ts` names
+ * each caller and the handle it passes.
  */
 export type JournalDb = Pool | PoolClient;
 

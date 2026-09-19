@@ -41,7 +41,7 @@ export type MessageAbsence = 'not_retained' | 'empty_message';
  * Why a turn shows no agent reply.
  *
  * `turn.approved_reply_text` is written on the approval path alone
- * (DEC-37, db/011). Six different facts land in that null:
+ * (DEC-37, db/011). Seven different facts land in that null:
  *
  *   - `handled_automatically`: a run resolved the turn with an internal write
  *     and no person saw it. DEC-12 makes every customer reply wait for a
@@ -60,6 +60,9 @@ export type MessageAbsence = 'not_retained' | 'empty_message';
  *     escalated, abandoned or superseded.
  *   - `not_retained`: no run joins this turn at all, so nothing here can say
  *     what happened to it.
+ *   - `closed_without_reply`: a person closed the case without answering it
+ *     (DEC-48). Neither label beside it is true: the system did not handle
+ *     this turn, and nobody approved an action on it.
  */
 export type ReplyAbsence =
   | 'handled_automatically'
@@ -67,7 +70,8 @@ export type ReplyAbsence =
   | 'awaiting_approval'
   | 'in_flight'
   | 'no_reply_sent'
-  | 'not_retained';
+  | 'not_retained'
+  | 'closed_without_reply';
 
 /** One turn of a conversation, with what the ledger holds about it. */
 export interface ConversationTurnRow {
@@ -263,6 +267,10 @@ function replyAbsenceFor(runState: string | null, approvedBy: string | null): Re
   // `no_reply_sent` — reporting a run that may yet answer as one that
   // terminally did not.
   if (!TERMINAL_RUN_STATES.has(runState)) return 'in_flight';
+  // DEC-48: a person closed the case without answering it. Read before the
+  // catch-all below, because a close sends nothing for a reason the other
+  // terminal states do not share: a person decided the case needs no reply.
+  if (runState === 'closed') return 'closed_without_reply';
   if (runState !== 'resolved') return 'no_reply_sent';
   // A resolved run that dispatched a reply wrote it to the turn, so one
   // reaching here answered without reply text. Whether a person was involved

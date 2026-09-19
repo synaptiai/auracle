@@ -17,7 +17,8 @@
 // names every write it makes.
 import type { Pool } from 'pg';
 import type {
-  ApproveOptions, ApproveOutcome, DraftReadBack, SaveOutcome, SaveReplyOptions, UndoOutcome,
+  ApproveOptions, ApproveOutcome, CloseOptions, CloseOutcome, DraftReadBack, SaveOutcome,
+  SaveReplyOptions, UndoOutcome,
 } from 'auracle/ledger-read';
 
 import { ReadBackFailed } from './read-back.js';
@@ -311,4 +312,53 @@ export function saveFor(deps: {
       { pool: deps.pool, saveReply: deps.saveReply },
       { runId, text, shown },
     )).outcome;
+}
+
+/**
+ * The close the console's entry point hands its server (DEC-48).
+ *
+ * A delegation, like the approval and the save: `closeRun` owns the
+ * transaction, the DEC-46 guard and the journal row, and a second
+ * implementation here would be a second set of rules about the same case.
+ *
+ * The identity travels with the source `roster`, as it does on the approval
+ * path: the gate resolved it against the reviewer roster before this route
+ * was reached, so what the ledger records is a checked name.
+ */
+export function closeFor(deps: {
+  readonly pool: Pool;
+  readonly closeRun: (
+    pool: Pool,
+    runId: string,
+    options: CloseOptions,
+  ) => Promise<CloseOutcome>;
+  /**
+   * DEC-44: whether the adapter's ledger holds the reply.
+   *
+   * Read off the adapter at startup, as the approval's is. It decides which
+   * text the case drew, and so which text the guard compares: the reply a
+   * person saved, or the body the park journaled.
+   */
+  readonly ledgerReply: boolean;
+}): (
+  runId: string,
+  reviewer: string,
+  reason: string,
+  shown: string,
+) => Promise<CloseOutcome['outcome']> {
+  return async (runId, reviewer, reason, shown) => {
+    // Refused here, as the approval and the save refuse it: `run_id` is a
+    // `uuid` column, so a value of another shape makes the ledger raise rather
+    // than answer `unknown_run`, and the page would blame the ledger for a
+    // request that never reached it.
+    const id = runId.trim();
+    if (!RUN_ID.test(id)) throw new Error(`'${runId}' is not a run id`);
+    return (await deps.closeRun(deps.pool, id, {
+      reason,
+      closedBy: reviewer,
+      closedBySource: 'roster',
+      ledgerReply: deps.ledgerReply,
+      shown,
+    })).outcome;
+  };
 }

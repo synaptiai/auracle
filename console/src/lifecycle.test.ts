@@ -62,16 +62,18 @@ describe('the console as a long-running process', () => {
     expect(MAIN).toMatch(/readBackFor\(process\.env, selectReadBackAdapter, log\)/);
     expect(MAIN).toMatch(/approve: approvalFor\(\{/);
     expect(MAIN).toMatch(/\bpool, approveRun, readBack, log,/);
-    // DEC-44: and the declaration the approval branches on comes from the
-    // adapter the read-back chose, never from the environment a second time.
+    // DEC-44: and the declaration the pages and the writes branch on comes
+    // from the adapter the read-back chose, never from the environment a
+    // second time.
     //
-    // Counted, and not merely found. Two sites read it — the approval and the
-    // pages it draws — and the failure this guards is the two disagreeing: an
-    // editor offered to a reviewer whose text the approval never sends.
-    // `indexOf` and `toMatch` both pass while one of the two says something
-    // else.
+    // Counted, and not merely found. Three sites read it — the approval, the
+    // close whose guard compares the text a page drew, and the pages
+    // themselves — and the failure this guards is any of them disagreeing: an
+    // editor offered to a reviewer whose text the approval never sends, or a
+    // close refused against a text the case never drew. `indexOf` and
+    // `toMatch` both pass while one of the three says something else.
     const declaration = /ledgerReply: readBack\?\.supportsLedgerReply \?\? false/g;
-    expect([...MAIN.matchAll(declaration)]).toHaveLength(2);
+    expect([...MAIN.matchAll(declaration)]).toHaveLength(3);
     expect(MAIN).not.toContain('approveFromConsole');
   });
 

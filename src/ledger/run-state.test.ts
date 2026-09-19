@@ -27,9 +27,9 @@ describe('what a run state means to the fence', () => {
     expect(IN_FLIGHT_RUN_STATES).not.toContain('awaiting_approval');
   });
 
-  it('reads the four terminal states as terminal', () => {
+  it('reads the five terminal states as terminal', () => {
     expect(TERMINAL_RUN_STATE_NAMES)
-      .toEqual(['resolved', 'escalated', 'superseded', 'abandoned']);
+      .toEqual(['resolved', 'escalated', 'superseded', 'abandoned', 'closed']);
     for (const state of TERMINAL_RUN_STATE_NAMES) {
       expect(runStateClass(state), state).toBe('terminal');
     }

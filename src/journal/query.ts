@@ -322,6 +322,8 @@ export interface JournalStep {
   readonly compose: ComposeRecord | null;
   /** Present on a `park` row. */
   readonly park: ParkRecord | null;
+  /** Present on a `close` row: who finished the case, and why (DEC-48). */
+  readonly close: CloseRecord | null;
   /** DEC-24: the action-derived key, on an `execute` row. */
   readonly idemKey: string | null;
   /** The coordinator's EscalationReason, on an `escalate` row. */
@@ -820,6 +822,46 @@ function payloadOf(
   return isObject(raw) ? raw : null;
 }
 
+/**
+ * What the close step recorded (DEC-48).
+ *
+ * Written by `src/outcomes/close.ts` and not by a coordinator step, so this
+ * row is outside `STEP_ORDER` and the reader marks it unrecognised — and
+ * returns it anyway, because it is the only record of why a case ended.
+ *
+ * The reason is the reviewer's own text, and it is returned whole. It is what
+ * the surface exists to show, and the console already draws the customer's
+ * message and the drafted reply on the same page.
+ */
+export interface CloseRecord {
+  /** DEC-48: why the reviewer closed the case. Null when the row recorded none. */
+  readonly reason: string | null;
+  /** Who closed it, or null when the row named nobody at all. */
+  readonly reviewer: string | null;
+  /** DEC-45: what the name proves, when the row recorded it. */
+  readonly reviewerSource: string | null;
+}
+
+/**
+ * The record, or null when the row is not one a reader can take at its word.
+ *
+ * `malformed` is a result that was recorded and is not an object. Returning
+ * the empty record there would answer "no reason recorded" about a row that
+ * holds one nobody can read — the flattering answer this module refuses for
+ * the compose partition and the stale list alike.
+ */
+function toCloseRecord(
+  result: Record<string, unknown> | null,
+  malformed: boolean,
+): CloseRecord | null {
+  if (malformed) return null;
+  return {
+    reason: stringAt(result, 'reason'),
+    reviewer: stringAt(result, 'reviewer'),
+    reviewerSource: stringAt(result, 'reviewerSource'),
+  };
+}
+
 function toParkRecord(result: Record<string, unknown> | null): ParkRecord {
   return {
     actionClass: stringAt(result, 'actionClass'),
@@ -909,6 +951,9 @@ function toStep(row: Record<string, unknown>): JournalStep {
     embedModelVer: stepId === 'retrieve' ? stringAt(result, 'embed_model_ver') : null,
     compose: stepId === 'compose' ? toComposeRecord(status, result) : null,
     park: stepId === 'park' ? toParkRecord(result) : null,
+    // DEC-48. Read on any status: a close is one row written complete, so
+    // there is no intent row to separate from an outcome.
+    close: stepId === 'close' ? toCloseRecord(result, recorded && result === null) : null,
     idemKey: stepId === 'execute' ? stringAt(result, 'idemKey') : null,
     escalationReason:
       stepId === 'escalate' ? escalationHead(stringAt(result, 'reason')) : null,

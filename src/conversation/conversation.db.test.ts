@@ -397,7 +397,7 @@ describe('a conversation the ledger holds', () => {
   });
 });
 
-describe('the three reasons a turn shows no reply', () => {
+describe('the reasons a turn shows no reply', () => {
   it('names an automatic resolution, which sends no customer reply (DEC-12)', async () => {
     const id = await conversation();
     await turn(id, 1, { body: 'please close this' });
@@ -423,7 +423,19 @@ describe('the three reasons a turn shows no reply', () => {
     expect(thread?.turns[0]?.replyAbsence).toBe('no_reply_sent');
   });
 
-  // Four codes, four distinct answers. A surface reading these sends an
+  // A person closed the case without answering it (DEC-48). The two labels
+  // beside it are wrong about this turn: the system did not handle it, and
+  // nobody approved an action on it.
+  it('names a case a person closed with no reply', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'duplicate of another ticket' });
+    await run(id, 1, 'closed');
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.replyText).toBeNull();
+    expect(thread?.turns[0]?.replyAbsence).toBe('closed_without_reply');
+  });
+
+  // Every code, every distinct answer. A surface reading these sends an
   // operator somewhere different for each, so two that rendered alike would
   // be worse than one that rendered nothing.
   it('gives each absence its own value', async () => {
@@ -439,11 +451,13 @@ describe('the three reasons a turn shows no reply', () => {
     await run(id, 5, 'resolved', 'ops-oncall');
     await turn(id, 6, { body: 'f' });
     await run(id, 6, 'composed');
+    await turn(id, 7, { body: 'g' });
+    await run(id, 7, 'closed');
     const thread = await readConversation(pool, id);
     const codes = thread?.turns.map((t) => t.replyAbsence) ?? [];
     expect(codes).toEqual([
       'handled_automatically', 'awaiting_approval', 'no_reply_sent', 'not_retained',
-      'approved_without_reply', 'in_flight',
+      'approved_without_reply', 'in_flight', 'closed_without_reply',
     ]);
     expect(new Set(codes).size).toBe(codes.length);
   });

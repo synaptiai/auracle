@@ -1105,3 +1105,48 @@ describe('the retrieved documents', () => {
     expect(documents?.map((d) => d.position)).toEqual([1, 2]);
   });
 });
+
+// DEC-48: a case a person closed with no reply. The row is written by
+// `src/outcomes/close.ts` and by no coordinator step, so it sits outside
+// `STEP_ORDER` — and the reader returns it anyway, marked unrecognised, which
+// is what lets the case show the reviewer and the reason on the run.
+describe('the close a person made (DEC-48)', () => {
+  it('returns the reason and the reviewer, and marks the step as outside the walk', async () => {
+    const runId = await journal([
+      {
+        stepId: 'close',
+        status: 'done',
+        result: {
+          reason: 'Duplicate of ticket T-4471.',
+          reviewer: 'anna@example.test',
+          reviewerSource: 'roster',
+        },
+      },
+    ]);
+    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'close');
+    expect(step?.close).toEqual({
+      reason: 'Duplicate of ticket T-4471.',
+      reviewer: 'anna@example.test',
+      reviewerSource: 'roster',
+    });
+    // Not a step the coordinator walks, and still returned: a console that
+    // dropped it would lose the only record of why the case ended.
+    expect(step?.recognized).toBe(false);
+  });
+
+  it('reads a row that recorded no reason as no reason, never as text', async () => {
+    const runId = await journal([
+      { stepId: 'close', status: 'done', result: { reviewer: 'anna@example.test' } },
+    ]);
+    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'close');
+    expect(step?.close?.reason).toBeNull();
+    expect(step?.close?.reviewer).toBe('anna@example.test');
+  });
+
+  it('reads a close row whose result is not an object as malformed, not as empty', async () => {
+    const runId = await journal([{ stepId: 'close', status: 'done', result: ['no'] }]);
+    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'close');
+    expect(step?.resultMalformed).toBe(true);
+    expect(step?.close).toBeNull();
+  });
+});

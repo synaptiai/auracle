@@ -25,6 +25,9 @@ export { probeLedger, requireDbUrl } from '../db/config.js';
  */
 export const LEDGER_WRITES: Readonly<Record<string, string>> = {
   approveRun: 'the approval: it commits the send, the run it resolves and the edit distance',
+  // DEC-48: a case a reviewer finishes with no reply. It sends nothing: the
+  // run lands `closed`, the journal records who and why, and the hold ends.
+  closeRun: 'finishes a waiting case with no reply, and records who closed it and why',
   handoverHold: 'moves a live hold to the teammate it names',
   readHold: 'clears a hold whose period ran out and records the lapse it found',
   releaseHold: 'ends the holder\'s hold on a case',
@@ -53,6 +56,10 @@ export {
   readConversation,
   turnAnsweredBy,
 } from '../conversation/query.js';
+// DEC-48: the codes a turn's two absences can carry. Exported so the console
+// that words them is held to the reader's own union: a table keyed by
+// `string` renders an eighth code as its own literal, and nobody notices.
+export type { MessageAbsence, ReplyAbsence } from '../conversation/query.js';
 
 export { readDocument } from '../documents/query.js';
 
@@ -67,6 +74,12 @@ export type { PartitionLatency } from '../latency/query.js';
 export { readDays } from '../bands/query.js';
 
 export { approveRun } from '../approval/approve.js';
+
+// DEC-48: the case a reviewer finishes with no reply. The bound travels with
+// the write, so the form that posts a reason and the ledger that records it
+// cannot disagree about how long one may be.
+export { MAX_CLOSE_REASON_CHARS, closeRun } from '../outcomes/close.js';
+export type { CloseOptions, CloseOutcome } from '../outcomes/close.js';
 
 // DEC-46: the digest of the reply a page drew, which the console puts in its
 // approval form and the approval recomputes under the run's lock. One

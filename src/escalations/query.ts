@@ -169,6 +169,9 @@ export const TERMINAL_RUN_STATES = [
   'escalated',
   'superseded',
   'abandoned',
+  // DEC-48: a reviewer closed the case with no reply. A terminal state the
+  // coordinator never walks a run to, and one a person reaches.
+  'closed',
 ] as const satisfies readonly TerminalRunState[];
 
 export const LEDGER_STATES = [

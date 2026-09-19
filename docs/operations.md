@@ -1555,11 +1555,13 @@ A fenced row or an unknown row says nobody can confirm the delivery. The relay
 can fence a row after a send that timed out (DEC-28). That send may have
 reached the customer.
 
-The surface also names why a turn shows no reply, and six reasons exist.
+The surface also names why a turn shows no reply, and seven reasons exist.
 
 An internal write answered, and no reply went to the customer. A person approved
 an action and no reply text was recorded. A parked run still waits for a person.
-A run stopped. A run is still running. No run joins the turn at all.
+A run stopped. A run is still running.
+
+No run joins the turn at all. A person closed the case with no reply (DEC-48).
 
 A stopped run beside a row the relay did not refuse says what became of the
 action on that row. The row can belong to an earlier run. So a run that sent
@@ -1621,23 +1623,28 @@ message.
 The console shows this, so an operator reading it reads what the ledger holds.
 State the position before you carry real traffic (DEC-17, DEC-19).
 
-Seven columns hold text a customer wrote, would read, or is named in. Each
-lives for the life of its row, and nothing removes any of it.
+Ten places hold text a customer wrote, would read, or is named in. Each lives
+for the life of its row, and nothing removes any of it.
 
 | Where | What | Written by |
 |---|---|---|
 | `turn.body_text` | the inbound message | intake, on every turn |
 | `turn.approved_reply_text` | the reply an approval dispatched | the approval path alone |
+| `turn.saved_reply_text` | the reply a reviewer edited and saved | the console's save |
 | `step_journal.result` on `park` | the drafted reply | every gated run |
 | `step_journal.result` on `park` | the fault an adapter raised | a park the adapter refused |
 | `step_journal.result` on `compose` | the reply, sentence by sentence | every run that composed |
 | `step_journal.result` on `compose` | the body of each cited document | every run that cited one |
 | `step_journal.result` on `escalate` | the reason, which interpolates adapter text | the relay and the consumer |
+| `step_journal.result` on `close` | the reason the reviewer closed the case | the console's close |
 | `conversation.customer_address` | the participant the messages come from | the first sender that names itself |
 
-The last two hold an address rather than a message. An adapter builds a fault
-naming the expected recipient, and an SMTP rejection quotes one. Both reach a
-journal row verbatim.
+The park fault and the escalation reason hold an address rather than a message.
+An adapter builds a fault naming the expected recipient, and an SMTP rejection
+quotes one. Both reach a journal row verbatim.
+
+A close reason is a reviewer's own words, and it can quote the customer. It is
+recorded on the run, and the console draws it on the case.
 
 `intake.ticket_text` holds the inbound message as well, and is not listed. The
 consumer deletes that row on the ack and on the abandon, so it clears itself.
@@ -1658,19 +1665,20 @@ statements below are what an adopter runs to clear each field by age. None of
 them removes a run, so the control bands and the replay keep their history.
 
 ```sql
--- The customer's message and the reply a person sent, past 90 days.
+-- The customer's message, the reply a person sent, and the reply a person
+-- saved, past 90 days.
 UPDATE turn
-   SET body_text = NULL, approved_reply_text = NULL
+   SET body_text = NULL, approved_reply_text = NULL, saved_reply_text = NULL
  WHERE created_at < now() - interval '90 days';
 
--- The drafted reply, the cited document bodies, the adapter fault and the
--- escalation reason, past 90 days.
+-- The drafted reply, the cited document bodies, the adapter fault, the
+-- escalation reason and the close reason, past 90 days.
 UPDATE step_journal j
    SET result = j.result - 'body' - 'sentences' - 'claims' - 'citedBodies'
                          - 'error' - 'reason'
   FROM run r
  WHERE r.run_id = j.run_id
-   AND j.step_id IN ('park', 'compose', 'escalate')
+   AND j.step_id IN ('park', 'compose', 'escalate', 'close')
    AND r.created_at < now() - interval '90 days';
 
 -- The participant of a conversation nobody will add a turn to.
@@ -1702,9 +1710,10 @@ removes them.
 Clearing a draft does not reach the helpdesk. The draft parks there as well
 (DEC-11), and the adapter's own retention governs that copy.
 
-**The console writes the ledger in five places, and it names each one.** It
-approves a reply, takes a case, and releases a case. It also hands a case to
-a teammate, and clears a hold whose period ran out.
+**The console writes the ledger in eight places, and it names each one.** It
+approves a reply, saves an edited reply, and closes a case with no reply. It
+takes a case, releases a case, and hands a case to a teammate. It also clears
+a hold whose period ran out, and takes a send back inside its hold.
 
 Every other statement it issues is a SELECT. So it is otherwise as safe
 against a live database as `pnpm run bands` and `pnpm run latency`. That

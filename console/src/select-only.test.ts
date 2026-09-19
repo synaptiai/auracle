@@ -126,10 +126,14 @@ const APPROVAL_CALLERS = ['src/approve.ts'];
 /**
  * The writes the entry point calls itself, rather than passing on.
  *
- * `approveRun` is the one it passes: the approval path has a module of its
- * own, and the holds are wired straight into the surfaces that use them.
+ * `approveRun` and `closeRun` are the two it passes: each has a module of its
+ * own — the approval bridge and the outcomes — and the holds are wired
+ * straight into the surfaces that use them.
  */
 const CALLED_BY_THE_ENTRY_POINT = ['handoverHold', 'readHold', 'releaseHold', 'takeHold'];
+
+/** The writes the entry point hands to a helper instead of calling. */
+const PASSED_ON_BY_THE_ENTRY_POINT = ['approveRun', 'closeRun'];
 
 /**
  * Every symbol this console takes from the barrel, and whether it writes.
@@ -142,6 +146,9 @@ const CALLED_BY_THE_ENTRY_POINT = ['handoverHold', 'readHold', 'releaseHold', 't
 const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   activeReviewer: 'read',
   approveRun: 'write',
+  // DEC-48: the case a reviewer finishes with no reply. The console's fourth
+  // write, and the only one that ends a case without sending anything.
+  closeRun: 'write',
   conversationOfRun: 'read',
   // DEC-44: whether a copy read back from the helpdesk holds text. A rule
   // read by the approval and by the page, and no statement either way.
@@ -150,6 +157,10 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   LEDGER_STATES: 'read',
   listEscalations: 'read',
   listRuns: 'read',
+  // DEC-48: how long a reason a close may record. The bound the form's field
+  // is built with and the ledger enforces, from one definition. A number, and
+  // no statement.
+  MAX_CLOSE_REASON_CHARS: 'read',
   // DEC-51: whether an approval's send is still held, and for how long. A
   // read of the record the approval wrote, and no statement.
   readApprovalHold: 'read',
@@ -439,10 +450,13 @@ describe('the console against a live database', () => {
       .toEqual([...CALLED_BY_THE_ENTRY_POINT].sort());
     // Naming a write is not calling it, and the difference is the whole
     // design: `main.ts` imports `approveRun` to hand it to
-    // `approveFromConsole`, which is what lets a test drive the delegation
-    // without a ledger. So the injector is asserted to be an injector.
-    expect(main.referenced.has('approveRun')).toBe(true);
-    expect(main.called.has('approveRun')).toBe(false);
+    // `approveFromConsole`, and `closeRun` to hand it to `closeFor`, which is
+    // what lets a test drive each delegation without a ledger. So the
+    // injector is asserted to be an injector.
+    for (const name of PASSED_ON_BY_THE_ENTRY_POINT) {
+      expect(main.referenced.has(name), name).toBe(true);
+      expect(main.called.has(name), name).toBe(false);
+    }
   });
 
   // And the approval is invoked in one module: `approve.ts` calls what it was

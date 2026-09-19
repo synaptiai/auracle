@@ -354,6 +354,25 @@ describe('the control-band daily sample', () => {
     expect(edit.count + edit.notReached + edit.unrecorded).toBe(day!.runs);
   });
 
+  // DEC-48: a case a person closed with no reply. Nobody approved it and no
+  // reply was sent, so it carries no edit distance and counts as not reached.
+  // It is not pending either: it has left the queue, and the day's totals
+  // still account for it.
+  it('counts a closed case as not reached, and never as one still to land', async () => {
+    await seedRun({ day: '2026-02-01', editDistance: 0.4 });
+    await seedRun({ day: '2026-02-01', state: 'closed' });
+    await seedRun({ day: '2026-02-01', state: 'awaiting_approval' });
+
+    const [day] = await readDays(pool, FROM, TO);
+    const edit = day!.samples.approval_edit_distance;
+    expect(edit.count).toBe(1);
+    expect(edit.notReached).toBe(2);
+    // Only the waiting run is still to land. A closed case counted here would
+    // report a queue that is holding work nobody is doing.
+    expect(edit.pending).toBe(1);
+    expect(edit.count + edit.notReached + edit.unrecorded).toBe(day!.runs);
+  });
+
   it('counts a run with a stuck delivery once, however many records are stuck', async () => {
     await seedRun({ day: '2026-02-01', outbox: ['delivery_unknown', 'delivery_unknown'] });
     await seedRun({ day: '2026-02-01', outbox: ['sent'] });
