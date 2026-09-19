@@ -60,7 +60,18 @@ describe('the console as a long-running process', () => {
   // with the console's own log, rather than wiring the adapter by hand.
   it('builds the approval and the read-back through the functions that log them', () => {
     expect(MAIN).toMatch(/readBackFor\(process\.env, selectReadBackAdapter, log\)/);
-    expect(MAIN).toMatch(/approve: approvalFor\(\{ pool, approveRun, readBack, log \}\)/);
+    expect(MAIN).toMatch(/approve: approvalFor\(\{/);
+    expect(MAIN).toMatch(/\bpool, approveRun, readBack, log,/);
+    // DEC-44: and the declaration the approval branches on comes from the
+    // adapter the read-back chose, never from the environment a second time.
+    //
+    // Counted, and not merely found. Two sites read it — the approval and the
+    // pages it draws — and the failure this guards is the two disagreeing: an
+    // editor offered to a reviewer whose text the approval never sends.
+    // `indexOf` and `toMatch` both pass while one of the two says something
+    // else.
+    const declaration = /ledgerReply: readBack\?\.supportsLedgerReply \?\? false/g;
+    expect([...MAIN.matchAll(declaration)]).toHaveLength(2);
     expect(MAIN).not.toContain('approveFromConsole');
   });
 

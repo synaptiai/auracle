@@ -53,6 +53,36 @@ describe('fencedInsert', () => {
     await truncateLedger(pool);
   });
 
+  // DEC-44: the record carries the reply it must send. DEC-49 keeps it out of
+  // the idempotency key, so it is stored beside the payload and the payload a
+  // caller passed is stored untouched.
+  it('carries the reply the ledger holds, outside the payload (DEC-44)', async () => {
+    const run = makeRun(1n);
+    const reply = {
+      bodyText: 'Your refund is on its way.',
+      disclosure: 'Sent by Auracle.',
+      provenance: {
+        generatedBy: 'model',
+        modelId: 'm1',
+        promptVer: 'p1',
+        generatedAt: '2026-09-19T00:00:00Z',
+      },
+    };
+    const result = await fencedInsert(pool, run, {
+      ...makeOutbox(run, 'key-reply'),
+      reply,
+    });
+    expect(result).toEqual({ outcome: 'accepted' });
+
+    const row = await pool.query<{ reply: unknown; payload: Record<string, unknown> }>(
+      "SELECT reply, payload FROM outbox WHERE run_id = $1 AND step_id = 's1'",
+      [run.runId],
+    );
+    expect(row.rows[0]?.reply).toEqual(reply);
+    // The payload is the semantic action, exactly as the caller passed it.
+    expect(row.rows[0]?.payload).toEqual({ refundAmount: 50, currency: 'EUR' });
+  });
+
   it('commits the run state change and the outbox insert together', async () => {
     const run = makeRun(1n);
     const result = await fencedInsert(pool, run, makeOutbox(run, 'key-a'));

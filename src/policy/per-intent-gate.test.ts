@@ -20,6 +20,7 @@ const CAPABLE: PolicyInput['capabilities'] = {
   supportsDraftState: true,
   supportsStructuredFields: true,
   supportsThreading: true,
+  supportsLedgerReply: false,
 };
 
 // Typed, not cast. An `as PolicyInput` cast on this fixture hid a wrong

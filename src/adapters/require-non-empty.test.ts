@@ -84,6 +84,7 @@ function egressAdapters(): { name: string; sendDraft: (id: string, key: string) 
     baseUrl: 'https://freescout.example.test',
     apiKey: 'synthetic-key',
     userId: 1,
+    internalNote: false,
   });
   const smtp = new SmtpEgressAdapter({
     imap: {
@@ -114,6 +115,7 @@ function egressAdapterInstances(): {
     baseUrl: 'https://freescout.example.test',
     apiKey: 'synthetic-key',
     userId: 1,
+    internalNote: false,
   });
   const smtp = new SmtpEgressAdapter({
     imap: {
@@ -265,8 +267,8 @@ describe('the argument order cannot drift back', () => {
       ]),
     );
     expect(scanned.length).toBeGreaterThan(100);
-    // 12 in helpdesk, 7 in freescout, 10 in imap-smtp when this was written.
-    expect(CALLS.length).toBe(29);
+    // 12 in helpdesk, 11 in freescout, 10 in imap-smtp when this was written.
+    expect(CALLS.length).toBe(33);
   });
 
   it('still reads a call the text matcher could not', () => {
@@ -295,7 +297,7 @@ describe('the argument order cannot drift back', () => {
     //   const idemKey = keyFor(a, b);
     //   requireNonEmpty('idemKey', idemKey);
     //
-    // All 29 call sites satisfy this today.
+    // All 33 call sites satisfy this today.
     const mismatched = CALLS.filter((call) => call.field !== call.value).map(
       (call) =>
         `${call.file}: requireNonEmpty('${call.field}', ${call.value}) `

@@ -42,6 +42,7 @@ import type {
   EgressAdapter,
   IngressAdapter,
   IngressEvent,
+  LedgerReply,
   NormalizedEvent,
 } from './types.js';
 import { AdapterCapabilityError } from './types.js';
@@ -53,6 +54,7 @@ export const IMAP_SMTP_CAPABILITIES: Readonly<AdapterCapabilities> = Object.free
   supportsDraftState: true,
   supportsStructuredFields: false,
   supportsThreading: true,
+  supportsLedgerReply: false,
 });
 
 /**
@@ -604,6 +606,24 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
       }
       return { draftExternalId: String(appended.uid) };
     });
+  }
+
+  /**
+   * Mail keeps the DEC-40 draft path, so the ledger never holds the reply
+   * (DEC-44, maintainer ruling of 2026-09-14).
+   *
+   * A mail client can send any message from any mailbox, so no mailbox holds
+   * a copy the helpdesk cannot send. The draft does: `sendDraft` takes it
+   * from Drafts and sends it. So this adapter declares no ledger reply, and
+   * the console offers no editor on this channel.
+   */
+  async sendLedgerReply(
+    _reply: LedgerReply,
+    _idemKey: string,
+  ): Promise<{ readonly externalId: string }> {
+    throw new AdapterCapabilityError(
+      'imap-smtp cannot send a reply the ledger holds: supportsLedgerReply is false, and the draft in the mailbox is what sends (DEC-44)',
+    );
   }
 
   async sendDraft(draftExternalId: string, idemKey: string): Promise<{ readonly externalId: string }> {

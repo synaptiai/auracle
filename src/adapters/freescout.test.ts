@@ -29,7 +29,7 @@ import {
 } from '../test-support/freescout-wire.js';
 
 import {
-  FREESCOUT_CAPABILITIES,
+  freeScoutCapabilities,
   FreeScoutEgressAdapter,
   assertTicketIdIsAddressable,
   composeDraftBody,
@@ -73,6 +73,7 @@ beforeEach(async () => {
     baseUrl: instance.baseUrl,
     apiKey: FREESCOUT_TEST_API_KEY,
     userId: FREESCOUT_TEST_USER_ID,
+    internalNote: false,
     timeoutMs: 5_000,
   });
 });
@@ -100,7 +101,7 @@ describe('the capability declaration (DEC-06)', () => {
   });
 
   it('is frozen, so no caller can widen a guarantee at runtime', () => {
-    expect(Object.isFrozen(FREESCOUT_CAPABILITIES)).toBe(true);
+    expect(Object.isFrozen(freeScoutCapabilities(false))).toBe(true);
   });
 });
 
@@ -209,6 +210,21 @@ describe('readDraft reads the parked body back (section 4.10)', () => {
     const parked = await adapter.createDraft(reply());
     instance.conversations.set('41', []);
     expect(await adapter.readDraft(parked.draftExternalId)).toBeNull();
+  });
+
+  // A conversation is read whole to find one thread in it, and nothing bounds
+  // a thread: an adopter's helpdesk can hold one of tens of megabytes, and
+  // the console draws the copy on a page a person can reload. Refused rather
+  // than truncated, because half a conversation is not a copy anyone can
+  // judge — a partial read compares unequal to the reply for a reason that
+  // has nothing to do with a person's edit.
+  it('refuses a conversation larger than the read bound', async () => {
+    instance.conversations.set('41', [
+      { id: 101, state: 'draft', type: 'message', body: 'x'.repeat(4_000_001) },
+    ]);
+
+    await expect(adapter.readDraft(formatDraftId('41', '101')))
+      .rejects.toThrow(/more than 4000000 characters/);
   });
 
   it('returns null for a conversation that is gone', async () => {
@@ -379,6 +395,7 @@ describe('a FreeScout request that is redirected', () => {
         baseUrl: `http://127.0.0.1:${(redirecting.address() as AddressInfo).port}`,
         apiKey: FREESCOUT_TEST_API_KEY,
         userId: FREESCOUT_TEST_USER_ID,
+        internalNote: false,
       });
       const failure = await redirected.readDraft(formatDraftId('41', '101')).catch((error: unknown) => error);
       // Named, and permanent: a base URL that redirects is a configuration
@@ -417,6 +434,7 @@ describe('a draft read the caller stops waiting for', () => {
         baseUrl: `http://127.0.0.1:${(silent.address() as AddressInfo).port}`,
         apiKey: FREESCOUT_TEST_API_KEY,
         userId: FREESCOUT_TEST_USER_ID,
+        internalNote: false,
         timeoutMs: 10_000,
       });
       const controller = new AbortController();
@@ -439,7 +457,14 @@ describe('configuration comes from the environment and has no default', () => {
       FREESCOUT_API_KEY: FREESCOUT_TEST_API_KEY,
       FREESCOUT_USER_ID: '7',
     });
-    expect(config).toEqual({ baseUrl: 'http://localhost:8088', apiKey: FREESCOUT_TEST_API_KEY, userId: 7 });
+    // DEC-44: the one value with a default, and the default is false. An
+    // instance nobody has proved takes the draft path it always took.
+    expect(config).toEqual({
+      baseUrl: 'http://localhost:8088',
+      apiKey: FREESCOUT_TEST_API_KEY,
+      userId: 7,
+      internalNote: false,
+    });
   });
 
   // A default base URL would let a misconfigured process post a customer
@@ -509,7 +534,7 @@ describe('the policy engine routes every write of this adapter to a person (DEC-
       agreement: 1,
       groundedness: 1,
       thresholds,
-      capabilities: FREESCOUT_CAPABILITIES,
+      capabilities: freeScoutCapabilities(false),
       action,
     };
   }
@@ -652,5 +677,235 @@ describe('the trailer split is a guess, and each guess fails a stated way', () =
     expect((await adapter.readDraft(parked.draftExternalId))?.body).toBe(
       'A reply with no trailer at all.',
     );
+  });
+});
+
+describe('DEC-44: the reply the ledger holds, where the operator proved the note', () => {
+  /** The same instance, configured as one whose operator proved the note. */
+  function noteCapable(): FreeScoutEgressAdapter {
+    return new FreeScoutEgressAdapter({
+      baseUrl: instance.baseUrl,
+      apiKey: FREESCOUT_TEST_API_KEY,
+      userId: FREESCOUT_TEST_USER_ID,
+      internalNote: true,
+      timeoutMs: 5_000,
+    });
+  }
+
+  // The declaration is the whole of the condition DEC-44 sets: an adapter
+  // declares it only when its helpdesk cannot send the copy it parks, and a
+  // note is the copy no customer can be sent. So it is false until a person
+  // says their own instance holds one.
+  it('declares no ledger reply until the operator says their instance holds a note', () => {
+    expect(adapter.capabilities.supportsLedgerReply).toBe(false);
+    expect(noteCapable().capabilities.supportsLedgerReply).toBe(true);
+    expect(freeScoutCapabilities(false).supportsLedgerReply).toBe(false);
+    expect(freeScoutCapabilities(true).supportsLedgerReply).toBe(true);
+  });
+
+  it('parks an internal note, not a draft, once the flag is set', async () => {
+    const parked = await noteCapable().createDraft(reply());
+
+    const threads = instance.threadsOf('41');
+    expect(threads).toHaveLength(1);
+    expect(threads[0]?.type).toBe('note');
+    expect(threads[0]?.state).toBe('published');
+    // What went on the wire, not only what the fake stored: the request body
+    // is where a wrong `type` would show.
+    expect(instance.seen.at(-1)?.body).toMatchObject({ type: 'note', state: 'published' });
+    expect(parked.draftExternalId).toBe(formatDraftId('41', String(threads[0]?.id)));
+  });
+
+  it('reads the parked note back, which is why a note is not a dead end', async () => {
+    const capable = noteCapable();
+    const parked = await capable.createDraft(reply());
+
+    expect((await capable.readDraft(parked.draftExternalId))?.body).toBe(reply().body);
+  });
+
+  // A consumer that reads FREESCOUT_INTERNAL_NOTE as false parks a draft,
+  // and a draft is a copy a person can publish. Reading it as an absence
+  // would let the approval send the ledger's text beside it, which DEC-44
+  // rejects by name: this is a fault, and the console refuses on it.
+  it('names the disagreement when the parked copy is not a note', async () => {
+    const capable = noteCapable();
+    // A draft thread where this configuration expects a note, as another
+    // process with the flag unset would have parked.
+    instance.conversations.set('41', [
+      { id: 101, state: 'draft', type: 'message', body: 'A copy a person can publish.' },
+    ]);
+
+    await expect(capable.readDraft(formatDraftId('41', '101'))).rejects.toThrow(
+      /rather than an internal note/,
+    );
+  });
+
+  it('refuses the draft path once the ledger holds the reply', async () => {
+    const capable = noteCapable();
+    const parked = await capable.createDraft(reply());
+
+    // The note cannot be published, so a caller asking for the parked copy to
+    // send is asking for the stale-copy path DEC-44 rejected by name.
+    await expect(capable.sendDraft(parked.draftExternalId, 'refund:41:v1')).rejects.toThrow(
+      /supportsLedgerReply is true/,
+    );
+  });
+
+  it('sends the ledger text as a published message, leaving the note in place', async () => {
+    const capable = noteCapable();
+    const parked = await capable.createDraft(reply());
+    const { conversationId, threadId } = parseDraftId(parked.draftExternalId);
+
+    const sent = await capable.sendLedgerReply(
+      {
+        draftExternalId: parked.draftExternalId,
+        bodyText: 'Your refund is on its way, and the ledger holds this text.',
+        disclosure: reply().disclosure,
+        provenance: PROVENANCE,
+      },
+      'refund:41:v1',
+    );
+
+    const threads = instance.threadsOf(conversationId);
+    expect(threads).toHaveLength(2);
+    const message = threads.find((thread) => thread.id !== Number(threadId));
+    expect(message?.type).toBe('message');
+    expect(message?.state).toBe('published');
+    // The disclosure and the provenance ride on it, exactly as a park would
+    // have carried them (DEC-14, DEC-33), and the text is the ledger's.
+    expect(message?.body).toBe(
+      composeDraftBody(
+        'Your refund is on its way, and the ledger holds this text.',
+        reply().disclosure,
+        PROVENANCE,
+      ),
+    );
+    expect(sent.externalId).toBe(formatDraftId(conversationId, String(message?.id)));
+    // The parked note is untouched: it is still the copy an approval reads,
+    // and it still cannot reach the customer.
+    expect(threads.find((thread) => String(thread.id) === threadId)?.type).toBe('note');
+  });
+
+  // DEC-44: the check every path passes. A process that read the flag as
+  // false parks a draft, and a draft is a copy a person can publish — so the
+  // send refuses rather than delivering the ledger's text beside it. The
+  // approval catches this shape only when a caller reads the copy back;
+  // `pnpm run approve` without `--read-back` does not, and the relay never
+  // does, which is why the check is here.
+  it('refuses to send the ledger text beside a copy that is not a note', async () => {
+    const capable = noteCapable();
+    instance.conversations.set('41', [
+      { id: 101, state: 'draft', type: 'message', body: 'A copy a person can publish.' },
+    ]);
+
+    await expect(capable.sendLedgerReply(
+      {
+        draftExternalId: formatDraftId('41', '101'),
+        bodyText: 'Your refund is on its way.',
+        disclosure: reply().disclosure,
+        provenance: PROVENANCE,
+      },
+      'refund:41:v1',
+    )).rejects.toThrow(/rather than an internal note/);
+    // Nothing reached the conversation: the draft is still the only thread,
+    // and no customer has seen the ledger's text.
+    expect(instance.threadsOf('41')).toHaveLength(1);
+  });
+
+  // A copy that is gone is not a refusal: the ledger holds the reply, so
+  // there is nothing left to publish beside it (the console says the same).
+  it('sends when the parked copy is gone', async () => {
+    const capable = noteCapable();
+
+    await capable.sendLedgerReply(
+      {
+        draftExternalId: formatDraftId('41', '101'),
+        bodyText: 'Your refund is on its way.',
+        disclosure: reply().disclosure,
+        provenance: PROVENANCE,
+      },
+      'refund:41:v1',
+    );
+
+    expect(instance.threadsOf('41')).toHaveLength(1);
+  });
+
+  it('refuses a ledger send on an instance that has not proved the note', async () => {
+    const parked = await adapter.createDraft(reply());
+
+    await expect(
+      adapter.sendLedgerReply(
+        {
+          draftExternalId: parked.draftExternalId,
+          bodyText: 'a reply',
+          disclosure: reply().disclosure,
+          provenance: PROVENANCE,
+        },
+        'refund:41:v1',
+      ),
+    ).rejects.toThrow(/supportsLedgerReply is false/);
+  });
+
+  it('refuses a ledger send that carries no disclosure (DEC-14)', async () => {
+    const capable = noteCapable();
+    const parked = await capable.createDraft(reply());
+
+    await expect(
+      capable.sendLedgerReply(
+        {
+          draftExternalId: parked.draftExternalId,
+          bodyText: 'a reply',
+          disclosure: '   ',
+          provenance: PROVENANCE,
+        },
+        'refund:41:v1',
+      ),
+    ).rejects.toThrow(/disclosure/);
+  });
+
+  it('leaves the draft path working exactly as it was when the flag is off', async () => {
+    const parked = await adapter.createDraft(reply());
+    expect(instance.threadsOf('41')[0]?.type).toBe('message');
+    expect(instance.threadsOf('41')[0]?.state).toBe('draft');
+
+    // The draft path sends the parked copy, which is the DEC-40 behaviour
+    // this change does not touch. What was sent, and not merely that
+    // something resolved: this assertion read `resolves.toBeDefined()`, which
+    // passes for a publish of any text at all.
+    const sent = await adapter.sendDraft(parked.draftExternalId, 'refund:41:v1');
+    const threads = instance.threadsOf('41');
+    expect(threads).toHaveLength(2);
+    expect(threads[1]?.state).toBe('published');
+    expect(threads[1]?.body).toBe(threads[0]?.body);
+    expect(threads[1]?.body).toContain('Your order ships tomorrow.');
+    expect(sent.externalId).toBe(formatDraftId('41', String(threads[1]?.id)));
+  });
+});
+
+describe('the internal-note flag is read from the environment, and only declared', () => {
+  it('reads true and false, and defaults to false', () => {
+    const base = {
+      FREESCOUT_BASE_URL: 'http://localhost:8088',
+      FREESCOUT_API_KEY: FREESCOUT_TEST_API_KEY,
+      FREESCOUT_USER_ID: '7',
+    };
+    expect(freeScoutConfigFromEnv(base).internalNote).toBe(false);
+    expect(freeScoutConfigFromEnv({ ...base, FREESCOUT_INTERNAL_NOTE: 'true' }).internalNote).toBe(true);
+    expect(freeScoutConfigFromEnv({ ...base, FREESCOUT_INTERNAL_NOTE: '1' }).internalNote).toBe(true);
+    expect(freeScoutConfigFromEnv({ ...base, FREESCOUT_INTERNAL_NOTE: 'false' }).internalNote).toBe(false);
+    expect(freeScoutConfigFromEnv({ ...base, FREESCOUT_INTERNAL_NOTE: '' }).internalNote).toBe(false);
+  });
+
+  // An operator who set it meant to turn it on, so a value this code cannot
+  // read fails loudly rather than leaving the instance on the draft path.
+  it('refuses a value it cannot read, naming the variable', () => {
+    expect(() =>
+      freeScoutConfigFromEnv({
+        FREESCOUT_BASE_URL: 'http://localhost:8088',
+        FREESCOUT_API_KEY: FREESCOUT_TEST_API_KEY,
+        FREESCOUT_USER_ID: '7',
+        FREESCOUT_INTERNAL_NOTE: 'yes',
+      }),
+    ).toThrow(/FREESCOUT_INTERNAL_NOTE must be 'true' or 'false'/);
   });
 });

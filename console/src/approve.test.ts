@@ -27,7 +27,7 @@ const SHOWN = 'a'.repeat(64);
 
 import type { DraftReadBack } from 'auracle/ledger-read';
 
-import { approvalFor, approveFromConsole } from './approve.js';
+import { approvalFor, approveFromConsole, saveFor, saveFromConsole } from './approve.js';
 import { ReadBackFailed } from './read-back.js';
 
 describe('approving from the console', () => {
@@ -36,7 +36,7 @@ describe('approving from the console', () => {
     const pool = { query: vi.fn() };
 
     const result = await approveFromConsole(
-      { pool: pool as never, approveRun },
+      { pool: pool as never, approveRun, ledgerReply: false },
       { runId: RUN_A, approvedBy: REVIEWER, shown: SHOWN },
     );
 
@@ -61,7 +61,7 @@ describe('approving from the console', () => {
   it('reports a missing draft, exactly as the command line does', async () => {
     const approveRun = vi.fn().mockResolvedValue({ outcome: 'draft_missing' });
     const result = await approveFromConsole(
-      { pool: {} as never, approveRun },
+      { pool: {} as never, approveRun, ledgerReply: false },
       { runId: RUN_B, approvedBy: REVIEWER, shown: SHOWN },
     );
     expect(result.outcome).toBe('draft_missing');
@@ -74,7 +74,7 @@ describe('approving from the console', () => {
   it('reads the draft back through the adapter it was given', async () => {
     const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved' });
     const readDraft: DraftReadBack = { readDraft: async () => ({ body: 'Hello.' }) };
-    await approveFromConsole({ pool: {} as never, approveRun, readDraft }, { runId: RUN_A, approvedBy: REVIEWER, shown: SHOWN });
+    await approveFromConsole({ pool: {} as never, approveRun, ledgerReply: false, readDraft }, { runId: RUN_A, approvedBy: REVIEWER, shown: SHOWN });
     const options = approveRun.mock.calls[0]![2] as Record<string, unknown>;
     expect(options['readDraft']).toBe(readDraft);
     expect(Object.hasOwn(options, 'finalBody')).toBe(false);
@@ -84,7 +84,7 @@ describe('approving from the console', () => {
     const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved' });
     const readDraft: DraftReadBack = { readDraft: async () => null };
     await approveFromConsole(
-      { pool: {} as never, approveRun, readDraft },
+      { pool: {} as never, approveRun, ledgerReply: false, readDraft },
       { runId: RUN_A, approvedBy: 'synthetic-reviewer', shown: SHOWN },
     );
     expect(approveRun).toHaveBeenCalledWith({}, RUN_A, {
@@ -101,7 +101,7 @@ describe('approving from the console', () => {
   it('reports a failed read-back as its own outcome, with the fault', async () => {
     const approveRun = vi.fn().mockRejectedValue(new ReadBackFailed('FreeScout answered 502'));
     const result = await approveFromConsole(
-      { pool: {} as never, approveRun, readDraft: { readDraft: async () => null } },
+      { pool: {} as never, approveRun, ledgerReply: false, readDraft: { readDraft: async () => null } },
       { runId: RUN_A, approvedBy: REVIEWER, shown: SHOWN },
     );
     expect(result).toEqual({ outcome: 'read_back_failed', fault: 'read-back failed: FreeScout answered 502' });
@@ -113,12 +113,12 @@ describe('approving from the console', () => {
     const onReadBackFailed = vi.fn();
     const failing = vi.fn().mockRejectedValue(new ReadBackFailed('FreeScout answered 502'));
     await approveFromConsole(
-      { pool: {} as never, approveRun: failing, readDraft: { readDraft: async () => null }, onReadBackFailed },
+      { pool: {} as never, approveRun: failing, ledgerReply: false, readDraft: { readDraft: async () => null }, onReadBackFailed },
       { runId: RUN_A, approvedBy: REVIEWER, shown: SHOWN },
     );
     expect(onReadBackFailed.mock.calls).toEqual([[RUN_A, 'read-back failed: FreeScout answered 502', null]]);
     const passing = vi.fn().mockResolvedValue({ outcome: 'draft_missing', draftExternalId: 'D' });
-    await approveFromConsole({ pool: {} as never, approveRun: passing, onReadBackFailed }, { runId: RUN_B, approvedBy: REVIEWER, shown: SHOWN });
+    await approveFromConsole({ pool: {} as never, approveRun: passing, ledgerReply: false, onReadBackFailed }, { runId: RUN_B, approvedBy: REVIEWER, shown: SHOWN });
     expect(onReadBackFailed).toHaveBeenCalledTimes(1);
   });
 
@@ -128,7 +128,7 @@ describe('approving from the console', () => {
     const approveRun = vi.fn().mockRejectedValue(new Error('connection terminated'));
     const onReadBackFailed = vi.fn();
     await expect(approveFromConsole(
-      { pool: {} as never, approveRun, readDraft: { readDraft: async () => null }, onReadBackFailed },
+      { pool: {} as never, approveRun, ledgerReply: false, readDraft: { readDraft: async () => null }, onReadBackFailed },
       { runId: RUN_A, approvedBy: REVIEWER, shown: SHOWN },
     )).rejects.toThrow('connection terminated');
     expect(onReadBackFailed).not.toHaveBeenCalled();
@@ -136,7 +136,7 @@ describe('approving from the console', () => {
 
   it('never passes approved text, so no distance is recorded from here', async () => {
     const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved' });
-    await approveFromConsole({ pool: {} as never, approveRun }, { runId: RUN_C, approvedBy: REVIEWER, shown: SHOWN });
+    await approveFromConsole({ pool: {} as never, approveRun, ledgerReply: false }, { runId: RUN_C, approvedBy: REVIEWER, shown: SHOWN });
     const options = approveRun.mock.calls[0]![2] as Record<string, unknown>;
     expect(options).toEqual({ approvedBy: REVIEWER, approvedBySource: 'roster', shown: SHOWN });
     // Stated over the key rather than the value: `finalBody: undefined` would
@@ -152,7 +152,7 @@ describe('approving from the console', () => {
   it('takes a run id, a reviewer and a digest, and no reply text', async () => {
     const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved' });
     const request = { runId: RUN_C, approvedBy: REVIEWER, shown: SHOWN };
-    await approveFromConsole({ pool: {} as never, approveRun }, request);
+    await approveFromConsole({ pool: {} as never, approveRun, ledgerReply: false }, request);
     expect(Object.keys(request)).toEqual(['runId', 'approvedBy', 'shown']);
   });
 
@@ -171,10 +171,50 @@ describe('approving from the console', () => {
       '------', 'abcdef', 'deadbeefcafe', '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b3',
     ]) {
       await expect(
-        approveFromConsole({ pool: {} as never, approveRun }, { runId: bad, approvedBy: REVIEWER, shown: SHOWN }),
+        approveFromConsole({ pool: {} as never, approveRun, ledgerReply: false }, { runId: bad, approvedBy: REVIEWER, shown: SHOWN }),
       ).rejects.toThrow(/run id/);
     }
     expect(approveRun).not.toHaveBeenCalled();
+  });
+});
+
+// The console's second write (DEC-44), and the glue the case page reaches it
+// through. Both were untested: `/edit` is proved against a fake `saveReply`,
+// and `src/approval/save-reply.db.test.ts` proves the core — so nothing
+// failed if `shown` stopped being forwarded, which silently disables the
+// DEC-46 guard on every console save.
+describe('saving from the console', () => {
+  it('delegates to saveReply with the digest the page drew', async () => {
+    const saveReply = vi.fn().mockResolvedValue({ outcome: 'saved' });
+    const pool = { query: vi.fn() };
+
+    const result = await saveFromConsole(
+      { pool: pool as never, saveReply },
+      { runId: RUN_A, text: 'A reply a person wrote.', shown: SHOWN },
+    );
+
+    expect(result.outcome).toBe('saved');
+    expect(saveReply).toHaveBeenCalledWith(pool, RUN_A, 'A reply a person wrote.', { shown: SHOWN });
+    // The digest is the whole of DEC-46 on this path: a save without one is a
+    // save of text the reviewer may never have read.
+    expect(Object.hasOwn(saveReply.mock.calls[0]![3] as object, 'shown')).toBe(true);
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('refuses a run id that is not a run id, and saves nothing', async () => {
+    const saveReply = vi.fn();
+    await expect(
+      saveFromConsole({ pool: {} as never, saveReply }, { runId: 'not-a-run', text: 'x', shown: SHOWN }),
+    ).rejects.toThrow(/run id/);
+    expect(saveReply).not.toHaveBeenCalled();
+  });
+
+  it('answers the outcome alone, through the function the entry point hands the server', async () => {
+    const saveReply = vi.fn().mockResolvedValue({ outcome: 'shown_changed' });
+    const save = saveFor({ pool: {} as never, saveReply });
+
+    await expect(save(RUN_B, 'A reply.', SHOWN)).resolves.toBe('shown_changed');
+    expect(saveReply).toHaveBeenCalledWith({}, RUN_B, 'A reply.', { shown: SHOWN });
   });
 });
 
@@ -186,7 +226,7 @@ describe('approvalFor', () => {
     const readDraft = { readDraft: async () => null };
     const approveRun = vi.fn().mockRejectedValue(new ReadBackFailed('refused', { draftExternalId: '4:12' }));
     const approve = approvalFor({
-      pool: {} as never, approveRun, readBack: { name: 'freescout', readDraft }, log: (record) => { records.push(record); },
+      pool: {} as never, approveRun, ledgerReply: false, readBack: { name: 'freescout', readDraft, supportsLedgerReply: false }, log: (record) => { records.push(record); },
     });
     await expect(approve(RUN_A, 'Synthetic Reviewer', SHOWN)).resolves.toBe('read_back_failed');
     expect(approveRun).toHaveBeenCalledWith({}, RUN_A, {
@@ -200,10 +240,42 @@ describe('approvalFor', () => {
     ]);
   });
 
+  // DEC-44: the reviewer's decision about a helpdesk copy a person edited.
+  // It travels only when the page sent one, and it is a digest rather than a
+  // flag, so a copy that moved since refuses instead of being sent past on a
+  // stale decision.
+  it('carries an acknowledgement only when the page sent one', async () => {
+    const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved', idemKey: 'k' });
+    const approve = approvalFor({
+      pool: {} as never, approveRun, ledgerReply: true, readBack: null,
+      log: () => undefined,
+    });
+    const ack = 'b'.repeat(64);
+
+    await approve(RUN_A, REVIEWER, SHOWN, ack);
+    expect(approveRun.mock.calls[0]![2]).toMatchObject({ copyAcknowledged: ack });
+
+    await approve(RUN_B, REVIEWER, SHOWN);
+    expect(Object.hasOwn(approveRun.mock.calls[1]![2] as object, 'copyAcknowledged')).toBe(false);
+  });
+
+  // A read-back fault a retry cannot clear is its own answer (DEC-30). The
+  // operator is sent to the configuration, not to the connection.
+  it('answers a permanent read-back fault with its own outcome', async () => {
+    const approveRun = vi.fn().mockRejectedValue(new ReadBackFailed('the thread is not a note', {
+      permanent: true,
+    }));
+    const approve = approvalFor({
+      pool: {} as never, approveRun, ledgerReply: true, readBack: null, log: () => undefined,
+    });
+
+    await expect(approve(RUN_A, REVIEWER, SHOWN)).resolves.toBe('read_back_not_a_note');
+  });
+
   it('passes no read-back when the console reads none, and logs nothing on an approval', async () => {
     const records: Record<string, unknown>[] = [];
     const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved', idemKey: 'k' });
-    const approve = approvalFor({ pool: {} as never, approveRun, readBack: null, log: (record) => { records.push(record); } });
+    const approve = approvalFor({ pool: {} as never, approveRun, ledgerReply: false, readBack: null, log: (record) => { records.push(record); } });
     await expect(approve(RUN_B, REVIEWER, SHOWN)).resolves.toBe('approved');
     expect(approveRun).toHaveBeenCalledWith({}, RUN_B, {
       approvedBy: REVIEWER,

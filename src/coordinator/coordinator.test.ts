@@ -90,7 +90,7 @@ function deps(pool: Pool, provider: ModelProvider, limits?: Partial<CoordinatorD
     taxonomy: { intents: [{ id: 'refund', label: 'Refund', risk_tier: 'high' }] },
     capabilities: {
       supportsIdempotencyKey: true, supportsReadBack: true, supportsDraftState: true,
-      supportsStructuredFields: true, supportsThreading: true,
+      supportsStructuredFields: true, supportsThreading: true, supportsLedgerReply: false,
     },
     egress: {} as EgressAdapter,
     pins: { promptVer: 'p1', modelVer: 'm1' },

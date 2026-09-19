@@ -9,7 +9,8 @@
 // missing draft: `approveRun` refuses a missing draft as `draft_missing`, and
 // that sentence tells an operator someone removed it. And the read is bounded,
 // because the approval request waits on it.
-import type { DraftReadBack } from 'auracle/ledger-read';
+import type { DraftReadBack, ReadBackAdapter } from 'auracle/ledger-read';
+import { PermanentEgressError } from 'auracle/ledger-read';
 
 /**
  * How long one approval waits for the helpdesk to answer a read-back.
@@ -33,21 +34,44 @@ export interface ReadBackBound {
 export class ReadBackFailed extends Error {
   /** The draft the read was for, when the failure knows it. */
   readonly draftExternalId: string | null;
+  /**
+   * Whether a retry can clear the fault (DEC-30).
+   *
+   * The adapter's own class decides it, and the page reads it: a connection
+   * fault is worth another press, and a parked thread the helpdesk no longer
+   * holds as an internal note is not — the same press refuses every time
+   * until the processes read one configuration again.
+   */
+  readonly permanent: boolean;
 
   constructor(
     detail: string,
-    options?: { readonly cause?: unknown; readonly draftExternalId?: string },
+    options?: {
+      readonly cause?: unknown;
+      readonly draftExternalId?: string;
+      readonly permanent?: boolean;
+    },
   ) {
     super(`read-back failed: ${detail}`, options?.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'ReadBackFailed';
     this.draftExternalId = options?.draftExternalId ?? null;
+    this.permanent = options?.permanent ?? options?.cause instanceof PermanentEgressError;
   }
 }
 
-/** The adapter the console reads drafts back from, and its name. */
+/** The adapter the console reads drafts back from, its name, and what it declares. */
 export interface ConsoleReadBack {
   readonly name: string;
   readonly readDraft: DraftReadBack;
+  /**
+   * DEC-44: the adapter's own declaration that its helpdesk cannot send the
+   * copy it parks, so the ledger holds the reply.
+   *
+   * The console reads it to decide whether a reviewer edits the reply here.
+   * It comes from the adapter the approval will use, and not from a second
+   * reading of the environment: the two must agree about the same instance.
+   */
+  readonly supportsLedgerReply: boolean;
 }
 
 /**
@@ -62,14 +86,20 @@ export interface ConsoleReadBack {
  */
 export function consoleReadBack(
   env: NodeJS.ProcessEnv,
-  choose: (name: string, env: NodeJS.ProcessEnv) => DraftReadBack,
+  choose: (name: string, env: NodeJS.ProcessEnv) => ReadBackAdapter,
   bound: ReadBackBound,
 ): ConsoleReadBack | null {
   const name = env['APPROVE_ADAPTER'];
   if (name === undefined || name === 'helpdesk') return null;
+  const adapter = choose(name, env);
   // Bounded here rather than by the caller, so no path reaches the bare
-  // adapter and waits on it without limit.
-  return { name, readDraft: boundedReadBack(choose(name, env), bound) };
+  // adapter and waits on it without limit. The declaration is read from the
+  // adapter itself, before it is wrapped in the bound.
+  return {
+    name,
+    readDraft: boundedReadBack(adapter, bound),
+    supportsLedgerReply: adapter.capabilities.supportsLedgerReply,
+  };
 }
 
 /**
@@ -142,7 +172,7 @@ export function boundedReadBack(inner: DraftReadBack, bound: ReadBackBound): Dra
  */
 export function readBackFor(
   env: NodeJS.ProcessEnv,
-  choose: (name: string, env: NodeJS.ProcessEnv) => DraftReadBack,
+  choose: (name: string, env: NodeJS.ProcessEnv) => ReadBackAdapter,
   log: (record: Readonly<Record<string, unknown>>) => void,
 ): ConsoleReadBack | null {
   return consoleReadBack(env, choose, {

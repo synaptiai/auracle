@@ -143,10 +143,16 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   activeReviewer: 'read',
   approveRun: 'write',
   conversationOfRun: 'read',
+  // DEC-44: whether a copy read back from the helpdesk holds text. A rule
+  // read by the approval and by the page, and no statement either way.
+  copyHoldsText: 'read',
   handoverHold: 'write',
   LEDGER_STATES: 'read',
   listEscalations: 'read',
   listRuns: 'read',
+  // DEC-30: the class of egress fault a retry cannot clear, read to tell the
+  // two read-back faults apart. A class, and no statement.
+  PermanentEgressError: 'read',
   probeLedger: 'read',
   // DEC-47: the product catalogue, read once at startup for the labels the
   // queue draws. A file read, and no statement.
@@ -167,6 +173,9 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   // read of the roster: the console can order by a preference, and cannot
   // set one.
   reviewerProducts: 'read',
+  // DEC-44: the reply a reviewer saves, written onto the turn it answers.
+  // The console's second write, and the second one that is not a hold.
+  saveReply: 'write',
   selectReadBackAdapter: 'read',
   takeHold: 'write',
   turnAnsweredBy: 'read',
@@ -261,6 +270,45 @@ function parse(file: string): Parsed {
 const PARSED = MODULES.map((file) => parse(file));
 const rel = (file: string): string => relative(PACKAGE_ROOT, file).split('\\').join('/');
 
+/**
+ * The statement-shaped words in one piece of source, or none.
+ *
+ * A keyword alone is not a statement. This package renders prose and markup:
+ * a control that says "Delete the sentence" is a button, and an HTML
+ * `<select>` is an element, and a sweep that refused the bare word refused
+ * both. So each pattern names what the keyword governs — the token that makes
+ * it a clause — and the sweep reports the keyword when its clause is there.
+ *
+ * What that costs: a statement written in lowercase with no clause this table
+ * knows (`select 1`) is no longer seen here. The guarantee does not rest on
+ * this function alone. `.query(` is refused by its own case below, and a
+ * statement reaches a ledger through that call or not at all, so the teeth
+ * are in the pair and not in this one pattern set.
+ */
+const STATEMENTS: readonly (readonly [string, RegExp])[] = [
+  // A probe, or the head of a query. Never an English word: `Select` in a
+  // sentence is followed by a letter.
+  ['SELECT', /\bSELECT\s+[\d*"'`(]/i],
+  ['SELECT', /\bSELECT\b[\s\S]{0,400}?\bFROM\b/i],
+  ['INSERT', /\bINSERT\s+INTO\b/i],
+  ['UPDATE', /\bUPDATE\b[\s\S]{0,200}?\bSET\b/i],
+  ['DELETE', /\bDELETE\s+FROM\b/i],
+  ['DROP', /\bDROP\s+(TABLE|INDEX|VIEW|COLUMN|CONSTRAINT|SCHEMA|DATABASE|TRIGGER|FUNCTION)\b/i],
+  ['ALTER', /\bALTER\s+(TABLE|INDEX|VIEW|SCHEMA|DATABASE)\b/i],
+  ['CREATE', /\bCREATE\s+(TABLE|INDEX|VIEW|SCHEMA|DATABASE|EXTENSION|UNIQUE)\b/i],
+  ['TRUNCATE', /\bTRUNCATE\s+(TABLE\s+)?\w/i],
+  ['MERGE', /\bMERGE\s+INTO\b/i],
+  ['COMMIT', /\b(COMMIT|ROLLBACK)\s*[;'"]/i],
+];
+
+export function statementKeywords(source: string): string[] {
+  const found = new Set<string>();
+  for (const [keyword, pattern] of STATEMENTS) {
+    if (pattern.test(source)) found.add(keyword);
+  }
+  return [...found];
+}
+
 describe('the console against a live database', () => {
   it('has modules to check, so the rules below are not vacuous', () => {
     expect(MODULES.length).toBeGreaterThan(2);
@@ -285,22 +333,30 @@ describe('the console against a live database', () => {
     const offenders: string[] = [];
     for (const file of MODULES) {
       const source = stripComments(readFileSync(file, 'utf8'));
-      for (const keyword of [
-        'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'MERGE', 'TRUNCATE',
-        'DROP', 'ALTER', 'CREATE', 'COMMIT', 'ROLLBACK',
-      ]) {
-        // Case-insensitive: lowercase `select` is the same statement, and a
-        // case-sensitive sweep would have passed it.
-        // Not after a dot. `createHash(...).update(...)` is a method call and
-        // not a statement, and a scan that could not tell them apart would
-        // force this package to avoid a standard library rather than avoid
-        // writing to a ledger.
-        if (new RegExp(`(?<![.\\w])${keyword}\\b`, 'i').test(source)) {
-          offenders.push(`${relative(PACKAGE_ROOT, file)} names ${keyword}`);
-        }
+      for (const keyword of statementKeywords(source)) {
+        offenders.push(`${relative(PACKAGE_ROOT, file)} names ${keyword}`);
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  // The sweep reads code, and this package also renders prose. The narrowing
+  // above is only honest if it still sees a statement and still passes a
+  // sentence, so both are held here.
+  it('reads a statement as a statement, and a sentence as a sentence', () => {
+    expect(statementKeywords("await pool.query('DELETE FROM run')")).toEqual(['DELETE']);
+    expect(statementKeywords("const q = 'select * from run';")).toEqual(['SELECT']);
+    expect(statementKeywords("const q = `INSERT INTO run (a) VALUES (1)`;")).toEqual(['INSERT']);
+    expect(statementKeywords("'UPDATE run SET state = $1'")).toEqual(['UPDATE']);
+    expect(statementKeywords("'CREATE TABLE turn_reply (id int)'")).toEqual(['CREATE']);
+    expect(statementKeywords("'DROP TABLE run'")).toEqual(['DROP']);
+    expect(statementKeywords("'COMMIT;'")).toEqual(['COMMIT']);
+    expect(statementKeywords("'SELECT 1'")).toEqual(['SELECT']);
+    // The copy this package renders. None of these is a clause.
+    expect(statementKeywords('Delete the sentence')).toEqual([]);
+    expect(statementKeywords('Update the reply before you send it.')).toEqual([]);
+    expect(statementKeywords('<select name="product">')).toEqual([]);
+    expect(statementKeywords('Create a document from this case.')).toEqual([]);
   });
 
   // `pool.query` is how a statement reaches the ledger. The console never

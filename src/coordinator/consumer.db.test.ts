@@ -50,6 +50,7 @@ const CAPABILITIES: AdapterCapabilities = {
   supportsDraftState: true,
   supportsStructuredFields: true,
   supportsThreading: true,
+  supportsLedgerReply: false,
 };
 const PARTITION_COUNT = 8;
 const DIM = 1536;

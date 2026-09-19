@@ -31,6 +31,7 @@ describe('one port, many adapters (section 4.1)', () => {
       expect(Object.keys(entry.capabilities).sort()).toEqual([
         'supportsDraftState',
         'supportsIdempotencyKey',
+        'supportsLedgerReply',
         'supportsReadBack',
         'supportsStructuredFields',
         'supportsThreading',
@@ -47,6 +48,7 @@ describe('WebhookAdapter capabilities', () => {
       supportsDraftState: false,
       supportsStructuredFields: false,
       supportsThreading: false,
+      supportsLedgerReply: false,
     });
   });
 

@@ -56,6 +56,7 @@ const FULL_CAPABILITIES: AdapterCapabilities = {
   supportsDraftState: true,
   supportsStructuredFields: true,
   supportsThreading: true,
+  supportsLedgerReply: false,
 };
 
 /** Routing writes the queue field on the ticket; the write is never customer-visible. */

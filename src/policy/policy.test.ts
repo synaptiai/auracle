@@ -21,6 +21,7 @@ const FULL_CAPABILITIES: AdapterCapabilities = {
   supportsDraftState: true,
   supportsStructuredFields: true,
   supportsThreading: true,
+  supportsLedgerReply: false,
 };
 
 function baseInput(overrides: Partial<PolicyInput> = {}): PolicyInput {

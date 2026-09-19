@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
-import type { DraftReply, EgressAdapter } from '../adapters/types.js';
+import type { DraftReply, EgressAdapter, LedgerReply } from '../adapters/types.js';
 import {
   ApprovalRefusalError,
   parkGatedReply,
@@ -36,6 +36,7 @@ function recordingAdapter(): EgressAdapter & { calls: number } {
       return delegate.createDraft(r);
     },
     sendDraft: (id: string, key: string) => delegate.sendDraft(id, key),
+    sendLedgerReply: (reply: LedgerReply, key: string) => delegate.sendLedgerReply(reply, key),
     performAction: (actionClass: string, payload: Record<string, unknown>, key: string) =>
       delegate.performAction(actionClass, payload, key),
     readBack: (ref: { readonly idemKey: string }) => delegate.readBack(ref),

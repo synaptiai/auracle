@@ -28,7 +28,8 @@ import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
 import type { PolicyReason } from 'auracle/policy';
 import { replyDigest } from 'auracle/ledger-read';
 import type { OutboxStatus } from 'auracle/ledger-read';
-import type { ConsoleApproveOutcome } from './approve.js';
+import type { ConsoleApproveOutcome, ConsoleSaveOutcome } from './approve.js';
+import type { HandoverOutcome, ReleaseOutcome, TakeOutcome } from 'auracle/ledger-read';
 import { CONSOLE_SCRIPT } from './script.js';
 import { groupQueue } from './queue.js';
 import type { QueueGroup } from './queue.js';
@@ -544,6 +545,16 @@ export interface RequestView {
   readonly bodyText: string | null;
   /** Named when there is no text. Never both null. */
   readonly absence: string | null;
+  /**
+   * DEC-44: the reply a reviewer saved for this turn, or null when nobody
+   * saved one. Null means the approval sends the body the park journaled.
+   */
+  readonly savedReplyText: string | null;
+  /**
+   * DEC-37: the reply an approval dispatched for this turn, or null when no
+   * approval reached it. This is what the customer was sent.
+   */
+  readonly approvedReplyText: string | null;
 }
 
 /** The drafted reply, its claims and the documents behind them. */
@@ -709,6 +720,7 @@ function evidenceBlock(
   view: EvidenceView,
   draftId: string | null,
   request: RequestView | null,
+  edit: ReplyEdit | null = null,
 ): string {
   if (view.draftBody === null && view.sentences === null) {
     return requestBlock(request) + nothing('This run composed no reply.');
@@ -724,50 +736,233 @@ function evidenceBlock(
   const unsupported = (claims ?? []).filter((claim) => claim.supported === false).length;
   const unread = (claims ?? []).filter((claim) => claim.supported === null).length;
 
+  // The drafted reply, sentence by sentence. Beside the editor when a
+  // reviewer edits here, and on its own when the helpdesk holds the copy that
+  // sends (DEC-11, DEC-40).
+  const drafted = sentences === null
+    ? view.draftBody === null
+      ? nothing('No draft was recorded for this run.')
+      // A draft with no partition is a run journalled before the sentences
+      // were written. The reply is shown whole, and the citations are not
+      // available for it — which is a different thing from having none.
+      : `<div class="prose">${escapeHtml(view.draftBody)}</div>`
+        + '<p class="discl">This run recorded no claim list, so no sentence here'
+        + ' carries its source. The reply is shown as it was drafted.</p>'
+    // A recorded list with nothing in it. Rare and real, and it is not a
+    // clean bill of health: drawing an empty prose block and then saying
+    // every claim was accepted would have this console vouch for a reply
+    // that makes no claims.
+    : sentences.length === 0
+      ? nothing('This run recorded a claim list with no claims in it.')
+      : replyProse(sentences, sources);
+  // Suppressed only when there is no partition at all. A reply whose
+  // sentences all cite nothing has no claims to summarise and is the one
+  // that most needs saying so: without this the console drew it in muted
+  // italic and said nothing, and DEC-43 rests on this console naming every
+  // uncited sentence as uncited.
+  const summary = sentences === null || sentences.length === 0
+    ? ''
+    : claimSummary(
+      (claims ?? []).length,
+      unsupported,
+      unread,
+      sentences.filter((sentence) => sentence.docId === null).length,
+    );
+
+  // A reply record exists only where the park carries a handle into the
+  // target system. A ledger-only park (DEC-34 compensation) sends no reply at
+  // all: its record routes to `performAction`, so an editor here would take a
+  // reviewer's words and send none of them.
+  // An editor belongs to a case that is waiting: a run that left the queue
+  // has a reply the approval sent, and nothing here edits it.
+  const editable = edit !== null
+    && edit.ledgerReply
+    && edit.draftId !== null
+    && edit.text !== null
+    && edit.waiting
+    // A park journalled before DEC-38 carries no turn, and `saveReply` refuses
+    // a run it cannot write on. The card draws no editor for a save that would
+    // be refused with the reviewer's text still in the box.
+    && edit.hasTurn;
+  /**
+   * A case that has left the queue, on an adapter whose ledger holds the
+   * reply. What it draws is the text the approval sent (DEC-37), and not the
+   * sentences the composer drafted: a person may have edited them, and the
+   * card must not read as though the draft were what the customer received.
+   *
+   * It is the approval's own record and not the text the ledger holds now. A
+   * run the gate escalated sent nothing, and a second run on the turn can
+   * write a reply after a send: either one would otherwise be drawn as what
+   * the customer received, under a header that said the approval sent it.
+   */
+  const sentText = edit !== null && edit.ledgerReply && !edit.waiting
+    ? (request?.approvedReplyText ?? null)
+    : null;
+  const sent = sentText !== null;
   return [
     requestBlock(request),
     '<div class="card"><header>',
-    '<span class="lbl">The reply, as the system drafted it</span>',
-    // Named precisely. The relay sends the helpdesk copy, which a person may
-    // have edited since (DEC-11), so this is not "as it will be sent".
-    draftId === null
-      ? chip('parked in the ledger, no helpdesk draft')
-      : chip(`helpdesk draft ${draftId}`),
+    `<span class="lbl">${editable
+      ? 'Your reply · editable here, sent from here'
+      : sent ? 'The reply the approval sent' : 'The reply, as the system drafted it'}</span>`,
+    // Named precisely. On the draft path the relay sends the helpdesk copy,
+    // which a person may have edited since (DEC-11), so this is not "as it
+    // will be sent"; where the ledger holds the reply, it is. And on that
+    // path the parked copy is what the draft hands over, while on this one it
+    // is a copy nobody can send from here — "draft" would name the wrong one.
+    editable
+      ? chip('the ledger holds this reply')
+      : draftId === null
+        ? chip('parked in the ledger, no helpdesk draft')
+        : edit?.ledgerReply === true
+          ? chip(`helpdesk copy ${draftId}`)
+          : chip(`helpdesk draft ${draftId}`),
     '</header><div class="body">',
-    sentences === null
-      ? view.draftBody === null
-        ? nothing('No draft was recorded for this run.')
-        // A draft with no partition is a run journalled before the sentences
-        // were written. The reply is shown whole, and the citations are not
-        // available for it — which is a different thing from having none.
-        : `<div class="prose">${escapeHtml(view.draftBody)}</div>`
-          + '<p class="discl">This run recorded no claim list, so no sentence here'
-          + ' carries its source. The reply is shown as it was drafted.</p>'
-      // A recorded list with nothing in it. Rare and real, and it is not a
-      // clean bill of health: drawing an empty prose block and then saying
-      // every claim was accepted would have this console vouch for a reply
-      // that makes no claims.
-      : sentences.length === 0
-        ? nothing('This run recorded a claim list with no claims in it.')
-        : replyProse(sentences, sources),
-    // Suppressed only when there is no partition at all. A reply whose
-    // sentences all cite nothing has no claims to summarise and is the one
-    // that most needs saying so: without this the console drew it in muted
-    // italic and said nothing, and DEC-43 rests on this console naming every
-    // uncited sentence as uncited.
-    sentences === null || sentences.length === 0
-      ? ''
-      : claimSummary(
-        (claims ?? []).length,
-        unsupported,
-        unread,
-        sentences.filter((sentence) => sentence.docId === null).length,
-      ),
+    sent
+      ? `<div class="prose">${escapeHtml(sentText)}</div>`
+      : !editable || edit === null
+        ? drafted
+        : [
+          '<div class="editcols">',
+          editorForm(edit),
+          '<div class="preview">',
+          '<span class="lbl">The sentences the system drafted</span>',
+          drafted,
+          callouts(claims, sources, edit),
+          summary,
+          '</div>',
+          '</div>',
+        ].join(''),
+    sent ? '' : !editable || edit === null ? summary : '',
+    // The same fact as the editor, read the other way: a run with no parked
+    // copy has no copy to edit elsewhere either, and the card two lines above
+    // already says so.
+    edit === null || edit.ledgerReply || edit.draftId === null ? '' : '<p class="discl">'
+      + 'This reply is edited in the helpdesk, not here: the draft this system parked is the'
+      + ' copy that sends, and the console cannot write into it.</p>',
     '</div></div>',
     claims === null || claims.length === 0
       ? ''
       : sourceList(claims, sources, retrieved, view.documentsMalformed),
   ].join('');
+}
+
+/**
+ * The editor the case screen shows where the ledger holds the reply (DEC-44).
+ *
+ * A form and nothing else: it works with no script, and the reply it saves is
+ * the whole of what a reviewer typed. The digest of the text this page drew
+ * rides with it, so a save from a page whose reply has moved is refused
+ * (DEC-46) rather than overwriting text its reviewer never read.
+ */
+function editorForm(edit: ReplyEdit): string {
+  return [
+    `<form class="editor" method="post" action="/edit${escapeHtml(filtersQuery(edit.rule, edit.product))}">`,
+    `<input type="hidden" name="runId" value="${escapeHtml(edit.runId)}">`,
+    `<input type="hidden" name="shown" value="${escapeHtml(edit.shown)}">`,
+    '<input type="hidden" name="edit" value="text">',
+    `<textarea name="text" rows="12" spellcheck="false">${escapeHtml(edit.text ?? '')}</textarea>`,
+    '<button class="btn primary" type="submit">Save the reply</button>',
+    '<p class="discl">The disclosure and the provenance travel with it, exactly as the'
+      + ' helpdesk copy would have carried them.</p>',
+    '</form>',
+  ].join('');
+}
+
+/**
+ * One callout per refused claim, each with the three ways out of it.
+ *
+ * Drawn for the claims the judge refused and no others: an accepted claim
+ * needs nothing, and a claim nobody judged is a different fact from one that
+ * was refused (DEC-07).
+ *
+ * Every control is a form that posts to `/edit`, and every one of them edits
+ * the reply the ledger holds. None of them sends anything.
+ */
+function callouts(
+  claims: readonly ClaimView[] | null,
+  sources: ReadonlyMap<string, DocumentView>,
+  edit: ReplyEdit,
+): string {
+  const refused = (claims ?? []).filter((claim) => claim.supported === false);
+  if (refused.length === 0) return '';
+  return refused.map((claim) => {
+    const title = sources.get(claim.docId)?.title ?? claim.docId;
+    const writing = edit.writing === claim.text;
+    return [
+      `<div class="callout"><p>Sentence ${claim.index + 1} cites ${escapeHtml(claim.docId)}`
+        + ` (${escapeHtml(title)}), which does not say this — and that document may have changed`
+        + ' since this run read it.</p>',
+      `<form method="post" action="/edit${escapeHtml(filtersQuery(edit.rule, edit.product))}">`,
+      editFormFields(edit.runId, edit.shown, 'replace', claim.text),
+      '<button class="btn" type="submit">Replace with what the document says</button>',
+      '</form>',
+      `<form method="post" action="/edit${escapeHtml(filtersQuery(edit.rule, edit.product))}">`,
+      editFormFields(edit.runId, edit.shown, 'delete', claim.text),
+      '<button class="btn" type="submit">Delete the sentence</button>',
+      '</form>',
+      // The third way out, and the only one that asks for something. It opens
+      // a field rather than a page: the answer a person writes here replaces
+      // the sentence the document could not support (DEC-44, #109), and the
+      // document they would publish is #112's job.
+      writing
+        ? [
+          `<form method="post" action="/edit${escapeHtml(filtersQuery(edit.rule, edit.product))}">`,
+          editFormFields(edit.runId, edit.shown, 'write', claim.text),
+          '<label class="lbl" for="answer">The answer, in your words</label>',
+          '<input type="text" id="answer" name="answer" value="">',
+          '<button class="btn" type="submit">Use this answer</button>',
+          '</form>',
+        ].join('')
+        : `<a class="btn" href="${escapeHtml(withQuery(caseHref(edit.runId, edit.rule, edit.product), 'write', claim.text))}">Write the missing answer →</a>`,
+      '</div>',
+    ].join('');
+  }).join('');
+}
+
+/** The three fields a callout's forms all carry, and nothing else. */
+function editFormFields(runId: string, shown: string, edit: string, sentence: string): string {
+  return [
+    `<input type="hidden" name="runId" value="${escapeHtml(runId)}">`,
+    `<input type="hidden" name="shown" value="${escapeHtml(shown)}">`,
+    `<input type="hidden" name="edit" value="${escapeHtml(edit)}">`,
+    `<input type="hidden" name="sentence" value="${escapeHtml(sentence)}">`,
+  ].join('');
+}
+
+/**
+ * One URL with one more query parameter, whichever separator it needs.
+ *
+ * The filters may or may not be on the URL this is added to, so `&` alone
+ * would build `/case/<id>&write=...` on a case opened with no filter: a path
+ * with an ampersand in it, which reaches no route at all.
+ */
+function withQuery(url: string, name: string, value: string): string {
+  return `${url}${url.includes('?') ? '&' : '?'}${name}=${encodeURIComponent(value)}`;
+}
+
+/** What the case screen's editor needs about the reply it edits (DEC-44). */
+interface ReplyEdit {
+  readonly ledgerReply: boolean;
+  readonly runId: string;
+  /** The parked handle, or null for a park that carries none (DEC-34). */
+  readonly draftId: string | null;
+  /** Whether the case is waiting, which is the only state an editor serves. */
+  readonly waiting: boolean;
+  /**
+   * Whether the run names a conversation turn. `saveReply` refuses a run with
+   * none, so a card that drew an editor over one would take a reviewer's text
+   * and keep none of it (DEC-38).
+   */
+  readonly hasTurn: boolean;
+  /** The text the ledger would send, or null when the run composed none. */
+  readonly text: string | null;
+  /** The digest of exactly that text, as the approval form carries it. */
+  readonly shown: string;
+  readonly rule: string | null;
+  readonly product: string | null;
+  /** The sentence a reviewer asked to answer in their own words, or ''. */
+  readonly writing: string;
 }
 
 /**
@@ -1644,6 +1839,28 @@ export interface CaseView extends RunView {
 export interface CaseOptions {
   /** The outcome of the approval just posted, drawn above the case. */
   readonly outcome: string;
+  /**
+   * The outcome of the save just posted, drawn above the case (DEC-44).
+   *
+   * Its own field and not `outcome`, because the two queries answer different
+   * questions — nothing was sent against nothing was saved — and one of the
+   * names, `shown_changed`, means both.
+   */
+  readonly edit: string;
+  /**
+   * Why an edit did not apply, off the query string. A code this console
+   * knows, looked up rather than printed.
+   */
+  readonly why: string;
+  /**
+   * DEC-44: whether the adapter this console approves through cannot send the
+   * copy it parks, so the ledger holds the reply and a reviewer edits it here.
+   *
+   * Read from the adapter's own declaration. False on every adapter that
+   * keeps the draft path, where the case says the reply cannot be edited in
+   * the console rather than offering an editor whose text never sends.
+   */
+  readonly ledgerReply: boolean;
   /** The queue rule a person came from, kept on the way back. */
   readonly rule: string | null;
   /** DEC-47: the queue product a person came from, kept the same way. */
@@ -1677,6 +1894,248 @@ export interface CaseOptions {
    * type a colleague's identity twice.
    */
   readonly handoverTo: string;
+  /**
+   * DEC-44: the sentence a reviewer asked to answer in their own words, off
+   * the query string. The callout it names comes back open, with the field
+   * that takes the answer.
+   */
+  readonly writing: string;
+  /**
+   * DEC-44: the helpdesk's copy of the reply, when an approval refused
+   * because a person edited it after the park. Both texts are drawn, and the
+   * reviewer chooses the one to send.
+   */
+  readonly copy: CopyRead;
+}
+
+/**
+ * The reply the ledger would send for one case (DEC-44).
+ *
+ * One rule, read by the editor, by the digest the approval form carries and
+ * by the callouts that edit it: the text a reviewer saved, or the body the
+ * park journaled when nobody saved one.
+ *
+ * Where the adapter keeps the draft path, the saved reply is not what the
+ * approval compares — it compares the text the park put there — so the page
+ * reads the same text the approval reads. A page that preferred a saved reply
+ * the approval ignores would carry a digest the approval refuses, and the
+ * reviewer could not get past it: the console's own edit route is closed on
+ * that adapter.
+ *
+ * Null is a run that composed no reply, which the card says in words rather
+ * than drawing an editor over nothing.
+ */
+function replyTextOf(view: CaseView, ledgerReply: boolean): string | null {
+  // A run that has left the queue sends what the approval recorded (DEC-37).
+  // The saved reply is what a reviewer was working on, and a second run on
+  // the turn could have written one after the send: drawing it as the reply
+  // would show text the customer never received.
+  const sent = view.request?.approvedReplyText ?? null;
+  if (view.state !== 'awaiting_approval' && sent !== null) return sent;
+  if (!ledgerReply) return view.evidence.draftBody;
+  return view.request?.savedReplyText ?? view.evidence.draftBody;
+}
+
+/**
+ * The copy the helpdesk holds, read for a case whose approval refused
+ * because a person edited it (DEC-44).
+ *
+ * Read on the page rather than carried from the refusal, because the refusal
+ * answers with a name and the page reloads: a link someone else can send must
+ * not be able to put text on the page that the helpdesk does not hold.
+ *
+ * Three answers, as the customer read has. `none` is no refusal to answer —
+ * or a run with no parked copy to read — and `unread` carries the tag of the
+ * log line naming the fault.
+ */
+export type CopyRead =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'copy'; readonly text: string }
+  /**
+   * The helpdesk holds no copy for this run: a person deleted it, or the run
+   * has no parked handle. Its own answer, because a refusal about two texts
+   * has one of them missing.
+   */
+  | { readonly kind: 'gone' }
+  /**
+   * The copy is there and holds no text: a person cleared it. Its own answer
+   * rather than `gone`, because the thread still exists, and its own answer
+   * rather than `copy`, because a text with nothing in it is not a text to
+   * choose: `saveReply` refuses an empty reply, so that button cannot work.
+   */
+  | { readonly kind: 'empty' }
+  | { readonly kind: 'unread'; readonly tag: string };
+
+/**
+ * What the ledger said about the save just posted, in plain words (DEC-44).
+ *
+ * Its own set beside the approval's, because the two questions differ:
+ * nothing was sent against nothing was saved. `shown_changed` is the one name
+ * both sets carry, and it means a different thing in each — so the two are
+ * drawn from their own query parameter and never from one another's.
+ *
+ * The same discipline as `renderOutcome`: a known name whose fact the page
+ * contradicts is not printed as the ledger's answer, and a name this console
+ * does not know is never echoed.
+ */
+const EDIT_SAYS = {
+  saved: 'Saved. The approval sends this text.',
+  empty_reply: 'That reply had nothing in it, so nothing was saved.',
+  shown_changed: 'The reply changed since this page was drawn, so nothing was saved.'
+    + ' Open the case again to read it as it is now.',
+  no_turn: 'This run serves no conversation turn, so there is nowhere to save a reply.',
+  unknown_run: 'That run is not in the ledger.',
+  not_awaiting_approval: 'That run is not waiting for approval, so no reply was saved.',
+  // An edit that did not apply. Its own reason travels beside it, because
+  // three different facts reach this one outcome and each has a next step.
+  not_an_edit: 'The edit did not apply, so nothing was saved.',
+  // The console's own arm, for an edit route that refused before the ledger
+  // was asked. Nothing reached a save, and the sentence travels beside it.
+} as const satisfies Record<ConsoleSaveOutcome['outcome'] | 'not_an_edit', string>;
+
+/**
+ * Why one edit did not apply, as the page words it.
+ *
+ * The codes a refused callout posts with. Each names a fact the reviewer can
+ * act on, and each is looked up here rather than printed: a query string is a
+ * place any text can be put, so the page never repeats what it was handed.
+ */
+const WHY_SAYS: Readonly<Record<string, string>> = {
+  no_reply: 'This run holds no reply to edit.',
+  no_sentence: 'The reply no longer holds that sentence, so nothing was changed.'
+    + ' Open the case again to read it as it is now.',
+  no_wording: 'The document that sentence cites shares no word with it, so nothing replaced it.'
+    + ' Delete the sentence, or write the answer yourself.',
+  no_document: 'The document that sentence cites is not in the index, so nothing replaced it.'
+    + ' Delete the sentence, or write the answer yourself.',
+  document_too_large: 'The document that sentence cites is too large for this console to quote'
+    + ' from. Delete the sentence, or write the answer yourself.',
+  no_answer: 'The answer was empty, so nothing was saved.',
+};
+
+/** What a save outcome this page cannot vouch for is answered with. */
+const UNKNOWN_EDIT = 'That is not an answer this console knows.';
+
+export function renderEditOutcome(
+  outcome: string,
+  run: OutcomeRun | null,
+  why = '',
+): string {
+  // `Object.hasOwn`, never a bare read, for the reason `renderOutcome` gives.
+  const known = Object.hasOwn(EDIT_SAYS, outcome) && editOutcomeFits(outcome, run);
+  const said = known
+    ? outcome === 'not_an_edit' && Object.hasOwn(WHY_SAYS, why)
+      ? WHY_SAYS[why]!
+      : EDIT_SAYS[outcome as keyof typeof EDIT_SAYS]!
+    : UNKNOWN_EDIT;
+  return [
+    '<div class="wrap" style="padding-bottom:0">',
+    known
+      ? `<p class="outcome${outcome === 'saved' ? ' ok' : ' refused'}" data-edit="${escapeHtml(outcome)}">`
+      : '<p class="outcome">',
+    escapeHtml(said),
+    '</p></div>',
+  ].join('');
+}
+
+/**
+ * Whether a save outcome can be the ledger's answer about `run`.
+ *
+ * A save leaves the run where it was, so every outcome but one holds while
+ * the run still waits for approval — and `saved` is the one that claims a
+ * fact beyond that: the reply the page says was written. It is drawn only
+ * when the page read one back, so a hand-written link cannot make this
+ * console say a reply was saved that the case has never held.
+ */
+function editOutcomeFits(outcome: string, run: OutcomeRun | null): boolean {
+  switch (outcome) {
+    case 'saved':
+      // DEC-44: the claim is that the approval sends this text, which holds
+      // only where the approval sends the text the ledger holds. On the draft
+      // path a saved reply sends nothing, so the sentence is not drawn.
+      return run !== null && run.state === 'awaiting_approval' && run.savedReply
+        && run.ledgerReply;
+    case 'empty_reply':
+    case 'shown_changed':
+    case 'no_turn':
+    // An edit that did not apply saved nothing, so the run still waits. That
+    // is the fact a link cannot fake: the run is where it was.
+    case 'not_an_edit':
+      return run !== null && run.state === 'awaiting_approval';
+    case 'not_awaiting_approval':
+      return run !== null && run.state !== 'awaiting_approval';
+    case 'unknown_run':
+      return run === null;
+    default:
+      return false;
+  }
+}
+
+/**
+ * The two texts a refusal about the copy leaves a reviewer, and the choice
+ * between them (DEC-44).
+ *
+ * A person edited the copy in the helpdesk after the park. Neither text is
+ * discarded: the reply the ledger holds is drawn beside the copy the helpdesk
+ * holds, and the reviewer decides which one goes out. Choosing the copy is a
+ * save like any other — it writes that text onto the turn — and the approval
+ * that follows sends the text the ledger holds, which is then the copy. One
+ * path, and no second way to send.
+ */
+function copyChoice(
+  copy: CopyRead,
+  reply: string | null,
+  options: CaseOptions,
+  runId: string,
+  shown: string,
+): string {
+  if (copy.kind === 'none') return '';
+  if (copy.kind === 'gone') {
+    return '<div class="wrap" style="padding-bottom:0"><p class="refused">'
+      + 'The helpdesk holds no copy of this reply now, so only the reply the ledger holds is'
+      + ' below. Approving sends it, and nothing else is compared.</p></div>';
+  }
+  if (copy.kind === 'empty') {
+    return '<div class="wrap" style="padding-bottom:0"><p class="refused">'
+      + 'The copy in the helpdesk holds no text now, so there is nothing to choose between.'
+      + ' Approving sends the reply the ledger holds.</p></div>';
+  }
+  if (copy.kind === 'unread') {
+    return '<div class="wrap" style="padding-bottom:0"><p class="refused">'
+      + 'The copy in the helpdesk could not be read, so it is not drawn here.'
+      + ` The console log names the fault ${escapeHtml(copy.tag)}.</p></div>`;
+  }
+  const filters = escapeHtml(filtersQuery(options.rule, options.product));
+  return [
+    '<div class="wrap" style="padding-bottom:0"><div class="callout">',
+    '<p>Both texts are below. Choose the one to send: the ledger sends the reply it holds,'
+      + ' so choosing the helpdesk copy saves it as the reply first.</p>',
+    '<span class="lbl">The reply the ledger holds</span>',
+    `<div class="prose">${escapeHtml(reply ?? 'the run holds no reply text')}</div>`,
+    '<span class="lbl">The copy the helpdesk holds</span>',
+    `<div class="prose">${escapeHtml(copy.text)}</div>`,
+    `<form method="post" action="/edit${filters}">`,
+    `<input type="hidden" name="runId" value="${escapeHtml(runId)}">`,
+    `<input type="hidden" name="shown" value="${escapeHtml(shown)}">`,
+    '<input type="hidden" name="edit" value="text">',
+    `<input type="hidden" name="text" value="${escapeHtml(copy.text)}">`,
+    '<button class="btn" type="submit">Send the helpdesk copy</button>',
+    '</form>',
+    // The other half of the choice, and it needs a control of its own: the
+    // copy is in a helpdesk this system cannot write into, so nothing a
+    // reviewer could do here would make the two texts agree. The digest is of
+    // the copy drawn above, which is what makes this a decision about text
+    // somebody read rather than a flag that discards whatever is there.
+    `<form method="post" action="/approve${filters}">`,
+    `<input type="hidden" name="runId" value="${escapeHtml(runId)}">`,
+    `<input type="hidden" name="shown" value="${escapeHtml(shown)}">`,
+    `<input type="hidden" name="ack" value="${escapeHtml(replyDigest(copy.text))}">`,
+    '<button class="btn" type="submit">Send the reply above</button>',
+    '</form>',
+    '<p class="discl">Sending the copy saves it as the reply first. Sending the reply above'
+      + ' leaves the copy in the helpdesk, and the person who wrote it is not told.</p>',
+    '</div></div>',
+  ].join('');
 }
 
 /**
@@ -1712,7 +2171,7 @@ export interface CaseHold {
  * drawn on the case it approved. Only a waiting run offers the approval.
  */
 export function renderCase(view: CaseView, options: CaseOptions): string {
-  const act = actOf(view);
+  const act = actOf(view, options.ledgerReply);
   const waiting = view.state === 'awaiting_approval';
   const rule = view.policyReason;
   return [
@@ -1737,10 +2196,41 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
     ` · run <a href="/run/${encodeURIComponent(view.runId)}">${escapeHtml(view.runId)}</a>`,
     '</div>',
     '</div>',
-    options.outcome === '' ? '' : renderOutcome(options.outcome, { state: view.state, approved: view.approved }),
+    options.outcome === '' ? '' : renderOutcome(options.outcome, {
+      state: view.state,
+      approved: view.approved,
+      savedReply: view.request?.savedReplyText != null,
+      ledgerReply: options.ledgerReply,
+    }),
+    options.outcome === 'copy_changed'
+      ? copyChoice(
+        options.copy,
+        replyTextOf(view, options.ledgerReply),
+        options,
+        view.runId,
+        replyDigest(replyTextOf(view, options.ledgerReply) ?? ''),
+      )
+      : '',
+    options.edit === '' ? '' : renderEditOutcome(options.edit, {
+      state: view.state,
+      approved: view.approved,
+      savedReply: view.request?.savedReplyText != null,
+      ledgerReply: options.ledgerReply,
+    }, options.why),
     '<div class="case">',
     '<div class="casemain">',
-    evidenceBlock(view.evidence, view.draftExternalId, view.request),
+    evidenceBlock(view.evidence, view.draftExternalId, view.request, {
+      ledgerReply: options.ledgerReply,
+      runId: view.runId,
+      text: replyTextOf(view, options.ledgerReply),
+      shown: replyDigest(replyTextOf(view, options.ledgerReply) ?? ''),
+      draftId: view.draftExternalId,
+      waiting: view.state === 'awaiting_approval',
+      hasTurn: view.request !== null,
+      rule: options.rule,
+      product: options.product,
+      writing: options.writing,
+    }),
     act.kind === 'action' ? payloadBlock(view.payload) : '',
     '</div>',
     '<div class="caseside">',
@@ -1821,14 +2311,13 @@ function whyBlock(view: CaseView, act: Act): string {
     : isPolicyReason(rule)
       ? `<p><span class="m">${escapeHtml(rule)}</span>. ${escapeHtml(WHY_YOURS[rule])}</p>`
       : '<p>The journal recorded a rule this console does not know.</p>';
-  // What approving does, said only while there is an approval to make.
-  const does = view.state !== 'awaiting_approval'
+  // What approving does, said only while there is an approval to make. The
+  // sentence comes off the act, which read the adapter's declaration: worded
+  // here, the card said "the helpdesk draft" on an adapter where the ledger
+  // holds the reply and the draft is a note nobody can send (DEC-44).
+  const does = view.state !== 'awaiting_approval' || act.kind === 'none'
     ? null
-    : act.kind === 'reply'
-      ? 'Approving sends the helpdesk draft to the customer.'
-      : act.kind === 'action'
-        ? `Approving performs ${view.actionClass ?? 'the parked action'} through the adapter.`
-        : null;
+    : act.does;
   return [
     '<div class="card why"><header>',
     '<span class="lbl">Why this is yours</span>',
@@ -1980,7 +2469,9 @@ function takeSays(outcome: string, hold: CaseHold | null, state: string): string
   // toString` resolved a function and `escapeHtml` threw on it — a 500 from a
   // link anyone can send a reviewer. And a value this console does not know
   // gets its own sentence rather than being echoed as the console's words.
-  const known = Object.hasOwn(TAKE_SAYS, outcome) ? TAKE_SAYS[outcome]! : UNKNOWN_TAKE;
+  const known = Object.hasOwn(TAKE_SAYS, outcome)
+    ? TAKE_SAYS[outcome as keyof typeof TAKE_SAYS]!
+    : UNKNOWN_TAKE;
   // A sentence about a hold must fit the hold this page just read. `?taken=
   // taken` on a page that reloaded after the hold lapsed drew "You hold this
   // case now" beside "Nobody holds this case", and a link can carry any of
@@ -2030,7 +2521,7 @@ function takenFits(outcome: string, hold: CaseHold | null, state: string): boole
 }
 
 /** What a take answered, in the words the case shows. */
-const TAKE_SAYS: Readonly<Record<string, string>> = {
+const TAKE_SAYS = {
   taken: 'You hold this case now.',
   released: 'You released this case.',
   held_by_other: 'Somebody else holds this case. Take it over to move it to you.',
@@ -2041,7 +2532,10 @@ const TAKE_SAYS: Readonly<Record<string, string>> = {
   not_yours: 'Somebody else holds this case now, so it did not move.',
   already_yours: 'You already hold this case, so it did not move.',
   not_held: 'Nobody held this case, so there was nothing to hand over.',
-};
+} as const satisfies Record<
+  TakeOutcome['outcome'] | ReleaseOutcome['outcome'] | HandoverOutcome['outcome'],
+  string
+>;
 
 /**
  * The bar at the foot of the case: the approval, or why there is none.
@@ -2054,29 +2548,47 @@ function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
     : act.kind === 'none'
       ? `<p class="discl">${escapeHtml(act.says)}</p>`
       // The digest is of the reply this page drew, which is the text the
-      // ledger parked and the text the approval will compare against.
+      // ledger would send and the text the approval compares against
+      // (DEC-44: the saved reply on the adapter whose ledger holds it, the
+      // parked body everywhere else).
       : approveForm(
         view.runId,
         act.label,
         act.says,
         { rule: options.rule, product: options.product },
-        replyDigest(view.evidence.draftBody ?? ''),
+        replyDigest(replyTextOf(view, options.ledgerReply) ?? ''),
       )
-        + (act.kind === 'reply' ? `<p class="readback">${escapeHtml(readBackSays(options.readBack))}</p>` : '');
+        + (act.kind === 'reply' ? `<p class="readback">${escapeHtml(readBackSays(options.readBack, options.ledgerReply))}</p>` : '');
   return `<div class="actionbar">${inner}</div>`;
 }
 
-/** Whether an approval here measures the edit a person made (section 4.10). */
-function readBackSays(readBack: string | null): string {
-  return readBack === null
-    ? 'This console reads no draft back, so an approval here records no edit distance.'
+/** What an approval here does with the parked copy (section 4.10, DEC-44). */
+function readBackSays(readBack: string | null, ledgerReply: boolean): string {
+  if (readBack === null) {
+    return 'This console reads no draft back, so an approval here records no edit distance.';
+  }
+  return ledgerReply
+    ? `Approving reads the helpdesk copy back through ${readBack} first and compares it with the`
+      + ' reply the ledger holds, then records how far a person edited the draft.'
     : `Approving reads the helpdesk draft back through ${readBack} first, and records how far a person edited it.`;
 }
 
-/** What approving a run performs, and the words the button and warning use. */
+/**
+ * What approving a run performs, and the words the button and warning use.
+ *
+ * `does` is the short form the context column prints, and it comes from here
+ * and not from the page: `says` and `does` are one decision about one act, and
+ * a second wording drew "sends the helpdesk draft" on the adapter where the
+ * ledger holds the reply (DEC-44).
+ */
 type Act =
   | { readonly kind: 'none'; readonly says: string }
-  | { readonly kind: 'reply' | 'action'; readonly label: string; readonly says: string };
+  | {
+      readonly kind: 'reply' | 'action';
+      readonly label: string;
+      readonly says: string;
+      readonly does: string;
+    };
 
 /**
  * The approval, and what it will do (DEC-11, DEC-34, DEC-40).
@@ -2092,7 +2604,7 @@ type Act =
  * send escalates as `delivery_unknown` (DEC-30). A person pressing this on a
  * payment reversal is owed both facts.
  */
-function actOf(run: RunDetail): Act {
+function actOf(run: RunDetail, ledgerReply: boolean): Act {
   if (run.draftExternalId === null && !run.payloadRecorded) {
     return {
       kind: 'none',
@@ -2101,15 +2613,22 @@ function actOf(run: RunDetail): Act {
     };
   }
   if (run.draftExternalId !== null) {
-    // No text box. The draft parks in the helpdesk and is edited there
-    // (DEC-11, DEC-40); the relay sends that draft verbatim, so a body typed
-    // here would be recorded and never sent.
+    // Where the reply is edited decides these words, and nothing else: a
+    // reviewer who reads "edit it there" beside an editor above it has been
+    // told two things (DEC-44, DEC-40).
     return {
       kind: 'reply',
       label: 'Approve and send',
-      says: 'The reply above is what the system drafted. The helpdesk holds the copy the'
-        + ' relay sends, so edit it there — a person may have changed it since. This sends that'
-        + ' copy as it stands, and a sent reply cannot be recalled.',
+      does: ledgerReply
+        ? 'Approving sends the reply the ledger holds.'
+        : 'Approving sends the helpdesk draft to the customer.',
+      says: ledgerReply
+        ? 'This sends the reply above, exactly as the ledger holds it. A sent reply cannot be'
+          + ' recalled. The helpdesk keeps a copy that no customer can be sent, and a person'
+          + ' who edited it since is asked which text to send.'
+        : 'The reply above is what the system drafted. The helpdesk holds the copy the relay'
+          + ' sends, so edit it there — a person may have changed it since. This sends that copy'
+          + ' as it stands, and a sent reply cannot be recalled.',
     };
   }
   // Read from the action, not from which rule happened to fire first.
@@ -2124,6 +2643,7 @@ function actOf(run: RunDetail): Act {
   return {
     kind: 'action',
     label: 'Approve and perform',
+    does: `Approving performs ${run.actionClass ?? 'the parked action'} through the adapter.`,
     says: 'No reply goes to a customer. This run parked an action in the ledger, and'
       + ` approving it performs ${run.actionClass ?? 'the action'} through the adapter with the`
       + ' payload the run journalled.'
@@ -2713,6 +3233,19 @@ const DESIGN_NOTES: readonly { readonly token: Token; readonly title: string; re
   },
   {
     token: 'accent',
+    title: 'The reply is edited here, and sent from here',
+    says: 'On an adapter whose helpdesk cannot send the copy it parks, the ledger holds the reply.'
+      + ' A reviewer edits it on the case, saves it, and reloads to find the text they saved.'
+      + ' The sentences the system drafted stay beside the editor, each with the verdict it was given,'
+      + ' and a claim the judge refused offers the words of the document it cites, its removal,'
+      + ' or the answer the reviewer writes.'
+      + ' What the approval sends is the text the ledger holds, with the disclosure and the provenance'
+      + ' every customer reply carries.'
+      + ' Where the helpdesk can send its own parked copy, the case says so and offers no editor:'
+      + ' two texts that may both send is the one thing this console will not build.',
+  },
+  {
+    token: 'accent',
     title: 'A lock, because four people pull from one uncapped list',
     says: 'The queue is not capped, so the same case can sit in front of four reviewers at once.'
       + ' A reviewer takes a case before working it, so the others see who holds it and the time left.'
@@ -2811,18 +3344,69 @@ const OUTCOMES = {
   not_awaiting_approval: 'That run is not waiting for approval.',
   superseded: 'Another action already holds this key, so nothing was sent.',
   stale_epoch: 'Another owner took this ticket. Nothing was sent.',
-  draft_missing: 'The parked draft is gone, so nothing was sent.',
+  // DEC-40: approving reads the draft back, so a copy that is gone refuses.
+  // The way out is named, because "approve again" is the one step that cannot
+  // work: the draft this approval would read is the thing that is missing.
+  draft_missing: 'The parked draft is gone, so nothing was sent. Restore the copy in the helpdesk,'
+    + ' then approve again. A copy that cannot be restored needs the approval command without'
+    + ' --read-back: it hands the run to the relay, which escalates a copy it cannot find.',
   // DEC-46: the reply moved under the reviewer. The page that drew it is
   // stale, so the answer says to read the case again rather than to retry.
   shown_changed: 'The reply changed since this page was drawn, so nothing was sent.'
     + ' Open the case again to read it as it is now.',
-  read_back_failed: 'The helpdesk draft could not be read back, so nothing was sent. The console log holds the fault.',
+  // DEC-44: the two texts travel with the refusal, so the case page prints
+  // both and lets the reviewer choose. Nothing was sent either way. What the
+  // page draws is not promised here: the copy block below says what it has,
+  // and a copy that could not be read is not a text to choose from.
+  copy_changed: 'The copy in the helpdesk was edited after this reply was parked, so nothing was'
+    + ' sent.',
+  // DEC-14: a reply may not reach a customer without the adopter's
+  // disclosure. A reply parked before this change carries none, and the
+  // parked copy still carries one: the draft path sends that.
+  no_disclosure: 'This reply carries no disclosure, so nothing was sent (DEC-14).'
+    + ' A reply parked before this deploy carries none, and its parked copy does.'
+    + ' Set FREESCOUT_INTERNAL_NOTE=false for the console, the relay and the consumer,'
+    + ' and that copy is what sends.',
+  // DEC-30: a fault a retry can clear. The page names both classes, because
+  // the read that failed cannot say which one it was: the fault itself is in
+  // the log line the sentence points at.
+  read_back_failed: 'The helpdesk copy could not be read back, so nothing was sent.'
+    + ' Check the helpdesk connection and its API key, then approve again.'
+    + ' The console log holds the fault.',
+  // DEC-44: the other class of read-back fault, and it does not clear on a
+  // retry. The processes that park and approve read the helpdesk's
+  // configuration differently, so one of them parks a copy the other will not
+  // compare.
+  read_back_not_a_note: 'The copy in the helpdesk is not one this console can compare, so nothing'
+    + ' was sent. This does not clear by trying again: a process parked it with a different'
+    + ' helpdesk setting, and the console, the relay and the consumer have to read the same one.'
+    + ' The console log names the fault.',
 } as const satisfies Record<ConsoleApproveOutcome['outcome'], string>;
 
 /** What an outcome is checked against: the run's state, and whether it was approved. */
 export interface OutcomeRun {
   readonly state: string;
   readonly approved: boolean;
+  /**
+   * DEC-44: whether the turn holds a reply a reviewer saved, as the page read
+   * it. A save outcome claiming one is drawn only when this is true.
+   *
+   * Required, so a caller that renders an edit outcome cannot leave it out
+   * and have every save read as an answer this console does not know.
+   */
+  readonly savedReply: boolean;
+  /**
+   * DEC-44: whether this console's adapter cannot send the copy it parks, so
+   * a reply the ledger holds is what sends.
+   *
+   * Read by `saved`, whose sentence claims the approval sends the text just
+   * saved. On an adapter that keeps the draft path the approval sends the
+   * parked copy, so that claim would be false about a save that did happen.
+   *
+   * Required, for the reason above it: a caller that omits it would have every
+   * save read as an answer this console does not know.
+   */
+  readonly ledgerReply: boolean;
 }
 
 /**
@@ -2851,6 +3435,12 @@ function outcomeFits(outcome: string, run: OutcomeRun | null): boolean {
     // DEC-46: the shown-text refusal commits nothing, so the run is still
     // waiting. A run that is not is a sentence somebody wrote.
     case 'shown_changed':
+    // Both of DEC-44's refusals commit nothing either, so a run either one is
+    // true of is still waiting. Without them a stale link would tell an
+    // operator that a send was refused on a case that resolved days ago.
+    case 'copy_changed':
+    case 'no_disclosure':
+    case 'read_back_not_a_note':
       return state === 'awaiting_approval';
     case 'not_awaiting_approval':
       return state !== 'awaiting_approval';

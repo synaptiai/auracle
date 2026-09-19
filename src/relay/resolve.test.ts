@@ -17,6 +17,7 @@ function caps(flags: {
     supportsDraftState: false,
     supportsStructuredFields: false,
     supportsThreading: false,
+    supportsLedgerReply: false,
   });
 }
 

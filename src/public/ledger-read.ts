@@ -28,6 +28,10 @@ export const LEDGER_WRITES: Readonly<Record<string, string>> = {
   handoverHold: 'moves a live hold to the teammate it names',
   readHold: 'clears a hold whose period ran out and records the lapse it found',
   releaseHold: 'ends the holder\'s hold on a case',
+  // DEC-44: the reply a reviewer edits on the case screen, saved onto the
+  // turn it answers. One statement under the run's row lock, and no state
+  // moves with it.
+  saveReply: 'the reply a reviewer saved: it writes the text the approval will send',
   takeHold: 'takes a case for one reviewer, and releases the taker\'s others',
 };
 
@@ -65,6 +69,11 @@ export { approveRun } from '../approval/approve.js';
 // definition, because the two must agree byte for byte on the text.
 export { replyDigest } from '../approval/shown.js';
 
+// DEC-44: whether a copy read back from the helpdesk holds text at all. One
+// rule, read by the approval that compares it and by the case screen that
+// draws it, so a copy a person cleared is not offered as a text to send.
+export { copyHoldsText } from '../approval/reply-copy.js';
+
 // DEC-45: whether an identity may review, and DEC-47: the products that
 // reviewer covers, which the queue reads to put their cases first. Both are
 // reads, and they are the only part of the roster the console reaches: the
@@ -93,5 +102,15 @@ export type {
 // The adapters an approval reads a parked draft back from. A read of the
 // helpdesk, never a write.
 export { READ_BACK_ADAPTER_NAMES, selectReadBackAdapter } from '../adapters/read-back.js';
+export type { ReadBackAdapter } from '../adapters/read-back.js';
 export type { DraftReadBack } from '../adapters/types.js';
+// DEC-30: the class of egress failure a retry can never clear. The console
+// reads it to tell the reader of a failed read-back whether the fault is
+// worth retrying or needs a configuration put back in step.
+export { PermanentEgressError } from '../adapters/types.js';
 export type { ApproveOptions, ApproveOutcome } from '../approval/approve.js';
+// DEC-44: the console's second write. The reply a reviewer saves, guarded the
+// way the approval is guarded (DEC-46), so the text a person edits is the text
+// the approval sends.
+export { saveReply } from '../approval/save-reply.js';
+export type { SaveOutcome, SaveReplyOptions } from '../approval/save-reply.js';

@@ -103,6 +103,7 @@ const FULL_CAPABILITIES: AdapterCapabilities = {
   supportsDraftState: true,
   supportsStructuredFields: true,
   supportsThreading: true,
+  supportsLedgerReply: false,
 };
 
 /** The model version the offline stub reports (src/replay/fake-model.ts). */

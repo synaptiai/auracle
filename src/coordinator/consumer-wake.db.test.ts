@@ -61,6 +61,7 @@ const CAPABILITIES: AdapterCapabilities = {
   supportsDraftState: true,
   supportsStructuredFields: true,
   supportsThreading: true,
+  supportsLedgerReply: false,
 };
 
 afterAll(async () => {

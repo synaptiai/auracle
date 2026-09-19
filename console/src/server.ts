@@ -20,6 +20,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 
 import { isRunId } from './approve.js';
+import { closestDocumentSentence, withSentenceReplaced, withoutSentence } from './reply-edit.js';
 import { escapeHtml } from './render.js';
 import { CONSOLE_SCRIPT } from './script.js';
 import {
@@ -40,9 +41,9 @@ import {
   renderOutcome,
   renderRuns,
 } from './surfaces.js';
-import type { ConsoleApproveOutcome } from './approve.js';
+import type { ConsoleApproveOutcome, ConsoleSaveOutcome } from './approve.js';
 import type {
-  BandRow, CaseHoldRead, CustomerRead, DocumentPage, LatencyRow,
+  BandRow, CaseHoldRead, CopyRead, CustomerRead, DocumentPage, LatencyRow,
   QueueHold, QueueHoldsRead, QueueTodayRead, QueueTodayView,
   RunDetail, RunRow, RunView, Shell,
   ThreadView, Theme,
@@ -52,6 +53,7 @@ import { describeFault } from 'auracle/cli';
 // JSON leaves several line breaks raw.
 import { logLine } from 'auracle/format';
 import type { ReviewerFor } from './reviewer.js';
+import { copyHoldsText } from 'auracle/ledger-read';
 import type { HandoverOutcome, Hold, ReleaseOutcome, TakeOutcome } from 'auracle/ledger-read';
 
 /**
@@ -85,18 +87,47 @@ export interface ConsoleDeps {
   readonly readConversation: (conversationId: string) => Promise<ThreadView | null>;
   readonly readDocument: (docId: string) => Promise<DocumentPage | null>;
   /**
-   * The approval, with the reviewer this request resolved to (DEC-45) and the
-   * digest of the reply the page drew (DEC-46).
+   * The approval, with the reviewer this request resolved to (DEC-45), the
+   * digest of the reply the page drew (DEC-46), and the reviewer's decision
+   * about a helpdesk copy a person edited (DEC-44).
    *
    * The identity has already passed the roster, so it is never undefined
    * here: the gate refuses a request before this call when no reviewer
    * stands behind it. `approveRun` bounds what it keeps all the same.
+   *
+   * The acknowledgement is absent on every approval that is not choosing
+   * between two texts, which is nearly all of them.
    */
   readonly approve: (
     runId: string,
     approvedBy: string,
     shown: string,
+    copyAcknowledged?: string,
   ) => Promise<ConsoleApproveOutcome['outcome']>;
+  /**
+   * DEC-44: the reviewer's text, saved as the reply this case holds.
+   *
+   * The console's second write. `shown` is the digest of the reply the page
+   * drew, exactly as the approval's is, and the save is refused when the
+   * ledger's reply has moved since: the guard is DEC-46's, applied one step
+   * earlier.
+   */
+  readonly saveReply: (
+    runId: string,
+    text: string,
+    shown: string,
+  ) => Promise<ConsoleSaveOutcome['outcome']>;
+  /**
+   * The copy the helpdesk holds for one parked draft (DEC-44), read when an
+   * approval refused because a person edited it. Null when there is nothing
+   * to read, which the page says in words.
+   */
+  readonly readCopy: (draftExternalId: string) => Promise<string | null>;
+  /**
+   * The document one cited claim rests on, read for the callout's first
+   * button (DEC-44). Null when the ledger holds no such document.
+   */
+  readonly readDocumentBody: (docId: string) => Promise<string | null>;
   /**
    * The reviewer behind this request, or the reason there is none (DEC-45).
    *
@@ -161,6 +192,16 @@ const CSS_PATH = '/console.css';
  * log whole either.
  */
 const SHOWN_DIGEST = /^[0-9a-f]{64}$/;
+
+/**
+ * The longest document body the callout scans for the sentence it quotes.
+ *
+ * The id is the run's own, so no request chooses which document is read. The
+ * bound is here because this read happens inside a request: a corpus is
+ * adopter-written, and a body this console would not quote a sentence from is
+ * not one worth splitting into sentences on the way to a page.
+ */
+const MAX_CITED_DOCUMENT_CHARS = 200_000;
 
 /**
  * The queue filters a URL carries (DEC-47).
@@ -494,6 +535,15 @@ export interface ConsoleOptions {
    * console reads none (section 4.10). A case says which.
    */
   readonly readBack: string | null;
+  /**
+   * DEC-44: whether that adapter declares that its helpdesk cannot send the
+   * copy it parks, so the ledger holds the reply.
+   *
+   * Read from the adapter's own declaration at startup, never from the
+   * environment again: the console draws the editor where the approval will
+   * send the ledger's text, and the two must answer about the same adapter.
+   */
+  readonly ledgerReply: boolean;
 }
 
 export function createConsole(
@@ -881,10 +931,32 @@ async function route(
       console.error(logLine({ event: 'console_hold_unread', tag, runId, error: describeFault(error) }));
       hold = { kind: 'unread', tag };
     }
+    // DEC-44: the helpdesk's copy is read only for the refusal that names it,
+    // so an ordinary case reads nothing back. A fault here does not take the
+    // case away: the refusal is still drawn, and the copy with a tag.
+    const edit = url.searchParams.get('edit') ?? '';
+    const why = url.searchParams.get('why') ?? '';
+    const writing = url.searchParams.get('write') ?? '';
+    let copy: CopyRead = { kind: 'none' };
+    if (outcome === 'copy_changed' && run.draftExternalId !== null) {
+      try {
+        const held = await deps.readCopy(run.draftExternalId);
+        // One rule with the approval's, so the page never offers a text the
+        // save would refuse: a copy whose text is empty is nothing to choose.
+        copy = !copyHoldsText(held)
+          ? (held === null ? { kind: 'gone' } : { kind: 'empty' })
+          : { kind: 'copy', text: held };
+      } catch (error) {
+        const tag = randomUUID().slice(0, 8);
+        console.error(logLine({ event: 'console_copy_unread', tag, runId, error: describeFault(error) }));
+        copy = { kind: 'unread', tag };
+      }
+    }
     send(res, 200, page(
       `Case ${run.ticketId}`,
       renderCase({ ...run, customer }, {
-        outcome, rule, product, readBack: options.readBack, hold, taken, handoverTo,
+        outcome, edit, why, rule, product, readBack: options.readBack, hold, taken, handoverTo,
+        ledgerReply: options.ledgerReply, writing, copy,
       }),
       { ...shell(`/case/${runId}`), back: caseHref(runId, rule, product) },
     ));
@@ -1064,6 +1136,11 @@ async function route(
     return;
   }
 
+  if (req.method === 'POST' && path === '/edit') {
+    await editRoute(req, res, deps, reviewer, url, theme, options.ledgerReply);
+    return;
+  }
+
   if (req.method === 'POST' && path === '/approve') {
     // Read before the body, and used by every line this route logs. A client
     // that hangs up destroys its socket, and a later read of the address may
@@ -1135,7 +1212,30 @@ async function route(
       ));
       return;
     }
-    // The run id and the digest are the whole request. Any other field is
+    // DEC-44: the reviewer's answer to a refusal that drew two texts. It is
+    // the digest of the helpdesk copy the page drew, so the approval refuses
+    // again if that copy moved since — and a request without it is an
+    // approval that is not choosing between two texts. Shape-checked like the
+    // reply digest beside it, and never echoed.
+    const ack = (form.get('ack') ?? '').trim();
+    if (ack !== '' && !SHOWN_DIGEST.test(ack)) {
+      console.error(logLine({
+        event: 'console_refused',
+        reason: 'not_a_copy_digest',
+        runId,
+        ackLength: loggedLength(ack),
+        host: req.headers.host ?? null,
+        from,
+      }));
+      send(res, 400, bare(
+        'Refused',
+        'That request carries an answer about the helpdesk copy in no shape this console reads,'
+          + ' so nothing was approved. Open the case and answer the refusal there.',
+        theme,
+      ));
+      return;
+    }
+    // The run id and the digests are the whole request. Any other field is
     // ignored, because the relay sends the parked draft verbatim and a body
     // posted here would be recorded as the approved reply without ever
     // reaching the customer.
@@ -1143,7 +1243,9 @@ async function route(
     // roster and active, or this request never reached the route.
     let outcome;
     try {
-      outcome = await deps.approve(runId, reviewer, shown);
+      outcome = ack === ''
+        ? await deps.approve(runId, reviewer, shown)
+        : await deps.approve(runId, reviewer, shown, ack);
     } catch (error) {
       // The one request that writes. A fault here can come after the
       // transaction committed, so the page does not say the console was only
@@ -1185,6 +1287,10 @@ async function route(
       reviewer: logged(reviewer),
       reviewerLength: loggedLength(reviewer),
       approvedBy: outcome === 'approved' ? reviewer : null,
+      // DEC-44: the approval that sent the ledger's reply past a helpdesk copy
+      // a person edited. A boolean and not the digest: the fact an incident
+      // reader needs is that the edit was set aside on purpose, and by whom.
+      copyAcknowledged: ack !== '' && outcome === 'approved',
       host: req.headers.host ?? null,
       from,
     }));
@@ -1217,6 +1323,227 @@ async function route(
   // surface's own path, such as a POST to `/`, is not that surface, and the
   // rail must not mark it as the page being read.
   send(res, 404, page('Not found', nothingFound(), shell(NOT_A_SURFACE)));
+}
+
+/**
+ * The console's save: the reply a reviewer wrote, written onto the turn it
+ * answers (DEC-44).
+ *
+ * Three requests reach here, and they differ only in how the text is
+ * assembled. The editor sends the whole reply. A callout sends the sentence
+ * it edits, and the rest of the reply is read back from the ledger — so the
+ * edit lands on the text the approval would send, not on a copy the browser
+ * happened to hold.
+ *
+ * The response is a redirect to the case, like every other write here: a
+ * refresh cannot post the save twice, and the page beside the outcome is the
+ * reply it just changed.
+ */
+async function editRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ConsoleDeps,
+  reviewer: string,
+  url: URL,
+  theme: Theme,
+  ledgerReply: boolean,
+): Promise<void> {
+  const from = req.socket.remoteAddress ?? null;
+  // The page offers no editor on an adapter whose helpdesk sends its own
+  // parked copy, and neither does this route. A save there would write text
+  // the approval never reads, which is a reply a reviewer believes they sent.
+  if (!ledgerReply) {
+    console.error(logLine({
+      event: 'console_refused', reason: 'no_editor_on_this_adapter',
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 400, bare(
+      'Refused',
+      'This console does not edit replies: the helpdesk copy is what sends,'
+        + ' so edit it in the helpdesk.',
+      theme,
+    ));
+    return;
+  }
+  let form;
+  try {
+    form = await readForm(req);
+  } catch (error) {
+    // The same three answers the other writes give a body they cannot read.
+    if (!(error instanceof OversizedForm)) {
+      if (req.destroyed || req.readableAborted) {
+        console.error(logLine({
+          event: 'console_refused', reason: 'client_aborted',
+          host: req.headers.host ?? null, from,
+        }));
+        return;
+      }
+      throw error;
+    }
+    req.destroy();
+    send(res, 413, bare('Refused', 'The edit is larger than this console accepts.', theme));
+    return;
+  }
+
+  const runId = (form.get('runId') ?? '').trim();
+  if (!isRunId(runId)) {
+    console.error(logLine({
+      event: 'console_refused', reason: 'not_a_run_id',
+      runId: logged(runId), runIdLength: loggedLength(runId),
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 400, bare('Refused', 'That is not a run id, so nothing was saved.', theme));
+    return;
+  }
+  // The digest of the reply the form's page drew, required for the reason the
+  // approval requires one: a save from a page this console did not render
+  // would overwrite text its reviewer never read.
+  const shown = (form.get('shown') ?? '').trim();
+  if (!SHOWN_DIGEST.test(shown)) {
+    console.error(logLine({
+      event: 'console_refused', reason: 'not_a_shown_digest',
+      runId, shownLength: loggedLength(shown),
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 400, bare(
+      'Refused',
+      'That request carries no reply digest, so this console will not save it.'
+        + ' Open the case and edit it there.',
+      theme,
+    ));
+    return;
+  }
+
+  const edit = (form.get('edit') ?? '').trim();
+  const sentence = form.get('sentence') ?? '';
+  let text: string | null = null;
+  // Why an edit that saved nothing did not apply. A code and not a sentence:
+  // the answer travels back on a redirect, and a query string is a place any
+  // text can be put, so the page looks each code up rather than printing what
+  // it was handed.
+  let refusal: string | null = null;
+  // Whether the save was reached. The 500 below answers for two different
+  // moments — a run or a document read that failed, and a write that may have
+  // committed — and only this tells them apart. A fault in a read answered
+  // "it may or may not have committed" about a write nobody made.
+  let saving = false;
+  try {
+    // Inside the handler for the reason above: a read that fails is a fault
+    // this route answers for, and outside it the generic catch-all logged it
+    // as an unhandled console error with no edit named.
+    const run = await deps.readRun(runId);
+    // Every edit needs the run, and this is why. A park that carries no handle
+    // into the target system is a ledger-only park (DEC-34): its record routes
+    // to `performAction`, so a reply saved here would never send. The card
+    // draws no editor for such a run, and neither does this route — a card is
+    // not what refuses a request.
+    if (run !== null && run.draftExternalId === null) {
+      console.error(logLine({
+        event: 'console_refused', reason: 'no_reply_to_edit', runId,
+        host: req.headers.host ?? null, from,
+      }));
+      send(res, 400, bare(
+        'Refused',
+        'This case holds no reply to edit: it parked an action rather than a reply, so nothing'
+          + ' here would be sent.',
+        theme,
+      ));
+      return;
+    }
+    if (edit === 'text') {
+      text = form.get('text') ?? '';
+    } else if (edit === 'replace' || edit === 'delete' || edit === 'write') {
+      const current = run === null
+        ? null
+        : (run.request?.savedReplyText ?? run.evidence.draftBody);
+      if (current === null) {
+        refusal = 'no_reply';
+      } else if (sentence === '') {
+        refusal = 'no_sentence';
+      } else if (edit === 'delete') {
+        text = withoutSentence(current, sentence);
+      } else if (edit === 'write') {
+        const answer = (form.get('answer') ?? '').trim();
+        if (answer.length === 0) refusal = 'no_answer';
+        else text = withSentenceReplaced(current, sentence, answer);
+      } else {
+        // The document's own words, or the reason there are none. The
+        // document is the one the run's own journal says this sentence cites,
+        // and never one the request names: a form field would let any indexed
+        // document be quoted into a customer reply.
+        const cited = (run?.evidence.claims ?? []).find((claim) => claim.text === sentence)?.docId;
+        // Three answers, and each says something else. A sentence no claim of
+        // this run makes is not in the reply any more. A claim whose document
+        // the ledger does not hold is a retrieval fault. A document that
+        // shares no word with the claim is the third button's job.
+        if (cited === undefined) refusal = 'no_sentence';
+        else {
+          const body = await deps.readDocumentBody(cited);
+          if (body === null) refusal = 'no_document';
+          else if (body.length > MAX_CITED_DOCUMENT_CHARS) refusal = 'document_too_large';
+          else {
+            const pick = closestDocumentSentence(body, sentence);
+            if (pick === null) refusal = 'no_wording';
+            else text = withSentenceReplaced(current, sentence, pick);
+          }
+        }
+      }
+      if (text === null && refusal === null) refusal = 'no_sentence';
+    } else {
+      console.error(logLine({
+        event: 'console_refused', reason: 'not_a_known_edit', runId,
+        editLength: loggedLength(edit), host: req.headers.host ?? null, from,
+      }));
+      send(res, 400, bare('Refused', 'That is not an edit this console knows.', theme));
+      return;
+    }
+
+    // The console's own arm for an edit that never reached a save, beside
+    // the ledger's answers to ones that did.
+    let outcome: ConsoleSaveOutcome['outcome'] | 'not_an_edit';
+    if (refusal !== null) {
+      outcome = 'not_an_edit';
+    } else {
+      saving = true;
+      outcome = await deps.saveReply(runId, text ?? '', shown);
+    }
+    // The write this console makes. The ledger records the text; this line is
+    // the console-side evidence naming who saved it and what they asked for.
+    console.error(logLine({
+      event: 'console_reply_saved',
+      runId, edit, outcome, why: refusal,
+      reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+      host: req.headers.host ?? null, from,
+    }));
+    const kept = filtersQuery(url.searchParams.get('rule'), url.searchParams.get('product'))
+      .replace(/^\?/, '&');
+    const why = refusal === null ? '' : `&why=${encodeURIComponent(refusal)}`;
+    res.writeHead(303, {
+      ...SAFETY_HEADERS,
+      location: `/case/${encodeURIComponent(runId)}?edit=${encodeURIComponent(outcome)}${why}${kept}`,
+    });
+    res.end();
+  } catch (error) {
+    const tag = randomUUID().slice(0, 8);
+    console.error(logLine({
+      event: 'console_save_failed', tag, runId, edit, saving,
+      reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+      host: req.headers.host ?? null, from, error: describeFault(error),
+    }));
+    send(res, 500, bare(
+      'Error',
+      saving
+        ? `Something failed during the save, and it may or may not have committed.`
+          + ` The console log names it ${tag}.`
+        : `Something failed while preparing this edit, and nothing was saved.`
+          + ` The console log names it ${tag}.`,
+      theme,
+      {
+        href: caseHref(runId, url.searchParams.get('rule'), url.searchParams.get('product')),
+        text: 'Open the case to see its reply.',
+      },
+    ));
+  }
 }
 
 /**

@@ -239,6 +239,94 @@ describe('migrate', () => {
     expect(scoped.rows[0]?.products).toEqual(['aurora']);
   });
 
+  // DEC-44: the text a reviewer saved on the case screen, before any approval
+  // sends it. Nullable with no default, because a turn written before this
+  // migration has no saved reply and that null is the answer: the approval
+  // then sends the parked body.
+  it('installs the reply a reviewer saved (db/024, DEC-44)', async () => {
+    await migrate(client);
+
+    const columns = await client.query<{
+      column_name: string;
+      is_nullable: string;
+      data_type: string;
+      column_default: string | null;
+    }>(
+      `SELECT column_name, is_nullable, data_type, column_default
+         FROM information_schema.columns
+        WHERE table_schema = 'migrate_test' AND table_name = 'turn'
+          AND column_name IN ('saved_reply_text', 'approved_reply_text')
+        ORDER BY column_name`,
+    );
+    expect(columns.rows).toEqual([
+      { column_name: 'approved_reply_text', is_nullable: 'YES', data_type: 'text', column_default: null },
+      { column_name: 'saved_reply_text', is_nullable: 'YES', data_type: 'text', column_default: null },
+    ]);
+
+    const conversationId = '11111111-1111-1111-1111-111111111111';
+    await client.query(
+      "INSERT INTO conversation (conversation_id, primary_ticket_id) VALUES ($1, 'T-1')",
+      [conversationId],
+    );
+    await client.query(
+      'INSERT INTO turn (conversation_id, turn_number, ticket_id) VALUES ($1, 1, $2)',
+      [conversationId, 'T-1'],
+    );
+
+    // A turn written before this migration keeps no saved reply.
+    const before = await client.query<{ saved_reply_text: string | null }>(
+      'SELECT saved_reply_text FROM turn WHERE conversation_id = $1 AND turn_number = 1',
+      [conversationId],
+    );
+    expect(before.rows[0]?.saved_reply_text).toBeNull();
+
+    // The two columns answer different questions and are written
+    // independently: what a person saved, and what an approval sent.
+    await client.query(
+      'UPDATE turn SET saved_reply_text = $2, approved_reply_text = $3 WHERE conversation_id = $1 AND turn_number = 1',
+      [conversationId, 'the saved text', 'the sent text'],
+    );
+    const after = await client.query<{ saved_reply_text: string | null; approved_reply_text: string | null }>(
+      'SELECT saved_reply_text, approved_reply_text FROM turn WHERE conversation_id = $1 AND turn_number = 1',
+      [conversationId],
+    );
+    expect(after.rows[0]).toEqual({
+      saved_reply_text: 'the saved text',
+      approved_reply_text: 'the sent text',
+    });
+  });
+
+  // DEC-44: the reply an outbox record sends, when the ledger holds it rather
+  // than the helpdesk. Separate from `payload`, because the payload is hashed
+  // into the idempotency key and DEC-49 rejects a key that folds in the body.
+  it('installs the reply an outbox record carries (db/025, DEC-44)', async () => {
+    await migrate(client);
+
+    const column = await client.query<{ is_nullable: string; data_type: string; column_default: string | null }>(
+      `SELECT is_nullable, data_type, column_default FROM information_schema.columns
+        WHERE table_schema = 'migrate_test' AND table_name = 'outbox'
+          AND column_name = 'reply'`,
+    );
+    expect(column.rows).toEqual([{ is_nullable: 'YES', data_type: 'jsonb', column_default: null }]);
+
+    const runId = await seedRun();
+    await client.query(
+      `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class, delivery, payload, reply)
+       VALUES ($1, 'approve', 'customer_reply:T-1:abc', 1, 'customer_reply', 'at_most_once',
+               '{"draftExternalId": "hd-draft-0001"}',
+               '{"bodyText": "Your refund is on its way.", "disclosure": "Sent by Auracle.",
+                 "provenance": {"generatedBy": "model", "modelId": "m", "promptVer": "p",
+                                "generatedAt": "2026-09-19T00:00:00Z"}}')`,
+      [runId],
+    );
+    const row = await client.query<{ reply: { bodyText: string; disclosure: string } | null }>(
+      "SELECT reply FROM outbox WHERE run_id = $1 AND step_id = 'approve'",
+      [runId],
+    );
+    expect(row.rows[0]?.reply?.bodyText).toBe('Your refund is on its way.');
+    expect(row.rows[0]?.reply?.disclosure).toBe('Sent by Auracle.');
+  });
+
   it('installs the products a document serves (db/022, DEC-47)', async () => {
     await migrate(client);
 

@@ -69,6 +69,7 @@ const CAPABILITIES = {
   supportsDraftState: true,
   supportsStructuredFields: false,
   supportsThreading: true,
+  supportsLedgerReply: false,
 } satisfies AdapterCapabilities;
 
 const DIM = 1536;

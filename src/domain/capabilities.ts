@@ -55,4 +55,22 @@ export interface AdapterCapabilities {
   supportsDraftState: boolean; // necessary for DEC-11
   supportsStructuredFields: boolean; // necessary for bug records
   supportsThreading: boolean;
+  /**
+   * DEC-44: the helpdesk cannot send the copy it parks, so the ledger holds
+   * the approved reply and every approval path sends it.
+   *
+   * True only where the parked copy can never reach a customer. A helpdesk
+   * that can send its own draft makes this false whatever else it declares:
+   * two texts that may both send is the failure DEC-44 rejected by name.
+   *
+   * The relay reads it to choose between sending the parked handle and
+   * sending the reply the approval recorded; the console reads it to decide
+   * whether a reviewer edits the reply here; the approval reads it through
+   * its caller, which passes `ledgerReply`.
+   *
+   * Unlike the two flags the policy engine reads, this one decides no
+   * autonomy: an automatic write never sends a customer reply (DEC-12), so
+   * only the approval path consults it.
+   */
+  supportsLedgerReply: boolean;
 }

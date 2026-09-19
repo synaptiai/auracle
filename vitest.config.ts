@@ -66,7 +66,18 @@ export default defineConfig({
           // src/test-support/db-url.setup.ts now clones the migrated template
           // into a database of each file's own, so no two files share one.
           hookTimeout: 60_000,
-          testTimeout: 30_000,
+          // Higher than the other projects, because parallel files share one
+          // Postgres and the heaviest case is a seeded history. Measured:
+          // `gives a different ledger from a different seed` takes about 6 s
+          // alone and passed 30 s in a full run, where the db project runs
+          // thirty-eight suites through that one server.
+          //
+          // The cost of being wrong here is not only a failed case. Vitest
+          // abandons a case at the timeout and does not cancel its query, so
+          // the orphan holds its locks in that database, and the next case's
+          // TRUNCATE deadlocks against it. A budget that is too small fails
+          // twice and reads as two defects.
+          testTimeout: 120_000,
         },
       },
       {

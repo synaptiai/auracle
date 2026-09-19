@@ -71,6 +71,15 @@ export interface FencedOutboxInput {
   actionClass: string;
   delivery: 'at_least_once' | 'at_most_once';
   payload: unknown;
+  /**
+   * DEC-44: the reply this record sends when the ledger holds it rather than
+   * the helpdesk: `{bodyText, disclosure, provenance}`.
+   *
+   * Its own field and not part of `payload`, because `payload` is hashed into
+   * the idempotency key and DEC-49 rejects a key that folds in the body: an
+   * edited reply would then derive a second key and send twice.
+   */
+  reply?: unknown;
 }
 
 /**
@@ -274,8 +283,8 @@ export async function fencedInsert(
 
     const inserted = await client.query(
         `INSERT INTO outbox (
-           run_id, step_id, idem_key, epoch, action_class, delivery, payload, status
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+           run_id, step_id, idem_key, epoch, action_class, delivery, payload, reply, status
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
          ON CONFLICT (idem_key) DO NOTHING`,
         [
           run.runId,
@@ -285,6 +294,7 @@ export async function fencedInsert(
           outbox.actionClass,
           outbox.delivery,
           JSON.stringify(outbox.payload),
+          outbox.reply === undefined ? null : JSON.stringify(outbox.reply),
         ],
       );
 
@@ -531,8 +541,8 @@ export async function fencedTransition(
       if (t.outbox !== undefined) {
         const inserted = await client.query(
           `INSERT INTO outbox (
-             run_id, step_id, idem_key, epoch, action_class, delivery, payload, status
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+             run_id, step_id, idem_key, epoch, action_class, delivery, payload, reply, status
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
            ON CONFLICT (idem_key) DO NOTHING`,
           [
             t.runId,
@@ -542,6 +552,7 @@ export async function fencedTransition(
             t.outbox.actionClass,
             t.outbox.delivery,
             JSON.stringify(t.outbox.payload),
+            t.outbox.reply === undefined ? null : JSON.stringify(t.outbox.reply),
           ],
         );
         if ((inserted.rowCount ?? 0) === 0) {

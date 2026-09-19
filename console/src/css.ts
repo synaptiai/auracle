@@ -259,6 +259,35 @@ tbody tr:hover { background:var(--panel); }
 }
 .prose + .discl { margin-top: 12px; }
 
+/* The reply a reviewer edits, and the drafted sentences beside it (DEC-44).
+ *
+ * Two columns that wrap: the editor keeps a basis wide enough to write in,
+ * and the preview drops below it on a narrow window rather than shrinking to
+ * a column of three words. The same rule the case body itself follows. */
+.editcols { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
+.editor { flex:1 1 420px; display:flex; flex-direction:column; gap:9px; }
+.editor textarea {
+  width:100%; box-sizing:border-box; padding:12px 13px; border-radius:4px;
+  border:1px solid var(--rule2); background:var(--panel2); color:var(--ink);
+  font-family:Charter, 'Bitstream Charter', 'Sitka Text', Cambria, Georgia, serif;
+  font-size:15px; line-height:1.62; resize:vertical;
+}
+.preview { flex:1 1 300px; max-width:420px; display:flex; flex-direction:column; gap:8px; }
+/* The callout names the defect and offers the ways out of it. Ringed the way
+ * the design handoff rings it: this is the one thing on the page that blocks
+ * a send, and it must not read as one more paragraph. */
+.callout { border:1px solid var(--rule2); border-left:2px solid var(--hot);
+  border-radius:4px; padding:11px 13px; background:var(--panel); }
+.callout p { margin:0 0 9px; font-size:12.5px; line-height:1.5; color:var(--ink); }
+.callout form { display:inline; }
+.callout .btn { margin:0 6px 6px 0; background:transparent; color:var(--ink); }
+.callout input[type=text] {
+  width:100%; box-sizing:border-box; margin:6px 0 8px; padding:8px 9px; border-radius:4px;
+  border:1px solid var(--rule2); background:var(--panel2); color:var(--ink);
+  font-family:var(--sans); font-size:12.5px;
+}
+.callout a.btn { display:inline-block; text-decoration:none; }
+
 /* A queue row's top line: the ticket, and how long it has waited.
  *
  * The line wraps rather than starving its subject. The ticket keeps a basis

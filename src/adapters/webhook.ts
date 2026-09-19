@@ -35,6 +35,7 @@ export class WebhookAdapter implements IngressAdapter {
     supportsDraftState: false,
     supportsStructuredFields: false,
     supportsThreading: false,
+    supportsLedgerReply: false,
   });
 
   normalize(event: IngressEvent): NormalizedEvent {

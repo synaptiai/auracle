@@ -165,6 +165,26 @@ export interface ReplyProvenance {
   generatedAt: string;
 }
 
+/**
+ * A reply the ledger holds, on its way to the customer (DEC-44).
+ *
+ * The same three parts a `DraftReply` carries, under a name that says where
+ * they come from. `draftExternalId` is the parked copy's handle: it addresses
+ * the ticket and the thread the reply posts on, and it is not read for its
+ * body. Nothing here is read back from the target system — an adapter that
+ * cannot send what it parked sends this instead.
+ */
+export interface LedgerReply {
+  /** The parked copy's handle, which addresses the ticket. */
+  readonly draftExternalId: string;
+  /** The approved reply, as the ledger holds it. */
+  readonly bodyText: string;
+  /** The adopter's disclosure. Must not be empty (DEC-12, DEC-14). */
+  readonly disclosure: string;
+  /** Machine-readable provenance, mandatory on every customer reply (DEC-33). */
+  readonly provenance: ReplyProvenance;
+}
+
 /** A gated customer reply before it enters the target system. */
 export interface DraftReply {
   /** `ticketId` of the ticket this reply answers. */
@@ -236,6 +256,22 @@ export interface EgressAdapter {
    * `status = 'pending'` guard is what prevents a second send there.
    */
   sendDraft(draftExternalId: string, idemKey: string): Promise<{ readonly externalId: string }>;
+  /**
+   * Send the reply the ledger holds (DEC-44).
+   *
+   * For an adapter that declares `supportsLedgerReply`. Its helpdesk cannot
+   * send the copy it parks, so the approved text comes from the ledger,
+   * together with the disclosure and provenance the adapter attaches to any
+   * customer reply (DEC-14, DEC-33). `draftExternalId` addresses the ticket,
+   * exactly as it addresses the park: on this path it names the parked copy
+   * that is read back and never sent.
+   *
+   * An adapter whose helpdesk can send its parked copy must throw
+   * `AdapterCapabilityError` instead, and the relay branches on the
+   * declaration before it calls: two texts that may both send is the failure
+   * DEC-44 rejected by name.
+   */
+  sendLedgerReply(reply: LedgerReply, idemKey: string): Promise<{ readonly externalId: string }>;
   /**
    * Apply one automatic internal write (section 4.3, executing path). The
    * relay calls this for every action class that is not a customer reply;

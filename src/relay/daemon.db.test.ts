@@ -8,6 +8,7 @@ import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AdapterCapabilityError } from '../adapters/types.js';
 import type {
   AdapterCapabilities,
   DeliveryState,
@@ -83,6 +84,12 @@ class ScriptedEgress implements EgressAdapter {
     return this.onPerform(call);
   }
 
+  async sendLedgerReply(): Promise<{ readonly externalId: string }> {
+    // No scenario in this suite declares the capability, so the relay never
+    // routes here. Present so the fake satisfies the whole port.
+    throw new AdapterCapabilityError('this scripted adapter holds no ledger reply');
+  }
+
   async readBack(ref: { readonly idemKey: string }): Promise<DeliveryState> {
     return this.onReadBack(ref);
   }
@@ -94,6 +101,7 @@ const IDEMPOTENT: AdapterCapabilities = Object.freeze({
   supportsDraftState: true,
   supportsStructuredFields: true,
   supportsThreading: true,
+  supportsLedgerReply: false,
 });
 
 function makeRun(epoch: bigint, ticketId: string): FencedRunInput {
@@ -266,6 +274,7 @@ describe('relay daemon loop', () => {
         supportsDraftState: false,
         supportsStructuredFields: false,
         supportsThreading: false,
+        supportsLedgerReply: false,
       }),
       async () => {
         attempts += 1;
@@ -329,6 +338,7 @@ describe('relay daemon scan-level resilience', () => {
         supportsDraftState: false,
         supportsStructuredFields: false,
         supportsThreading: false,
+        supportsLedgerReply: false,
       }),
       createDraft: async () => ({ draftExternalId: 'd' }),
       sendDraft: async () => ({ externalId: 'e' }),
@@ -337,6 +347,9 @@ describe('relay daemon scan-level resilience', () => {
       // port: a missing method should be a type error, not a surprise.
       performAction: async () => {
         throw new Error('performAction is not part of this scenario');
+      },
+      sendLedgerReply: async () => {
+        throw new AdapterCapabilityError('this fake holds no ledger reply');
       },
     };
 
@@ -381,6 +394,7 @@ describe('relay daemon scan-level resilience', () => {
       delivery: 'at_least_once',
       action_class: 'customer_reply',
       payload: { draftExternalId: 'draft-bad' },
+      reply: null,
     };
     const goodRow: PendingOutboxRow = {
       run_id: goodRun,
@@ -391,6 +405,7 @@ describe('relay daemon scan-level resilience', () => {
       delivery: 'at_least_once',
       action_class: 'customer_reply',
       payload: { draftExternalId: 'draft-good' },
+      reply: null,
     };
 
     // Any query bound to the bad run's id fails; everything else succeeds.

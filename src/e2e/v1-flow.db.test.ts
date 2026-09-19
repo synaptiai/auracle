@@ -46,7 +46,7 @@ import type {
 } from '../models/provider.js';
 import { fencedTransition } from '../ledger/insert.js';
 import type { AdapterCapabilities as PolicyCapabilities } from '../policy/policy.js';
-import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
+import { AdapterCapabilityError, CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
 import { relayPending } from '../relay/relay.js';
 import { indexDocument } from '../retriever/retriever.js';
 
@@ -67,6 +67,7 @@ const CAPABILITIES = {
   supportsDraftState: true,
   supportsStructuredFields: true,
   supportsThreading: true,
+  supportsLedgerReply: false,
 } satisfies AdapterCapabilities;
 const DIM = 1536;
 const TICKET_TEXT = 'I cannot sign in to my account. How do I reset my password?';
@@ -256,6 +257,7 @@ class UnknownDeliveryEgress implements EgressAdapter {
     supportsDraftState: false,
     supportsStructuredFields: false,
     supportsThreading: false,
+    supportsLedgerReply: false,
   });
 
   attempts = 0;
@@ -272,6 +274,10 @@ class UnknownDeliveryEgress implements EgressAdapter {
   async performAction(): Promise<{ readonly externalId: string }> {
     this.attempts += 1;
     throw new Error('connection lost mid-write; delivery state unknown');
+  }
+
+  async sendLedgerReply(): Promise<{ readonly externalId: string }> {
+    throw new AdapterCapabilityError('this fake holds no ledger reply: supportsLedgerReply is false');
   }
 
   async readBack(): Promise<DeliveryState> {

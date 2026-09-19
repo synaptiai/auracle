@@ -335,6 +335,48 @@ Remove the draft in the FreeScout UI after the send.
 | `FREESCOUT_BASE_URL` | Instance root, such as `http://localhost:8088`. Required. | none |
 | `FREESCOUT_API_KEY` | Value of the `X-FreeScout-API-Key` header. Required. | none |
 | `FREESCOUT_USER_ID` | FreeScout user the threads belong to. Required. | none |
+| `FREESCOUT_INTERNAL_NOTE` | `true` once the proof below passes. | `false` |
+
+##### The internal-note mode, and the proof it needs
+
+DEC-44 lets the ledger hold the reply instead of the helpdesk.
+The adapter declares that capability only where the helpdesk cannot send the
+copy it parks.
+A FreeScout internal note cannot reach a customer, so a note is such a copy.
+
+Set `FREESCOUT_INTERNAL_NOTE=true` only after proving that your own instance
+accepts one.
+With it set, the park posts a note instead of a draft thread. The ledger then
+holds the approved reply, and a reviewer edits that reply on the console.
+Without it, the adapter behaves as it always did: the draft thread is what
+sends. The declaration reads the variable, so the console offers no editor
+until an operator sets it.
+
+Every process that reads the variable must agree.
+They are the consumer that parks, the relay that sends, and the console that
+approves.
+A relay that reads it as false cannot send a reply the console recorded.
+It escalates that record instead of posting a copy a person edited.
+So the run reaches a person, and no text leaves the ledger unseen.
+
+The proof needs the `API & Webhooks` module from the section below.
+Open a real conversation, mint a key, then post one note through the API:
+
+```sh
+curl -X POST -H "X-FreeScout-API-Key: $FREESCOUT_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"note","text":"Synthetic check: the internal note API works.","user":1,"state":"published"}' \
+  http://localhost:8088/api/conversations/<conversation-id>/threads
+```
+
+A `201` with a `Resource-ID` header is the proof.
+The note must then appear in the FreeScout UI as internal, and the customer
+must receive no mail.
+Check both before setting the variable.
+A `404` means the module is absent, and the adapter cannot take this mode.
+
+No test in this repository covers that proof.
+It needs a paid module and a live instance, and this repository ships neither.
 
 ##### Bringing an instance up
 
@@ -1678,6 +1720,38 @@ Edit the draft in the helpdesk, then approve. The relay sends the parked draft
 exactly as the helpdesk holds it. So text typed anywhere else is recorded and
 never sent.
 
+Where the adapter cannot send the copy it parks, the reviewer edits the reply
+on the case. Set `FREESCOUT_INTERNAL_NOTE=true`, as the FreeScout section
+describes. The console then draws the editor, the sentences the system drafted
+and the callout for a claim the judge refused. The reviewer saves the text, and
+the approval sends what the ledger holds. `pnpm run approve` sends the same
+text, so the two paths agree.
+
+The ledger then holds the reply, and the helpdesk holds a copy nothing can
+send. The approval compares the two. A copy a person edited after the park
+refuses, and both texts appear on the case. The reviewer chooses one, and the
+choice is a save like any other. Without `--read-back` the command line makes
+no comparison and sends the text the ledger holds.
+
+The refusal offers both texts, and a reviewer may choose either one. Choosing
+the helpdesk copy saves it as the reply. Choosing the reply the ledger holds
+sends it past the copy, and leaves the copy in the helpdesk.
+
+That second choice carries the digest of the copy the page drew. A copy that
+changed since refuses again. The command line takes the same decision, with
+`--read-back --accept-copy-edit <digest>`. Its refusal prints the digest. A
+copy a person cleared holds no text, so the case draws no choice.
+
+The approval reads the copy once, before its transaction opens. An edit that
+lands after that read is not seen by anything. The relay posts what the outbox
+record holds, and a capable adapter declares no read-back at the send (DEC-30).
+Treat an edit in that window as lost. When two people work one case, edit the
+reply from the console.
+
+On every other adapter the case says the reply is edited in the helpdesk, and
+the console offers no editor. A member of staff who typed there would write
+text that never sends. A sent reply cannot be recalled (DEC-12).
+
 The console reads the draft back when `APPROVE_ADAPTER` names `imap-smtp` or
 `freescout`. That is the path `pnpm run approve --read-back` takes. The approval
 reads the draft the helpdesk holds and records the approval-edit distance
@@ -1705,6 +1779,19 @@ nothing commits. The log line `console_read_back_failed` names the run, the
 draft and the fault. When the console gives up, it tells the adapter to stop,
 and the adapter closes the connection it holds. A fault that arrives later
 gets its own line, `console_read_back_late_fault`, with the same draft.
+
+One read-back fault never clears, and it has its own sentence. A thread the
+helpdesk does not hold as an internal note means two processes read
+`FREESCOUT_INTERNAL_NOTE` differently. Set it to the same value for the
+console, the relay and the consumer. The approval that reads such a copy
+refuses as `read_back_not_a_note`, and the sentence names the setting. Every
+approval refuses until the three agree.
+
+The adapter reads one conversation as one body, and refuses a conversation
+larger than four million characters. Half a conversation is not a copy a
+person can judge. A partial read would compare unequal to the reply, for a
+reason that is not an edit. So a case that names such a copy says the read
+failed, and the log line carries the size.
 
 Four seconds sits inside the console's five-second shutdown grace. The rest of
 the grace is for the approval's own statements. A transaction that asks for

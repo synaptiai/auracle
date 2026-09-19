@@ -14,6 +14,21 @@
  * relay sends that draft verbatim, so a body supplied here is recorded and
  * never sent. Read-back is the honest way to measure an edit.
  *
+ * DEC-44 adds the second path through here. A caller whose adapter cannot
+ * send the copy it parks passes `ledgerReply`: the approval then resolves
+ * the text from the ledger — the reply a person saved, or the body the park
+ * journaled — checks the copy against what the park put there, and writes
+ * that text onto the outbox record for the relay to send.
+ *
+ * The copy is read once, before the transaction opens, and its answer is
+ * checked against the digest the caller supplies. What that covers, and what
+ * it does not: a copy a person edited before this call is either sent or
+ * refused, so it is never discarded unseen. An edit that lands between this
+ * read and the relay's send is not seen by anything — the relay posts what
+ * the outbox record holds, and a capable adapter declares no read-back at the
+ * send (DEC-30). The window is stated here and in the runbook because a lost
+ * helpdesk edit is otherwise mistaken for a system that refused nothing.
+ *
  * One transaction does all of:
  *   1. refuse the move unless the run sits in `awaiting_approval` (DEC-12)
  *   2. read the fencing epoch against ticket_epoch (DEC-28), under the same
@@ -35,17 +50,30 @@
  */
 import type { Pool, PoolClient } from 'pg';
 
-import type { DraftReadBack } from '../adapters/types.js';
-import { recordApprovedReply } from '../ledger/conversation.js';
+import type { DraftReadBack, ReplyProvenance } from '../adapters/types.js';
+import { readSavedReply, recordApprovedReply } from '../ledger/conversation.js';
 import { fencedTransition } from '../ledger/insert.js';
 import { deriveIdemKey } from '../ledger/keys.js';
 import { UNATTRIBUTED, approverFrom } from './approver.js';
 import { releaseHoldIn } from '../holds/hold.js';
 import { recordApprovalEditDistance } from './measure.js';
+import { copyEditWouldBeLost, copyHoldsText } from './reply-copy.js';
 import { replyDigest } from './shown.js';
 
 export type ApproveOutcome =
-  | { readonly outcome: 'approved'; readonly idemKey: string }
+  | {
+      readonly outcome: 'approved';
+      readonly idemKey: string;
+      /**
+       * DEC-44: present when this approval sent the ledger's reply past a
+       * helpdesk copy a person had edited, on a caller's acknowledgement.
+       *
+       * A bare `true`, and not the digest the caller supplied: the fact worth
+       * recording is that a person's edit was set aside on purpose, and the
+       * text it was set aside for is the reply the outbox record holds.
+       */
+      readonly copyAcknowledged?: true;
+    }
   | { readonly outcome: 'unknown_run' }
   | { readonly outcome: 'not_awaiting_approval'; readonly state: string }
   /** Section 4.2 rule 2: another semantic action already holds the key. */
@@ -72,7 +100,27 @@ export type ApproveOutcome =
    * the change is the reply: a run that left `awaiting_approval` is refused
    * above, as `not_awaiting_approval`, which names that state.
    */
-  | { readonly outcome: 'shown_changed' };
+  | { readonly outcome: 'shown_changed' }
+  /**
+   * DEC-44: a person edited the copy in the helpdesk after the park. The
+   * design refuses to discard that edit silently, so both texts travel with
+   * this outcome: the reply the ledger would send, and the copy as it reads
+   * now. The caller shows them and lets the person choose. Nothing is sent.
+   */
+  | {
+      readonly outcome: 'copy_changed';
+      /** The text the approval was about to send: the ledger's reply. */
+      readonly ledgerText: string;
+      /** The copy the target system holds, as it reads now. */
+      readonly copyText: string;
+    }
+  /**
+   * DEC-44, DEC-14: the reply the ledger holds carries no disclosure, so it
+   * may not be sent. Only a park journaled before this change has no
+   * disclosure beside its body: the adapters refuse an empty one at park
+   * time, so a new reply always has one.
+   */
+  | { readonly outcome: 'no_disclosure' };
 
 /** Optional inputs for one approval. */
 export interface ApproveOptions {
@@ -113,6 +161,24 @@ export interface ApproveOptions {
    */
   readonly approvedBySource?: 'roster' | 'header' | 'none';
   /**
+   * DEC-44: this approval's target system cannot send the copy it parks, so
+   * the ledger holds the reply and this approval sends it.
+   *
+   * The text is the turn's saved reply when a person saved one, the parked
+   * body otherwise. With `readDraft`, two questions decide a refusal, and
+   * `copyEditWouldBeLost` states both: did a person edit the copy in the
+   * helpdesk after the park, and is the text about to be sent something other
+   * than that edit? A copy that answers both yes refuses as `copy_changed`,
+   * with both texts, rather than being sent or discarded in silence. A
+   * reviewer's own edit in the console is not compared — it is what this path
+   * exists to send — and neither is the copy itself once that is the text the
+   * reviewer chose to send.
+   *
+   * A caller that says both this and `finalBody` says two things about which
+   * text to send, so the approval refuses the pair instead of picking one.
+   */
+  readonly ledgerReply?: boolean;
+  /**
    * DEC-46: the digest of the reply the reviewer was shown, when a page
    * showed them one.
    *
@@ -126,6 +192,22 @@ export interface ApproveOptions {
    * so is any caller that read the case itself.
    */
   readonly shown?: string;
+  /**
+   * DEC-44: the digest of the helpdesk copy a person read and decided to send
+   * past, when the copy differs from the reply the ledger holds.
+   *
+   * The refusal shows both texts and lets a reviewer choose. Choosing the
+   * helpdesk copy is a save, and the approval that follows sends it. Choosing
+   * the ledger's reply has no such move: the copy is in a helpdesk this
+   * system cannot write into, so the two texts never agree on their own. This
+   * is how that choice is made — and it is bound to the text the person read,
+   * because it is the digest of that copy. A copy that changed once more does
+   * not match, so it refuses again rather than discarding the newer edit.
+   *
+   * It never suppresses the refusal for a copy nobody was shown: the digest
+   * has to be of the copy this approval read.
+   */
+  readonly copyAcknowledged?: string;
 }
 
 /** What the coordinator's `park` step recorded in the journal. */
@@ -147,10 +229,26 @@ interface ParkRecord {
    * so an approval in flight across the upgrade still matches its record.
    */
   readonly turnNumber?: number;
+  /**
+   * DEC-44: the adopter's disclosure and the reply's provenance (DEC-14,
+   * DEC-33), journaled so an approval that sends this reply from the ledger
+   * attaches what the adapter would have attached. Absent on a park
+   * journaled before this change, which is what `no_disclosure` names.
+   */
+  readonly disclosure?: string;
+  readonly provenance?: ReplyProvenance;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** The four strings a provenance record carries (DEC-33), or nothing. */
+function isProvenance(value: unknown): value is ReplyProvenance {
+  if (!isPlainObject(value)) return false;
+  return (['generatedBy', 'modelId', 'promptVer', 'generatedAt'] as const).every(
+    (field) => typeof value[field] === 'string' && (value[field] as string).length > 0,
+  );
 }
 
 function parkRecordFrom(journalResult: unknown): ParkRecord {
@@ -164,6 +262,8 @@ function parkRecordFrom(journalResult: unknown): ParkRecord {
   const body = r['body'];
   const payload = r['payload'];
   const turnNumber = r['turnNumber'];
+  const disclosure = r['disclosure'];
+  const provenance = r['provenance'];
   if (
     (draftExternalId !== undefined && (typeof draftExternalId !== 'string' || draftExternalId.length === 0))
     || typeof actionClass !== 'string'
@@ -174,6 +274,8 @@ function parkRecordFrom(journalResult: unknown): ParkRecord {
     || (payload !== undefined && !isPlainObject(payload))
     || (turnNumber !== undefined
         && (typeof turnNumber !== 'number' || !Number.isInteger(turnNumber)))
+    || (disclosure !== undefined && (typeof disclosure !== 'string' || disclosure.length === 0))
+    || (provenance !== undefined && !isProvenance(provenance))
   ) {
     throw new Error('park journal result is malformed for approval');
   }
@@ -184,6 +286,8 @@ function parkRecordFrom(journalResult: unknown): ParkRecord {
     body,
     ...(payload === undefined ? {} : { payload }),
     ...(turnNumber === undefined ? {} : { turnNumber }),
+    ...(disclosure === undefined ? {} : { disclosure }),
+    ...(provenance === undefined ? {} : { provenance }),
   };
 }
 
@@ -267,14 +371,57 @@ export async function approveRun(
     payload: outboxPayload,
   });
 
-  // Resolve the final body (section 4.10). An explicit capture wins.
-  // Otherwise, for a draft-backed park, read-back fetches what the person
-  // actually edited in the target system. A ledger-only park holds no
-  // draft to read, so its distance stays null. The read happens before
-  // the transition opens: the distance records what the target system
-  // held at read time.
+  // DEC-44: a caller that says the ledger holds the reply and also names a
+  // body says two things about which text to send, so the pair is refused
+  // rather than resolved by a precedence no reader of the call can see.
+  const ledgerReply = options?.ledgerReply === true;
+  if (ledgerReply && options?.finalBody !== undefined) {
+    throw new TypeError(
+      'approveRun was given both ledgerReply and finalBody: the ledger holds the reply, '
+        + 'so a caller cannot also name the text to send',
+    );
+  }
+
+  // Resolve the final body (section 4.10). On DEC-44's path the ledger holds
+  // it: the reply a person saved, or the body the park journaled when nobody
+  // saved one. Otherwise an explicit capture wins; failing that, for a
+  // draft-backed park, read-back fetches what the person actually edited in
+  // the target system. A ledger-only park holds no draft to read, so its
+  // distance stays null. The read happens before the transition opens: the
+  // distance records what the target system held at read time.
   let finalBody = options?.finalBody;
-  if (
+  // DEC-44: the reply the outbox record carries, when the ledger holds it.
+  // Built here with the text it sends, and kept out of `payload`: the payload
+  // is hashed into the idempotency key, and DEC-49 keeps the body out of it,
+  // so an edited reply must not derive a second key.
+  let outboxReply: Record<string, unknown> | undefined;
+  /** DEC-44: the reply the ledger holds, when this approval sends it. */
+  let ledgerText: string | undefined;
+  // DEC-44 governs a customer reply, and only a customer reply: that is the
+  // park which carries a handle into the target system. A ledger-only park
+  // (DEC-34 compensation) holds no reply and journals no disclosure, so it
+  // takes the path it always took, and `performAction` still performs it.
+  const holdsACustomerReply = ledgerReply && park.draftExternalId !== undefined;
+  if (holdsACustomerReply) {
+    if (park.disclosure === undefined || park.provenance === undefined) {
+      // DEC-44, DEC-14: every customer reply carries the adopter's disclosure
+      // and its provenance (DEC-33). The park journals both, so a park
+      // without them is one written before this change, and the approval
+      // cannot attach what the ledger does not hold.
+      return { outcome: 'no_disclosure' };
+    }
+    const held = (await readSavedReply(pool, {
+      conversationId,
+      turnNumber: park.turnNumber,
+    })) ?? park.body;
+    finalBody = held;
+    ledgerText = held;
+    outboxReply = {
+      bodyText: held,
+      disclosure: park.disclosure,
+      provenance: park.provenance,
+    };
+  } else if (
     finalBody === undefined
     && options?.readDraft !== undefined
     && park.draftExternalId !== undefined
@@ -284,6 +431,42 @@ export async function approveRun(
       return { outcome: 'draft_missing', draftExternalId: park.draftExternalId };
     }
     finalBody = read.body;
+  }
+
+  // DEC-44: with the ledger holding the reply, a read-back is a check and not
+  // a source. Two questions decide the refusal, and `copyEditWouldBeLost`
+  // states both: did a person edit the copy in the helpdesk after the park,
+  // and is the text about to be sent something other than that edit?
+  //
+  // Neither question alone is right. Comparing the copy against the parked
+  // body alone refuses every console edit, which is the thing DEC-44 exists
+  // to allow. Comparing it against the text to send alone refuses a reviewer
+  // who chose the copy, and would leave no way to send the text the refusal
+  // was about.
+  //
+  // A copy that cannot be read — no read-back configured, or none found —
+  // leaves nothing to compare and the send proceeds: on this path the parked
+  // copy was never the text that sends, so its absence strands nothing. A copy
+  // whose text a person cleared reads the same way, for the same reason
+  // (`copyHoldsText`).
+  //
+  // The acknowledgement is checked here, against the copy this call read. A
+  // caller that says it read one copy and a helpdesk that holds another is a
+  // refusal, not a send: the person acknowledged text they were shown.
+  let copyAcknowledged = false;
+  if (
+    ledgerText !== undefined
+    && options?.readDraft !== undefined
+    && park.draftExternalId !== undefined
+  ) {
+    const read = await options.readDraft.readDraft(park.draftExternalId);
+    const copyText = read?.body ?? null;
+    if (copyHoldsText(copyText) && copyEditWouldBeLost(park.body, ledgerText, copyText)) {
+      if (options.copyAcknowledged !== replyDigest(copyText)) {
+        return { outcome: 'copy_changed', ledgerText, copyText };
+      }
+      copyAcknowledged = true;
+    }
   }
 
   // The reply the person approved is the agent's half of the conversation
@@ -346,6 +529,13 @@ export async function approveRun(
   };
 
   const shown = options?.shown;
+  // DEC-44: the text this approval sends was resolved before the transition
+  // opened, and the outbox row is built from it. So the digest checked under
+  // the lock is the caller's when a page supplied one, and otherwise the
+  // digest of the text this call means to send — a caller that read the
+  // ledger itself is still holding the reply it read.
+  const guardDigest = shown
+    ?? (ledgerText === undefined ? undefined : replyDigest(ledgerText));
   const moved = await fencedTransition(pool, {
     runId,
     state: 'resolved',
@@ -356,7 +546,7 @@ export async function approveRun(
     // holds now — read here, inside the transaction that takes the row lock,
     // and before anything is written. Read outside it, the guard has a window
     // between the check and the write, which is the change it exists to catch.
-    ...(shown === undefined ? {} : {
+    ...(guardDigest === undefined ? {} : {
       refuseIf: async (client: PoolClient): Promise<boolean> => {
         const held = await client.query(
           "SELECT result->>'body' AS body FROM step_journal WHERE run_id = $1 AND step_id = 'park'",
@@ -365,7 +555,21 @@ export async function approveRun(
         // A row that is gone, or a body that is not text, refuses: the
         // approval cannot show what the reviewer read, so it does not send.
         const body = held.rows[0]?.body as unknown;
-        return typeof body !== 'string' || replyDigest(body) !== shown;
+        if (typeof body !== 'string') return true;
+        // DEC-44: on a path where the ledger holds the reply, what the
+        // reviewer read is the text that sends — the saved reply when a
+        // person saved one, the parked body otherwise — so that is what the
+        // digest is recomputed against.
+        const saved = ledgerReply
+          ? await readSavedReply(client, { conversationId, turnNumber: park.turnNumber })
+          : null;
+        const current = saved ?? body;
+        if (replyDigest(current) !== guardDigest) return true;
+        // And the text about to be sent is the text this read returned. It
+        // was resolved outside the lock, so a save that landed between that
+        // read and this one would otherwise be sent while the case records
+        // the text this guard just approved.
+        return ledgerText !== undefined && replyDigest(current) !== replyDigest(ledgerText);
       },
     }),
     outbox: {
@@ -374,13 +578,18 @@ export async function approveRun(
       actionClass: park.actionClass,
       delivery: park.delivery,
       payload: outboxPayload,
+      ...(outboxReply === undefined ? {} : { reply: outboxReply }),
     },
     afterWrite,
   });
 
   switch (moved.outcome) {
     case 'accepted':
-      return { outcome: 'approved', idemKey };
+      return {
+        outcome: 'approved',
+        idemKey,
+        ...(copyAcknowledged ? { copyAcknowledged: true as const } : {}),
+      };
     case 'wrong_state':
       // Lost a race with another approve call; it re-checked under the lock.
       return { outcome: 'not_awaiting_approval', state: moved.currentState };

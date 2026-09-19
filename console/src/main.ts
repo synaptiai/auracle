@@ -46,13 +46,14 @@ import { LEDGER_STATES, listEscalations, listRuns, readQueueToday, readRun } fro
 import { readRunJournal } from 'auracle/ledger-read';
 import { conversationOfRun, readConversation, turnAnsweredBy } from 'auracle/ledger-read';
 import { readDocument } from 'auracle/ledger-read';
+import { saveReply } from 'auracle/ledger-read';
 import { readLatency } from 'auracle/ledger-read';
 import { humanMs } from 'auracle/format';
 // Every log line this process writes, so a value from a request cannot break
 // one line into two.
 import { logLine } from 'auracle/format';
 
-import { approvalFor } from './approve.js';
+import { approvalFor, saveFor } from './approve.js';
 import { developmentReviewer } from './dev-reviewer.js';
 import { readBackFor } from './read-back.js';
 import { SHUTDOWN_GRACE_MS } from './shutdown.js';
@@ -106,6 +107,8 @@ async function requestFor(pool: Pool, runId: string): Promise<RequestView | null
     turnNumber: turn.turnNumber,
     bodyText: turn.bodyText,
     absence: turn.absence,
+    savedReplyText: turn.savedReplyText,
+    approvedReplyText: turn.approvedReplyText,
   };
 }
 
@@ -515,10 +518,24 @@ async function main(): Promise<void> {
     },
 
     readDocument: async (docId) => readDocument(pool, docId),
+    // DEC-44: the callout's first button takes the cited document's own
+    // sentence, so the document is read where the edit is applied and not
+    // where the page is drawn.
+    readDocumentBody: async (docId) => (await readDocument(pool, docId))?.body ?? null,
+    // DEC-44: the helpdesk's copy, read for the refusal that names it. Null
+    // is no adapter to read through, which the page says in words.
+    readCopy: async (draftExternalId) =>
+      readBack === null ? null : (await readBack.readDraft.readDraft(draftExternalId))?.body ?? null,
+    saveReply: saveFor({ pool, saveReply }),
 
     // The page says a read-back failed and nothing was sent. The fault is
     // logged beside the run and the draft it stopped.
-    approve: approvalFor({ pool, approveRun, readBack, log }),
+    approve: approvalFor({
+      pool, approveRun, readBack, log,
+      // DEC-44: read off the adapter, so the editor is offered exactly where
+      // the approval will send the text the ledger holds.
+      ledgerReply: readBack?.supportsLedgerReply ?? false,
+    }),
 
     // DEC-45: every request, read or write, is resolved against the roster
     // before any page is built. The header is the one the operator named,
@@ -563,6 +580,9 @@ async function main(): Promise<void> {
     states: [...LEDGER_STATES],
     ledger: ledgerName(connectionString),
     readBack: readBack?.name ?? null,
+    // DEC-44: the page draws the editor from this, and the approval sends
+    // from the same declaration.
+    ledgerReply: readBack?.supportsLedgerReply ?? false,
   });
 
   // `listen` reports a bind failure by event, after `main`'s promise has

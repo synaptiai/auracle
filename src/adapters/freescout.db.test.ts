@@ -32,7 +32,7 @@ import {
   FakeFreeScout,
 } from '../test-support/freescout-wire.js';
 
-import { FREESCOUT_CAPABILITIES, FreeScoutEgressAdapter, parseDraftId } from './freescout.js';
+import { freeScoutCapabilities, FreeScoutEgressAdapter, parseDraftId } from './freescout.js';
 import { CUSTOMER_REPLY_ACTION_CLASS } from './types.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
@@ -85,7 +85,7 @@ function makeDeps(): CoordinatorDeps {
     pool,
     provider: new FakeProvider(happyScript()),
     taxonomy: { intents: [{ id: 'password_reset', label: 'Password reset', risk_tier: 'low' }] },
-    capabilities: FREESCOUT_CAPABILITIES,
+    capabilities: freeScoutCapabilities(false),
     egress: adapter,
     pins: PINS,
     limits: {
@@ -137,6 +137,7 @@ describe('the gated path through a FreeScout instance (DEC-11, DEC-12)', () => {
       baseUrl: instance.baseUrl,
       apiKey: FREESCOUT_TEST_API_KEY,
       userId: FREESCOUT_TEST_USER_ID,
+      internalNote: false,
       timeoutMs: 5_000,
     });
     await truncateLedger(pool);

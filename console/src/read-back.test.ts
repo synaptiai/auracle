@@ -4,7 +4,7 @@
 // Pure cases. The adapter choice is injected, so nothing here builds a real
 // adapter or reaches a helpdesk.
 import { describe, expect, it, vi } from 'vitest';
-import type { DraftReadBack } from 'auracle/ledger-read';
+import type { DraftReadBack, ReadBackAdapter } from 'auracle/ledger-read';
 
 import {
   READ_BACK_GIVE_UP_MS, ReadBackFailed, boundedReadBack, consoleReadBack, readBackFor,
@@ -14,6 +14,22 @@ import { SHUTDOWN_GRACE_MS } from './shutdown.js';
 const BOUND = { giveUpMs: 1_000, onLateFault: (): void => undefined };
 
 const draft = (body: string): DraftReadBack => ({ readDraft: async () => ({ body }) });
+
+/**
+ * An adapter the selector returns: the read port, and the declaration beside
+ * it. Every case here reads a draft, so no case declares a ledger reply.
+ */
+const chosen = (inner: DraftReadBack): ReadBackAdapter => ({
+  ...inner,
+  capabilities: {
+    supportsIdempotencyKey: false,
+    supportsReadBack: false,
+    supportsDraftState: true,
+    supportsStructuredFields: false,
+    supportsThreading: true,
+    supportsLedgerReply: false,
+  },
+});
 
 describe('consoleReadBack', () => {
   // The reference adapter holds drafts in the memory of the process that
@@ -27,12 +43,15 @@ describe('consoleReadBack', () => {
   });
 
   it('chooses the named adapter from the environment it is given', () => {
-    const adapter = draft('Your refund is on its way.');
+    const adapter = chosen(draft('Your refund is on its way.'));
     const env = { APPROVE_ADAPTER: 'freescout', FREESCOUT_BASE_URL: 'http://helpdesk.invalid' };
     const choose = vi.fn().mockReturnValue(adapter);
-    const chosen = consoleReadBack(env, choose, BOUND);
+    const readBack = consoleReadBack(env, choose, BOUND);
     expect(choose).toHaveBeenCalledWith('freescout', env);
-    expect(chosen?.name).toBe('freescout');
+    expect(readBack?.name).toBe('freescout');
+    // DEC-44: the declaration travels beside the port, so the console draws
+    // its editor from the same adapter the approval will use.
+    expect(readBack?.supportsLedgerReply).toBe(false);
   });
 
   // The adapter the console uses is the bounded one, never the bare adapter:
@@ -42,7 +61,7 @@ describe('consoleReadBack', () => {
     try {
       const chosen = consoleReadBack(
         { APPROVE_ADAPTER: 'freescout' },
-        () => ({ readDraft: () => new Promise(() => {}) }),
+        () => ({ readDraft: () => new Promise(() => {}), capabilities: { supportsLedgerReply: false } } as never),
         { giveUpMs: 250, onLateFault: () => undefined },
       );
       const settled = chosen!.readDraft.readDraft('4:12').catch((error: unknown) => error);
@@ -57,7 +76,7 @@ describe('consoleReadBack', () => {
   // that started and then failed its first approval would look healthy until
   // a person pressed the button.
   it('lets a refused configuration throw, so the console refuses to start', () => {
-    const choose = (): DraftReadBack => {
+    const choose = (): ReadBackAdapter => {
       throw new Error('FREESCOUT_BASE_URL is required for the FreeScout adapter');
     };
     expect(() => consoleReadBack({ APPROVE_ADAPTER: 'freescout' }, choose, BOUND)).toThrow(/FREESCOUT_BASE_URL/);
@@ -245,7 +264,7 @@ describe('readBackFor', () => {
       let fail: (error: Error) => void = () => undefined;
       const chosen = readBackFor(
         { APPROVE_ADAPTER: 'freescout' },
-        () => ({ readDraft: () => new Promise((_, reject) => { fail = reject; }) }),
+        () => ({ readDraft: () => new Promise((_, reject) => { fail = reject; }), capabilities: { supportsLedgerReply: false } } as never),
         (record) => { records.push(record); },
       );
       const settled = chosen!.readDraft.readDraft('4:12').catch((error: unknown) => error);
@@ -262,6 +281,6 @@ describe('readBackFor', () => {
   });
 
   it('reads nothing back when the environment names no adapter', () => {
-    expect(readBackFor({}, () => ({ readDraft: async () => null }), () => undefined)).toBeNull();
+    expect(readBackFor({}, () => ({ readDraft: async () => null, capabilities: { supportsLedgerReply: false } } as never), () => undefined)).toBeNull();
   });
 });

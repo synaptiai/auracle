@@ -624,7 +624,35 @@ export interface PlannedPark {
   body: string;
   readonly payload?: Record<string, unknown>;
   turnNumber: number;
+  /**
+   * DEC-14 and DEC-33: the disclosure and the provenance a customer reply
+   * carries, which the park journals so the ledger can attach them when the
+   * reply sends.
+   *
+   * Absent on a ledger-only park, which holds no customer text (DEC-34). A
+   * seeded customer reply carries both, so a seeded ledger exercises the
+   * shipped path: without them every waiting run refuses as `no_disclosure`
+   * on an adapter whose helpdesk cannot send its parked copy (DEC-44).
+   */
+  readonly disclosure?: string;
+  readonly provenance?: {
+    readonly generatedBy: string;
+    readonly modelId: string;
+    readonly promptVer: string;
+    readonly generatedAt: string;
+  };
 }
+
+/**
+ * The disclosure a seeded reply carries (DEC-14).
+ *
+ * Synthetic, as every seeded value is (DEC-18): it names no adopter and no
+ * product, and a reader can tell it from a real one.
+ */
+const SEED_DISCLOSURE = 'This reply was drafted by an automated assistant, and approved by a person.';
+
+/** The pins every seeded step carries, as `write.ts` spells them (DEC-26). */
+const SEED_PIN = 'seed';
 
 /** One planned run, with every value the writer needs. */
 export interface PlannedRun {
@@ -929,6 +957,7 @@ const FULL_CAPABILITIES: AdapterCapabilities = Object.freeze({
   supportsDraftState: true,
   supportsStructuredFields: true,
   supportsThreading: true,
+  supportsLedgerReply: false,
 });
 
 /**
@@ -1289,6 +1318,8 @@ function planDetail(
   rng: () => number,
   reason: PolicyReason | null,
   ticketId: string,
+  /** When this run's reply was composed, for the provenance it carries. */
+  composedAt: string,
 ): RunDetail {
   // The intent, from the pool the reason allows. `high_risk` needs the high
   // tier by definition; a reason that got past the risk check needs anything
@@ -1429,6 +1460,15 @@ function planDetail(
         delivery,
         body,
         turnNumber: 1,
+        disclosure: SEED_DISCLOSURE,
+        // The run's own composition time, so a seeded reply carries a
+        // provenance that matches the history around it.
+        provenance: {
+          generatedBy: 'auracle',
+          modelId: SEED_PIN,
+          promptVer: SEED_PIN,
+          generatedAt: composedAt,
+        },
       }
       // DEC-34: a gated write with no customer draft parks in the ledger
       // alone, and approval relays the journaled payload through
@@ -1623,7 +1663,12 @@ export function planHistory(options: PlanOptions): PlannedRun[] {
     // nothing above it, and `plan.test.ts` pins that against the planner as
     // it stood before this detail existed.
     for (const run of dayRuns) {
-      const detail = planDetail(rng, run.abstained ? null : run.reason, run.ticketId);
+      const detail = planDetail(
+        rng,
+        run.abstained ? null : run.reason,
+        run.ticketId,
+        run.createdAt.toISOString(),
+      );
       planned.push({
         ...run,
         ...detail,

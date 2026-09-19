@@ -167,6 +167,22 @@ CASES = [
     ("two wrapped paragraphs stay apart", PASS,
      "word " * 8 + "\n" + "word " * 8 + "end.\n\n"
      + "word " * 8 + "\n" + "word " * 8 + "end.\n"),
+    # A design record's declaration is a list, not a sentence. Twenty-two
+    # decisions are twenty-three words, and no rewriting shortens a list of
+    # identifiers. `check-docs.py` reads this line; a reader reads a list.
+    ("a declaration line is not measured", PASS,
+     "Affects: " + ", ".join(f"DEC-{n:02d}" for n in range(1, 23)) + "\n"),
+    ("a one-decision declaration passes", PASS, "Affects: DEC-44\n"),
+    # The exemption is the declaration shape alone. Identifiers and commas,
+    # nothing else. The three cases below close the ways a sentence could ride
+    # on the prefix.
+    ("prose behind the declaration prefix is prose", FAIL,
+     "Affects: " + LONG.strip() + ".\n"),
+    ("a declaration written as a sentence is prose", FAIL,
+     "Affects: DEC-44 is the row this change ships, and this sentence keeps "
+     "running well past the twenty-word limit before it finally ends.\n"),
+    ("the prose under a declaration is still measured", FAIL,
+     "Affects: DEC-44\n\n" + LONG.strip() + ".\n"),
 ]
 
 

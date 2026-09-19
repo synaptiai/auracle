@@ -16,7 +16,9 @@
 // holds it to one: the holds (DEC-46) are the console's other writes, and it
 // names every write it makes.
 import type { Pool } from 'pg';
-import type { ApproveOptions, ApproveOutcome, DraftReadBack } from 'auracle/ledger-read';
+import type {
+  ApproveOptions, ApproveOutcome, DraftReadBack, SaveOutcome, SaveReplyOptions,
+} from 'auracle/ledger-read';
 
 import { ReadBackFailed } from './read-back.js';
 import type { ConsoleReadBack } from './read-back.js';
@@ -60,6 +62,15 @@ export interface ApproveDeps {
    * nothing more, so the fault is kept beside the run it stopped.
    */
   readonly onReadBackFailed?: (runId: string, fault: string, draftExternalId: string | null) => void;
+  /**
+   * DEC-44: whether this console's adapter cannot send the copy it parks, so
+   * the approval sends the reply the ledger holds.
+   *
+   * Required, and not inferred from `readDraft`: the two are separate facts.
+   * An adapter can be read back and still send its own parked copy, which is
+   * every adapter that keeps the DEC-40 path.
+   */
+  readonly ledgerReply: boolean;
 }
 
 /**
@@ -72,7 +83,16 @@ export interface ApproveDeps {
  */
 export type ConsoleApproveOutcome =
   | ApproveOutcome
-  | { readonly outcome: 'read_back_failed'; readonly fault: string };
+  | { readonly outcome: 'read_back_failed'; readonly fault: string }
+  /**
+   * DEC-44: the read-back refused a copy this instance cannot compare, and a
+   * retry cannot change that. The one shape that reaches it is a parked
+   * thread the helpdesk does not hold as an internal note, which means the
+   * processes that park and approve read the helpdesk's configuration
+   * differently. Its own outcome, because the next step differs: the
+   * operator aligns the processes rather than checking a connection.
+   */
+  | { readonly outcome: 'read_back_not_a_note'; readonly fault: string };
 
 /**
  * The console approves; it does not compose.
@@ -107,6 +127,53 @@ export interface ApproveRequest {
    * holds, under the run's lock, and refuses the send when the two differ.
    */
   readonly shown: string;
+  /**
+   * DEC-44: the digest of the helpdesk copy the reviewer read and decided to
+   * send past, from the refusal's own form. Absent when the reviewer is not
+   * deciding that.
+   */
+  readonly copyAcknowledged?: string;
+}
+
+/**
+ * The console's save (DEC-44), which is a delegation for the same reason the
+ * approval is: `saveReply` owns the transaction, the DEC-46 guard and the
+ * turn it writes on, and a second implementation here would be a second set
+ * of rules about the same text.
+ */
+export interface SaveDeps {
+  readonly pool: Pool;
+  /** Injected, so a test proves the delegation rather than the ledger. */
+  readonly saveReply: (
+    pool: Pool,
+    runId: string,
+    text: string,
+    options?: SaveReplyOptions,
+  ) => Promise<SaveOutcome>;
+}
+
+export interface SaveRequest {
+  readonly runId: string;
+  /** The whole reply, as the reviewer wrote it or as a callout assembled it. */
+  readonly text: string;
+  /** DEC-46: the digest of the reply the page that posted this drew. */
+  readonly shown: string;
+}
+
+/** What the console's save answered: the ledger's outcome, or nothing. */
+export type ConsoleSaveOutcome = SaveOutcome;
+
+export async function saveFromConsole(
+  deps: SaveDeps,
+  request: SaveRequest,
+): Promise<ConsoleSaveOutcome> {
+  const runId = request.runId.trim();
+  if (!RUN_ID.test(runId)) {
+    throw new Error(`'${request.runId}' is not a run id`);
+  }
+  // The digest always travels: every save this console makes is a save of a
+  // page it rendered, so a request without one never reaches the ledger.
+  return deps.saveReply(deps.pool, runId, request.text, { shown: request.shown });
 }
 
 export async function approveFromConsole(
@@ -123,12 +190,22 @@ export async function approveFromConsole(
   // null, which is the truthful reading when nobody captured what was sent.
   const options: ApproveOptions = {
     approvedBy: request.approvedBy,
+    // DEC-44: where the adapter cannot send the copy it parks, the ledger
+    // holds the reply and this approval sends it. Read off the adapter at
+    // startup, so the console never draws an editor the approval ignores.
+    ...(deps.ledgerReply === true ? { ledgerReply: true } : {}),
     // DEC-45: the console only serves an identity it checked against the
     // roster, so the ledger records where this name came from.
     approvedBySource: 'roster',
     // DEC-46: the reply this page drew, so the approval can refuse a case
     // whose saved reply moved under the reviewer.
     shown: request.shown,
+    // DEC-44: the reviewer's decision about a helpdesk copy a person edited.
+    // The digest is of the copy the refusal drew, so a copy that moved again
+    // refuses rather than being sent past on a stale decision.
+    ...(request.copyAcknowledged === undefined
+      ? {}
+      : { copyAcknowledged: request.copyAcknowledged }),
     ...(deps.readDraft === undefined ? {} : { readDraft: deps.readDraft }),
   };
   try {
@@ -136,7 +213,9 @@ export async function approveFromConsole(
   } catch (error) {
     if (error instanceof ReadBackFailed) {
       deps.onReadBackFailed?.(runId, error.message, error.draftExternalId);
-      return { outcome: 'read_back_failed', fault: error.message };
+      return error.permanent
+        ? { outcome: 'read_back_not_a_note', fault: error.message }
+        : { outcome: 'read_back_failed', fault: error.message };
     }
     throw error;
   }
@@ -153,20 +232,50 @@ export function approvalFor(deps: {
   readonly pool: Pool;
   readonly approveRun: ApproveDeps['approveRun'];
   readonly readBack: ConsoleReadBack | null;
+  readonly ledgerReply: boolean;
   readonly log: (record: Readonly<Record<string, unknown>>) => void;
-}): (runId: string, approvedBy: string, shown: string) => Promise<ConsoleApproveOutcome['outcome']> {
-  return async (runId, approvedBy, shown) => {
+}): (
+  runId: string,
+  approvedBy: string,
+  shown: string,
+  copyAcknowledged?: string,
+) => Promise<ConsoleApproveOutcome['outcome']> {
+  return async (runId, approvedBy, shown, copyAcknowledged) => {
     const outcome = await approveFromConsole(
       {
         pool: deps.pool,
         approveRun: deps.approveRun,
+        ledgerReply: deps.ledgerReply,
         ...(deps.readBack === null ? {} : { readDraft: deps.readBack.readDraft }),
         onReadBackFailed: (failedRun, fault, draftExternalId) => {
           deps.log({ event: 'console_read_back_failed', runId: failedRun, draftExternalId, fault });
         },
       },
-      { runId, approvedBy, shown },
+      {
+        runId,
+        approvedBy,
+        shown,
+        ...(copyAcknowledged === undefined ? {} : { copyAcknowledged }),
+      },
     );
     return outcome.outcome;
   };
+}
+
+/**
+ * The save the console's entry point hands its server.
+ *
+ * The same shape as `approvalFor`, and for the same reason: the entry point
+ * owns the pool and the log, and the server takes functions so it can be
+ * driven without either.
+ */
+export function saveFor(deps: {
+  readonly pool: Pool;
+  readonly saveReply: SaveDeps['saveReply'];
+}): (runId: string, text: string, shown: string) => Promise<ConsoleSaveOutcome['outcome']> {
+  return async (runId, text, shown) =>
+    (await saveFromConsole(
+      { pool: deps.pool, saveReply: deps.saveReply },
+      { runId, text, shown },
+    )).outcome;
 }

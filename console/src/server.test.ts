@@ -33,6 +33,10 @@ const REQUEST = {
   turnNumber: 1,
   bodyText: 'There are two charges for the same month.',
   absence: null,
+  // Nobody has saved an edit on this case, so the approval would send the
+  // body the park journaled (DEC-44), and no approval has reached the turn.
+  savedReplyText: null,
+  approvedReplyText: null,
 };
 
 /**
@@ -184,6 +188,11 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
         },
       ],
     }),
+    // DEC-44: the console's second write, and the two reads its callout and
+    // its refusal need. None of them reaches the ledger in these cases.
+    saveReply: async () => 'saved',
+    readCopy: async () => null,
+    readDocumentBody: async () => null,
     readDocument: async () => ({
       docId: 'SYN-DOC-01', kind: 'document', title: 'Refund policy',
       body: 'A charge is refundable inside fourteen days.',
@@ -317,9 +326,10 @@ async function startGuarded(
   d: ConsoleDeps,
   namedProxy?: string,
   readBack?: string,
+  ledgerReply = false,
 ): Promise<string> {
   const probe = createConsole(d, '.root{}', {
-    allowedHosts: [], readBack: null, states: [...STATES], ledger: LEDGER,
+    allowedHosts: [], readBack: null, states: [...STATES], ledger: LEDGER, ledgerReply,
   });
   await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
   const { port } = probe.address() as AddressInfo;
@@ -336,6 +346,7 @@ async function startGuarded(
     readBack: readBack ?? null,
     states: [...STATES],
     ledger: LEDGER,
+    ledgerReply,
   });
   opened.push(server);
   await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
@@ -2158,12 +2169,14 @@ describe('the design notes', () => {
       ['warn', 'The gates stay apart, everywhere'],
       ['ok', 'An absence is still a sentence'],
       ['dim', 'The engineer surfaces sit under Admin'],
-      // DEC-46: the case hold, which the console keeps now.
+      // DEC-47: the product, which the console records and narrows by now.
       ['ok', 'Product is a first-class column'],
+      // DEC-44: the reply a reviewer edits where it will be sent.
+      ['accent', 'The reply is edited here, and sent from here'],
+      // DEC-46: the case hold, which the console keeps now.
       ['accent', 'A lock, because four people pull from one uncapped list'],
     ]);
     for (const unbuilt of [
-      'The reply is edited here, and sent from here',
       'The knowledge base is edited from inside the case',
     ]) {
       expect(html, unbuilt).not.toContain(unbuilt);
@@ -2176,7 +2189,7 @@ describe('the design notes', () => {
     const base = await startGuarded(deps());
     const html = await (await fetch(base + '/notes')).text();
     const cards = cardsOf(html);
-    expect(cards).toHaveLength(5);
+    expect(cards).toHaveLength(6);
     for (const card of cards) {
       for (const source of ['was:', '.ts', 'approveControl', 'MESSAGE_ABSENCE', 'gateValue', 'Instrument']) {
         expect(card.says, `${card.title}: ${source}`).not.toContain(source);
@@ -2217,6 +2230,15 @@ describe('the design notes', () => {
         + ' reports it as smaller than it is.'
         + ' The products a reviewer covers read first, and that order hides nothing: every waiting case is'
         + ' still on the page.',
+      'On an adapter whose helpdesk cannot send the copy it parks, the ledger holds the reply.'
+        + ' A reviewer edits it on the case, saves it, and reloads to find the text they saved.'
+        + ' The sentences the system drafted stay beside the editor, each with the verdict it was given,'
+        + ' and a claim the judge refused offers the words of the document it cites, its removal,'
+        + ' or the answer the reviewer writes.'
+        + ' What the approval sends is the text the ledger holds, with the disclosure and the provenance'
+        + ' every customer reply carries.'
+        + ' Where the helpdesk can send its own parked copy, the case says so and offers no editor:'
+        + ' two texts that may both send is the one thing this console will not build.',
       'The queue is not capped, so the same case can sit in front of four reviewers at once.'
         + ' A reviewer takes a case before working it, so the others see who holds it and the time left.'
         + ' The hold says who is working, and it refuses no write: any reviewer may still approve the case.'
@@ -2335,6 +2357,24 @@ describe('the design notes', () => {
     for (const surface of ['Runs', 'Control bands', 'Partition latency']) {
       expect(admin, surface).toContain(`<span class="navlabel">${surface}</span>`);
     }
+  });
+
+  // The reply card (DEC-44), claimed on the screens it describes: the case
+  // draws the editor and the callout where the adapter cannot send its parked
+  // copy, and says the copy is what sends where it can.
+  it('makes the reply card true of the console it describes', async () => {
+    const capable = await startGuarded(deps(), undefined, undefined, true);
+    const editing = await (await fetch(capable + CASE)).text();
+    expect(editing).toContain('Your reply · editable here, sent from here');
+    expect(editing).toContain('<textarea name="text"');
+    expect(editing).toContain('The sentences the system drafted');
+    expect(editing).toContain('Replace with what the document says');
+    expect(editing).toContain('The disclosure and the provenance travel with it');
+
+    const draftPath = await startGuarded(deps());
+    const parked = await (await fetch(draftPath + CASE)).text();
+    expect(parked).toContain('edited in the helpdesk, not here');
+    expect(parked).not.toContain('<textarea');
   });
 
   // Card 4, claimed on the screens it describes (DEC-46). The queue is
@@ -5313,8 +5353,15 @@ describe('the case a reviewer decides on (issue #102)', () => {
       expect(html, refusal).not.toContain('outcome ok');
     }
     expect(await at('draft_missing')).toContain('The parked draft is gone, so nothing was sent.');
+    // One word for both paths: on the draft path the copy read back is the
+    // parked draft, and where the ledger holds the reply it is a copy nobody
+    // can send. The sentence names the fault class, and the log names which.
     expect(await at('read_back_failed'))
-      .toContain('The helpdesk draft could not be read back, so nothing was sent.');
+      .toContain('The helpdesk copy could not be read back, so nothing was sent.');
+    // DEC-44: a permanent read-back fault has its own sentence, because the
+    // next step is not a retry.
+    expect(await at('read_back_not_a_note'))
+      .toContain('is not one this console can compare');
   });
 
   it('carries a failed read-back through the approval to the case', async () => {
@@ -5466,5 +5513,744 @@ describe('the rail', () => {
       expect(accented).toContain('>ÅB<');
       expect(accented).toContain('>Åsa Berg Nyström<');
     });
+  });
+});
+
+// DEC-44: the reply is edited where it will be sent. The console draws an
+// editor only where the adapter cannot send the copy it parks, and every
+// control it draws writes the reply the ledger holds.
+describe('DEC-44: the console edits the reply the ledger holds', () => {
+  /** A console whose adapter cannot send the copy it parks. */
+  async function capable(over: Partial<ConsoleDeps> = {}): Promise<string> {
+    return startGuarded(deps(over), undefined, undefined, true);
+  }
+
+  /** The digest of the reply this harness's page draws (DEC-46). */
+  const DRAWN = createHash('sha256').update(EVIDENCE.draftBody).digest('hex');
+
+  async function postEdit(
+    base: string,
+    fields: Record<string, string>,
+  ): Promise<Response> {
+    return fetch(`${base}/edit`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        // Same-origin, as a form this console served is.
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: new URLSearchParams(fields).toString(),
+      redirect: 'manual',
+    });
+  }
+
+  it('draws the editor, the sentence preview and the callout', async () => {
+    const base = await capable();
+    const html = await (await fetch(base + CASE)).text();
+
+    // The card, titled as the design handoff titles it, holding the reply
+    // the ledger would send.
+    expect(html).toContain('Your reply · editable here, sent from here');
+    expect(html).toContain('the ledger holds this reply');
+    expect(html).toContain('<textarea name="text"');
+    expect(html).toContain(EVIDENCE.draftBody);
+
+    // Criterion 2: every sentence the system drafted stays visible beside the
+    // editor, each with the judge's verdict on it.
+    for (const verdict of ['accepted', 'refused', 'unread']) {
+      expect(html).toContain(verdict);
+    }
+    expect(html).toContain('The sentences the system drafted');
+
+    // Criterion 3: the callout's own words, for the one claim that was
+    // refused, and no callout for the claim nobody judged.
+    expect(html).toContain('Replace with what the document says');
+    expect(html).toContain('Delete the sentence');
+    expect(html).toContain('Write the missing answer →');
+    expect(html).toContain('Sentence 2 cites SYN-DOC-01');
+  });
+
+  it('says what this approval sends, and where the copy stands', async () => {
+    // The read-back is named, because this case is about the words the two
+    // facts produce together: the ledger holding the reply, and the console
+    // reading the copy back.
+    const base = await startGuarded(deps(), undefined, 'freescout', true);
+    const html = await (await fetch(base + CASE)).text();
+
+    // The words above the button, for the adapter whose ledger holds the
+    // reply: no instruction to edit a copy somewhere else.
+    expect(html).toContain('This sends the reply above, exactly as the ledger holds it');
+    expect(html).toContain('a person who edited it since is asked which text to send');
+    expect(html).not.toContain('edit it there');
+    expect(html).toContain('compares it with the reply the ledger holds');
+  });
+
+  it('opens the field for an answer on the sentence the link names', async () => {
+    const base = await capable();
+    const closed = await (await fetch(base + CASE)).text();
+    // The third way out is a link on a case with no filter, and the separator
+    // is the one the URL needs: `&write=` after no query is a path with an
+    // ampersand in it, and reaches no route at all.
+    const href = /<a class="btn" href="([^"]*write=[^"]*)"/.exec(closed)?.[1];
+    expect(href).toBeDefined();
+    const sentence = 'Your bank decides when it lands.';
+    expect(href).toBe(`${CASE}?write=${encodeURIComponent(sentence)}`);
+
+    const opened = await (await fetch(base + href!)).text();
+    expect(opened).toContain('The answer, in your words');
+    expect(opened).toContain('<input type="text" id="answer" name="answer"');
+    // The other two ways out are still there, and the field replaces neither.
+    expect(opened).toContain('Replace with what the document says');
+    expect(opened).toContain('Delete the sentence');
+  });
+
+  it('keeps the filters on the link it opens the field with', async () => {
+    const base = await capable();
+    const closed = await (await fetch(`${base}${CASE}?rule=customer_visible&product=Aurora`)).text();
+    const href = /<a class="btn" href="([^"]*write=[^"]*)"/.exec(closed)?.[1];
+
+    expect(href).toContain('/case/');
+    expect(href).toContain('rule=customer_visible');
+    expect(href).toContain('product=Aurora');
+    // Escaped in the attribute and decoded by the browser, so the separator
+    // reads `&amp;` here and `&` in the request.
+    expect(href).toContain('&amp;write=');
+  });
+
+  // A ledger-only park carries a body and a payload, and its record routes to
+  // `performAction`: nothing a reviewer typed there would send. The card says
+  // so rather than offering an editor whose text goes nowhere.
+  it('offers no editor on a park that carries no reply', async () => {
+    const base = await capable({
+      readRun: caseOf({ draftExternalId: null, payloadRecorded: true }) as never,
+    });
+    const html = await (await fetch(base + CASE)).text();
+
+    expect(html).not.toContain('<textarea');
+    expect(html).not.toContain('Your reply · editable here, sent from here');
+    // And no sentence about editing a parked copy elsewhere: there is none.
+    expect(html).not.toContain('edited in the helpdesk, not here');
+  });
+
+  // The page and the approval must read one text. Where the adapter keeps the
+  // draft path, that text is the parked body even when a turn holds a saved
+  // reply — a page carrying the saved reply's digest would have every
+  // approval refused, and the console's own edit route is closed there.
+  it('digests the text the approval compares, not a reply it ignores', async () => {
+    const parkedOnly = createHash('sha256').update(EVIDENCE.draftBody).digest('hex');
+    const draftPath = await startGuarded(deps({
+      readRun: caseOf({ request: { ...REQUEST, savedReplyText: 'A saved reply nobody sends.' } }) as never,
+    }));
+    const html = await (await fetch(draftPath + CASE)).text();
+
+    expect(html).toContain(`name="shown" value="${parkedOnly}"`);
+    expect(html).not.toContain('<textarea');
+  });
+
+  it('says the reply is edited in the helpdesk when its adapter sends the parked copy', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + CASE)).text();
+
+    expect(html).toContain('edited in the helpdesk, not here');
+    expect(html).toContain('the console cannot write into it');
+    expect(html).not.toContain('<textarea');
+  });
+
+  // Criterion 1's reload half: the text a reviewer saved is the text the page
+  // draws, in the editor and in the form the approval carries.
+  it('draws the reply a reviewer saved, and digests that one', async () => {
+    const saved = 'A reply a reviewer saved a moment ago.';
+    const base = await capable({
+      readRun: caseOf({ request: { ...REQUEST, savedReplyText: saved } }) as never,
+    });
+    const html = await (await fetch(base + CASE)).text();
+
+    expect(html).toContain(`<textarea name="text" rows="12" spellcheck="false">${saved}</textarea>`);
+    expect(html).toContain(
+      `name="shown" value="${createHash('sha256').update(saved).digest('hex')}"`,
+    );
+  });
+
+  it('saves what a reviewer typed, and returns to the case', async () => {
+    const saveReply = vi.fn().mockResolvedValue('saved');
+    const base = await capable({ saveReply });
+
+    const res = await postEdit(base, {
+      runId: RUN, shown: DRAWN, edit: 'text', text: 'A reply a person wrote.',
+    });
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(`${CASE}?edit=saved`);
+    expect(saveReply).toHaveBeenCalledWith(RUN, 'A reply a person wrote.', DRAWN);
+  });
+
+  /**
+   * One form as the page renders it: its action, and the fields it carries.
+   *
+   * The whole point of this helper is that the test clicks what the page
+   * drew. Posting fields by hand let the replace button ship broken: the
+   * route wanted a `docId` no form ever carried, and every hand-written test
+   * supplied it.
+   */
+  function formFor(html: string, label: string): { action: string; fields: Record<string, string> } {
+    const form = new RegExp(
+      `<form method="post" action="([^"]*)">((?:<input[^>]*>)*)<button[^>]*>${label}</button>`,
+    ).exec(html);
+    expect(form, `no form renders ${label}`).not.toBeNull();
+    const fields: Record<string, string> = {};
+    for (const input of form![2]!.matchAll(/name="([^"]*)" value="([^"]*)"/g)) {
+      fields[input[1]!] = decodeHtml(input[2]!);
+    }
+    return { action: decodeHtml(form![1]!), fields };
+  }
+
+  /** The entities `escapeHtml` writes, read back as a browser would. */
+  function decodeHtml(value: string): string {
+    return value
+      .replaceAll('&amp;', '&')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&#39;', "'")
+      .replaceAll('&quot;', '"');
+  }
+
+  it('acts on every callout control the page renders, as it renders it', async () => {
+    for (const [label, expected] of [
+      ['Replace with what the document says',
+        'We refunded the duplicate charge. Your bank posts it in five days.'],
+      ['Delete the sentence', 'We refunded the duplicate charge.'],
+    ] as const) {
+      const saveReply = vi.fn().mockResolvedValue('saved');
+      const base = await capable({
+        saveReply,
+        readDocumentBody: async () =>
+          'A charge is refundable inside fourteen days. Your bank posts it in five days.',
+      });
+      const page = await (await fetch(base + CASE)).text();
+      const form = formFor(page, label);
+
+      const res = await postEdit(base, form.fields);
+
+      expect(res.status, label).toBe(303);
+      expect(res.headers.get('location'), label).toBe(`${CASE}?edit=saved`);
+      expect(saveReply, label).toHaveBeenCalledWith(RUN, expected, DRAWN);
+    }
+  });
+
+  it('removes the sentence a reviewer dropped, and saves the rest', async () => {
+    const saveReply = vi.fn().mockResolvedValue('saved');
+    const base = await capable({ saveReply });
+
+    await postEdit(base, {
+      runId: RUN, shown: DRAWN, edit: 'delete', sentence: 'Your bank decides when it lands.',
+    });
+
+    expect(saveReply).toHaveBeenCalledWith(RUN, 'We refunded the duplicate charge.', DRAWN);
+  });
+
+  it('puts what the cited document says in place of a refused sentence', async () => {
+    const saveReply = vi.fn().mockResolvedValue('saved');
+    const base = await capable({
+      saveReply,
+      readDocumentBody: async () =>
+        'A charge is refundable inside fourteen days. Your bank posts it in five days.',
+    });
+
+    await postEdit(base, {
+      runId: RUN, shown: DRAWN, edit: 'replace',
+      sentence: 'Your bank decides when it lands.',
+    });
+
+    // The document's own sentence, chosen by the words the two share, and
+    // nothing else: no model runs in this console.
+    expect(saveReply).toHaveBeenCalledWith(
+      RUN,
+      'We refunded the duplicate charge. Your bank posts it in five days.',
+      DRAWN,
+    );
+  });
+
+  it('refuses to replace a sentence when the document shares no word with it', async () => {
+    const saveReply = vi.fn().mockResolvedValue('saved');
+    const base = await capable({ saveReply, readDocumentBody: async () => 'Nothing here at all.' });
+
+    const res = await postEdit(base, {
+      runId: RUN, shown: DRAWN, edit: 'replace',
+      sentence: 'Your bank decides when it lands.', docId: 'SYN-DOC-01',
+    });
+
+    // A refusal with its own reason, and nothing saved: the reviewer is told
+    // which way out is left rather than left with a sentence that vanished.
+    expect(res.headers.get('location')).toBe(`${CASE}?edit=not_an_edit&why=no_wording`);
+    expect(saveReply).not.toHaveBeenCalled();
+  });
+
+  // Every code a refused callout redirects with has a sentence the page
+  // looks up. A code the page does not know would answer "That is not an
+  // answer this console knows" to a reviewer whose document simply shared no
+  // word — and the redirect drops what they had typed.
+  it('words the reason a callout edit did not apply', async () => {
+    const saveReply = vi.fn().mockResolvedValue('saved');
+    const cases: readonly (readonly [Record<string, string>, string])[] = [
+      [
+        { edit: 'replace', sentence: 'A sentence no claim of this run makes.' },
+        'The reply no longer holds that sentence',
+      ],
+      [
+        { edit: 'write', sentence: 'Your bank decides when it lands.', answer: '   ' },
+        'The answer was empty',
+      ],
+      [
+        { edit: 'delete', sentence: 'A sentence nobody wrote.' },
+        'The reply no longer holds that sentence',
+      ],
+    ];
+    for (const [fields, expected] of cases) {
+      const base = await capable({
+        saveReply,
+        readDocumentBody: async () => null,
+      });
+      const res = await postEdit(base, { runId: RUN, shown: DRAWN, ...fields });
+      const location = res.headers.get('location')!;
+      const page = await (await fetch(new URL(location, base))).text();
+
+      expect(page, JSON.stringify(fields)).toContain(expected);
+      expect(page).not.toContain('not an answer this console knows');
+      expect(saveReply).not.toHaveBeenCalled();
+      saveReply.mockClear();
+    }
+  });
+
+  it('words the document that shares no word with the sentence', async () => {
+    const saveReply = vi.fn().mockResolvedValue('saved');
+    const base = await capable({ saveReply, readDocumentBody: async () => 'Nothing here at all.' });
+
+    const res = await postEdit(base, {
+      runId: RUN, shown: DRAWN, edit: 'replace',
+      sentence: 'Your bank decides when it lands.',
+    });
+    const page = await (await fetch(new URL(res.headers.get('location')!, base))).text();
+
+    expect(page).toContain('shares no word with it');
+    expect(saveReply).not.toHaveBeenCalled();
+  });
+
+  it('writes the answer a reviewer typed in place of the refused sentence', async () => {
+    const saveReply = vi.fn().mockResolvedValue('saved');
+    const base = await capable({ saveReply });
+
+    await postEdit(base, {
+      runId: RUN, shown: DRAWN, edit: 'write',
+      sentence: 'Your bank decides when it lands.',
+      answer: 'Your bank posts refunds in five business days.',
+    });
+
+    expect(saveReply).toHaveBeenCalledWith(
+      RUN,
+      'We refunded the duplicate charge. Your bank posts refunds in five business days.',
+      DRAWN,
+    );
+  });
+
+  it('refuses an edit of a sentence the reply no longer holds', async () => {
+    const saveReply = vi.fn().mockResolvedValue('saved');
+    const base = await capable({ saveReply });
+
+    const res = await postEdit(base, {
+      runId: RUN, shown: DRAWN, edit: 'delete', sentence: 'A sentence nobody wrote.',
+    });
+
+    expect(res.headers.get('location')).toBe(`${CASE}?edit=not_an_edit&why=no_sentence`);
+    expect(saveReply).not.toHaveBeenCalled();
+  });
+
+  it('refuses a save with no digest of the page that posted it', async () => {
+    const saveReply = vi.fn().mockResolvedValue('saved');
+    const base = await capable({ saveReply });
+
+    const res = await postEdit(base, { runId: RUN, edit: 'text', text: 'a reply' });
+
+    expect(res.status).toBe(400);
+    expect(saveReply).not.toHaveBeenCalled();
+  });
+
+  // The card draws no editor for a park that carries no reply. A card is not
+  // what refuses a request, and text saved here is text no path sends.
+  it('refuses an edit on a run whose park carries no reply', async () => {
+    const saveReply = vi.fn().mockResolvedValue('saved');
+    const base = await capable({
+      saveReply,
+      readRun: caseOf({ draftExternalId: null, payloadRecorded: true }) as never,
+    });
+
+    const res = await postEdit(base, {
+      runId: RUN, shown: DRAWN, edit: 'text', text: 'A reply a person wrote.',
+    });
+
+    expect(res.status).toBe(400);
+    expect(saveReply).not.toHaveBeenCalled();
+  });
+
+  it('refuses an edit on a console whose adapter sends its own parked copy', async () => {
+    const saveReply = vi.fn().mockResolvedValue('saved');
+    const base = await startGuarded(deps({ saveReply }));
+
+    const res = await postEdit(base, {
+      runId: RUN, shown: DRAWN, edit: 'text', text: 'A reply a person wrote.',
+    });
+
+    expect(res.status).toBe(400);
+    expect(saveReply).not.toHaveBeenCalled();
+  });
+
+  it('draws both texts for a refusal about the copy, and the choice between them', async () => {
+    const base = await capable({ readCopy: async () => 'Your bank posts it in five minutes.' });
+    const html = await (await fetch(`${base}${CASE}?outcome=copy_changed`)).text();
+
+    expect(html).toContain('The reply the ledger holds');
+    expect(html).toContain(EVIDENCE.draftBody);
+    expect(html).toContain('The copy the helpdesk holds');
+    expect(html).toContain('Your bank posts it in five minutes.');
+    // Choosing the copy is a save, so the choice travels as one.
+    expect(html).toContain('Send the helpdesk copy');
+    expect(html).toContain('name="edit" value="text"');
+  });
+
+  // The refusal's sentence promises two texts. A copy a person deleted since
+  // leaves one of them missing, and the page says which rather than drawing
+  // the promise with nothing under it.
+  it('says the copy is gone when the helpdesk holds none', async () => {
+    const base = await capable({ readCopy: async () => null });
+    const html = await (await fetch(`${base}${CASE}?outcome=copy_changed`)).text();
+
+    expect(html).toContain('The helpdesk holds no copy of this reply now');
+    expect(html).not.toContain('The copy the helpdesk holds');
+  });
+
+  // An outcome the run contradicts is a sentence somebody wrote, and the
+  // query string is a place anyone can put one. Both DEC-44 refusals commit
+  // nothing, so they are true of a waiting run and of no other.
+  // A case that has left the queue sends what the approval recorded (DEC-37).
+  // Drawing the turn's saved reply there would show text the customer never
+  // received, and offering an editor over it would invite a write nothing
+  // sends.
+  it('draws what the approval sent, and offers no editor, once the case is done', async () => {
+    const base = await capable({
+      readRun: caseOf({
+        state: 'resolved',
+        approved: true,
+        request: {
+          ...REQUEST,
+          savedReplyText: 'What a reviewer was working on.',
+          approvedReplyText: 'What the approval sent.',
+        },
+      }) as never,
+    });
+    const html = await (await fetch(base + CASE)).text();
+
+    expect(html).toContain('The reply the approval sent');
+    expect(html).toContain('What the approval sent.');
+    expect(html).not.toContain('What a reviewer was working on.');
+    expect(html).not.toContain('<textarea');
+  });
+
+  // DEC-14's refusal is a dead end on a capable adapter, and its sentence has
+  // to say which way out exists: the whole stack reads the flag, so the whole
+  // stack rolls back together.
+  it('names the way out of a reply the ledger cannot disclose', async () => {
+    const base = await capable();
+    const html = await (await fetch(`${base}${CASE}?outcome=no_disclosure`)).text();
+
+    expect(html).toContain('carries no disclosure');
+    expect(html).toContain('Set FREESCOUT_INTERNAL_NOTE=false for the console, the relay and the consumer');
+  });
+
+  it('refuses to draw a refusal the run contradicts', async () => {
+    const base = await capable({ readCopy: async () => 'The copy as a person left it.' });
+    const resolved = await startGuarded(deps({
+      readRun: caseOf({ state: 'resolved', approved: true }) as never,
+    }), undefined, undefined, true);
+    for (const outcome of ['copy_changed', 'no_disclosure']) {
+      const waiting = await (await fetch(`${base}${CASE}?outcome=${outcome}`)).text();
+      expect(waiting, outcome).toContain('data-outcome');
+
+      const sent = await (await fetch(`${resolved}${CASE}?outcome=${outcome}`)).text();
+      expect(sent, outcome).not.toContain('data-outcome');
+      expect(sent, outcome).toContain('this console does not know');
+    }
+  });
+
+  /** The digest the page carries for one text (DEC-46). */
+  function digestOf(text: string): string {
+    return createHash('sha256').update(text).digest('hex');
+  }
+
+  // The reviewer's own text is sendable. The copy is in a helpdesk this
+  // system cannot write into, so nothing a reviewer does here would make the
+  // two texts agree: without a control of its own, the refusal's second
+  // branch would be a dead end and every press above it would refuse again.
+  it('offers the second half of the choice, carrying the digest of the copy it drew', async () => {
+    const copy = 'Your bank posts it in five minutes.';
+    const base = await capable({ readCopy: async () => copy });
+    const html = await (await fetch(`${base}${CASE}?outcome=copy_changed`)).text();
+
+    expect(html).toContain('Send the reply above');
+    // The route the form posts to, read off the page: a control that posts
+    // nowhere is the defect the replace button shipped with.
+    expect(html).toContain(`<form method="post" action="/approve">`);
+    // The digest the form carries is of the text drawn above it, which is
+    // what makes the acknowledgement a decision about text somebody read.
+    expect(html).toContain(`name="ack" value="${digestOf(copy)}"`);
+  });
+
+  // Posted as the page renders it, never as the test believes it should be:
+  // a control nothing can use passed 339 cases in this suite while the
+  // replace button wanted a field no form drew.
+  it('approves with the acknowledgement the rendered form carries', async () => {
+    const copy = 'Your bank posts it in five minutes.';
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await capable({ readCopy: async () => copy, approve });
+    const html = await (await fetch(`${base}${CASE}?outcome=copy_changed`)).text();
+
+    // The form whose button sends the ledger's reply, found by that button,
+    // and the action the page names. A form that posts to the wrong route
+    // fails here rather than passing on a URL this test chose.
+    const rendered = [...html.matchAll(/<form method="post" action="([^"]*)">(.*?)<\/form>/gs)]
+      .find(([, , body]) => body!.includes('Send the reply above'));
+    expect(rendered).toBeDefined();
+    const fields: Record<string, string> = {};
+    for (const [, name, value] of rendered![2]!.matchAll(/name="([^"]+)" value="([^"]*)"/g)) {
+      fields[name!] = value!;
+    }
+
+    const res = await fetch(`${base}${rendered![1]}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: new URLSearchParams(fields).toString(),
+      redirect: 'manual',
+    });
+
+    expect(res.status).toBe(303);
+    expect(approve).toHaveBeenCalledWith(RUN, REVIEWER, fields['shown'], fields['ack']);
+    expect(fields['ack']).toBe(digestOf(copy));
+  });
+
+  it('refuses an acknowledgement that is not a digest', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await capable({ approve });
+
+    const res = await fetch(`${base}/approve`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: new URLSearchParams({ runId: RUN, shown: DRAWN, ack: 'yes' }).toString(),
+      redirect: 'manual',
+    });
+
+    expect(res.status).toBe(400);
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  // A copy a person cleared holds no text, and the console's only control for
+  // a copy saves it as the reply — which `saveReply` refuses for an empty
+  // reply. So the page says there is nothing to choose rather than drawing a
+  // button that cannot work.
+  it('says a cleared copy leaves nothing to choose between', async () => {
+    const base = await capable({ readCopy: async () => '   ' });
+    const html = await (await fetch(`${base}${CASE}?outcome=copy_changed`)).text();
+
+    expect(html).toContain('holds no text now, so there is nothing to choose between');
+    expect(html).not.toContain('Send the helpdesk copy');
+    expect(html).not.toContain('name="ack"');
+  });
+
+  // The refusal's sentence is drawn with the copy block, and the promise it
+  // makes is about what is under it. A run with no parked handle reads no
+  // copy at all, so the page must not promise two texts.
+  it('does not promise two texts on a refusal it cannot show one of', async () => {
+    const base = await capable({
+      readRun: caseOf({ draftExternalId: null, payloadRecorded: true }) as never,
+      readCopy: async () => null,
+    });
+    const html = await (await fetch(`${base}${CASE}?outcome=copy_changed`)).text();
+
+    expect(html).toContain('The copy in the helpdesk was edited after this reply was parked');
+    expect(html).not.toContain('Both texts are below');
+  });
+
+  // A run the gate escalated sent nothing, and a second run on the turn can
+  // write a reply after a send. Neither is "the reply the approval sent", and
+  // the card that says so draws the approval's own record (DEC-37).
+  it('claims no send for a run that sent nothing', async () => {
+    const base = await capable({
+      readRun: caseOf({
+        state: 'escalated',
+        approved: false,
+        request: { ...REQUEST, savedReplyText: 'What a reviewer was working on.' },
+      }) as never,
+    });
+    const html = await (await fetch(base + CASE)).text();
+
+    expect(html).not.toContain('The reply the approval sent');
+    expect(html).not.toContain('What a reviewer was working on.');
+    expect(html).toContain('The reply, as the system drafted it');
+    // And the parked thread is named as what it is here: a copy nobody can
+    // send from this console, not the draft a relay publishes.
+    expect(html).toContain('helpdesk copy D-1');
+  });
+
+  // `saveReply` refuses a run with no turn, so an editor over one would take
+  // a reviewer's text and keep none of it.
+  it('offers no editor on a run whose park names no turn', async () => {
+    const base = await capable({ readRun: caseOf({ request: null }) as never });
+    const html = await (await fetch(base + CASE)).text();
+
+    expect(html).not.toContain('<textarea');
+    // The reply is still drawn, as the sentences a judge ruled on rather than
+    // as an editor: nothing here writes it.
+    expect(html).toContain('We refunded the duplicate charge.');
+  });
+
+  // The words the context column draws come off the act, which read the
+  // adapter's declaration. Worded separately, the card said the helpdesk
+  // draft sends on the adapter where the ledger holds the reply and the
+  // parked copy is a note nobody can send.
+  it('says in the context column what the action bar says', async () => {
+    const capableHtml = await (await fetch((await capable()) + CASE)).text();
+    expect(capableHtml).toContain('Approving sends the reply the ledger holds.');
+
+    const draftPath = await (await fetch((await startGuarded(deps())) + CASE)).text();
+    expect(draftPath).toContain('Approving sends the helpdesk draft to the customer.');
+  });
+
+  // A read that failed is not a write that may have committed. The 500 used
+  // to say the save might have landed about a fault that never reached one.
+  it('says nothing was saved when the failure was a read', async () => {
+    const base = await capable({
+      readRun: async () => { throw new Error('the ledger did not answer'); },
+    });
+
+    const res = await postEdit(base, {
+      runId: RUN, shown: DRAWN, edit: 'text', text: 'A reply a person wrote.',
+    });
+
+    expect(res.status).toBe(500);
+    expect(await res.text()).toContain('nothing was saved');
+  });
+
+  // The save's sentence claims the approval sends the text just saved, which
+  // is false on an adapter whose helpdesk copy sends. A save cannot happen
+  // there today, and a flag flipped after one would leave a link saying so.
+  it('refuses a claim about a save on an adapter whose copy sends', async () => {
+    const base = await startGuarded(deps({
+      readRun: caseOf({
+        request: { ...REQUEST, savedReplyText: 'A reply that was saved.' },
+      }) as never,
+    }));
+
+    const html = await (await fetch(`${base}${CASE}?edit=saved`)).text();
+
+    expect(html).not.toContain('Saved. The approval sends this text.');
+    expect(html).toContain('That is not an answer this console knows.');
+  });
+
+  // Four refusals this route made and no case reached: an oversized form, a
+  // run id of the wrong shape, an edit word this console does not know, and
+  // the two reasons the callout's first button can find no wording to quote.
+  // Each is a request this console declines rather than a fault, and the
+  // answer each gives is its own.
+  it('refuses an edit form larger than the console accepts', async () => {
+    const saveReply = vi.fn().mockResolvedValue('saved');
+    const base = await capable({ saveReply });
+
+    const res = await fetch(`${base}/edit`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: `runId=${RUN}&shown=${DRAWN}&edit=text&text=${'x'.repeat(70 * 1024)}`,
+    });
+
+    expect(res.status).toBe(413);
+    expect(await res.text()).toContain('The edit is larger than this console accepts.');
+    expect(saveReply).not.toHaveBeenCalled();
+  });
+
+  it('refuses an edit whose run id is not a run id', async () => {
+    const saveReply = vi.fn();
+    const base = await capable({ saveReply });
+
+    const res = await postEdit(base, { runId: 'not-a-run', shown: DRAWN, edit: 'text', text: 'x' });
+
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('That is not a run id, so nothing was saved.');
+    expect(saveReply).not.toHaveBeenCalled();
+  });
+
+  it('refuses an edit this console does not know', async () => {
+    const saveReply = vi.fn();
+    const base = await capable({ saveReply });
+
+    const res = await postEdit(base, {
+      runId: RUN, shown: DRAWN, edit: 'summarise', sentence: 'Your bank decides when it lands.',
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('That is not an edit this console knows.');
+    expect(saveReply).not.toHaveBeenCalled();
+  });
+
+  // Two facts leave the first button with no wording to offer: the document
+  // the sentence cites is not in the index, or it is too large to quote from.
+  // The answer travels as a code, and the page words it.
+  it('says which reason left a document unquoted', async () => {
+    const sentence = 'Your bank decides when it lands.';
+
+    const missing = await capable({ readDocumentBody: async () => null });
+    expect((await postEdit(missing, {
+      runId: RUN, shown: DRAWN, edit: 'replace', sentence,
+    })).headers.get('location')).toBe(`${CASE}?edit=not_an_edit&why=no_document`);
+
+    const huge = await capable({ readDocumentBody: async () => 'x'.repeat(200_001) });
+    expect((await postEdit(huge, {
+      runId: RUN, shown: DRAWN, edit: 'replace', sentence,
+    })).headers.get('location')).toBe(`${CASE}?edit=not_an_edit&why=document_too_large`);
+
+    const page = await (await fetch(`${huge}${CASE}?edit=not_an_edit&why=document_too_large`))
+      .text();
+    expect(page).toContain('too large for this console to quote');
+  });
+
+  it('says so when the copy a refusal names cannot be read', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await capable({
+        readCopy: async () => { throw new Error('the helpdesk did not answer'); },
+      });
+      const html = await (await fetch(`${base}${CASE}?outcome=copy_changed`)).text();
+
+      // The page names the failure and the tag of the line that holds the
+      // fault, exactly as a failed read-back does.
+      expect(html).toContain('The copy in the helpdesk could not be read');
+      const tag = /names the fault ([0-9a-f]{8})/.exec(html)?.[1];
+      expect(tag).toBeDefined();
+      expect(logged.some((line) => line.includes('console_copy_unread') && line.includes(tag!)))
+        .toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -648,6 +648,7 @@ describe('the reason each run ends under', () => {
         supportsDraftState: true,
         supportsStructuredFields: true,
         supportsThreading: true,
+        supportsLedgerReply: false,
         supportsAttachments: true,
       },
       action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
@@ -896,6 +897,9 @@ describe('the steps each run journals', () => {
   it('parks a record the approval path can read back', () => {
     let drafts = 0;
     let ledgerOnly = 0;
+    // Every customer reply carries the same disclosure: it is the adopter's,
+    // and not a value drawn per run.
+    const disclosures = new Set<string>();
     for (const run of plan) {
       if (run.gate?.decision !== 'gated') {
         expect(run.park).toBeNull();
@@ -911,6 +915,17 @@ describe('the steps each run journals', () => {
         // DEC-11: the draft lives in the helpdesk, and the handle is what the
         // relay sends against.
         expect(park.draftExternalId).toMatch(/^SYN-DRAFT-/);
+        // DEC-14 and DEC-33: the disclosure and the provenance travel with
+        // the reply, so a seeded ledger exercises the shipped path. Without
+        // them every waiting run refuses as `no_disclosure` on an adapter
+        // whose helpdesk cannot send its parked copy — a seeded history no
+        // console could then act on.
+        expect(typeof park.disclosure).toBe('string');
+        expect(park.disclosure!.length).toBeGreaterThan(0);
+        disclosures.add(park.disclosure!);
+        expect(park.provenance).toBeDefined();
+        expect(Object.values(park.provenance!).every((value: string) => value.length > 0))
+          .toBe(true);
         drafts += 1;
       } else {
         // DEC-34: a gated write with no draft parks in the ledger alone, and
@@ -922,6 +937,7 @@ describe('the steps each run journals', () => {
     }
     expect(drafts).toBeGreaterThan(0);
     expect(ledgerOnly).toBeGreaterThan(0);
+    expect(disclosures.size).toBe(1);
   });
 
   // DEC-29 binds the delivery rule to the action class, and the coordinator

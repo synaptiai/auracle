@@ -161,13 +161,18 @@ export async function park(ctx: RunContext): Promise<StepResult> {
   // appending. Leaving the marker for one of those poisons the ticket
   // permanently: every future run escalates park_unresolved with no draft
   // anywhere to reconcile.
+  // DEC-44: the disclosure and the provenance are what every send of this
+  // reply carries (DEC-14, DEC-33). On an adapter whose helpdesk cannot send
+  // the copy it parks, the approval sends the reply from the ledger, so both
+  // have to survive the wait beside the body.
+  const provenance = replyProvenanceFor(ctx.deps.pins);
   let parked;
   try {
     parked = await parkGatedReply(ctx.deps.egress, {
       ticketExternalId: ctx.input.ticketId,
       body: draft,
       disclosure: ctx.input.disclosure,
-      provenance: replyProvenanceFor(ctx.deps.pins),
+      provenance,
       idemKey: parkKey,
       expectedRecipient: ctx.input.customerAddress ?? null,
     });
@@ -199,6 +204,10 @@ export async function park(ctx: RunContext): Promise<StepResult> {
     // approve entrypoint measures the person's edit against it
     // (section 4.10) from the ledger alone.
     body: draft,
+    // DEC-44: both travel with it, so an approval that sends this reply from
+    // the ledger can attach what the adapter would have attached.
+    disclosure: ctx.input.disclosure,
+    provenance,
   });
   const awaiting = await transitionOrStop(ctx, 'awaiting_approval');
   if (awaiting !== null) return { kind: 'stop', outcome: awaiting };

@@ -28,6 +28,13 @@ length pass as long as a bullet followed it.
 Code fences drop out entirely. Inline code collapses to one word, because a
 path or an identifier is one term to a reader.
 
+A design record's declaration drops out too. `Affects: DEC-06, DEC-07` names
+the decisions a change cites, `check-docs.py` reads it, and a reader reads a
+list rather than a sentence. The list grows with the change, and 20 decisions
+is 21 words no rewriting can shorten. The exemption is the declaration shape
+alone: `DEC-` identifiers, commas and nothing else. A line that opens with
+`Affects:` and then runs into prose is prose, and it is measured.
+
 A YAML front-matter block that opens a file drops out too, when every line in
 it is a known metadata key. No file in the shipped set opens with one; the
 rule serves a run that names a file, such as a design document.
@@ -103,6 +110,12 @@ LIST_ITEM = re.compile(r"^(\d+\.|[-*+])\s")
 HEADING = re.compile(r"^#{1,6}\s+")
 QUOTE = re.compile(r"^>\s?")
 WORD = re.compile(r"[A-Za-z0-9_-]+")
+# The declaration a design record opens its "Decisions affected" section with,
+# and the only line rule 1 does not measure. Strict on purpose: identifiers and
+# commas alone, so a sentence cannot hide behind the prefix. `check-docs.py`
+# refuses a second declaration line and reads the first physical one, so a
+# wrapped list declares less than it looks like it declares.
+DECLARATION = re.compile(r"^Affects:\s*(?:DEC-\d{2,})(?:\s*,\s*DEC-\d{2,})*\.?$")
 CELL_SPLIT = re.compile(r"(?<!\\)\|")
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])[*_'\")\]]*\s+")
 # A full stop that ends a word rather than a sentence. `No.` is absent on
@@ -224,7 +237,10 @@ def check_file(path: str) -> list[str]:
         lines = []
         for raw in block.splitlines():
             line = QUOTE.sub("", HEADING.sub("", raw.strip()))
-            if line:
+            # A declaration is a list, not a sentence, and no rewriting makes
+            # 21 decisions fit 20 words. It is dropped before the unit is
+            # measured, so the prose beside it is still prose.
+            if line and not DECLARATION.match(line):
                 lines.append(line)
         if not lines:
             continue

@@ -100,6 +100,62 @@ async function outbox(
   );
 }
 
+// DEC-44: the two reply columns the case screen reads. `turnAnsweredBy` is
+// the console's only read of them, so a rule about what an empty stored reply
+// means lives here and nowhere else.
+describe('the turn a run answered, and the replies on it', () => {
+  async function setReplies(
+    conversationId: string,
+    turnNumber: number,
+    saved: string,
+    approved: string,
+  ): Promise<void> {
+    await pool.query(
+      `UPDATE turn SET saved_reply_text = $3, approved_reply_text = $4
+        WHERE conversation_id = $1 AND turn_number = $2`,
+      [conversationId, turnNumber, saved, approved],
+    );
+  }
+
+  it('reads the reply a reviewer saved and the reply an approval sent', async () => {
+    const id = await conversation();
+    await turn(id, 1);
+    await setReplies(id, 1, 'The reply a reviewer saved.', 'The reply the approval sent.');
+    const runId = await run(id, 1, 'awaiting_approval');
+
+    expect(await turnAnsweredBy(pool, runId)).toMatchObject({
+      savedReplyText: 'The reply a reviewer saved.',
+      approvedReplyText: 'The reply the approval sent.',
+    });
+  });
+
+  // An empty stored string is no reply, never a blank one. Drawn as text it
+  // would be an empty editor over a case whose reply the ledger does not
+  // hold, and a case that printed "The reply the approval sent" over nothing.
+  it('reads an empty stored reply as none at all', async () => {
+    const id = await conversation();
+    await turn(id, 1);
+    await setReplies(id, 1, '', '');
+    const runId = await run(id, 1, 'awaiting_approval');
+
+    expect(await turnAnsweredBy(pool, runId)).toMatchObject({
+      savedReplyText: null,
+      approvedReplyText: null,
+    });
+  });
+
+  it('reads a reply the ledger has never held as none', async () => {
+    const id = await conversation();
+    await turn(id, 1);
+    const runId = await run(id, 1, 'awaiting_approval');
+
+    expect(await turnAnsweredBy(pool, runId)).toMatchObject({
+      savedReplyText: null,
+      approvedReplyText: null,
+    });
+  });
+});
+
 describe('a conversation the ledger holds', () => {
   it('answers null for one it does not hold, and for a malformed id', async () => {
     expect(await readConversation(pool, randomUUID())).toBeNull();

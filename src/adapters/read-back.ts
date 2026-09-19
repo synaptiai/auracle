@@ -11,9 +11,21 @@
 import { FreeScoutEgressAdapter, freeScoutConfigFromEnv } from './freescout.js';
 import { HelpdeskAdapter } from './helpdesk.js';
 import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from './imap-smtp.js';
-import type { DraftReadBack } from './types.js';
+import type { AdapterCapabilities, DraftReadBack } from './types.js';
 
-const READ_BACK_ADAPTERS: Readonly<Record<string, (env: NodeJS.ProcessEnv) => DraftReadBack>> = {
+/**
+ * An adapter an approval reads back through, with the declaration it made.
+ *
+ * The capabilities travel because an approval asks its adapter one question
+ * beyond reading a draft: whether the ledger holds the reply it must send
+ * (DEC-44). Reading that flag from the environment instead would be a second
+ * copy of a rule that moves with the adapter's own configuration.
+ */
+export type ReadBackAdapter = DraftReadBack & {
+  readonly capabilities: AdapterCapabilities;
+};
+
+const READ_BACK_ADAPTERS: Readonly<Record<string, (env: NodeJS.ProcessEnv) => ReadBackAdapter>> = {
   helpdesk: () => new HelpdeskAdapter(),
   'imap-smtp': (env) => new SmtpEgressAdapter(imapSmtpConfigFromEnv(env)),
   freescout: (env) => new FreeScoutEgressAdapter(freeScoutConfigFromEnv(env)),
@@ -28,8 +40,11 @@ export const READ_BACK_ADAPTER_NAMES: readonly string[] = Object.keys(READ_BACK_
  * Throws on a name it does not know, and on a configuration the adapter
  * refuses. `Object.hasOwn`, because a bare read of a plain record resolves
  * `toString` to a function.
+ *
+ * Returns the adapter itself, not only its read port, so a caller that needs
+ * the declaration beside the port builds one adapter and reads both.
  */
-export function selectReadBackAdapter(name: string, env: NodeJS.ProcessEnv): DraftReadBack {
+export function selectReadBackAdapter(name: string, env: NodeJS.ProcessEnv): ReadBackAdapter {
   if (!Object.hasOwn(READ_BACK_ADAPTERS, name)) {
     throw new Error(
       `unknown APPROVE_ADAPTER '${name}' (known: ${READ_BACK_ADAPTER_NAMES.join(', ')})`,

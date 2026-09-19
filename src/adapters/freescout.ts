@@ -86,16 +86,37 @@ import type {
   DraftReadBack,
   DraftReply,
   EgressAdapter,
-  ReplyProvenance,
+  LedgerReply,
 } from './types.js';
 
-export const FREESCOUT_CAPABILITIES: Readonly<AdapterCapabilities> = Object.freeze({
-  supportsIdempotencyKey: false,
-  supportsReadBack: false,
-  supportsDraftState: true,
-  supportsStructuredFields: false,
-  supportsThreading: true,
-});
+/**
+ * The flags this adapter declares, given what its operator has proved.
+ *
+ * `internalNote` is the operator's statement that their own instance accepts
+ * an internal note on a conversation, and that they have watched it hold one.
+ * It comes from `FREESCOUT_INTERNAL_NOTE`, unset by default.
+ *
+ * The capability is false until that statement exists, because the proof
+ * cannot be made here. A stock FreeScout answers 404 to every `/api/` route
+ * until a person installs the paid API module, so no suite and no CI job in
+ * this repository can observe the note, and a declaration nobody can check is
+ * exactly what DEC-44 refuses on FreeScout's behalf.
+ *
+ * With it true, `supportsLedgerReply` turns on and the park becomes a note
+ * that cannot reach a customer. That is DEC-44's condition, by name: an
+ * adapter declares the capability only when its helpdesk cannot send the copy
+ * it parks.
+ */
+export function freeScoutCapabilities(internalNote: boolean): Readonly<AdapterCapabilities> {
+  return Object.freeze({
+    supportsIdempotencyKey: false,
+    supportsReadBack: false,
+    supportsDraftState: true,
+    supportsStructuredFields: false,
+    supportsThreading: true,
+    supportsLedgerReply: internalNote,
+  });
+}
 
 /** Everything one FreeScout instance needs. No value here is a default. */
 export interface FreeScoutConfig {
@@ -108,6 +129,12 @@ export interface FreeScoutConfig {
    * thread of type `message`, and a wrong id is refused rather than guessed.
    */
   readonly userId: number;
+  /**
+   * DEC-44: the operator's statement that their instance accepts an internal
+   * note, so this adapter's parked copy can never reach a customer and the
+   * ledger holds the reply. See `freeScoutCapabilities`.
+   */
+  readonly internalNote: boolean;
   /** Request deadline in milliseconds. */
   readonly timeoutMs?: number;
 }
@@ -126,7 +153,30 @@ export function freeScoutConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Fr
   if (!Number.isInteger(userId) || userId <= 0) {
     throw new Error(`FREESCOUT_USER_ID must be a positive integer, got '${rawUser}'`);
   }
-  return { baseUrl: baseUrl.replace(/\/+$/, ''), apiKey, userId };
+  return {
+    baseUrl: baseUrl.replace(/\/+$/, ''),
+    apiKey,
+    userId,
+    // DEC-44: the one FreeScout value with a default, and the default is the
+    // honest one. An instance nobody has proved takes the draft path it has
+    // always taken. A value that is neither true nor false is refused by name
+    // rather than read as false: an operator who set it meant to turn it on.
+    internalNote: flag(env, 'FREESCOUT_INTERNAL_NOTE', false),
+  };
+}
+
+/**
+ * Reads one boolean variable, or throws naming it.
+ *
+ * The same shape the mail adapter's config uses: `true`/'1' and `false`/'0',
+ * an absent or empty value taking the fallback, and anything else refused.
+ */
+function flag(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boolean {
+  const raw = env[name];
+  if (raw === undefined || raw === '') return fallback;
+  if (raw === 'true' || raw === '1') return true;
+  if (raw === 'false' || raw === '0') return false;
+  throw new Error(`${name} must be 'true' or 'false', got '${raw}'`);
 }
 
 /**
@@ -171,6 +221,20 @@ function requireEnv(env: NodeJS.ProcessEnv, name: string): string {
  * park returns.
  */
 const DRAFT_ID_SEPARATOR = ':';
+
+/**
+ * The most of one conversation this adapter reads, in characters.
+ *
+ * A conversation is read whole to find one thread in it, and nothing bounds a
+ * thread: an adopter's helpdesk can hold a conversation of tens of megabytes,
+ * and the console draws the copy and compares it on a page a person can
+ * reload. The bound is refused rather than truncated, because half a
+ * conversation is not a copy anyone can judge, and a partial read would
+ * compare unequal to the reply for a reason that has nothing to do with a
+ * person's edit. It sits above every fixture and every document bound in this
+ * repository.
+ */
+const MAX_CONVERSATION_CHARS = 4_000_000;
 
 /**
  * Refuses a ticket id that cannot survive the round trip, or returns it.
@@ -221,61 +285,23 @@ interface FreeScoutConversation {
   readonly _embedded?: { readonly threads?: readonly FreeScoutThread[] };
 }
 
-/**
- * The body a parked draft carries.
- *
- * The adapter declares no structured fields, so the disclosure (DEC-14) and
- * the provenance (DEC-33) travel as text under the reply. A person editing
- * the draft in FreeScout sees both, which is the point: the audit trail has
- * to reach the person who approves, not only the ledger.
- */
-export const DRAFT_TRAILER_MARKER = '\n\n-- \n';
+// This adapter declares no structured fields, so the disclosure (DEC-14) and
+// the provenance (DEC-33) travel as text under the reply. A person editing the
+// draft in FreeScout sees both, which is the point: the audit trail has to
+// reach the person who approves, not only the ledger. The text form itself
+// lives in reply-text.ts, because the approval reads it too (DEC-44).
+import { DRAFT_TRAILER_MARKER, composeDraftBody, replyPartOf } from './reply-text.js';
 
-export function composeDraftBody(
-  body: string,
-  disclosure: string,
-  provenance: ReplyProvenance,
-): string {
-  const trail = [
-    `generated-by: ${provenance.generatedBy}`,
-    `model: ${provenance.modelId}`,
-    `prompt-version: ${provenance.promptVer}`,
-    `generated-at: ${provenance.generatedAt}`,
-  ].join('\n');
-  return `${body}${DRAFT_TRAILER_MARKER}${disclosure}\n\n${trail}\n`;
-}
-
-/**
- * The reply part of a draft body, without the trailer this adapter appended.
- *
- * The approval-edit distance compares the body the ledger journalled against
- * the body read back (section 4.10). The journal holds the reply alone, so a
- * read-back that returned the trailer too would measure this adapter's own
- * decoration as a person's edit, and the C2 control band would move with the
- * disclosure text rather than with what people change.
- *
- * The split is on the first `-- ` separator line, and that is a guess with two
- * known failure modes. A person who ends their own edit with a signature
- * separator loses everything after it from the read-back, so the distance
- * understates their edit. A person who deletes the trailer has their whole
- * body counted, which overstates it.
- *
- * Neither can be repaired from the body alone: nothing in a FreeScout thread
- * records where the trailer began. Both understate or overstate one run's
- * distance rather than corrupt the ledger, and C2 reads a distribution over
- * many. A structured field would fix it, and this adapter has none.
- */
-export function replyPartOf(draftBody: string): string {
-  const at = draftBody.indexOf(DRAFT_TRAILER_MARKER);
-  return at === -1 ? draftBody : draftBody.slice(0, at);
-}
+export { DRAFT_TRAILER_MARKER, composeDraftBody, replyPartOf };
 
 export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
   readonly name = 'freescout';
 
-  readonly capabilities: AdapterCapabilities = FREESCOUT_CAPABILITIES;
+  readonly capabilities: AdapterCapabilities;
 
-  constructor(private readonly config: FreeScoutConfig) {}
+  constructor(private readonly config: FreeScoutConfig) {
+    this.capabilities = freeScoutCapabilities(config.internalNote);
+  }
 
   /**
    * Park one gated reply as a FreeScout draft (DEC-11).
@@ -298,10 +324,14 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
 
     await this.assertRecipientAgrees(reply);
 
+    // DEC-44: where the operator's instance accepts an internal note, the
+    // park posts one. A note cannot reach a customer, which is what lets the
+    // ledger hold the reply: the copy in the helpdesk is readable and never
+    // sendable. Everywhere else this stays a draft thread (DEC-11).
     const threadId = await this.postThread(
       reply.ticketExternalId,
       composeDraftBody(reply.body, reply.disclosure, reply.provenance),
-      'draft',
+      this.config.internalNote ? 'note' : 'draft',
     );
     return { draftExternalId: formatDraftId(reply.ticketExternalId, threadId) };
   }
@@ -359,6 +389,15 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
     draftExternalId: string,
     idemKey: string,
   ): Promise<{ readonly externalId: string }> {
+    if (this.config.internalNote) {
+      // DEC-44: an internal note is not sendable, so there is no draft to
+      // publish here. The relay branches on the capability and calls
+      // `sendLedgerReply`; a caller that reaches this is asking for the
+      // stale-copy path the design rejected by name.
+      throw new AdapterCapabilityError(
+        'freescout cannot send a parked copy: supportsLedgerReply is true, so the copy is an internal note and the ledger holds the reply (DEC-44)',
+      );
+    }
     requireNonEmpty('draftExternalId', draftExternalId);
     requireNonEmpty('idemKey', idemKey);
     const { conversationId } = parseDraftId(draftExternalId);
@@ -374,6 +413,59 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
     }
 
     const threadId = await this.postThread(conversationId, draft, 'published');
+    return { externalId: formatDraftId(conversationId, threadId) };
+  }
+
+  /**
+   * Send the reply the ledger holds (DEC-44).
+   *
+   * Available only where the park is an internal note, which is the case in
+   * which the ledger holds the reply. The text, the disclosure and the
+   * provenance all come from the approval. The parked copy is read, and no
+   * text is taken from it: a copy a person edited in FreeScout is what the
+   * approval refused before it got here, and a thread this instance did not
+   * park as a note is a copy a person can publish, which the read refuses.
+   *
+   * The post is a published thread on the conversation, the same shape
+   * `sendDraft` posts on the draft path, so the customer sees a message and
+   * the note stays internal. `idemKey` is accepted and not sent: the API
+   * takes no such field, and the relay's `status = 'pending'` guard is what
+   * stops a second post, exactly as it is on the draft path.
+   */
+  async sendLedgerReply(
+    reply: LedgerReply,
+    idemKey: string,
+  ): Promise<{ readonly externalId: string }> {
+    if (!this.config.internalNote) {
+      throw new AdapterCapabilityError(
+        'freescout cannot send a reply the ledger holds: supportsLedgerReply is false, so a parked copy is what sends (DEC-44)',
+      );
+    }
+    requireNonEmpty('reply.draftExternalId', reply.draftExternalId);
+    requireNonEmpty('reply.bodyText', reply.bodyText);
+    requireNonEmpty('reply.disclosure', reply.disclosure);
+    requireNonEmpty('idemKey', idemKey);
+    const { conversationId } = parseDraftId(reply.draftExternalId);
+
+    // The parked copy is read before the send for one reason, and it is not
+    // the text: `readRawDraftBody` refuses a thread this instance did not park
+    // as a note. A process that read FREESCOUT_INTERNAL_NOTE as false parks a
+    // draft, and a draft is a copy a person can publish — so this sends the
+    // ledger's text beside a copy that can also reach the customer, which is
+    // the pair DEC-44 rejected by name. The approval refuses that shape when
+    // it compares, but only a caller that read the copy back reaches the
+    // comparison: `pnpm run approve` without `--read-back` does not, and the
+    // relay never does. So the check is here, where every path passes.
+    //
+    // A copy that is gone answers null, and that is not a refusal: the ledger
+    // holds the reply, and there is nothing left to publish beside it.
+    await this.readRawDraftBody(reply.draftExternalId);
+
+    const threadId = await this.postThread(
+      conversationId,
+      composeDraftBody(reply.bodyText, reply.disclosure, reply.provenance),
+      'published',
+    );
     return { externalId: formatDraftId(conversationId, threadId) };
   }
 
@@ -455,7 +547,15 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
     }
   }
 
-  /** The parked draft's body exactly as FreeScout holds it, or null. */
+  /**
+   * The body of the parked copy, or null when this instance holds none.
+   *
+   * Two shapes, and the flag decides which is the park. A draft thread is the
+   * copy on every instance that has not been proved to accept a note, and a
+   * thread that has left the draft state is a sent message rather than a
+   * copy. Where a note is the park, the copy is the note: it carries no draft
+   * state at all, so it is found by its id and its type.
+   */
   private async readRawDraftBody(draftExternalId: string, signal?: AbortSignal): Promise<string | null> {
     const { conversationId, threadId } = parseDraftId(draftExternalId);
     const conversation = await this.getConversation(conversationId, signal);
@@ -463,20 +563,45 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
     const thread = (conversation._embedded?.threads ?? []).find(
       (candidate) => String(candidate.id) === threadId,
     );
-    if (thread === undefined || thread.state !== 'draft') return null;
+    if (thread === undefined) return null;
+    if (this.config.internalNote) {
+      if (thread.type === 'note') return thread.body ?? '';
+      // A thread this configuration did not park. A consumer that reads the
+      // flag as false parks a draft, and a draft is a copy a person can
+      // publish: sending the ledger's text beside it is the failure DEC-44
+      // rejected by name. So this is a fault and not an absence — an absence
+      // reads as nothing to compare, and the approval would send anyway.
+      throw new PermanentEgressError(
+        `freescout thread '${threadId}' is a ${thread.type ?? 'thread'} rather than an internal note:`
+          + ' this instance parks notes, so another process with FREESCOUT_INTERNAL_NOTE unset'
+          + ' parked this one, and that copy is one a person can send',
+      );
+    }
+    if (thread.state !== 'draft') return null;
     return thread.body ?? '';
   }
 
-  /** Creates one thread and returns the id FreeScout minted for it. */
+  /**
+   * Creates one thread and returns the id FreeScout minted for it.
+   *
+   * Three shapes, and each carries the type the API takes for it. A draft is
+   * a message the customer has not seen; a published message is one they
+   * have; a note is published inside the helpdesk and never sent anywhere
+   * (DEC-44). Only the pair matters at the API: a note is published and a
+   * draft is not.
+   */
   private async postThread(
     conversationId: string,
     text: string,
-    state: 'draft' | 'published',
+    kind: 'draft' | 'published' | 'note',
   ): Promise<string> {
+    const body = kind === 'note'
+      ? { type: 'note', text, user: this.config.userId, imported: false, state: 'published' }
+      : { type: 'message', text, user: this.config.userId, imported: false, state: kind };
     const response = await this.request(
       'POST',
       `/api/conversations/${encodeURIComponent(conversationId)}/threads`,
-      { type: 'message', text, user: this.config.userId, imported: false, state },
+      body,
     );
 
     if (response.status === 404) {
@@ -486,7 +611,7 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
       );
     }
     if (response.status !== 201) {
-      throw await egressError(response, `create a ${state} thread on '${conversationId}'`);
+      throw await egressError(response, `create a ${kind} thread on '${conversationId}'`);
     }
 
     // The id arrives in a header, not in the body. A create that answered 201
@@ -496,7 +621,7 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
     await discardBody(response);
     if (threadId === null || threadId.trim().length === 0) {
       throw new Error(
-        `freescout created a ${state} thread on '${conversationId}' and returned no Resource-ID header`,
+        `freescout created a ${kind} thread on '${conversationId}' and returned no Resource-ID header`,
       );
     }
     return threadId.trim();
@@ -524,7 +649,7 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
     }
     // Parsed here rather than by `response.json()`, whose error quotes the
     // start of a body that is not JSON: a proxy page can name a customer.
-    const text = await response.text();
+    const text = await readCapped(response, MAX_CONVERSATION_CHARS, conversationId);
     try {
       return JSON.parse(text) as FreeScoutConversation;
     } catch {
@@ -582,6 +707,45 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
  */
 async function discardBody(response: Response): Promise<void> {
   await response.body?.cancel().catch(() => undefined);
+}
+
+/**
+ * One response body, refused past a bound rather than read whole.
+ *
+ * Read in chunks, so a helpdesk that answers with more than the bound stops
+ * costing this process memory at the bound and not at the size of what was
+ * sent. `Content-Length` is not consulted: it is the helpdesk's claim, and a
+ * chunked answer carries none at all.
+ */
+async function readCapped(
+  response: Response,
+  limit: number,
+  conversationId: string,
+): Promise<string> {
+  const stream = response.body;
+  if (stream === null) return '';
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+      if (text.length > limit) {
+        throw new PermanentEgressError(
+          `freescout answered with more than ${limit} characters for conversation `
+            + `'${conversationId}', so this read is refused rather than served in part`,
+        );
+      }
+    }
+  } catch (error) {
+    // The connection is not left open for a body nobody will read, whether
+    // the bound stopped it or the stream itself failed.
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  }
+  return text + decoder.decode();
 }
 
 /**

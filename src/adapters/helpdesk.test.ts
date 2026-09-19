@@ -25,12 +25,13 @@ function reply(overrides: Partial<DraftReply> = {}): DraftReply {
 }
 
 describe('HelpdeskAdapter capabilities', () => {
-  it('declares the five section 4.1 capability flags', () => {
+  it('declares every capability flag the port carries', () => {
     const adapter = newAdapter();
 
     expect(Object.keys(adapter.capabilities).sort()).toEqual([
       'supportsDraftState',
       'supportsIdempotencyKey',
+      'supportsLedgerReply',
       'supportsReadBack',
       'supportsStructuredFields',
       'supportsThreading',
@@ -46,7 +47,32 @@ describe('HelpdeskAdapter capabilities', () => {
       supportsDraftState: true,
       supportsStructuredFields: true,
       supportsThreading: true,
+      supportsLedgerReply: false,
     });
+  });
+
+  // DEC-44: this helpdesk publishes the drafts it parks, so the ledger never
+  // holds the reply and the console offers no editor.
+  it('declares no ledger reply, because it sends the drafts it parks', async () => {
+    const adapter = newAdapter();
+
+    expect(adapter.capabilities.supportsLedgerReply).toBe(false);
+    await expect(
+      adapter.sendLedgerReply(
+        {
+          draftExternalId: 'hd-draft-0001',
+          bodyText: 'a reply',
+          disclosure: 'drafted by an automated assistant',
+          provenance: {
+            generatedBy: 'auracle',
+            modelId: 'test/model-v1',
+            promptVer: 'p-2026-01',
+            generatedAt: '2026-01-02T03:04:05Z',
+          },
+        },
+        'key',
+      ),
+    ).rejects.toThrow(AdapterCapabilityError);
   });
 
   it('freezes the declaration so callers cannot widen autonomy', () => {

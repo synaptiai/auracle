@@ -8,10 +8,12 @@ import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { AdapterCapabilityError } from '../adapters/types.js';
 import type {
   AdapterCapabilities,
   DeliveryState,
   EgressAdapter,
+  LedgerReply,
 } from '../adapters/types.js';
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { dbUrl } from '../db/config.js';
@@ -43,6 +45,9 @@ class ScriptedEgress implements EgressAdapter {
     idemKey: string;
   }> = [];
 
+  /** DEC-44: every reply this adapter was told to send from the ledger. */
+  readonly ledgerSends: Array<{ reply: LedgerReply; idemKey: string }> = [];
+
   constructor(
     capabilities: AdapterCapabilities,
     private readonly onSend: (call: {
@@ -53,6 +58,11 @@ class ScriptedEgress implements EgressAdapter {
     private readonly onPerform?: (call: {
       actionClass: string;
       payload: Record<string, unknown>;
+      idemKey: string;
+    }) => Promise<{ readonly externalId: string }>,
+    /** DEC-44: what this adapter does with a reply the ledger holds. */
+    private readonly onLedgerSend?: (call: {
+      reply: LedgerReply;
       idemKey: string;
     }) => Promise<{ readonly externalId: string }>,
   ) {
@@ -85,6 +95,23 @@ class ScriptedEgress implements EgressAdapter {
     return this.onPerform(call);
   }
 
+  /**
+   * DEC-44: the send on an adapter whose helpdesk cannot send what it parks.
+   * Recorded either way, so a case can assert that the draft path was not
+   * taken even when the capability is off.
+   */
+  async sendLedgerReply(
+    reply: LedgerReply,
+    idemKey: string,
+  ): Promise<{ readonly externalId: string }> {
+    const call = { reply, idemKey };
+    this.ledgerSends.push(call);
+    if (!this.onLedgerSend) {
+      throw new AdapterCapabilityError('no ledger reply was expected in this scenario');
+    }
+    return this.onLedgerSend(call);
+  }
+
   async readBack(ref: { readonly idemKey: string }): Promise<DeliveryState> {
     return this.onReadBack(ref);
   }
@@ -114,6 +141,7 @@ function replyOutbox(
     actionClass: 'customer_reply',
     delivery,
     payload: { draftExternalId: `draft-${run.ticketId}` },
+    reply: null,
   };
 }
 
@@ -207,6 +235,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: true,
         supportsStructuredFields: true,
         supportsThreading: true,
+        supportsLedgerReply: false,
       }),
       async (call) => {
         sendEntered();
@@ -253,6 +282,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: false,
         supportsStructuredFields: false,
         supportsThreading: false,
+        supportsLedgerReply: false,
       }),
       async () => {
         throw new Error('gateway timed out; the refund may or may not have gone out');
@@ -293,6 +323,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: false,
         supportsStructuredFields: false,
         supportsThreading: false,
+        supportsLedgerReply: false,
       }),
       async () => {
         throw new Error('connection lost mid-send; delivery state unknown');
@@ -336,6 +367,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: false,
         supportsStructuredFields: false,
         supportsThreading: false,
+        supportsLedgerReply: false,
       }),
       async () => {
         throw new Error('timeout after transmit; did it land?');
@@ -371,6 +403,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: false,
         supportsStructuredFields: false,
         supportsThreading: false,
+        supportsLedgerReply: false,
       }),
       async () => {
         throw new Error('connection lost mid-send; delivery state unknown');
@@ -409,6 +442,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: false,
         supportsStructuredFields: false,
         supportsThreading: false,
+        supportsLedgerReply: false,
       }),
       async () => {
         attempts += 1;
@@ -450,6 +484,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: true,
         supportsStructuredFields: true,
         supportsThreading: true,
+        supportsLedgerReply: false,
       }),
       async () => {
         throw new Error('a fenced record must never reach the adapter');
@@ -495,6 +530,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: true,
         supportsStructuredFields: true,
         supportsThreading: true,
+        supportsLedgerReply: false,
       }),
       async () => ({ externalId: 'ext-1' }),
       async () => {
@@ -552,6 +588,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: true,
         supportsStructuredFields: true,
         supportsThreading: true,
+        supportsLedgerReply: false,
       }),
       async () => ({ externalId: 'ext-1' }),
       async () => {
@@ -574,6 +611,7 @@ describe('section 4.4 outbox relay', () => {
       delivery: 'at_least_once',
       action_class: 'customer_reply',
       payload: { draftExternalId: 'draft-y' },
+      reply: null,
     });
     expect(orphan).toEqual({ idemKey: 'key-no-run', outcome: 'sent' });
   });
@@ -598,6 +636,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: true,
         supportsStructuredFields: true,
         supportsThreading: true,
+        supportsLedgerReply: false,
       }),
       async () => {
         throw new Error('a refused record must not reach the adapter');
@@ -617,6 +656,7 @@ describe('section 4.4 outbox relay', () => {
         delivery: 'at_least_once',
         action_class: 'customer_reply',
         payload: { draftExternalId: `draft-${ticket}` },
+        reply: null,
       }),
     ).toEqual({ idemKey, outcome: 'fenced' });
     expect(adapter.sendCalls).toHaveLength(0);
@@ -648,6 +688,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: true,
         supportsStructuredFields: true,
         supportsThreading: true,
+        supportsLedgerReply: false,
       }),
       async () => {
         throw new Error('a resolved record must not reach the adapter');
@@ -667,6 +708,7 @@ describe('section 4.4 outbox relay', () => {
         delivery: 'at_least_once',
         action_class: 'customer_reply',
         payload: { draftExternalId: `draft-${ticket}` },
+        reply: null,
       }),
     ).toEqual({ idemKey, outcome: 'fenced' });
     expect(adapter.sendCalls).toHaveLength(0);
@@ -693,6 +735,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: true,
         supportsStructuredFields: true,
         supportsThreading: true,
+        supportsLedgerReply: false,
       }),
       async (call) => {
         expect(call.idemKey).toBe(idemKey);
@@ -738,6 +781,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: true,
         supportsStructuredFields: true,
         supportsThreading: true,
+        supportsLedgerReply: false,
       }),
       async () => {
         throw new Error('sendDraft must never run for an internal write');
@@ -796,6 +840,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: true,
         supportsStructuredFields: true,
         supportsThreading: true,
+        supportsLedgerReply: false,
       }),
       async () => {
         throw new Error('a malformed record must never reach the adapter');
@@ -834,6 +879,7 @@ describe('section 4.4 outbox relay', () => {
         supportsDraftState: true,
         supportsStructuredFields: true,
         supportsThreading: true,
+        supportsLedgerReply: false,
       }),
       async () => {
         throw new Error('a malformed record must never reach the adapter');
@@ -849,8 +895,235 @@ describe('section 4.4 outbox relay', () => {
     expect(await outboxStatus(idemKey)).toBe('malformed');
     expect(await runState(idemKey)).toBe('escalated');
   });
+});
 
-  afterAll(async () => {
-    await pool.end();
+// DEC-44: where the target cannot send the copy it parks, what sends is the
+// reply the approval recorded on the outbox row. The rest of this suite
+// covers the DEC-40 draft path, which this change does not touch.
+describe('DEC-44: the relay sends the reply the ledger holds', () => {
+  const CAPABLE: AdapterCapabilities = Object.freeze({
+    supportsIdempotencyKey: true,
+    supportsReadBack: false,
+    supportsDraftState: true,
+    supportsStructuredFields: false,
+    supportsThreading: true,
+    supportsLedgerReply: true,
   });
+
+  const LEDGER_REPLY = {
+    bodyText: 'Your refund is on its way, and the ledger holds this text.',
+    disclosure: 'This reply was drafted by an automated assistant.',
+    provenance: {
+      generatedBy: 'auracle',
+      modelId: 'test/model-v1',
+      promptVer: 'p-2026-01',
+      generatedAt: '2026-01-02T03:04:05Z',
+    },
+  };
+
+  beforeEach(async () => {
+    await truncateLedger(pool);
+  });
+
+  afterEach(async () => {
+    await truncateLedger(pool);
+  });
+
+  async function seedLedgerReply(
+    ticketId: string,
+    epoch: bigint,
+    state = 'awaiting_approval',
+    reply: unknown = LEDGER_REPLY,
+  ): Promise<string> {
+    const run = makeRun(epoch, ticketId, state);
+    const idemKey = `idem:${ticketId}`;
+    const result = await fencedInsert(pool, run, {
+      ...replyOutbox(run, idemKey, 'at_least_once'),
+      reply,
+    });
+    expect(result).toEqual({ outcome: 'accepted' });
+    return idemKey;
+  }
+
+  /** An adapter that declares the capability and records what it is handed. */
+  function capableEgress(
+    onLedgerSend: (call: { reply: LedgerReply; idemKey: string }) => Promise<{
+      readonly externalId: string;
+    }>,
+  ): ScriptedEgress {
+    return new ScriptedEgress(
+      CAPABLE,
+      async () => {
+        throw new Error('the parked copy must never be sent on this path');
+      },
+      async () => ({ state: 'not_found' }),
+      undefined,
+      onLedgerSend,
+    );
+  }
+
+  it('sends the ledger text, with the disclosure and provenance the row carries', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedLedgerReply(ticket, 10n);
+    const adapter = capableEgress(async () => ({ externalId: 'e-1' }));
+
+    const results = await relayPending(pool, adapter);
+
+    expect(results.map((r) => ({ idemKey: r.idemKey, outcome: r.outcome }))).toEqual([
+      { idemKey, outcome: 'sent' },
+    ]);
+    // The text the ledger holds, the disclosure and the provenance, and the
+    // handle that addresses the ticket (DEC-14, DEC-33).
+    expect(adapter.ledgerSends).toEqual([
+      {
+        reply: { draftExternalId: `draft-${ticket}`, ...LEDGER_REPLY },
+        idemKey,
+      },
+    ]);
+    // The parked copy is not what sends here, and the record is not read as
+    // a draft path record.
+    expect(adapter.sendCalls).toEqual([]);
+    expect(await outboxStatus(idemKey)).toBe('sent');
+  });
+
+  it('sets the status after the send, never before', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedLedgerReply(ticket, 10n);
+    const seen: string[] = [];
+    const adapter = capableEgress(async () => {
+      seen.push(await outboxStatus(idemKey));
+      return { externalId: 'e-1' };
+    });
+
+    await relayPending(pool, adapter);
+
+    expect(seen).toEqual(['pending']);
+  });
+
+  it('checks the fence before it sends the ledger text (DEC-28)', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedLedgerReply(ticket, 10n, 'executing');
+    await pool.query('UPDATE ticket_epoch SET epoch = 11 WHERE ticket_id = $1', [ticket]);
+    const adapter = capableEgress(async () => ({ externalId: 'never' }));
+
+    const results = await relayPending(pool, adapter);
+
+    expect(results.map((r) => r.outcome)).toEqual(['fenced']);
+    expect(adapter.ledgerSends).toEqual([]);
+    expect(await outboxStatus(idemKey)).toBe('fenced');
+  });
+
+  it('escalates a record that carries no reply rather than sending anything', async () => {
+    // A record written by the draft path, handed to an adapter whose helpdesk
+    // cannot send the parked copy. Nothing can deliver it: the parked copy is
+    // not sendable, and no text travelled with the record.
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedLedgerReply(ticket, 10n, 'awaiting_approval', null);
+    const adapter = capableEgress(async () => ({ externalId: 'never' }));
+
+    const results = await relayPending(pool, adapter);
+
+    expect(results.map((r) => ({ idemKey: r.idemKey, outcome: r.outcome }))).toEqual([
+      { idemKey, outcome: 'malformed_escalated' },
+    ]);
+    expect(adapter.ledgerSends).toEqual([]);
+    expect(adapter.sendCalls).toEqual([]);
+    expect(await outboxStatus(idemKey)).toBe('malformed');
+    expect(await runState(idemKey)).toBe('escalated');
+  });
+
+  it('escalates a reply that holds no disclosure rather than send it (DEC-14)', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedLedgerReply(ticket, 10n, 'awaiting_approval', {
+      ...LEDGER_REPLY,
+      disclosure: '',
+    });
+    const adapter = capableEgress(async () => ({ externalId: 'never' }));
+
+    const results = await relayPending(pool, adapter);
+
+    expect(results.map((r) => r.outcome)).toEqual(['malformed_escalated']);
+    expect(adapter.ledgerSends).toEqual([]);
+    expect(await runState(idemKey)).toBe('escalated');
+  });
+
+  // Four shapes a reply can arrive in that no adapter can send, each refused
+  // before the adapter is reached. The row is written by code that reads the
+  // journal, so a shape it cannot read is a ledger one: escalating names it
+  // rather than sending a message missing the part that makes it safe.
+  it('escalates a reply with no text, no provenance, or a provenance missing a field', async () => {
+    const shapes: readonly (readonly [string, unknown])[] = [
+      ['no bodyText at all', { ...LEDGER_REPLY, bodyText: undefined }],
+      ['an empty bodyText', { ...LEDGER_REPLY, bodyText: '' }],
+      ['no provenance', { ...LEDGER_REPLY, provenance: undefined }],
+      ['a provenance missing generatedAt', {
+        ...LEDGER_REPLY,
+        provenance: { ...LEDGER_REPLY.provenance, generatedAt: '' },
+      }],
+    ];
+
+    for (const [shape, reply] of shapes) {
+      await truncateLedger(pool);
+      const ticket = 'T-' + randomUUID().slice(0, 8);
+      const idemKey = await seedLedgerReply(ticket, 10n, 'awaiting_approval', reply);
+      const adapter = capableEgress(async () => ({ externalId: 'never' }));
+
+      const results = await relayPending(pool, adapter);
+
+      expect(results.map((r) => r.outcome), shape).toEqual(['malformed_escalated']);
+      expect(adapter.ledgerSends, shape).toEqual([]);
+      expect(await outboxStatus(idemKey), shape).toBe('malformed');
+      expect(await runState(idemKey), shape).toBe('escalated');
+    }
+  });
+
+  // The relay and the console answer the capability from their own
+  // environments, so they can disagree. Sending the parked copy would discard
+  // the text a person approved without a word, and the ledger would record
+  // that text as what went out. Nothing can deliver such a record, so it
+  // escalates where a person reads it.
+  it('escalates a record carrying a reply the adapter cannot send', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedLedgerReply(ticket, 10n);
+    const adapter = new ScriptedEgress(
+      Object.freeze({ ...CAPABLE, supportsLedgerReply: false }),
+      async () => ({ externalId: 'never' }),
+      async () => ({ state: 'not_found' }),
+    );
+
+    const results = await relayPending(pool, adapter);
+
+    expect(results.map((r) => ({ idemKey: r.idemKey, outcome: r.outcome }))).toEqual([
+      { idemKey, outcome: 'malformed_escalated' },
+    ]);
+    expect(adapter.sendCalls).toEqual([]);
+    expect(adapter.ledgerSends).toEqual([]);
+    expect(await outboxStatus(idemKey)).toBe('malformed');
+    expect(await runState(idemKey)).toBe('escalated');
+  });
+
+  it('still sends the parked draft through an adapter without the capability', async () => {
+    // The same record shape, and the same adapter shape, differing only in
+    // the declaration: this is the DEC-40 path, unchanged.
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    await seedLedgerReply(ticket, 10n, 'awaiting_approval', null);
+    const adapter = new ScriptedEgress(
+      Object.freeze({ ...CAPABLE, supportsLedgerReply: false }),
+      async () => ({ externalId: 'e-1' }),
+      async () => ({ state: 'not_found' }),
+    );
+
+    const results = await relayPending(pool, adapter);
+
+    expect(results.map((r) => r.outcome)).toEqual(['sent']);
+    expect(adapter.sendCalls).toHaveLength(1);
+    expect(adapter.ledgerSends).toEqual([]);
+  });
+});
+
+// The pool closes once, after every describe in this file has run. Inside a
+// describe it would close before a later describe's tests, and every
+// truncate after that would fail against a pool that is already gone.
+afterAll(async () => {
+  await pool.end();
 });

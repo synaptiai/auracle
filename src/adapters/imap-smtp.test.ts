@@ -48,6 +48,7 @@ describe('ImapSmtpAdapter capabilities', () => {
       supportsDraftState: true,
       supportsStructuredFields: false,
       supportsThreading: true,
+      supportsLedgerReply: false,
     });
     expect(adapter.capabilities).toBe(IMAP_SMTP_CAPABILITIES);
   });
@@ -73,6 +74,30 @@ describe('SmtpEgressAdapter declares what it cannot do (DEC-06)', () => {
 
   it('refuses read-back so the relay escalates instead of guessing (DEC-30)', async () => {
     await expect(egress.readBack({ idemKey: 'key' })).rejects.toThrow(AdapterCapabilityError);
+  });
+
+  // DEC-44, and the maintainer ruling of 2026-09-14: mail keeps the DEC-40
+  // draft path. Any mail client can send any message from any mailbox, so no
+  // mailbox holds a copy the helpdesk cannot send, and the console offers no
+  // editor on this channel.
+  it('declares no ledger reply, because any mailbox can send the parked copy', async () => {
+    expect(egress.capabilities.supportsLedgerReply).toBe(false);
+    await expect(
+      egress.sendLedgerReply(
+        {
+          draftExternalId: '7',
+          bodyText: 'a reply',
+          disclosure: 'drafted by an automated assistant',
+          provenance: {
+            generatedBy: 'auracle',
+            modelId: 'test/model-v1',
+            promptVer: 'p-2026-01',
+            generatedAt: '2026-01-02T03:04:05Z',
+          },
+        },
+        'key',
+      ),
+    ).rejects.toThrow(AdapterCapabilityError);
   });
 });
 

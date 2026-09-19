@@ -27,6 +27,7 @@ import type {
   EgressAdapter,
   ReplyProvenance,
   Ticket,
+  LedgerReply,
 } from './types.js';
 import { AdapterCapabilityError, requireNonEmpty } from './types.js';
 import { COMPENSATION_ACTION_CLASS } from './types.js';
@@ -63,6 +64,7 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
     supportsDraftState: true,
     supportsStructuredFields: true,
     supportsThreading: true,
+    supportsLedgerReply: false,
   });
 
   private seq = 0;
@@ -144,6 +146,23 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
     this.deliveries.set(idemKey, delivery);
     this.drafts.set(draftExternalId, { ...draft, status: 'sent' });
     return { externalId: delivery.externalId };
+  }
+
+  /**
+   * This helpdesk sends the drafts it parks, so the ledger never holds the
+   * reply and this path is closed (DEC-44).
+   *
+   * Its `sendDraft` publishes the parked copy, which is the DEC-40 path. Two
+   * texts that may both send is what DEC-44 rejected by name, so an adapter
+   * that can send its parked copy must not also send a body from the ledger.
+   */
+  async sendLedgerReply(
+    _reply: LedgerReply,
+    _idemKey: string,
+  ): Promise<{ readonly externalId: string }> {
+    throw new AdapterCapabilityError(
+      'helpdesk cannot send a reply the ledger holds: supportsLedgerReply is false, and its own draft is what sends (DEC-44)',
+    );
   }
 
   /**

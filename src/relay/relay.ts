@@ -26,6 +26,7 @@ import type { Pool } from 'pg';
 // The relay routes by negation: only a customer reply takes the draft
 // path, so it never names the other classes.
 import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
+import type { LedgerReply } from '../adapters/types.js';
 
 import type {
   AdapterCapabilities,
@@ -133,6 +134,12 @@ export interface PendingOutboxRow {
   delivery: string;
   action_class: string;
   payload: unknown;
+  /**
+   * DEC-44: the reply this record sends, when the ledger holds it rather
+   * than the helpdesk. Null on the DEC-40 draft path, where the parked copy
+   * is what sends.
+   */
+  reply: unknown;
 }
 
 /**
@@ -142,7 +149,7 @@ export interface PendingOutboxRow {
 export async function pendingRows(pool: Pool): Promise<PendingOutboxRow[]> {
   const rows = await pool.query(
     `SELECT o.run_id, o.step_id, r.ticket_id, o.idem_key, o.epoch,
-            o.delivery, o.action_class, o.payload
+            o.delivery, o.action_class, o.payload, o.reply
      FROM outbox o JOIN run r ON r.run_id = o.run_id
      WHERE o.status = 'pending'
      ORDER BY o.idem_key`,
@@ -193,9 +200,62 @@ class PayloadShapeError extends Error {}
  */
 type Dispatch =
   | { readonly kind: 'draft'; readonly draftExternalId: string }
+  | { readonly kind: 'ledger'; readonly reply: LedgerReply }
   | { readonly kind: 'action'; readonly payload: Record<string, unknown> };
 
-function dispatchFor(row: PendingOutboxRow): Dispatch {
+/**
+ * The reply the ledger holds, as the adapter takes it (DEC-44).
+ *
+ * Shape-checked here rather than trusted. The column is jsonb, and a record
+ * whose reply cannot be read is a record that cannot be sent: throwing here
+ * escalates it as malformed, which is the outcome for a payload nothing can
+ * deliver. Nothing was sent, so there is no delivery state to reconcile.
+ *
+ * `draftExternalId` comes from the payload and not from the reply. It is the
+ * handle that addresses the ticket, and it is what the park recorded; a
+ * reply that named its own handle could point the send at another thread.
+ */
+function ledgerReplyFrom(value: unknown, draftExternalId: string): LedgerReply {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new PayloadShapeError(
+      'outbox reply is missing for an adapter that sends the reply the ledger holds (DEC-44)',
+    );
+  }
+  const record = value as Record<string, unknown>;
+  const bodyText = record['bodyText'];
+  const disclosure = record['disclosure'];
+  const provenance = record['provenance'];
+  if (typeof bodyText !== 'string' || bodyText.length === 0) {
+    throw new PayloadShapeError('outbox reply carries no bodyText');
+  }
+  if (typeof disclosure !== 'string' || disclosure.length === 0) {
+    throw new PayloadShapeError('outbox reply carries no disclosure (DEC-14)');
+  }
+  if (typeof provenance !== 'object' || provenance === null || Array.isArray(provenance)) {
+    throw new PayloadShapeError('outbox reply carries no provenance (DEC-33)');
+  }
+  const trail = provenance as Record<string, unknown>;
+  const read = (field: string): string => {
+    const held = trail[field];
+    if (typeof held !== 'string' || held.length === 0) {
+      throw new PayloadShapeError(`outbox reply provenance carries no ${field}`);
+    }
+    return held;
+  };
+  return {
+    draftExternalId,
+    bodyText,
+    disclosure,
+    provenance: {
+      generatedBy: read('generatedBy'),
+      modelId: read('modelId'),
+      promptVer: read('promptVer'),
+      generatedAt: read('generatedAt'),
+    },
+  };
+}
+
+function dispatchFor(row: PendingOutboxRow, ledgerHoldsReply: boolean): Dispatch {
   const payload = row.payload;
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
     throw new PayloadShapeError(
@@ -204,7 +264,28 @@ function dispatchFor(row: PendingOutboxRow): Dispatch {
   }
   const record = payload as Record<string, unknown>;
   if (row.action_class === CUSTOMER_REPLY_ACTION_CLASS) {
-    return { kind: 'draft', draftExternalId: draftExternalIdFrom(record) };
+    const draftExternalId = draftExternalIdFrom(record);
+    // DEC-44: where the target cannot send the copy it parks, the approval
+    // recorded the reply and this record carries it. The handle still
+    // addresses the ticket; it names the copy that was parked, never a body
+    // to read at send time.
+    if (ledgerHoldsReply) {
+      return { kind: 'ledger', reply: ledgerReplyFrom(row.reply, draftExternalId) };
+    }
+    // And the mirror: a record that carries a reply, handed to an adapter
+    // that cannot send one. The two processes answer this from their own
+    // environments, so the relay and the console can disagree — and sending
+    // the parked copy would discard the text a person approved, in silence,
+    // while the ledger recorded that text as what went out. Nothing can
+    // deliver this record, so it escalates for a person to read.
+    if (row.reply !== null && row.reply !== undefined) {
+      throw new PayloadShapeError(
+        'this record carries the reply the ledger holds, and this adapter cannot send it '
+          + '(DEC-44): set the adapter\'s capability in the relay as the console has it, or '
+          + 'reconcile the record by hand',
+      );
+    }
+    return { kind: 'draft', draftExternalId };
   }
   // The ledger owns the ticket identity; a stale or missing field in the
   // stored payload cannot redirect the write.
@@ -300,19 +381,25 @@ export async function relayOne(
   // escalates instead of livelocking in pending.
   let dispatch: Dispatch;
   try {
-    dispatch = dispatchFor(row);
+    dispatch = dispatchFor(row, adapter.capabilities.supportsLedgerReply);
   } catch (error) {
     if (!(error instanceof PayloadShapeError)) throw error;
     await parkEscalated(pool, row, 'malformed', `malformed_payload: ${errorText(error)}`);
     return { idemKey, outcome: 'malformed_escalated' };
   }
 
+  // Three deliveries, chosen by what the record routes to. DEC-44 adds the
+  // middle one: on an adapter whose helpdesk cannot send the copy it parks,
+  // the approved reply travels on the record and this is what sends it.
   const deliver =
     dispatch.kind === 'draft'
       ? (): Promise<{ readonly externalId: string }> =>
           adapter.sendDraft(dispatch.draftExternalId, idemKey)
-      : (): Promise<{ readonly externalId: string }> =>
-          adapter.performAction(row.action_class, dispatch.payload, idemKey);
+      : dispatch.kind === 'ledger'
+        ? (): Promise<{ readonly externalId: string }> =>
+            adapter.sendLedgerReply(dispatch.reply, idemKey)
+        : (): Promise<{ readonly externalId: string }> =>
+            adapter.performAction(row.action_class, dispatch.payload, idemKey);
 
   let resolution: FailureResolution;
   let sendFailure: string | null = null;

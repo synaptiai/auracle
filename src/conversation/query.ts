@@ -345,6 +345,25 @@ export interface AnsweredTurn {
   /** The customer's message, or null with `absence` naming why. */
   readonly bodyText: string | null;
   readonly absence: MessageAbsence | null;
+  /**
+   * DEC-37: the reply an approval dispatched for this turn, or null when no
+   * approval reached it.
+   *
+   * Read beside the saved reply because the two answer different questions
+   * once a run has left the queue: this is what the customer was sent, and
+   * that is what a reviewer was working on.
+   */
+  readonly approvedReplyText: string | null;
+  /**
+   * DEC-44: the reply a reviewer saved for this turn, or null when nobody
+   * saved one.
+   *
+   * Read here rather than by a second statement, because this one already
+   * holds the turn row. It is the text the ledger would send on an adapter
+   * whose helpdesk cannot send its parked copy, so a surface that draws a
+   * case has to have it.
+   */
+  readonly savedReplyText: string | null;
 }
 
 /**
@@ -365,7 +384,8 @@ export async function turnAnsweredBy(
 ): Promise<AnsweredTurn | null> {
   if (!UUID.test(runId)) return null;
   const { rows } = await pool.query(
-    `SELECT t.conversation_id, t.turn_number, t.body_text
+    `SELECT t.conversation_id, t.turn_number, t.body_text, t.saved_reply_text,
+            t.approved_reply_text
        FROM run r
        JOIN turn t
          ON t.conversation_id = r.conversation_id
@@ -376,11 +396,17 @@ export async function turnAnsweredBy(
   const row = rows[0] as Record<string, unknown> | undefined;
   if (row === undefined) return null;
   const bodyText = (row['body_text'] as string | null) ?? null;
+  const saved = (row['saved_reply_text'] as string | null) ?? null;
+  const approved = (row['approved_reply_text'] as string | null) ?? null;
   return {
     conversationId: String(row['conversation_id']),
     turnNumber: Number(row['turn_number']),
     bodyText,
     absence: messageAbsenceFor(bodyText),
+    approvedReplyText: approved === null || approved.length === 0 ? null : approved,
+    // The same rule the reader in src/ledger/conversation.ts applies: an
+    // empty stored string reads as no save, never as a blank reply.
+    savedReplyText: saved === null || saved.length === 0 ? null : saved,
   };
 }
 

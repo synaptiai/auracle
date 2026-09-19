@@ -49,6 +49,7 @@ const CAPABILITIES: AdapterCapabilities = {
   supportsDraftState: true,
   supportsStructuredFields: true,
   supportsThreading: true,
+  supportsLedgerReply: false,
 };
 const DIM = 1536;
 const TICKET_TEXT = 'I cannot sign in to my account. How do I reset my password?';
