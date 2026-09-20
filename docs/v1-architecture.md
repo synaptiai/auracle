@@ -439,7 +439,9 @@ that identity. It also restores the failure this section removed.
 
 Today a person may edit the draft in the helpdesk before the relay sends it
 (DEC-40). DEC-44 and DEC-48 also let a person rewrite a reply the ledger
-holds. Once that ships, a rewritten reply reports no coverage.
+holds. A rewritten reply reports no coverage. The gate judged the draft, so
+every surface withholds the number. Each one says whose reply it was. The
+gate row keeps the verdict.
 
 The shape is one optional courtesy sentence, then the claims, then one optional
 courtesy sentence. The parser refuses anything else. A draft that cites nothing

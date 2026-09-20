@@ -1050,6 +1050,30 @@ describe('DEC-44: the relay sends the reply the ledger holds', () => {
     expect(await runState(idemKey)).toBe('escalated');
   });
 
+  // DEC-48: a reply a person wrote from scratch names no model and no prompt,
+  // and carries neither key. That is a whole provenance, not a partial one,
+  // and the reply reaches the customer with it.
+  it('sends a reply whose provenance names a person and no model', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedLedgerReply(ticket, 10n, 'awaiting_approval', {
+      ...LEDGER_REPLY,
+      bodyText: 'Call the service desk, and quote your account id.',
+      provenance: { generatedBy: 'person', generatedAt: '2026-09-20T00:00:00.000Z' },
+    });
+    const adapter = capableEgress(async () => ({ externalId: 'm-1' }));
+
+    const results = await relayPending(pool, adapter);
+
+    expect(results.map((r) => ({ idemKey: r.idemKey, outcome: r.outcome }))).toEqual([
+      { idemKey, outcome: 'sent' },
+    ]);
+    expect(adapter.ledgerSends).toHaveLength(1);
+    expect(adapter.ledgerSends[0]?.reply.provenance).toEqual({
+      generatedBy: 'person',
+      generatedAt: '2026-09-20T00:00:00.000Z',
+    });
+  });
+
   // Four shapes a reply can arrive in that no adapter can send, each refused
   // before the adapter is reached. The row is written by code that reads the
   // journal, so a shape it cannot read is a ledger one: escalating names it
@@ -1062,6 +1086,25 @@ describe('DEC-44: the relay sends the reply the ledger holds', () => {
       ['a provenance missing generatedAt', {
         ...LEDGER_REPLY,
         provenance: { ...LEDGER_REPLY.provenance, generatedAt: '' },
+      }],
+      // DEC-48: a provenance names the model and the prompt, or it names
+      // neither. Half of a model's provenance would reach a customer saying
+      // a model wrote text with no version to point at. The key-absent shapes
+      // are the ones JSON can carry: an undefined value is dropped.
+      ['a provenance naming a model and no prompt key', {
+        ...LEDGER_REPLY,
+        provenance: { ...LEDGER_REPLY.provenance, promptVer: undefined },
+      }],
+      ['a provenance naming a prompt and no model key', {
+        ...LEDGER_REPLY,
+        provenance: { ...LEDGER_REPLY.provenance, modelId: undefined },
+      }],
+      // And a reply with neither model key that does not name a person: no
+      // writer here produces one, and it must fail loudly rather than ship
+      // as an unattributed model reply (DEC-48).
+      ['a provenance naming no model and no person', {
+        ...LEDGER_REPLY,
+        provenance: { generatedBy: 'auracle', generatedAt: '2026-01-02T03:04:05Z' },
       }],
     ];
 

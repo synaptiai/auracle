@@ -255,15 +255,35 @@ function ledgerReplyFrom(value: unknown, draftExternalId: string): LedgerReply {
     }
     return held;
   };
+  const generatedBy = read('generatedBy');
+  const generatedAt = read('generatedAt');
+  // DEC-48: a reply a person rewrote from scratch names no model and no
+  // prompt, and carries neither key. A model's reply carries both. One without
+  // the other is a record nobody writes, and is refused rather than sent: a
+  // reply reported as half the model's would reach a customer that way.
+  const named = 'modelId' in trail || 'promptVer' in trail;
+  if (!named) {
+    // DEC-48: a reply with no model keys is a person's, and the one value
+    // this repository writes for one is `person`. A record naming anything
+    // else carries no model and no person, and sending it would attribute
+    // the reply to nobody in a shape that reads as a person's. The message
+    // names no value: it is a ledger the relay cannot explain.
+    if (generatedBy !== 'person') {
+      throw new PayloadShapeError(
+        'outbox reply provenance names no model and no person (DEC-33, DEC-48)',
+      );
+    }
+    return { draftExternalId, bodyText, disclosure, provenance: { generatedBy, generatedAt } };
+  }
   return {
     draftExternalId,
     bodyText,
     disclosure,
     provenance: {
-      generatedBy: read('generatedBy'),
+      generatedBy,
       modelId: read('modelId'),
       promptVer: read('promptVer'),
-      generatedAt: read('generatedAt'),
+      generatedAt,
     },
   };
 }

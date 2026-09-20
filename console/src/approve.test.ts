@@ -27,7 +27,9 @@ const SHOWN = 'a'.repeat(64);
 
 import type { DraftReadBack } from 'auracle/ledger-read';
 
-import { approvalFor, approveFromConsole, closeFor, saveFor, saveFromConsole } from './approve.js';
+import {
+  approvalFor, approveFromConsole, closeFor, rewriteFor, saveFor, saveFromConsole, snoozeFor,
+} from './approve.js';
 import { ReadBackFailed } from './read-back.js';
 
 describe('approving from the console', () => {
@@ -228,6 +230,74 @@ describe('closing from the console', () => {
 
     await expect(close('not-a-run', REVIEWER, 'Duplicate.', SHOWN)).rejects.toThrow(/run id/);
     expect(closeRun).not.toHaveBeenCalled();
+  });
+});
+
+// DEC-48: the rewrite and the snooze, each with the same glue. Without these
+// a dropped `ledgerReply` makes every console rewrite refuse `not_ledger_reply`
+// and every snooze refuse for the draft path, with the whole suite green: the
+// route is proved against a fake and the core in its own suite, so nothing
+// else fails when the declaration stops travelling.
+describe('rewriting from the console', () => {
+  it('delegates to rewriteReply with the text, the reviewer and the digest', async () => {
+    const rewriteReply = vi.fn().mockResolvedValue({ outcome: 'rewritten' });
+    const pool = { query: vi.fn() };
+
+    const rewrite = rewriteFor({ pool: pool as never, rewriteReply, ledgerReply: true });
+    const outcome = await rewrite(RUN_B, REVIEWER, 'Call the service desk.', SHOWN);
+
+    expect(outcome).toBe('rewritten');
+    expect(rewriteReply).toHaveBeenCalledWith(pool, RUN_B, 'Call the service desk.', {
+      rewrittenBy: REVIEWER,
+      rewrittenBySource: 'roster',
+      ledgerReply: true,
+      shown: SHOWN,
+    });
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('carries the draft path through, so the write refuses rather than records', async () => {
+    const rewriteReply = vi.fn().mockResolvedValue({ outcome: 'not_ledger_reply' });
+    const rewrite = rewriteFor({ pool: {} as never, rewriteReply, ledgerReply: false });
+
+    expect(await rewrite(RUN_C, REVIEWER, 'Call the service desk.', SHOWN)).toBe('not_ledger_reply');
+    expect((rewriteReply.mock.calls[0]![3] as Record<string, unknown>)['ledgerReply']).toBe(false);
+  });
+
+  it('refuses a run id that is not a run id, and writes nothing', async () => {
+    const rewriteReply = vi.fn();
+    const rewrite = rewriteFor({ pool: {} as never, rewriteReply, ledgerReply: true });
+
+    await expect(rewrite('not-a-run', REVIEWER, 'Call the service desk.', SHOWN))
+      .rejects.toThrow(/run id/);
+    expect(rewriteReply).not.toHaveBeenCalled();
+  });
+});
+
+describe('putting a case aside from the console', () => {
+  it('delegates to snoozeRun with the period, the reviewer and the digest', async () => {
+    const snoozeRun = vi.fn().mockResolvedValue({ outcome: 'snoozed' });
+    const pool = { query: vi.fn() };
+
+    const snooze = snoozeFor({ pool: pool as never, snoozeRun, ledgerReply: true });
+    expect(await snooze(RUN_B, REVIEWER, 90 * 60_000, SHOWN)).toBe('snoozed');
+
+    expect(snoozeRun).toHaveBeenCalledWith(pool, RUN_B, {
+      periodMs: 90 * 60_000,
+      snoozedBy: REVIEWER,
+      snoozedBySource: 'roster',
+      ledgerReply: true,
+      shown: SHOWN,
+    });
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('refuses a run id that is not a run id, and puts nothing aside', async () => {
+    const snoozeRun = vi.fn();
+    const snooze = snoozeFor({ pool: {} as never, snoozeRun, ledgerReply: true });
+
+    await expect(snooze('not-a-run', REVIEWER, 60_000, SHOWN)).rejects.toThrow(/run id/);
+    expect(snoozeRun).not.toHaveBeenCalled();
   });
 });
 

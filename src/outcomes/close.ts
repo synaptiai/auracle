@@ -34,6 +34,7 @@ import { releaseHoldIn } from '../holds/hold.js';
 import { readSavedReply } from '../ledger/conversation.js';
 import { fencedTransition } from '../ledger/insert.js';
 import { journalStep } from '../ledger/journal-write.js';
+import { isStorableText } from '../ledger/storable-text.js';
 
 /**
  * The longest reason a close records.
@@ -45,23 +46,6 @@ import { journalStep } from '../ledger/journal-write.js';
  * anybody wrote.
  */
 export const MAX_CLOSE_REASON_CHARS = 1000;
-
-/**
- * Whether the ledger can store this text at all.
- *
- * Postgres `text` and `jsonb` both refuse a NUL, and a lone surrogate is not a
- * character any encoder can write. Either one raises inside the journal
- * insert, and the console then answers a fault about a close that wrote
- * nothing — when what arrived was a request this ledger declines. A paired
- * surrogate is one code point above the range, so it passes.
- */
-function isStorableText(value: string): boolean {
-  for (const character of value) {
-    const point = character.codePointAt(0)!;
-    if (point === 0 || (point >= 0xd800 && point <= 0xdfff)) return false;
-  }
-  return true;
-}
 
 /** What one close did, or why it did nothing. */
 export type CloseOutcome =

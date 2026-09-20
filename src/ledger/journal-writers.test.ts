@@ -149,6 +149,9 @@ describe('the step_journal write path', () => {
     // and must pass that transaction's client. The coordinator's steps hold no
     // transaction of their own and pass the pool.
     const expected: Record<string, string> = {
+      // DEC-48: the reply a person wrote from scratch. It journals inside its
+      // own transaction, under the run row lock, so it passes that client.
+      'src/approval/rewrite.ts': 'client',
       'src/approval/undo.ts': 'client',
       'src/coordinator/consumer.ts': 'client',
       'src/outcomes/close.ts': 'client',

@@ -209,6 +209,22 @@ describe('DEC-44: the console saves the reply a reviewer edited', () => {
     expect(await saveReply(pool, runId, 'a reply')).toEqual({ outcome: 'no_turn' });
   });
 
+  // DEC-48: the same column the rewrite writes, and the same hole until the
+  // class was swept. A NUL makes Postgres raise; an unpaired surrogate is
+  // silently replaced by the driver, so the customer would receive other text.
+  it('refuses a reply holding a character the ledger cannot store', async () => {
+    const { runId, conversationId } = await parkOnTurnOne();
+
+    for (const text of ['An edit.\u0000And more.', 'An edit \ud800 and more.']) {
+      expect(await saveReply(pool, runId, text), JSON.stringify(text))
+        .toEqual({ outcome: 'unprintable_reply' });
+    }
+    expect(await saved(conversationId)).toBeNull();
+    // A paired surrogate is one code point, and passes.
+    expect(await saveReply(pool, runId, 'An edit \ud83d\ude00 and more.'))
+      .toEqual({ outcome: 'saved' });
+  });
+
   afterAll(async () => {
     await pool.end();
   });

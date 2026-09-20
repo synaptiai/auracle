@@ -20,6 +20,7 @@ import type { Pool } from 'pg';
 import { errorMessage } from '../errors.js';
 import { readSavedReply, recordSavedReply } from '../ledger/conversation.js';
 import { replyDigest } from './shown.js';
+import { isStorableText } from '../ledger/storable-text.js';
 
 /** What one save did, or why it did nothing. */
 export type SaveOutcome =
@@ -34,6 +35,12 @@ export type SaveOutcome =
   | { readonly outcome: 'shown_changed' }
   /** A reply with nothing in it is not a reply (DEC-12). */
   | { readonly outcome: 'empty_reply' }
+  /**
+   * The text holds a character no ledger stores: a NUL, or an unpaired
+   * surrogate (DEC-48). It carried this hole from DEC-44 until the rewrite
+   * was written and the class was swept.
+   */
+  | { readonly outcome: 'unprintable_reply' }
   /**
    * The run serves no conversation turn, so there is no turn row to save on.
    * A V1-era run and a park journalled before DEC-38 are the two shapes that
@@ -70,6 +77,9 @@ export async function saveReply(
   const bodyText = text.trim();
   if (bodyText.length === 0) {
     return { outcome: 'empty_reply' };
+  }
+  if (!isStorableText(bodyText)) {
+    return { outcome: 'unprintable_reply' };
   }
 
   const client = await pool.connect();

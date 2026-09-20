@@ -487,6 +487,21 @@ export interface RunJournal {
   /** The coverage gate, or null when no gate row recorded a verdict. */
   readonly coverage: CoverageReading | null;
   /**
+   * DEC-48: the reply a person wrote from scratch, or null when the reply
+   * this run would send is the one the model drafted.
+   *
+   * It sits beside `coverage` because the two answer together: the gate
+   * judged the draft, so a run whose reply a person wrote has a coverage
+   * verdict that belongs to a reply the customer never receives. A reader
+   * that reports the number as this reply's verdict reports the model's work
+   * as a person's.
+   *
+   * Read from the turn, so every run that serves the turn reports the same
+   * thing — a retry after a crash and a send-back both park a second run on
+   * one turn, and that run sends the person's text.
+   */
+  readonly rewrite: RewriteRecord | null;
+  /**
    * The retrieved ids in recorded order, or null when the run journalled no
    * completed retrieval.
    *
@@ -519,21 +534,32 @@ export interface RunJournal {
  * that is not an object must cost that row its detail and nothing more.
  */
 const SELECT_STEPS = `
-  SELECT step_id,
-         status,
-         result IS NOT NULL                                     AS result_recorded,
+  SELECT step_journal.step_id                                    AS step_id,
+         step_journal.status                                     AS status,
+         step_journal.result IS NOT NULL                         AS result_recorded,
          -- The guard bands/query.ts uses, applied to the whole document
          -- rather than to one key. Nothing here casts, so the statement
          -- cannot be failed by one bad row; this states at the statement
          -- which rows carry readable detail, and the isObject guard below is what
          -- decides. Two tests of one rule, and the redundancy is the point:
          -- the day a key IS read in SQL, the guard is already in place.
-         CASE WHEN jsonb_typeof(result) = 'object' THEN result END AS result_object,
-         prompt_ver,
-         model_ver,
-         cost_micros
+         CASE WHEN jsonb_typeof(step_journal.result) = 'object'
+              THEN step_journal.result END                      AS result_object,
+         step_journal.prompt_ver,
+         step_journal.model_ver,
+         step_journal.cost_micros,
+         -- DEC-48: the author of the reply this run would send. Read from the
+         -- turn rather than from this run's journal, because a turn is served
+         -- by every run that answers it: a sibling run's send is the person's
+         -- text too, and its page must not report the draft's verdict for it.
+         -- The turn table is unique on the pair, so this joins without
+         -- multiplying the step rows.
+         saved.saved_reply_provenance AS reply_provenance
     FROM step_journal
-   WHERE run_id = $1
+    LEFT JOIN run r ON r.run_id = step_journal.run_id
+    LEFT JOIN turn saved
+      ON saved.conversation_id = r.conversation_id AND saved.turn_number = r.turn_number
+   WHERE step_journal.run_id = $1
    ORDER BY array_position($2::text[], step_id) NULLS LAST, step_id`;
 
 /**
@@ -862,6 +888,62 @@ function toCloseRecord(
   };
 }
 
+/**
+ * What the rewrite step recorded (DEC-48).
+ *
+ * Written by `src/approval/rewrite.ts` and not by a coordinator step, so it
+ * is outside `STEP_ORDER` like the close row.
+ *
+ * The row's existence is the signal and its fields are read best-effort, and
+ * that is the opposite of what `toCloseRecord` does with a row it cannot
+ * read. The directions differ because the questions do. A close row nobody
+ * can read leaves a reader with no reason to show, and silence is the honest
+ * answer. A rewrite row nobody can read still says the reply is a person's,
+ * because the text on the turn is theirs whatever the row holds — and the
+ * safe answer there is to stop reporting the draft's verdict for it.
+ */
+export interface RewriteRecord {
+  /**
+   * Who wrote it, or null.
+   *
+   * Null when the row named nobody, and null when this run holds no rewrite
+   * row at all: a sibling run of the same turn sends the same reply, and the
+   * record of who wrote it belongs to the run that did.
+   */
+  readonly reviewer: string | null;
+  /** DEC-45: what the name proves, when the row recorded it. */
+  readonly reviewerSource: string | null;
+  /**
+   * The digest of the reply this rewrite replaced.
+   *
+   * It is what lets a reader tell whether the draft it is showing is the one
+   * this rewrite replaced, rather than one a later write put there.
+   */
+  readonly cleared: string | null;
+  /**
+   * DEC-33: when the person wrote it.
+   *
+   * It is what the reply's provenance reports as `generatedAt`, because the
+   * moment the reply was written is the fact the trailer states — the moment
+   * it was approved is a later one, and a trailer reporting that would date
+   * the person's words to somebody else's act.
+   */
+  readonly at: string | null;
+}
+
+function toRewriteRecord(
+  result: Record<string, unknown> | null,
+  malformed: boolean,
+): RewriteRecord {
+  if (malformed) return { reviewer: null, reviewerSource: null, cleared: null, at: null };
+  return {
+    reviewer: stringAt(result, 'reviewer'),
+    reviewerSource: stringAt(result, 'reviewerSource'),
+    cleared: stringAt(result, 'cleared'),
+    at: stringAt(result, 'at'),
+  };
+}
+
 function toParkRecord(result: Record<string, unknown> | null): ParkRecord {
   return {
     actionClass: stringAt(result, 'actionClass'),
@@ -1059,6 +1141,17 @@ export async function readRunJournal(
           claimVerdicts: verdictsOf(gated),
         };
 
+  // DEC-48: the reply a person wrote in place of the draft. What decides is
+  // the turn's provenance, not this run's row: the reply a sibling run sends
+  // is the same text, so its page reports the same thing about it. The record
+  // — who wrote it and what it replaced — comes from this run's own row when
+  // it has one, and reads as all-null when the rewrite was another run's.
+  const provenance = rows[0]!['reply_provenance'];
+  const wroteReply = provenance !== null && provenance !== undefined;
+  const rewrite: RewriteRecord | null = wroteReply
+    ? toRewriteRecord(doneResult(steps, byStep, 'rewrite'), byStep.get('rewrite') === null)
+    : null;
+
   // A retrieval that finished. A failed one carries a shape and no ids, and
   // reading it would report a fault as a search that returned nothing.
   const retrieved = doneResult(steps, byStep, 'retrieve');
@@ -1113,5 +1206,5 @@ export async function readRunJournal(
           });
   }
 
-  return { runId, steps, agreement, coverage, documents, documentsMalformed };
+  return { runId, steps, agreement, coverage, rewrite, documents, documentsMalformed };
 }

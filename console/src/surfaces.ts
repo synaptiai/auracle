@@ -28,7 +28,7 @@ import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
 import type { PolicyReason } from 'auracle/policy';
 import { MAX_CLOSE_REASON_CHARS, MAX_SNOOZE_MS, MIN_SNOOZE_MS, replyDigest } from 'auracle/ledger-read';
 import type {
-  CloseOutcome, MessageAbsence, OutboxStatus, ReplyAbsence, SnoozeOutcome,
+  CloseOutcome, MessageAbsence, OutboxStatus, ReplyAbsence, RewriteOutcome, SnoozeOutcome,
 } from 'auracle/ledger-read';
 import type { ConsoleApproveOutcome, ConsoleSaveOutcome } from './approve.js';
 import { isFault } from './confirm.js';
@@ -65,6 +65,14 @@ export interface RunRow {
    * that replacement erase the value this row was listed with.
    */
   readonly gateCoverage: number | null;
+  /**
+   * DEC-48: whether a person wrote the reply this run holds.
+   *
+   * `gateCoverage` is null on such a run, because the gate judged the draft.
+   * Without this flag a row would report that as a run whose gate read
+   * nothing, which is a different fact and the one a reader would act on.
+   */
+  readonly replyRewritten: boolean;
   /** When the ledger opened the run, so a surface ordered by time shows it. */
   readonly createdAt: Date | null;
   /**
@@ -605,6 +613,24 @@ export interface EvidenceView {
    * something it did not.
    */
   readonly documentsMalformed: boolean;
+  /**
+   * DEC-48: whether a person wrote the reply this case holds, in place of
+   * the draft.
+   *
+   * The block draws the draft beside it when this is true, and the sentences
+   * carry no verdicts: the gate judged the draft, and the reply that sends is
+   * not the draft.
+   */
+  readonly replyRewritten: boolean;
+  /**
+   * DEC-48: whether the draft this view carries is the reply the rewrite
+   * replaced.
+   *
+   * False when a save landed between the park and the rewrite: the reply the
+   * person replaced was their own earlier text, and the block says what it
+   * draws rather than claiming to be what the rewrite displaced.
+   */
+  readonly draftReplaced: boolean;
 }
 
 /** Everything the run detail surface draws beyond the run row itself. */
@@ -814,9 +840,13 @@ function evidenceBlock(
   return [
     requestBlock(request),
     '<div class="card"><header>',
-    `<span class="lbl">${editable
-      ? 'Your reply · editable here, sent from here'
-      : sent ? 'The reply the approval sent' : 'The reply, as the system drafted it'}</span>`,
+    `<span class="lbl">${view.replyRewritten
+      ? (editable
+        ? 'The reply you wrote · editable here, sent from here'
+        : 'The reply a person wrote')
+      : editable
+        ? 'Your reply · editable here, sent from here'
+        : sent ? 'The reply the approval sent' : 'The reply, as the system drafted it'}</span>`,
     // Named precisely. On the draft path the relay sends the helpdesk copy,
     // which a person may have edited since (DEC-11), so this is not "as it
     // will be sent"; where the ledger holds the reply, it is. And on that
@@ -838,7 +868,15 @@ function evidenceBlock(
           '<div class="editcols">',
           editorForm(edit),
           '<div class="preview">',
-          '<span class="lbl">The sentences the system drafted</span>',
+          `<span class="lbl">${view.replyRewritten
+            ? (view.draftReplaced ? 'The draft this replaced' : 'The draft this run wrote')
+            : 'The sentences the system drafted'}</span>`,
+          // DEC-48: the draft stays readable, with the citations its reviewer
+          // kept, under a line that says which of the two sends.
+          view.replyRewritten
+            ? '<p class="discl">The gate judged this draft, and these are its citations.'
+              + ' The reply a person wrote is the one that sends.</p>'
+            : '',
           drafted,
           callouts(claims, sources, edit),
           summary,
@@ -1233,6 +1271,9 @@ export function renderRunDetail(run: RunView): string {
       agreementDetail: run.agreementDetail,
       coverageBlock: run.coverageBlock,
       coverageReview: run.coverageReview,
+      // Null where no person rewrote it: the card's own absent line is the
+      // bare `not recorded`, and the case page carries the longer note.
+      coverageAbsent: run.replyRewritten ? REPLACED_DRAFT_ABSENT : null,
     }),
     gatesNotReadSays(run.policyReason),
     '</div></div>',
@@ -1474,6 +1515,18 @@ function coverageSays(coverage: number | null, gateReason: string | null): strin
     ? ` · coverage ${escapeHtml(coverage.toFixed(2))}`
     : ` · coverage ${escapeHtml(coverage.toFixed(2))} (not read)`;
 }
+
+/**
+ * What a gate card says when a person wrote the reply (DEC-48).
+ *
+ * The gate judged the draft, so there is no verdict to draw for this reply.
+ * A card that said the journal holds none would be false about a ledger that
+ * holds one, and a card that printed the number would report the model's work
+ * as the person's. Each surface keeps its own absent wording for a run whose
+ * gate simply did not run; this sentence replaces that one, and only here.
+ */
+const REPLACED_DRAFT_ABSENT =
+  'a person wrote this reply, so the verdict belongs to the draft it replaced';
 
 /** The runs a chosen gate rule leaves, or all of them when none is chosen. */
 export function narrowToRule(
@@ -1759,7 +1812,13 @@ export function renderApprovals(
     // groundedness when it was never judged on it — and it says so on most
     // of the queue, because most of the queue is customer replies.
     `${agreementSays(run.agreement, run.gateReason)}`,
-    `${coverageSays(run.gateCoverage, run.gateReason)}`,
+    // DEC-48: a rewritten reply has no coverage of its own, and the row says
+    // which of the two absences this is. The gate's verdict on the draft is
+    // not a fact about the reply, and a blank would read as a run that never
+    // gated.
+    `${run.replyRewritten
+      ? ' · a person wrote this reply'
+      : coverageSays(run.gateCoverage, run.gateReason)}`,
     '</div>',
     '</a>',
     pickable ? '</div>' : '',
@@ -2188,6 +2247,19 @@ export interface CaseOptions {
    */
   readonly snoozed: string;
   /**
+   * The outcome of the rewrite just posted, drawn above the case (DEC-48).
+   *
+   * Its own field for the reason `closed` and `snoozed` have one: nothing was
+   * sent, nothing was closed, nothing was put aside and nothing was rewritten
+   * are four answers, and one name — `shown_changed` — means all four.
+   */
+  readonly rewritten: string;
+  /**
+   * Whether the page should draw the rewrite field rather than its link
+   * (DEC-48). Read from the query string, the way a callout's `writing` is.
+   */
+  readonly rewriting: boolean;
+  /**
    * Why an edit did not apply, off the query string. A code this console
    * knows, looked up rather than printed.
    */
@@ -2327,6 +2399,10 @@ export type CopyRead =
 const EDIT_SAYS = {
   saved: 'Saved. The approval sends this text.',
   empty_reply: 'That reply had nothing in it, so nothing was saved.',
+  // DEC-48: a character no ledger stores. Refused by name rather than left to
+  // the driver, which raises on a NUL and silently replaces a lone surrogate.
+  unprintable_reply: 'That reply holds a character the ledger cannot store, so nothing was saved.'
+    + ' Paste it again without the invisible character.',
   shown_changed: 'The reply changed since this page was drawn, so nothing was saved.'
     + ' Open the case again to read it as it is now.',
   no_turn: 'This run serves no conversation turn, so there is nowhere to save a reply.',
@@ -2559,6 +2635,7 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       approved: view.approved,
       savedReply: view.request?.savedReplyText != null,
       ledgerReply: options.ledgerReply,
+      replyRewritten: view.replyRewritten,
     }),
     sendHoldBar(options.sendHold, view.runId, options),
     options.outcome === 'copy_changed'
@@ -2575,18 +2652,28 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       approved: view.approved,
       savedReply: view.request?.savedReplyText != null,
       ledgerReply: options.ledgerReply,
+      replyRewritten: view.replyRewritten,
     }, options.why),
     options.closed === '' ? '' : renderCloseOutcome(options.closed, {
       state: view.state,
       approved: view.approved,
       savedReply: view.request?.savedReplyText != null,
       ledgerReply: options.ledgerReply,
+      replyRewritten: view.replyRewritten,
     }),
     options.snoozed === '' ? '' : renderSnoozeOutcome(options.snoozed, {
       state: view.state,
       approved: view.approved,
       savedReply: view.request?.savedReplyText != null,
       ledgerReply: options.ledgerReply,
+      replyRewritten: view.replyRewritten,
+    }),
+    options.rewritten === '' ? '' : renderRewriteOutcome(options.rewritten, {
+      state: view.state,
+      approved: view.approved,
+      savedReply: view.request?.savedReplyText != null,
+      ledgerReply: options.ledgerReply,
+      replyRewritten: view.replyRewritten,
     }),
     '<div class="case">',
     '<div class="casemain">',
@@ -2618,7 +2705,9 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       coverageBlock: view.coverageBlock,
       coverageReview: view.coverageReview,
       agreementAbsent: 'the journal holds no agreement for this run',
-      coverageAbsent: 'the journal holds no coverage for this run',
+      coverageAbsent: view.replyRewritten
+        ? REPLACED_DRAFT_ABSENT
+        : 'the journal holds no coverage for this run',
       stacked: true,
     }),
     gatesNotReadSays(rule),
@@ -3138,6 +3227,132 @@ export function renderSnoozeOutcome(outcome: string, run: OutcomeRun | null): st
   ].join('');
 }
 
+/**
+ * What a rewrite answered, in the words the case shows (DEC-48).
+ *
+ * The one that matters is `rewritten`: a reviewer who wrote the reply has to
+ * see that it is theirs, that it sends, and what became of the draft.
+ */
+const REWRITE_SAYS = {
+  rewritten: 'The reply is yours. It is the one that sends, and the draft stays here'
+    + ' as what it replaced.',
+  // DEC-46: the reply moved under the reviewer.
+  shown_changed: 'The reply changed since this page was drawn, so nothing was rewritten.'
+    + ' Open the case again to read it as it is now.',
+  not_awaiting_approval: 'That run is not waiting for approval, so nothing was rewritten.',
+  unknown_run: 'That run is not in the ledger.',
+  empty_reply: 'A reply with nothing in it is not a reply, so nothing was rewritten.',
+  unprintable_reply: 'That reply holds a character the ledger cannot store, so nothing was rewritten.'
+    + ' Paste it again without the invisible character.',
+  no_turn: 'That run holds no conversation turn to write a reply on, so nothing was rewritten.',
+  // DEC-34: the park holds an action rather than a reply. The same sentence
+  // the edit route refuses this shape with, word for word (criterion 10).
+  no_reply: 'This case holds no reply to edit: it parked an action rather than a reply,'
+    + ' so nothing here would be sent.',
+  // DEC-44: this adapter sends the copy it parks, so a reply written here
+  // would reach nobody.
+  not_ledger_reply: 'This case sends the copy the helpdesk holds, not a reply written here,'
+    + ' so nothing was rewritten.',
+} as const satisfies Record<RewriteOutcome['outcome'], string>;
+
+/** What a rewrite outcome this page cannot vouch for is answered with. */
+const UNKNOWN_REWRITE = 'That is not an answer this console knows.';
+
+/**
+ * Whether a rewrite outcome can be the ledger's answer about `run`.
+ *
+ * A rewrite moves no state: the case is where it was, and the reply under it
+ * is a person's. So `rewritten` is checked against the state the page read,
+ * and so is every refusal, which is what tells a stale answer from a true one.
+ */
+function rewriteOutcomeFits(outcome: string, run: OutcomeRun | null): boolean {
+  switch (outcome) {
+    case 'not_awaiting_approval':
+      return run !== null && run.state !== 'awaiting_approval';
+    case 'unknown_run':
+      return run === null;
+    // The two claims that depend on which path sends. `rewritten` says the
+    // reply on screen is the one that sends, which holds only where a person
+    // wrote it and this adapter sends what the ledger holds; and the refusal
+    // says the helpdesk copy sends instead, which holds only on the draft
+    // path. The save's own rule reads the same clause for the same reason.
+    case 'rewritten':
+      return run !== null && run.state === 'awaiting_approval'
+        && run.ledgerReply && run.replyRewritten;
+    case 'not_ledger_reply':
+      return run !== null && run.state === 'awaiting_approval' && !run.ledgerReply;
+    case 'shown_changed':
+    case 'empty_reply':
+    case 'unprintable_reply':
+    case 'no_turn':
+    case 'no_reply':
+      return run !== null && run.state === 'awaiting_approval';
+    default:
+      return false;
+  }
+}
+
+/**
+ * What the ledger said about the rewrite just posted, or that it said nothing
+ * this page can vouch for.
+ */
+export function renderRewriteOutcome(outcome: string, run: OutcomeRun | null): string {
+  const known = Object.hasOwn(REWRITE_SAYS, outcome) && rewriteOutcomeFits(outcome, run);
+  const said = known ? REWRITE_SAYS[outcome as keyof typeof REWRITE_SAYS] : UNKNOWN_REWRITE;
+  return [
+    '<div class="wrap" style="padding-bottom:0">',
+    known
+      ? `<p class="outcome${outcome === 'rewritten' ? ' ok' : ' refused'}" data-rewrite="${escapeHtml(outcome)}">`
+      : '<p class="outcome">',
+    escapeHtml(said),
+    '</p></div>',
+  ].join('');
+}
+
+/**
+ * The rewrite, beside the approval (DEC-48).
+ *
+ * A person's own reply in place of the draft. What follows from that is not a
+ * state: the run stays where it is, and the ledger records who wrote the
+ * reply, so the send carries a provenance that names a person and no model
+ * and no prompt, and no surface reports the gate's verdict on the draft as
+ * this reply's.
+ *
+ * Offered under the condition the editor is drawn under (DEC-44): only where
+ * this adapter's ledger holds the reply. On the draft path the send is the
+ * copy in the helpdesk, and a reply written here would reach nobody.
+ *
+ * Behind a link rather than always open. It is a textarea, and a reviewer who
+ * came to approve should not have to scroll past one.
+ */
+function rewriteBar(view: CaseView, options: CaseOptions): string {
+  const offered = view.state === 'awaiting_approval'
+    && options.ledgerReply
+    && view.draftExternalId !== null
+    && view.request !== null;
+  if (!offered) return '';
+  return [
+    '<div class="rewritebar">',
+    '<p class="discl">Rewriting replaces the draft with your own words. The customer'
+      + ' receives them, and the citations the draft used stay on this page.</p>',
+    options.rewriting
+      ? [
+        `<form method="post" action="/rewrite${escapeHtml(filtersQuery(options.rule, options.product))}">`,
+        `<input type="hidden" name="runId" value="${escapeHtml(view.runId)}">`,
+        `<input type="hidden" name="shown" value="${
+          escapeHtml(replyDigest(replyTextOf(view, options.ledgerReply) ?? ''))}">`,
+        '<label class="lbl" for="rewrite">Your reply, in your words</label>',
+        '<textarea id="rewrite" name="text" rows="8" required></textarea>',
+        '<button class="btn" type="submit">Rewrite from scratch</button>',
+        '</form>',
+      ].join('')
+      : `<a class="btn" href="${
+        escapeHtml(withQuery(caseHref(view.runId, options.rule, options.product), 'rewrite', '1'))
+      }">Rewrite from scratch →</a>`,
+    '</div>',
+  ].join('');
+}
+
 /** What a take answered, in the words the case shows. */
 const TAKE_SAYS = {
   taken: 'You hold this case now.',
@@ -3167,6 +3382,7 @@ function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
   // needs nothing from the park but the text the page drew.
   const close = view.state === 'awaiting_approval' ? closeForm(view, options) : '';
   const snooze = view.state === 'awaiting_approval' ? snoozeForm(view, options) : '';
+  const rewrite = rewriteBar(view, options);
   // A snoozed case says when it comes back. Without that a reviewer reading
   // the case cannot tell it from one nobody has picked up.
   const aside = view.state === 'snoozed' && view.snoozedUntil !== null
@@ -3188,7 +3404,7 @@ function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
         replyDigest(replyTextOf(view, options.ledgerReply) ?? ''),
       )
         + (act.kind === 'reply' ? `<p class="readback">${escapeHtml(readBackSays(options.readBack, options.ledgerReply))}</p>` : '');
-  return `<div class="actionbar">${approval}${close}${snooze}</div>`;
+  return `<div class="actionbar">${approval}${close}${snooze}${rewrite}</div>`;
 }
 
 /**
@@ -4047,6 +4263,13 @@ const OUTCOMES = {
     + ' A reply parked before this deploy carries none, and its parked copy does.'
     + ' Set FREESCOUT_INTERNAL_NOTE=false for the console, the relay and the consumer,'
     + ' and that copy is what sends.',
+  // DEC-48: a reply a person wrote, whose author the ledger cannot state.
+  // Only a ledger written by something else reaches it, and the remedy the
+  // missing-disclosure sentence below gives an operator does not apply: the
+  // cause is the record of who wrote the reply, not the disclosure.
+  rewrite_incomplete: 'The ledger holds this reply without the record of who wrote it,'
+    + ' so nothing was sent. The run journal names the rewrite; the turn row should'
+    + ' carry its provenance beside the text.',
   // DEC-30: a fault a retry can clear. The page names both classes, because
   // the read that failed cannot say which one it was: the fault itself is in
   // the log line the sentence points at.
@@ -4087,6 +4310,17 @@ export interface OutcomeRun {
    * save read as an answer this console does not know.
    */
   readonly ledgerReply: boolean;
+  /**
+   * DEC-48: whether the reply this page drew is one a person wrote.
+   *
+   * Read by `rewritten`, whose sentence claims the reply on screen is the
+   * one that sends. A link that names the outcome on a case nobody rewrote
+   * would otherwise draw that claim about the model's draft.
+   *
+   * Required, for the reason above: a caller that omits it would have every
+   * rewrite read as an answer this console does not know.
+   */
+  readonly replyRewritten: boolean;
 }
 
 /**

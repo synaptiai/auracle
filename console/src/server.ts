@@ -43,6 +43,7 @@ import {
   renderOutcome,
   renderRuns,
   renderCloseOutcome,
+  renderRewriteOutcome,
   renderSnoozeOutcome,
   renderUndoResult,
   replyTextOf,
@@ -64,7 +65,8 @@ import { logLine } from 'auracle/format';
 import type { ReviewerFor } from './reviewer.js';
 import { copyHoldsText, replyDigest } from 'auracle/ledger-read';
 import type {
-  ApprovalHold, CloseOutcome, HandoverOutcome, Hold, ReleaseOutcome, SnoozeOutcome, TakeOutcome,
+  ApprovalHold, CloseOutcome, HandoverOutcome, Hold, ReleaseOutcome, RewriteOutcome,
+  SnoozeOutcome, TakeOutcome,
   UndoOutcome,
 } from 'auracle/ledger-read';
 
@@ -164,6 +166,18 @@ export interface ConsoleDeps {
     periodMs: number,
     shown: string,
   ) => Promise<SnoozeOutcome['outcome']>;
+  /**
+   * DEC-48: the reply a reviewer writes from scratch, in place of the draft.
+   *
+   * The console's sixth write. The guard, the turn it writes on and the
+   * journal row are the core's; this hands it the field and draws the answer.
+   */
+  readonly rewrite: (
+    runId: string,
+    reviewer: string,
+    text: string,
+    shown: string,
+  ) => Promise<RewriteOutcome['outcome']>;
   /**
    * The copy the helpdesk holds for one parked draft (DEC-44), read when an
    * approval refused because a person edited it. Null when there is nothing
@@ -691,7 +705,10 @@ async function outcomeRuns(
         state: run.state,
         approved: run.approved,
         savedReply: run.request?.savedReplyText != null,
+        // The batch draws no outcome banner, and this read decides whether a
+        // case may be confirmed: no rewrite claim rests on it.
         ledgerReply: false,
+        replyRewritten: run.replyRewritten,
       });
     } catch (error) {
       // Named as unread rather than left out: an outcome drawn against no run
@@ -1166,6 +1183,12 @@ async function route(
     const closed = url.searchParams.get('closed') ?? '';
     // DEC-48: what the snooze route answered, drawn beside the case.
     const snoozed = url.searchParams.get('snoozed') ?? '';
+    // DEC-48: what the rewrite route answered, drawn beside the case. Read
+    // here for the reason the close's is: the branch below answers for a run
+    // this ledger does not hold.
+    const rewritten = url.searchParams.get('rewritten') ?? '';
+    // Whether the page should draw the rewrite field rather than its link.
+    const rewriting = url.searchParams.get('rewrite') === '1';
     const { rule, product } = queueFilters(url);
     if (runId === null || !isRunId(runId)) {
       send(res, 404, page('Case', nothingFound(), shell(NOT_A_SURFACE)));
@@ -1200,6 +1223,7 @@ async function route(
         (outcome === '' ? '' : renderOutcome(outcome, null))
           + (closed === '' ? '' : renderCloseOutcome(closed, null))
           + (snoozed === '' ? '' : renderSnoozeOutcome(snoozed, null))
+          + (rewritten === '' ? '' : renderRewriteOutcome(rewritten, null))
           + nothingFound(),
         shell(NOT_A_SURFACE),
       ));
@@ -1287,6 +1311,7 @@ async function route(
       renderCase({ ...run, customer }, {
         outcome, edit, why, closed, snoozed, rule, product, readBack: options.readBack, hold,
         taken, handoverTo, ledgerReply: options.ledgerReply, writing, copy, sendHold,
+        rewritten, rewriting,
       }),
       { ...shell(`/case/${runId}`), back: caseHref(runId, rule, product) },
     ));
@@ -1488,6 +1513,14 @@ async function route(
   // has: nothing is sent, and the case waits.
   if (req.method === 'POST' && path === '/snooze') {
     await snoozeRoute(req, res, deps, reviewer, url, theme);
+    return;
+  }
+
+  // DEC-48: the reply a reviewer writes from scratch. Its own route, as
+  // every outcome has: the case stays where it is, and the reply under it
+  // becomes a person's.
+  if (req.method === 'POST' && path === '/rewrite') {
+    await rewriteRoute(req, res, deps, reviewer, url, theme);
     return;
   }
 
@@ -2339,6 +2372,138 @@ async function snoozeRoute(
   res.writeHead(303, {
     ...SAFETY_HEADERS,
     location: `/case/${encodeURIComponent(runId)}?snoozed=${encodeURIComponent(outcome)}${kept}`,
+  });
+  res.end();
+}
+
+/**
+ * The rewrite (DEC-48): a reviewer writes the reply the customer receives.
+ *
+ * The same checks the save route makes, and the same refusals word for word:
+ * a reply written from a page nobody drew, or on a run the ledger does not
+ * hold, is not a reply this console sends. The text is not bounded here,
+ * because the ledger bounds what it will write and a reply has no length the
+ * adopter set; the form's own size is refused before this point.
+ */
+async function rewriteRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ConsoleDeps,
+  reviewer: string,
+  url: URL,
+  theme: Theme,
+): Promise<void> {
+  const from = req.socket.remoteAddress ?? null;
+  let form;
+  try {
+    form = await readForm(req);
+  } catch (error) {
+    if (!(error instanceof OversizedForm)) {
+      if (req.destroyed || req.readableAborted) {
+        console.error(logLine({
+          event: 'console_refused', reason: 'client_aborted',
+          host: req.headers.host ?? null, from,
+        }));
+        return;
+      }
+      throw error;
+    }
+    req.destroy();
+    send(res, 413, bare(
+      'Refused',
+      'The rewrite form is larger than this console accepts. Nothing was rewritten.',
+      theme,
+      backToQueue(url),
+    ));
+    return;
+  }
+
+  const runId = (form.get('runId') ?? '').trim();
+  if (!isRunId(runId)) {
+    console.error(logLine({
+      event: 'console_refused', reason: 'not_a_run_id',
+      runId: logged(runId), runIdLength: loggedLength(runId),
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 400, bare('Refused', 'That is not a run id, so nothing was rewritten.', theme));
+    return;
+  }
+  const shown = (form.get('shown') ?? '').trim();
+  if (!SHOWN_DIGEST.test(shown)) {
+    console.error(logLine({
+      event: 'console_refused', reason: 'not_a_shown_digest',
+      runId, shownLength: loggedLength(shown),
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 400, bare(
+      'Refused',
+      'That request carries no reply digest, so this console will not rewrite the case.'
+        + ' Open the case and rewrite it there.',
+      theme,
+    ));
+    return;
+  }
+
+  // The reply itself. The ledger trims it and refuses one that is only
+  // whitespace, so the console passes what the field held.
+  const text = form.get('text') ?? '';
+  let outcome: string;
+  try {
+    // A park that carries no handle into the target system is a ledger-only
+    // park (DEC-34): its record routes to `performAction`, so a reply written
+    // here would never send. The card draws no control for such a run, and
+    // neither does this route — a card is not what refuses a request. The
+    // ledger refuses the same shape, and this is the sentence the edit route
+    // refuses it with (DEC-48 reuses it word for word).
+    const held = await deps.readRun(runId);
+    if (held !== null && held.draftExternalId === null) {
+      console.error(logLine({
+        event: 'console_refused', reason: 'no_reply_to_rewrite', runId,
+        host: req.headers.host ?? null, from,
+      }));
+      send(res, 400, bare(
+        'Refused',
+        'This case holds no reply to edit: it parked an action rather than a reply, so nothing'
+          + ' here would be sent.',
+        theme,
+      ));
+      return;
+    }
+    outcome = await deps.rewrite(runId, reviewer, text, shown);
+  } catch (error) {
+    const tag = randomUUID().slice(0, 8);
+    console.error(logLine({
+      event: 'console_rewrite_failed', tag, runId, textLength: loggedLength(text),
+      reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+      host: req.headers.host ?? null, from, error: describeFault(error),
+    }));
+    send(res, 500, bare(
+      'Error',
+      `Something failed during the rewrite, and it may or may not have committed.`
+        + ` The console log names it ${tag}.`,
+      theme,
+      {
+        href: caseHref(runId, url.searchParams.get('rule'), url.searchParams.get('product')),
+        text: 'Open the case to see its state.',
+      },
+    ));
+    return;
+  }
+  console.error(logLine({
+    event: 'console_rewritten',
+    runId,
+    outcome,
+    textLength: loggedLength(text),
+    reviewer: logged(reviewer),
+    reviewerLength: loggedLength(reviewer),
+    host: req.headers.host ?? null,
+    from,
+  }));
+  const kept = filtersQuery(url.searchParams.get('rule'), url.searchParams.get('product'))
+    .replace(/^\?/, '&');
+  res.writeHead(303, {
+    ...SAFETY_HEADERS,
+    location: `/case/${encodeURIComponent(runId)}?rewritten=${encodeURIComponent(outcome)}${kept}`,
   });
   res.end();
 }

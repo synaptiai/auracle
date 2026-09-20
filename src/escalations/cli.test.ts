@@ -30,6 +30,9 @@ function item(over: Partial<EscalationItem> = {}): EscalationItem {
     approved: false,
     createdAt: new Date('2026-09-07T09:00:00.000Z'),
     snoozedUntil: null,
+    // DEC-48: no person rewrote this item's reply, so its coverage above is
+    // the gate's own reading.
+    replyRewritten: false,
     promptVer: 'seed',
     outboxStatus: null,
     draftExternalId: 'SYN-DRAFT-0001',

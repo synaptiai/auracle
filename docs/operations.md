@@ -1710,11 +1710,11 @@ removes them.
 Clearing a draft does not reach the helpdesk. The draft parks there as well
 (DEC-11), and the adapter's own retention governs that copy.
 
-**The console writes the ledger in nine places, and it names each one.** It
-approves a reply, saves an edited reply, and closes a case with no reply. It
-puts a case aside for a period. It takes a case, releases a case, and hands a
-case to a teammate. It also clears a hold whose period ran out, and takes a
-send back inside its hold.
+**The console writes the ledger in ten places, and it names each one.** It
+approves a reply, saves an edited reply, and rewrites one from scratch. It
+closes a case with no reply, and puts a case aside for a period. It takes a
+case, releases a case, and hands a case to a teammate. It also clears a hold
+whose period ran out, and takes a send back inside its hold.
 
 Every other statement it issues is a SELECT. So it is otherwise as safe
 against a live database as `pnpm run bands` and `pnpm run latency`. That

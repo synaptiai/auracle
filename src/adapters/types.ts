@@ -166,6 +166,31 @@ export interface ReplyProvenance {
 }
 
 /**
+ * Provenance for a reply a person wrote (DEC-48, DEC-33).
+ *
+ * A reviewer who rewrites a reply from scratch replaces the model's text, so
+ * the reply that reaches the customer names a person and no model and no
+ * prompt. It is its own shape rather than a `ReplyProvenance` with empty
+ * fields, because there is no model version to report: an empty string would
+ * be a value the trailers and headers would print as a fact.
+ */
+export interface PersonProvenance {
+  /** Who wrote the text. `person` is the value this repository writes. */
+  generatedBy: string;
+  /** ISO 8601 timestamp of when the text was written. */
+  generatedAt: string;
+}
+
+/**
+ * The provenance a customer reply carries (DEC-33, DEC-48).
+ *
+ * A reply the model drafted carries its model and prompt; one a person wrote
+ * carries neither. Serialized onto the outbox record, into the text trailer
+ * on a channel with no structured field, and into the adapter's headers.
+ */
+export type Provenance = ReplyProvenance | PersonProvenance;
+
+/**
  * A reply the ledger holds, on its way to the customer (DEC-44).
  *
  * The same three parts a `DraftReply` carries, under a name that says where
@@ -181,8 +206,13 @@ export interface LedgerReply {
   readonly bodyText: string;
   /** The adopter's disclosure. Must not be empty (DEC-12, DEC-14). */
   readonly disclosure: string;
-  /** Machine-readable provenance, mandatory on every customer reply (DEC-33). */
-  readonly provenance: ReplyProvenance;
+  /**
+   * Machine-readable provenance, mandatory on every customer reply (DEC-33).
+   *
+   * Either shape: the ledger sends the draft's own provenance, and a reply a
+   * person rewrote from scratch carries one that names no model (DEC-48).
+   */
+  readonly provenance: Provenance;
 }
 
 /** A gated customer reply before it enters the target system. */

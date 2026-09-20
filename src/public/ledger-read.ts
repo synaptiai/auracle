@@ -35,6 +35,10 @@ export const LEDGER_WRITES: Readonly<Record<string, string>> = {
   // turn it answers. One statement under the run's row lock, and no state
   // moves with it.
   saveReply: 'the reply a reviewer saved: it writes the text the approval will send',
+  // DEC-48: the reply a reviewer writes from scratch. It replaces the draft
+  // on the turn and records who wrote it, so the send carries a person's
+  // provenance and no surface reports the gate's verdict for that reply.
+  rewriteReply: 'replaces a waiting case\'s reply with one a person wrote, and records who',
   // DEC-48: a case a reviewer puts aside for a period. It writes no record
   // and records no approver: the run leaves the queue and comes back.
   snoozeRun: 'puts a waiting case aside for a period, and records when it is due back',
@@ -140,6 +144,12 @@ export type { ApproveOptions, ApproveOutcome } from '../approval/approve.js';
 // the approval sends.
 export { saveReply } from '../approval/save-reply.js';
 export type { SaveOutcome, SaveReplyOptions } from '../approval/save-reply.js';
+
+// DEC-48: a reply a person wrote from scratch, in place of the draft. The
+// same guard as the save, and the one write that changes who authored the
+// reply the customer receives.
+export { rewriteReply } from '../approval/rewrite.js';
+export type { RewriteOptions, RewriteOutcome } from '../approval/rewrite.js';
 
 // DEC-51: the way back inside a held send. The console's third write.
 export { undoApproval } from '../approval/undo.js';

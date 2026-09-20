@@ -5,9 +5,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  agreementDetail, evidenceOf, latencyCaveats, percentileShare, stepSays, toDetail, toRow,
+  agreementDetail, coverageForPage, evidenceOf, latencyCaveats, percentileShare, stepSays,
+  toDetail, toRow,
 } from './views.js';
 import { ageSays, whenSays } from './surfaces.js';
+import { replyDigest } from 'auracle/ledger-read';
 import type { JournalStep, RunJournal } from 'auracle/ledger-read';
 
 const RUN = '11111111-2222-4333-8444-555555555555';
@@ -38,6 +40,8 @@ function journal(step: Partial<JournalStep>): { step: JournalStep; journal: RunJ
     journal: {
       runId: RUN, steps: [full], agreement: null, coverage: null,
       documents: null, documentsMalformed: false,
+      // DEC-48: no rewrite row in these fixtures, so the reply is the draft's.
+      rewrite: null,
     } as unknown as RunJournal,
   };
 }
@@ -166,6 +170,9 @@ describe('what a run row carries onto a page', () => {
     coverage: 0.94, createdAt: new Date('2026-09-07T09:00:00.000Z'),
     // DEC-48: a run nobody snoozed has no moment.
     snoozedUntil: null,
+    // DEC-48: and nobody rewrote this run's reply, so its coverage above is
+    // the gate's own reading.
+    replyRewritten: false,
     costMicros: 1234, stepsUsed: 6,
     agreement: 0.89, agreementThreshold: 0.8, coverageReviewThreshold: 0.75,
     riskTier: 'high' as const, approved: false,
@@ -386,6 +393,8 @@ describe('numbering the claims of a reply that opens with a courtesy sentence', 
         ],
       },
       documents: null, documentsMalformed: false,
+      // DEC-48: no rewrite row in these fixtures, so the reply is the draft's.
+      rewrite: null,
     } as unknown as RunJournal;
   }
 
@@ -412,6 +421,86 @@ describe('numbering the claims of a reply that opens with a courtesy sentence', 
         docId: 'SYN-DOC-01', supported: false,
       },
     ]);
+  });
+
+  // DEC-48: the number a page may report. The case page reads the journal and
+  // drew the draft's coverage beside the person's words until the runtime pass
+  // caught it, so this is the rule that decides, tested at its own level.
+  it('reports no coverage for a run whose reply a person wrote', () => {
+    const shown = coverageForPage(composed());
+    expect(shown).toEqual({ coverage: 0.5, block: 0.7, review: 0.8 });
+
+    const written = {
+      ...composed(),
+      rewrite: {
+        reviewer: 'anna@example.test',
+        reviewerSource: 'roster',
+        cleared: null,
+        at: '2026-09-20T00:00:00.000Z',
+      },
+    } as unknown as RunJournal;
+    expect(coverageForPage(written)).toEqual({ coverage: null, block: null, review: null });
+    // The journal's own record is untouched: the number is withheld, not lost.
+    expect(written.coverage?.groundedness).toBe(0.5);
+  });
+
+  // DEC-48: what the block may say about the draft it draws. The journal
+  // records the digest of the reply the rewrite replaced, so a save between
+  // the park and the rewrite is visible: the draft on the page is the run's,
+  // but it is not the reply the person replaced.
+  it('says whether the draft is the reply the rewrite replaced', () => {
+    const DRAFT = 'Open the account settings page and choose reset password.';
+    const held = journal({
+      stepId: 'park',
+      park: {
+        actionClass: 'customer_reply', delivery: 'at_least_once', parkKey: null,
+        draftRecorded: true, payloadRecorded: false, failureRecorded: false,
+        turnNumber: 1, draftBody: DRAFT,
+      },
+    } as Partial<JournalStep>).journal;
+    const written = (cleared: string | null): RunJournal => ({
+      ...held,
+      rewrite: {
+        reviewer: 'anna@example.test',
+        reviewerSource: 'roster',
+        cleared,
+        at: '2026-09-20T00:00:00.000Z',
+      },
+    } as unknown as RunJournal);
+
+    // The digest of the draft the run parked: this rewrite replaced it.
+    expect(evidenceOf(written(replyDigest(DRAFT))).draftReplaced).toBe(true);
+    // Some other reply: a save landed first, and the block must say what it
+    // draws rather than claim to be what the rewrite displaced.
+    expect(evidenceOf(written('a-digest-of-something-else')).draftReplaced).toBe(false);
+    expect(evidenceOf(written(null)).draftReplaced).toBe(false);
+    // And with no rewrite at all there is nothing to have replaced.
+    expect(evidenceOf(held).draftReplaced).toBe(false);
+  });
+
+  // DEC-48: a reply a person wrote from scratch. The gate judged the draft, so
+  // its verdicts come off the reply the page draws — and the sentences and
+  // their documents stay, because those are the citations the reviewer kept.
+  it('drops the draft verdicts from a reply a person wrote', () => {
+    const written = {
+      ...composed(),
+      rewrite: {
+        reviewer: 'anna@example.test',
+        reviewerSource: 'roster',
+        cleared: null,
+        at: '2026-09-20T00:00:00.000Z',
+      },
+    } as unknown as RunJournal;
+
+    const evidence = evidenceOf(written);
+    expect(evidence.replyRewritten).toBe(true);
+    expect(evidence.sentences?.map((sentence) => sentence.supported))
+      .toEqual([null, null, null, null]);
+    expect(evidence.claims?.map((claim) => claim.supported)).toEqual([null, null]);
+    // The citations stay available, which is what the criterion asks for.
+    expect(evidence.claims?.map((claim) => claim.docId))
+      .toEqual(['SYN-DOC-01', 'SYN-DOC-01']);
+    expect(evidence.documents).toEqual(composed().documents);
   });
 });
 

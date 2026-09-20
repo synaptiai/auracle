@@ -8,6 +8,7 @@
 // They map and nothing else. No statement is issued here, and every value
 // comes from a reader in the root package.
 import { CLASSIFIER_K } from 'auracle/domain';
+import { replyDigest } from 'auracle/ledger-read';
 import type { JournalStep, RunJournal } from 'auracle/ledger-read';
 
 import { escalationHead } from './render.js';
@@ -23,6 +24,8 @@ export function toRow(item: {
   coverage: number | null; createdAt: Date | null;
   /** DEC-48: the moment a snooze is due back, or null. */
   snoozedUntil: Date | null;
+  /** DEC-48: whether a person wrote the reply this run holds. */
+  replyRewritten: boolean;
   costMicros: number; stepsUsed: number;
   /**
    * DEC-47: the product of the channel this run's message arrived on. Null
@@ -45,6 +48,9 @@ export function toRow(item: {
     gateCoverage: item.coverage,
     createdAt: item.createdAt,
     snoozedUntil: item.snoozedUntil,
+    // DEC-48: read from the same statement as the row. A rewritten reply has
+    // no coverage of its own, and every surface that says so reads this.
+    replyRewritten: item.replyRewritten,
     stepsUsed: item.stepsUsed,
     product: item.product,
   };
@@ -256,10 +262,41 @@ export function latencyCaveats(p: PartitionLatency): string[] {
  * sentence takes no verdict and advances no index, so a reply that opens with
  * one does not shift every verdict onto the following claim.
  */
+/**
+ * The coverage a page may report for a run (DEC-48).
+ *
+ * The gate judged the draft. A run whose reply a person wrote from scratch
+ * reports no coverage: not the number, and not either line it was measured
+ * against. This view is what the page draws, so a page reading the journal
+ * directly would put the draft's verdict beside the person's words — which
+ * the case page did until the runtime pass caught it.
+ *
+ * The journal read stays the record. `journal.coverage` is untouched, and
+ * this decides only what a surface may say about the reply on screen.
+ */
+export function coverageForPage(journal: RunJournal): {
+  readonly coverage: number | null;
+  readonly block: number | null;
+  readonly review: number | null;
+} {
+  if (journal.rewrite !== null) return { coverage: null, block: null, review: null };
+  return {
+    coverage: journal.coverage?.groundedness ?? null,
+    block: journal.coverage?.blockThreshold ?? null,
+    review: journal.coverage?.reviewThreshold ?? null,
+  };
+}
+
 export function evidenceOf(journal: RunJournal): EvidenceView {
   const park = journal.steps.find((step) => step.park !== null)?.park ?? null;
   const compose = journal.steps.find((step) => step.compose !== null)?.compose ?? null;
-  const verdicts = journal.coverage?.claimVerdicts ?? null;
+  // DEC-48: the gate judged the draft and no page may draw its verdicts on a
+  // reply a person wrote. The sentences and their sources stay — they are the
+  // citations the reviewer kept — and only the judgment about them goes. A
+  // callout here would offer to repair a sentence that is no longer sent.
+  const verdicts = journal.rewrite === null
+    ? (journal.coverage?.claimVerdicts ?? null)
+    : null;
 
   // Counted over the cited sentences, in draft order. `claimIndex` is what
   // the citation marker numbers and what the gate recorded a verdict against;
@@ -322,6 +359,18 @@ export function evidenceOf(journal: RunJournal): EvidenceView {
     claims,
     documents,
     documentsMalformed: journal.documentsMalformed,
+    // DEC-48. Read from the journal this builder already holds, so the block
+    // and the verdicts above cannot disagree about which reply is on screen.
+    replyRewritten: journal.rewrite !== null,
+    // Whether the draft the block draws is the reply the rewrite replaced.
+    // The journal records the digest of what it replaced, so a save between
+    // the park and the rewrite is visible here: the reply that person replaced
+    // was their own text, and the block says what it draws rather than
+    // claiming to be what the rewrite displaced.
+    draftReplaced: journal.rewrite !== null
+      && journal.rewrite.cleared !== null
+      && park?.draftBody != null
+      && journal.rewrite.cleared === replyDigest(park.draftBody),
   };
 }
 

@@ -94,6 +94,11 @@ const EVIDENCE = {
       bodyUnchanged: null, titleAtRun: 'Cancellation policy',
     },
   ],
+  // DEC-48: on this fixture the reply is the draft's, so the verdicts above
+  // are the ones the page draws as the reply's own, and no rewrite displaced
+  // the draft this carries.
+  replyRewritten: false,
+  draftReplaced: false,
 };
 
 /**
@@ -107,6 +112,9 @@ const EVIDENCE = {
 const ROW = {
   // DEC-48: no snooze on the fixture rows unless a case is about one.
   snoozedUntil: null,
+  // DEC-48: and no person rewrote the reply on the fixture rows unless a
+  // case is about one, so their coverage above is the gate's own reading.
+  replyRewritten: false,
   // DEC-47: the product of the channel the message arrived on. Every fixture
   // row carries one unless a case is about the runs whose channel mapped to
   // none, which is what a null says.
@@ -280,6 +288,10 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
     // returner are the core suites' subject; here the harness answers that a
     // case was put aside.
     snooze: async () => 'snoozed',
+    // DEC-48: the reply a reviewer writes from scratch. The guard and the
+    // turn it writes on are the core suite's subject; here the harness
+    // answers that a reply was written.
+    rewrite: async () => 'rewritten',
     // DEC-51: the batch's way back. The window and the row lock are the core
     // suite's subject; here the harness answers that a case was taken back.
     undo: async () => ({ outcome: 'undone' }),
@@ -7525,5 +7537,277 @@ describe('DEC-48: the console puts a case aside', () => {
       expect(page, outcome).toContain('That is not an answer this console knows.');
       expect(page, outcome).not.toContain(`data-snooze="${outcome}"`);
     }
+  });
+});
+
+describe('DEC-48: the console rewrites the reply from scratch', () => {
+  async function postRewrite(base: string, fields: Record<string, string>): Promise<Response> {
+    return fetch(`${base}/rewrite`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: new URLSearchParams(fields).toString(),
+      redirect: 'manual',
+    });
+  }
+
+  const SAME_ORIGIN = { headers: { 'sec-fetch-site': 'same-origin' } };
+  // The digest of the reply the page drew, as the form carries it (DEC-46).
+  const DRAWN = createHash('sha256').update(EVIDENCE.draftBody).digest('hex');
+
+  it('offers the rewrite where the ledger holds the reply, behind a link', async () => {
+    const base = await startGuarded(deps(), undefined, undefined, true);
+
+    const page = await (await fetch(`${base}${CASE}`, SAME_ORIGIN)).text();
+    expect(page).toContain('Rewrite from scratch');
+    // The field waits behind the link: a reviewer who came to approve should
+    // not have to scroll past a second textarea. The editor's own field is on
+    // the page already, so this looks for the rewrite's by its id.
+    expect(page).not.toContain('id="rewrite"');
+
+    const revealed = await (await fetch(`${base}${CASE}?rewrite=1`, SAME_ORIGIN)).text();
+    expect(revealed).toContain('<textarea id="rewrite" name="text"');
+    expect(revealed).toContain('Rewriting replaces the draft with your own words.');
+    expect(revealed).toContain('<button class="btn" type="submit">Rewrite from scratch</button>');
+  });
+
+  // DEC-44: this adapter sends the copy it parks, so a reply written here
+  // would reach nobody. The control is not offered at all.
+  it('offers no rewrite where the adapter sends the copy it parks', async () => {
+    const base = await startGuarded(deps());
+    const page = await (await fetch(`${base}${CASE}`, SAME_ORIGIN)).text();
+    expect(page).not.toContain('Rewrite from scratch');
+  });
+
+  it('writes the reviewer text, and answers with what the ledger said', async () => {
+    const rewrite = vi.fn(async () => 'rewritten' as const);
+    const base = await startGuarded(deps({ rewrite }), undefined, undefined, true);
+
+    const res = await postRewrite(base, { runId: RUN, shown: DRAWN, text: 'Call the service desk.' });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(`${CASE}?rewritten=rewritten`);
+    expect(rewrite).toHaveBeenCalledWith(RUN, REVIEWER, 'Call the service desk.', DRAWN);
+
+    const kept = await fetch(`${base}/rewrite?rule=customer_visible&product=aurora`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: new URLSearchParams({ runId: RUN, shown: DRAWN, text: 'Call the service desk.' }).toString(),
+      redirect: 'manual',
+    });
+    expect(kept.headers.get('location')).toBe(
+      `${CASE}?rewritten=rewritten&rule=customer_visible&product=aurora`,
+    );
+  });
+
+  it('writes nothing for a request this console did not render', async () => {
+    const rewrite = vi.fn(async () => 'rewritten' as const);
+    const base = await startGuarded(deps({ rewrite }), undefined, undefined, true);
+
+    const noDigest = await postRewrite(base, { runId: RUN, text: 'Call the service desk.' });
+    expect(noDigest.status).toBe(400);
+    expect(await noDigest.text()).toContain('will not rewrite the case');
+    const badRun = await postRewrite(base, { runId: 'not-a-run', shown: DRAWN, text: 'x' });
+    expect(badRun.status).toBe(400);
+    expect(await badRun.text()).toContain('nothing was rewritten');
+    const oversized = await fetch(`${base}/rewrite`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: `runId=${RUN}&shown=${DRAWN}&text=${'9'.repeat(70 * 1024)}`,
+    });
+    expect(oversized.status).toBe(413);
+    expect(await oversized.text()).toContain('The rewrite form is larger than this console accepts.');
+
+    expect(rewrite).not.toHaveBeenCalled();
+  });
+
+  it('answers a failed rewrite without claiming it did not commit', async () => {
+    const rewrite = vi.fn(async () => { throw new Error('the pool is gone'); });
+    const base = await startGuarded(deps({ rewrite }), undefined, undefined, true);
+    const res = await postRewrite(base, { runId: RUN, shown: DRAWN, text: 'Call the service desk.' });
+
+    expect(rewrite).toHaveBeenCalled();
+    expect(res.status).toBe(500);
+    const body = await res.text();
+    expect(body).toContain('may or may not have committed');
+    expect(body).not.toContain('nothing was rewritten');
+  });
+
+  // Every outcome the ledger can answer, each against a case that fits it.
+  // `rewritten` and `not_ledger_reply` need the path each claim is about: one
+  // says the reply on screen is what sends, the other says the helpdesk copy
+  // is. Each drew on the wrong console before the fit rules read the clause.
+  it('draws every rewrite answer, and refuses one the case contradicts', async () => {
+    for (const [outcome, ledgerReply] of [
+      ['rewritten', true],
+      ['shown_changed', false],
+      ['empty_reply', false],
+      ['unprintable_reply', false],
+      ['no_turn', false],
+      ['no_reply', false],
+      ['not_ledger_reply', false],
+    ] as const) {
+      const base = await startGuarded(
+        deps({
+          readRun: caseOf({
+            state: 'awaiting_approval',
+            replyRewritten: outcome === 'rewritten',
+          }),
+        }),
+        undefined,
+        undefined,
+        ledgerReply,
+      );
+      const html = await (await fetch(`${base}${CASE}?rewritten=${outcome}`, SAME_ORIGIN)).text();
+      expect(html, outcome).toContain(`data-rewrite="${outcome}"`);
+    }
+
+    // The two claims, each on the console it is true of.
+    const draftPath = await startGuarded(deps({
+      readRun: caseOf({ state: 'awaiting_approval', replyRewritten: true }),
+    }));
+    const draftPage = await (await fetch(`${draftPath}${CASE}?rewritten=rewritten`, SAME_ORIGIN)).text();
+    expect(draftPage).not.toContain('The reply is yours.');
+    const ledgerPath = await startGuarded(deps(), undefined, undefined, true);
+    const ledgerPage = await (await fetch(`${ledgerPath}${CASE}?rewritten=not_ledger_reply`, SAME_ORIGIN)).text();
+    expect(ledgerPage).not.toContain('This case sends the copy the helpdesk holds');
+
+    // A case whose reply is the draft's was not rewritten, whatever the link
+    // says: the sentence claims the reply on screen is the one that sends.
+    const unrewritten = await startGuarded(deps(), undefined, undefined, true);
+    const unrewrittenPage = await (await fetch(`${unrewritten}${CASE}?rewritten=rewritten`, SAME_ORIGIN)).text();
+    expect(unrewrittenPage).not.toContain('The reply is yours.');
+
+    // A case that already left the queue was not rewritten either.
+    const gone = await startGuarded(deps({ readRun: caseOf({ state: 'resolved' }) }));
+    const html = await (await fetch(`${gone}${CASE}?rewritten=rewritten`, SAME_ORIGIN)).text();
+    expect(html).not.toContain('The reply is yours.');
+
+    for (const outcome of ['toString', 'because']) {
+      const base = await startGuarded(deps());
+      const page = await (await fetch(`${base}${CASE}?rewritten=${outcome}`, SAME_ORIGIN)).text();
+      expect(page, outcome).toContain('That is not an answer this console knows.');
+      expect(page, outcome).not.toContain(`data-rewrite="${outcome}"`);
+    }
+  });
+
+  // A run the ledger does not hold, with an outcome that names it. The 404
+  // branch draws it, and `unknown_run` is the one member only that branch
+  // can vouch for.
+  it('answers a rewrite on a run the ledger does not hold', async () => {
+    const base = await startGuarded(deps({ readRun: async () => null }));
+    const page = await (await fetch(`${base}${CASE}?rewritten=unknown_run`, SAME_ORIGIN)).text();
+    expect(page).toContain('data-rewrite="unknown_run"');
+    expect(page).toContain('That run is not in the ledger.');
+  });
+
+  // The copy of the one outcome a reviewer reads most.
+  it('says the reply is the person\'s, and that it sends', async () => {
+    const base = await startGuarded(
+      deps({ readRun: caseOf({ replyRewritten: true }) }), undefined, undefined, true,
+    );
+    const page = await (await fetch(`${base}${CASE}?rewritten=rewritten`, SAME_ORIGIN)).text();
+    expect(page).toContain(
+      'The reply is yours. It is the one that sends, and the draft stays here as what it replaced.',
+    );
+  });
+
+  // DEC-34: the park holds an action rather than a reply. The route refuses it
+  // with the sentence the edit route refuses it with, because the card is not
+  // what refuses a request.
+  it('refuses a rewrite on a case that parked an action', async () => {
+    const rewrite = vi.fn(async () => 'rewritten' as const);
+    const base = await startGuarded(deps({
+      rewrite,
+      readRun: caseOf({ draftExternalId: null }),
+    }), undefined, undefined, true);
+
+    const res = await postRewrite(base, { runId: RUN, shown: DRAWN, text: 'Call the service desk.' });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('This case holds no reply to edit');
+    expect(rewrite).not.toHaveBeenCalled();
+  });
+
+  // The case page after a rewrite: the reply is the person's, the draft is
+  // what it replaced, and the gate's verdict is not drawn as the reply's.
+  it('draws the reply a person wrote, and keeps the draft as what it replaced', async () => {
+    const base = await startGuarded(deps({
+      readRun: caseOf({
+        replyRewritten: true,
+        coverage: null,
+        evidence: {
+          ...EVIDENCE,
+          replyRewritten: true,
+          // The journal recorded the digest of this draft, so the block may
+          // say the rewrite replaced it.
+          draftReplaced: true,
+          // The verdicts are the draft's, so the page puts none of them on
+          // the reply it draws.
+          sentences: EVIDENCE.sentences.map((sentence) => ({ ...sentence, supported: null })),
+          claims: EVIDENCE.claims.map((claim) => ({ ...claim, supported: null })),
+        },
+      }),
+    }), undefined, undefined, true);
+
+    const page = await (await fetch(`${base}${CASE}`, SAME_ORIGIN)).text();
+    expect(page).toContain('The reply you wrote · editable here, sent from here');
+    expect(page).toContain('The draft this replaced');
+    expect(page).toContain('The reply a person wrote is the one that sends.');
+    expect(page).toContain(
+      'a person wrote this reply, so the verdict belongs to the draft it replaced',
+    );
+    // The citations the draft used stay on the page (criterion 6).
+    expect(page).toContain('The documents these claims cite');
+    // And the draft's verdicts are not drawn as the reply's.
+    expect(page).not.toContain('class="vw refused"');
+  });
+
+  // The queue row, where the number would sit. The read keeps the gate's
+  // coverage so the grouping holds its place in the batch, so the row is the
+  // one surface that has to say whose reply this is.
+  it('says a person wrote the reply in the queue row', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => [{
+        runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+        reason: 'customer_visible', stepsUsed: 4,
+        agreement: 0.89, coverage: 0.94, draftExternalId: 'D-1',
+        replyRewritten: true,
+      }] as never,
+    }));
+
+    const queue = await (await fetch(`${base}/`, SAME_ORIGIN)).text();
+    expect(queue).toContain(' · a person wrote this reply');
+    expect(queue).not.toContain(' · coverage 0.94');
+  });
+
+  // The other arm, and the reason the heading is not a fixed sentence: a save
+  // between the park and the rewrite means the reply the person replaced was
+  // their own earlier text, so the block says what it draws.
+  it('says what the draft is when it is not the reply the rewrite replaced', async () => {
+    const base = await startGuarded(deps({
+      readRun: caseOf({
+        replyRewritten: true,
+        coverage: null,
+        evidence: {
+          ...EVIDENCE,
+          replyRewritten: true,
+          draftReplaced: false,
+        },
+      }),
+    }), undefined, undefined, true);
+
+    const page = await (await fetch(`${base}${CASE}`, SAME_ORIGIN)).text();
+    expect(page).toContain('The draft this run wrote');
+    expect(page).not.toContain('The draft this replaced');
   });
 });

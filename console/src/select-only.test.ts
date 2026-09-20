@@ -133,7 +133,7 @@ const APPROVAL_CALLERS = ['src/approve.ts'];
 const CALLED_BY_THE_ENTRY_POINT = ['handoverHold', 'readHold', 'releaseHold', 'takeHold'];
 
 /** The writes the entry point hands to a helper instead of calling. */
-const PASSED_ON_BY_THE_ENTRY_POINT = ['approveRun', 'closeRun', 'snoozeRun'];
+const PASSED_ON_BY_THE_ENTRY_POINT = ['approveRun', 'closeRun', 'rewriteReply', 'snoozeRun'];
 
 /**
  * Every symbol this console takes from the barrel, and whether it writes.
@@ -152,6 +152,10 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   // DEC-48: a case a reviewer puts aside for a period. It sends nothing and
   // records no approver: the run leaves the queue and comes back.
   snoozeRun: 'write',
+  // DEC-48: the reply a reviewer writes from scratch. It replaces the draft
+  // on the turn, and it is the one write that changes who authored the reply
+  // the customer receives.
+  rewriteReply: 'write',
   conversationOfRun: 'read',
   // DEC-44: whether a copy read back from the helpdesk holds text. A rule
   // read by the approval and by the page, and no statement either way.

@@ -102,6 +102,15 @@ export interface EscalationItem {
    * was put aside from one that never was.
    */
   readonly snoozedUntil: Date | null;
+  /**
+   * DEC-48: whether a person wrote the reply this run holds.
+   *
+   * It says why `coverage` above is null on such a run: the gate judged the
+   * draft, and the reply the customer receives is not the draft. A reader
+   * that showed a blank without this would be reporting a missing verdict
+   * where the ledger holds one about other text.
+   */
+  readonly replyRewritten: boolean;
   /** Outbox status when a record is stuck: `delivery_unknown` or `malformed`. */
   readonly outboxStatus: string | null;
   /**
@@ -232,6 +241,11 @@ const RUN_SELECT_BODY = `
          esc.result ->> 'reason'          AS reason,
          esc.result ->> 'fault'           AS fault,
          gate.result ->> 'reason'          AS gate_reason,
+         -- DEC-48: whether a person wrote the reply this run would send.
+         -- Read from the TURN, not from this run's journal: a turn is served
+         -- by every run that answers it, and a sibling run would otherwise
+         -- report a reply a person wrote as the model's.
+         (saved.saved_reply_provenance IS NOT NULL) AS reply_rewritten,
          CASE WHEN jsonb_typeof(gate.result -> 'groundedness') = 'number'
               THEN gate.result ->> 'groundedness' END AS coverage,
          CASE WHEN jsonb_typeof(cls.result -> 'agreement') = 'number'
@@ -257,6 +271,8 @@ const RUN_SELECT_BODY = `
       ON gate.run_id = r.run_id AND gate.step_id = 'gate'
     LEFT JOIN step_journal cls
       ON cls.run_id = r.run_id AND cls.step_id = 'classify'
+    LEFT JOIN turn saved
+      ON saved.conversation_id = r.conversation_id AND saved.turn_number = r.turn_number
     LEFT JOIN LATERAL (
       SELECT status FROM outbox
        WHERE run_id = r.run_id AND status IN ('delivery_unknown', 'malformed')
@@ -304,6 +320,11 @@ const OUTBOX_SELECT = `
          esc.result ->> 'reason'           AS reason,
          esc.result ->> 'fault'            AS fault,
          gate.result ->> 'reason'           AS gate_reason,
+         -- DEC-48: whether a person wrote the reply this run would send.
+         -- Read from the TURN, not from this run's journal: a turn is served
+         -- by every run that answers it, and a sibling run would otherwise
+         -- report a reply a person wrote as the model's.
+         (saved.saved_reply_provenance IS NOT NULL) AS reply_rewritten,
          CASE WHEN jsonb_typeof(gate.result -> 'groundedness') = 'number'
               THEN gate.result ->> 'groundedness' END AS coverage,
          CASE WHEN jsonb_typeof(cls.result -> 'agreement') = 'number'
@@ -331,6 +352,8 @@ const OUTBOX_SELECT = `
       ON gate.run_id = r.run_id AND gate.step_id = 'gate'
     LEFT JOIN step_journal cls
       ON cls.run_id = r.run_id AND cls.step_id = 'classify'
+    LEFT JOIN turn saved
+      ON saved.conversation_id = r.conversation_id AND saved.turn_number = r.turn_number
    WHERE o.status IN ('delivery_unknown', 'malformed')`;
 
 /**
@@ -375,6 +398,10 @@ function toItem(row: Record<string, unknown>): EscalationItem {
       : null,
     createdAt: row['created_at'] instanceof Date ? row['created_at'] : null,
     snoozedUntil: row['snoozed_until'] instanceof Date ? row['snoozed_until'] : null,
+    // DEC-48. True only for a row the SELECT says carries a rewrite: a reader
+    // that defaulted it to false would report a person's reply as the
+    // model's wherever the column was missing.
+    replyRewritten: row['reply_rewritten'] === true,
     promptVer: String(row['prompt_ver'] ?? ''),
     outboxStatus: (row['outbox_status'] as string | null) ?? null,
     draftExternalId: (row['draft_external_id'] as string | null) ?? null,

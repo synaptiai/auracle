@@ -50,7 +50,9 @@
  */
 import type { Pool, PoolClient } from 'pg';
 
-import type { DraftReadBack, ReplyProvenance } from '../adapters/types.js';
+import type {
+  DraftReadBack, PersonProvenance, Provenance, ReplyProvenance,
+} from '../adapters/types.js';
 import { readSavedReply, recordApprovedReply } from '../ledger/conversation.js';
 import { fencedTransition } from '../ledger/insert.js';
 import { deriveIdemKey } from '../ledger/keys.js';
@@ -120,7 +122,17 @@ export type ApproveOutcome =
    * disclosure beside its body: the adapters refuse an empty one at park
    * time, so a new reply always has one.
    */
-  | { readonly outcome: 'no_disclosure' };
+  | { readonly outcome: 'no_disclosure' }
+  /**
+   * DEC-48: the reply the ledger holds is a person's, and the author it
+   * records is not one this approval can state.
+   *
+   * Only a ledger written by something else reaches this: the rewrite writes
+   * the provenance in the same statement as the text. It is its own outcome
+   * because naming the model instead would name an author who did not write
+   * the text, and the remedy `no_disclosure` gives an operator does not apply.
+   */
+  | { readonly outcome: 'rewrite_incomplete' };
 
 /** Optional inputs for one approval. */
 export interface ApproveOptions {
@@ -252,6 +264,37 @@ interface ParkRecord {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A person's provenance (DEC-48), or nothing.
+ *
+ * The two strings a reply a person wrote carries, and no model and no prompt.
+ * A record holding anything else is not a provenance this approval can state,
+ * and naming the model instead would name an author who did not write it.
+ */
+function heldProvenance(value: unknown): PersonProvenance | null {
+  if (!isPlainObject(value)) return null;
+  const generatedBy = value['generatedBy'];
+  const generatedAt = value['generatedAt'];
+  if (typeof generatedBy !== 'string' || generatedBy.length === 0) return null;
+  if (typeof generatedAt !== 'string' || generatedAt.length === 0) return null;
+  return { generatedBy, generatedAt };
+}
+
+/**
+ * The author a turn's reply holds, as one comparable value (DEC-48).
+ *
+ * Three answers: no person wrote it (either a null column or an absent row),
+ * a person did, or the column holds something no reply can carry. The third
+ * is its own string so that it compares unequal to both of the others: a
+ * guard that read an unreadable provenance as "nobody wrote it" would send
+ * the reply under the model's name, which is the claim it exists to refuse.
+ */
+function authorKey(value: unknown): string {
+  if (value === null || value === undefined) return 'none';
+  const held = heldProvenance(value);
+  return held === null ? 'unreadable' : JSON.stringify([held.generatedBy, held.generatedAt]);
 }
 
 /** The four strings a provenance record carries (DEC-33), or nothing. */
@@ -413,6 +456,8 @@ export async function approveRun(
   let outboxReply: Record<string, unknown> | undefined;
   /** DEC-44: the reply the ledger holds, when this approval sends it. */
   let ledgerText: string | undefined;
+  /** DEC-48: the author the payload was built from, as the turn held it. */
+  let ledgerAuthor: unknown;
   /** DEC-51: how long the record is held, when this caller holds it. */
   let holdMs: number | undefined;
   // DEC-44 governs a customer reply, and only a customer reply: that is the
@@ -428,16 +473,56 @@ export async function approveRun(
       // cannot attach what the ledger does not hold.
       return { outcome: 'no_disclosure' };
     }
-    const held = (await readSavedReply(pool, {
-      conversationId,
-      turnNumber: park.turnNumber,
-    })) ?? park.body;
-    finalBody = held;
-    ledgerText = held;
+    // The reply and its author in one statement. A rewrite commits the
+    // turn's text and its journal row together, so two reads could take the
+    // text from one commit and the author from another, and the record would
+    // then send a person's words under the model's name (DEC-48). The empty
+    // string reads as no saved reply, the rule `readSavedReply` applies.
+    // The author travels with the text, because a turn is served by every run
+    // that answers it: a retry after a crash, or a send-back, parks a second
+    // run on the same turn. Reading the author from this run's own journal
+    // made the run the author of a text a sibling run's reviewer rewrote, and
+    // the customer received a person's words under the model's name (DEC-48).
+    const held = await pool.query(
+      `SELECT NULLIF(saved.saved_reply_text, '') AS saved_reply,
+              saved.saved_reply_provenance     AS saved_provenance
+         FROM run r
+         LEFT JOIN turn saved
+           ON saved.conversation_id = r.conversation_id AND saved.turn_number = $2
+        WHERE r.run_id = $1`,
+      [runId, park.turnNumber ?? null],
+    );
+    const heldRow = held.rows[0];
+    if (heldRow === undefined) {
+      throw new Error(`run ${runId} vanished between its park read and the reply read`);
+    }
+    // Null means the reply the park journaled: the model's, whatever this run
+    // recorded. An object means a person wrote the reply the customer
+    // receives.
+    const written = heldRow.saved_provenance;
+    // Kept raw for the in-transaction guard, which compares it with what the
+    // turn holds then.
+    ledgerAuthor = written;
+    let authored: Provenance = park.provenance;
+    if (written !== null && written !== undefined) {
+      const held = heldProvenance(written);
+      if (held === null) {
+        // DEC-33, DEC-48: the column holds something no reply can carry. The
+        // approval cannot state who wrote the text, and naming the model
+        // would name an author who did not write it. Its own outcome, because
+        // the cause is this ledger's and the remedy the operator is given for
+        // a missing disclosure does not apply here.
+        return { outcome: 'rewrite_incomplete' };
+      }
+      authored = held;
+    }
+    const replyText = (heldRow.saved_reply as string | null) ?? park.body;
+    finalBody = replyText;
+    ledgerText = replyText;
     outboxReply = {
-      bodyText: held,
+      bodyText: replyText,
       disclosure: park.disclosure,
-      provenance: park.provenance,
+      provenance: authored,
     };
     // DEC-51: the console's batch holds its sends, so an undo inside the
     // window can return the run to approval. The moment is resolved here, at
@@ -604,7 +689,20 @@ export async function approveRun(
         // was resolved outside the lock, so a save that landed between that
         // read and this one would otherwise be sent while the case records
         // the text this guard just approved.
-        return ledgerText !== undefined && replyDigest(current) !== replyDigest(ledgerText);
+        if (ledgerText !== undefined && replyDigest(current) !== replyDigest(ledgerText)) {
+          return true;
+        }
+        // DEC-48: and its author, which the text cannot vouch for — a rewrite
+        // that repeats the text it replaced leaves every digest unchanged, and
+        // the act is what decides who wrote it. Read under the lock and
+        // compared with what the payload was built from.
+        if (!ledgerReply) return false;
+        const author = await client.query<{ provenance: unknown }>(
+          'SELECT saved_reply_provenance AS provenance FROM turn'
+            + ' WHERE conversation_id = $1 AND turn_number = $2',
+          [conversationId, park.turnNumber ?? null],
+        );
+        return authorKey(author.rows[0]?.provenance) !== authorKey(ledgerAuthor);
       },
     }),
     outbox: {

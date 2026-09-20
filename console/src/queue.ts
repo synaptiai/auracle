@@ -54,6 +54,11 @@ const RISK_RULES: ReadonlySet<string> = new Set(['irreversible', 'high_risk']);
  * another rule sent each case to a person.
  */
 export function queueGroupOf(run: Groupable): QueueGroup {
+  // DEC-48: a reply a person wrote keeps its place here. The number this reads
+  // is the gate's verdict on the draft — the escalations read reports it for
+  // such a run — and the group decides which cases one press can confirm. A
+  // rewritten case is one a reviewer can send, so withholding the number would
+  // drop it out of the batch in silence. The row says whose reply it is.
   if ((run.gateReason !== null && RISK_RULES.has(run.gateReason))
     || run.riskTier === 'high'
     || run.actionClass === COMPENSATION_ACTION_CLASS) {

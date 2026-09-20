@@ -41,6 +41,42 @@ async function seedRun(state: string): Promise<FencedRunInput> {
   return run;
 }
 
+/**
+ * The turn one run serves, and the provenance of the reply it carries.
+ *
+ * Written the way `recordSavedReply` writes it: the text and the author in one
+ * statement. A person's provenance means a reviewer rewrote the reply.
+ */
+async function serveTurn(
+  run: FencedRunInput,
+  provenance: Record<string, unknown> | null,
+): Promise<string> {
+  const conversation = randomUUID();
+  await pool.query(
+    'INSERT INTO conversation (conversation_id, primary_ticket_id, customer_address)'
+      + ' VALUES ($1, $2, NULL)',
+    [conversation, run.ticketId],
+  );
+  await pool.query(
+    'INSERT INTO turn (conversation_id, turn_number, ticket_id, inbound_message_id, body_text,'
+      + ' saved_reply_text, saved_reply_provenance)'
+      + " VALUES ($1, 1, $2, 'm-1@example.test', 'Where is my refund?', $3, $4)",
+    [
+      conversation,
+      run.ticketId,
+      provenance === null ? null : 'Call the service desk.',
+      provenance === null ? null : JSON.stringify(provenance),
+    ],
+  );
+  await pool.query(
+    'UPDATE run SET conversation_id = $2, turn_number = 1 WHERE run_id = $1',
+    [run.runId, conversation],
+  );
+  return conversation;
+}
+
+const PERSON = { generatedBy: 'person', generatedAt: '2026-09-20T00:00:00.000Z' };
+
 async function journalStep(runId: string, stepId: string, result: object): Promise<void> {
   await pool.query(
     // DEC-26 pins are NOT NULL on step_journal (db/006). This suite used to
@@ -104,6 +140,9 @@ describe('escalations CLI queries', () => {
       // would be reading an invention.
       gateReason: null,
       coverage: null,
+      // DEC-48: no person rewrote this run's reply either, so the null above
+      // is a run that never gated rather than a draft's verdict withheld.
+      replyRewritten: false,
       // No classify or gate row, so no agreement and no line to judge it by.
       agreement: null,
       agreementThreshold: null,
@@ -450,6 +489,70 @@ describe('escalations CLI queries', () => {
       snoozedUntil: expect.any(Date),
     });
     expect(items[0]?.createdAt).toBeInstanceOf(Date);
+  });
+
+  // DEC-48: the reply a person wrote. The flag travels with the turn, so
+  // every run that serves that turn carries it — a retry after a crash parks
+  // a second run on one turn, and its send is the person's text too. The
+  // gate's number stays on the item: the console's queue groups on it, and
+  // withholding it silently dropped a rewritten case out of the batch's
+  // one-press confirm. No surface prints it beside the reply.
+  it('marks the reply a person wrote, and keeps the gate number the queue groups on', async () => {
+    const run = await seedRun('awaiting_approval');
+    await journalStep(run.runId, 'gate', {
+      groundedness: 0.62, decision: 'gated', reason: 'customer_visible',
+    });
+    const conversation = await serveTurn(run, null);
+
+    const [before] = await listEscalations(pool);
+    expect(before).toMatchObject({ coverage: 0.62, replyRewritten: false });
+
+    // What the rewrite writes, in the same statement as the text it replaces.
+    await pool.query(
+      'UPDATE turn SET saved_reply_text = $2, saved_reply_provenance = $3'
+        + ' WHERE conversation_id = $1 AND turn_number = 1',
+      [conversation, 'Call the service desk.', JSON.stringify(PERSON)],
+    );
+    await journalStep(run.runId, 'rewrite', {
+      reviewer: 'anna@example.test',
+      reviewerSource: 'roster',
+      at: '2026-09-20T00:00:00.000Z',
+    });
+
+    const [after] = await listEscalations(pool);
+    expect(after).toMatchObject({ coverage: 0.62, replyRewritten: true });
+    // The turn the flag, not the run: a sibling run of the same turn reads
+    // the same answer, and its send is the same text.
+    const sibling = await seedRun('awaiting_approval');
+    await pool.query(
+      'UPDATE run SET conversation_id = $2, turn_number = 1 WHERE run_id = $1',
+      [sibling.runId, conversation],
+    );
+    const items = await listEscalations(pool);
+    const siblingItem = items.find((item) => item.runId === sibling.runId);
+    expect(siblingItem?.replyRewritten).toBe(true);
+    // A run of another conversation is untouched by it.
+    expect(items.every((item) => item.runId === sibling.runId || item.replyRewritten)).toBe(true);
+  });
+
+  // The other arm of the same read. A rewritten reply whose send failed is
+  // exactly when a person reads this list, and the flag has to travel on the
+  // stuck-record SELECT too: it is a second statement with its own column list.
+  it('marks a stuck record whose reply a person wrote', async () => {
+    const run = await seedRun('resolved');
+    await serveTurn(run, PERSON);
+    await pool.query(
+      `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class, delivery, payload, status)
+       VALUES ($1, 'send', $2, 1, 'customer_reply', 'at_least_once', '{}', 'delivery_unknown')`,
+      [run.runId, 'idem-' + randomUUID()],
+    );
+
+    const [item] = await listEscalations(pool);
+    expect(item).toMatchObject({
+      runId: run.runId,
+      outboxStatus: 'delivery_unknown',
+      replyRewritten: true,
+    });
   });
 
   it('ignores resolved runs without a stuck record', async () => {

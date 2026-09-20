@@ -7,6 +7,7 @@
  * inbound message. This module owns what a later step adds to a turn that is
  * already recorded.
  */
+import type { PersonProvenance } from '../adapters/types.js';
 import type { Pool, PoolClient } from 'pg';
 
 /**
@@ -71,6 +72,15 @@ export interface SavedReply {
   turnNumber: number;
   /** The body the person saved. The disclosure rides beside it, unedited. */
   bodyText: string;
+  /**
+   * DEC-48: the provenance of a reply a person wrote from scratch.
+   *
+   * Absent means this write does not declare an author: it is an edit, and
+   * the column keeps what it holds. When a person already took the reply
+   * over, that write refreshes the moment instead — the text is theirs from
+   * the first rewrite on, and the trailer says when they last wrote it.
+   */
+  provenance?: PersonProvenance;
 }
 
 /**
@@ -94,10 +104,28 @@ export async function recordSavedReply(
   client: ConversationDb,
   reply: SavedReply,
 ): Promise<void> {
+  // The author travels with the text, in one statement (DEC-48). A write that
+  // declares a person writes its provenance; a write that declares nobody
+  // keeps the author the column holds and refreshes the moment, because an
+  // edit of a person's reply is the person's reply, written later. The moment
+  // is the same kind of value the park puts in its own provenance.
   const updated = await client.query(
-    `UPDATE turn SET saved_reply_text = $3
+    `UPDATE turn
+        SET saved_reply_text = $3,
+            saved_reply_provenance = CASE
+              WHEN $4::jsonb IS NOT NULL THEN $4::jsonb
+              WHEN saved_reply_provenance IS NOT NULL
+                THEN jsonb_set(saved_reply_provenance, '{generatedAt}', to_jsonb($5::text))
+              ELSE NULL
+            END
       WHERE conversation_id = $1 AND turn_number = $2`,
-    [reply.conversationId, reply.turnNumber, reply.bodyText],
+    [
+      reply.conversationId,
+      reply.turnNumber,
+      reply.bodyText,
+      reply.provenance === undefined ? null : JSON.stringify(reply.provenance),
+      new Date().toISOString(),
+    ],
   );
   if (updated.rowCount === 0) {
     throw new Error(

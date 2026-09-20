@@ -17,8 +17,8 @@
 // names every write it makes.
 import type { Pool } from 'pg';
 import type {
-  ApproveOptions, ApproveOutcome, CloseOptions, CloseOutcome, DraftReadBack, SaveOutcome,
-  SaveReplyOptions, SnoozeOptions, SnoozeOutcome, UndoOutcome,
+  ApproveOptions, ApproveOutcome, CloseOptions, CloseOutcome, DraftReadBack, RewriteOptions,
+  RewriteOutcome, SaveOutcome, SaveReplyOptions, SnoozeOptions, SnoozeOutcome, UndoOutcome,
 } from 'auracle/ledger-read';
 
 import { ReadBackFailed } from './read-back.js';
@@ -395,6 +395,45 @@ export function snoozeFor(deps: {
       periodMs,
       snoozedBy: reviewer,
       snoozedBySource: 'roster',
+      ledgerReply: deps.ledgerReply,
+      shown,
+    })).outcome;
+  };
+}
+
+/**
+ * The rewrite the console's entry point hands its server (DEC-48).
+ *
+ * A delegation, like the snooze: `rewriteReply` owns the transaction, the
+ * turn it writes on, the DEC-46 guard and the journal row. The identity
+ * travels with the source `roster`, because the gate resolved it against the
+ * ledger's roster before the route was reached.
+ *
+ * The adapter's declaration travels too, and here it is the whole condition:
+ * only where the ledger holds the reply does a reply written in the console
+ * reach the customer. `rewriteReply` refuses the draft path by name.
+ */
+export function rewriteFor(deps: {
+  readonly pool: Pool;
+  readonly rewriteReply: (
+    pool: Pool,
+    runId: string,
+    text: string,
+    options: RewriteOptions,
+  ) => Promise<RewriteOutcome>;
+  readonly ledgerReply: boolean;
+}): (
+  runId: string,
+  reviewer: string,
+  text: string,
+  shown: string,
+) => Promise<RewriteOutcome['outcome']> {
+  return async (runId, reviewer, text, shown) => {
+    const id = runId.trim();
+    if (!RUN_ID.test(id)) throw new Error(`'${runId}' is not a run id`);
+    return (await deps.rewriteReply(deps.pool, id, text, {
+      rewrittenBy: reviewer,
+      rewrittenBySource: 'roster',
       ledgerReply: deps.ledgerReply,
       shown,
     })).outcome;

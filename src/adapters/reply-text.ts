@@ -12,7 +12,7 @@
  * its only reader. The approval sits below no adapter, so the definition
  * moved here rather than the approval importing one adapter's module.
  */
-import type { ReplyProvenance } from './types.js';
+import type { Provenance } from './types.js';
 
 /**
  * The line that separates the reply a person wrote from the trailer this
@@ -27,12 +27,17 @@ export const DRAFT_TRAILER_MARKER = '\n\n-- \n';
 export function composeDraftBody(
   body: string,
   disclosure: string,
-  provenance: ReplyProvenance,
+  provenance: Provenance,
 ): string {
+  // The model and prompt lines are printed when the provenance has them.
+  // A reply a person rewrote from scratch has neither (DEC-48), and a trailer
+  // that printed `model: ` with nothing after it would state a fact about a
+  // model that wrote nothing.
   const trail = [
     `generated-by: ${provenance.generatedBy}`,
-    `model: ${provenance.modelId}`,
-    `prompt-version: ${provenance.promptVer}`,
+    ...('modelId' in provenance
+      ? [`model: ${provenance.modelId}`, `prompt-version: ${provenance.promptVer}`]
+      : []),
     `generated-at: ${provenance.generatedAt}`,
   ].join('\n');
   return `${body}${DRAFT_TRAILER_MARKER}${disclosure}\n\n${trail}\n`;

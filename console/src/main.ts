@@ -47,14 +47,16 @@ import { LEDGER_STATES, listEscalations, listRuns, readQueueToday, readRun } fro
 import { readRunJournal } from 'auracle/ledger-read';
 import { conversationOfRun, readConversation, turnAnsweredBy } from 'auracle/ledger-read';
 import { readDocument } from 'auracle/ledger-read';
-import { closeRun, readApprovalHold, saveReply, snoozeRun, undoApproval } from 'auracle/ledger-read';
+import {
+  closeRun, readApprovalHold, rewriteReply, saveReply, snoozeRun, undoApproval,
+} from 'auracle/ledger-read';
 import { readLatency } from 'auracle/ledger-read';
 import { humanMs } from 'auracle/format';
 // Every log line this process writes, so a value from a request cannot break
 // one line into two.
 import { logLine } from 'auracle/format';
 
-import { approvalFor, closeFor, saveFor, snoozeFor, undoFor } from './approve.js';
+import { approvalFor, closeFor, rewriteFor, saveFor, snoozeFor, undoFor } from './approve.js';
 import { developmentReviewer } from './dev-reviewer.js';
 import { readBackFor } from './read-back.js';
 import { SHUTDOWN_GRACE_MS } from './shutdown.js';
@@ -62,7 +64,8 @@ import { CONSOLE_CSS } from './css.js';
 import { allowedHosts, identityHeader } from './hosts.js';
 import { ledgerName } from './ledger-name.js';
 import {
-  agreementDetail, evidenceOf, latencyCaveats, percentileShare, stepSays, toDetail, toRow,
+  agreementDetail, coverageForPage, evidenceOf, latencyCaveats, percentileShare, stepSays,
+  toDetail, toRow,
 } from './views.js';
 import { cachedDaily } from './daily-cache.js';
 import { consolePoolConfig } from './pool.js';
@@ -132,20 +135,29 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
       evidence: {
         draftBody: null, sentences: null, claims: null,
         documents: null, documentsMalformed: false,
+        // A run with no journal holds no rewrite row, so its reply is
+        // whatever the ledger's item said, and that is not this field's
+        // subject: this one is read from the journal. With no journal there
+        // is also no draft recorded, so nothing was replaced by one.
+        replyRewritten: false,
+        draftReplaced: false,
       },
       conversationId: await conversationLink(pool, runId, requested),
       request: requested,
     };
   }
   const agreement = journal.agreement;
+  // DEC-48: the numbers a page may report, which is none of them for a reply
+  // a person wrote. The rule lives in `views.ts` beside the other view rules.
+  const shown = coverageForPage(journal);
   return {
     ...base,
     agreement: agreement?.agreement ?? null,
-    coverage: journal.coverage?.groundedness ?? null,
+    coverage: shown.coverage,
     agreementThreshold: agreement?.threshold ?? null,
     agreementDetail: agreement === null ? null : agreementDetail(agreement.agreement),
-    coverageBlock: journal.coverage?.blockThreshold ?? null,
-    coverageReview: journal.coverage?.reviewThreshold ?? null,
+    coverageBlock: shown.block,
+    coverageReview: shown.review,
     intentId: agreement?.intentId ?? null,
     decision: journal.coverage?.decision ?? null,
     policyReason: journal.coverage?.reason ?? null,
@@ -538,6 +550,10 @@ async function main(): Promise<void> {
     close: closeFor({ pool, closeRun, ledgerReply: readBack?.supportsLedgerReply ?? false }),
     // DEC-48: the case a reviewer puts aside, on the same declaration.
     snooze: snoozeFor({ pool, snoozeRun, ledgerReply: readBack?.supportsLedgerReply ?? false }),
+    // DEC-48: the reply a reviewer writes from scratch, on the declaration
+    // too: only where the ledger holds the reply does a reply written here
+    // reach the customer.
+    rewrite: rewriteFor({ pool, rewriteReply, ledgerReply: readBack?.supportsLedgerReply ?? false }),
     undo: undoFor({ pool, undoApproval }),
     // DEC-51: the read the pages use to count the window that is left.
     readApprovalHold: async (runId: string) => readApprovalHold(pool, runId),
