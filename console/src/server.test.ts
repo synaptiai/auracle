@@ -3267,6 +3267,53 @@ describe('taking a case (DEC-46)', () => {
       .toContain('The case is theirs now.');
   });
 
+  // Criterion 4 of issue #110, in its own words: hand to a teammate moves the
+  // reservation, and the customer sees nothing. The console half is the move
+  // and the words around it; the ledger half — no outbox record, no state
+  // change, no reply text, and both published reports reading the same before
+  // and after — is `src/holds/holds.db.test.ts`, which owns the write.
+  it('hands over a case, and reaches no customer', async () => {
+    const handed: Array<[string, string, string]> = [];
+    // The two writes that do reach a customer, spied rather than assumed.
+    // Without them this case proves the routing and nothing about the
+    // customer: the state it reads is the harness's own fixture.
+    const approve = vi.fn();
+    const saveReply = vi.fn();
+    const base = await startGuarded(deps({
+      // The page the redirect lands on reads the case after the move, so it
+      // names the teammate.
+      readHold: async () => holdFor('bo@example.test', 20),
+      handoverHold: async (runId: string, reviewer: string, to: string) => {
+        handed.push([runId, reviewer, to]);
+        return { outcome: 'handed_over' };
+      },
+      approve,
+      saveReply,
+    }));
+    const res = await fetch(base + '/take', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: `runId=${RUN}&handover=1&to=bo%40example.test`,
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(`/case/${RUN}?taken=handed_over`);
+    expect(handed).toEqual([[RUN, REVIEWER, 'bo@example.test']]);
+
+    // The page the redirect lands on names the teammate. The banner and the
+    // case's own state are the older case's subject; what this one adds is
+    // that the move happened and that nothing else did.
+    const page = await (await fetch(base + `/case/${RUN}?taken=handed_over`)).text();
+    expect(page).toContain('Held by bo@example.test');
+    // And the move is the whole of what this route did. Neither write that
+    // can reach a customer ran, so nothing was sent and nothing was saved.
+    expect(approve).not.toHaveBeenCalled();
+    expect(saveReply).not.toHaveBeenCalled();
+  });
+
   // Criterion 6, at the strength it has: a refusal keeps what the reviewer
   // typed. Typing a colleague's identity twice to fix a typo is the failure
   // this prevents.

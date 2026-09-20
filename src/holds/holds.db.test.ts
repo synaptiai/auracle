@@ -11,7 +11,9 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { readDays } from '../bands/query.js';
 import { dbUrl } from '../db/config.js';
+import { readLatency } from '../latency/query.js';
 import { truncateLedger } from '../test-support/schema.js';
 import {
   handoverHold, holdHistory, readHold, readHolds, releaseHold, releaseHoldIn, takeHold,
@@ -31,6 +33,76 @@ async function runIn(state = 'awaiting_approval'): Promise<string> {
     `INSERT INTO run (run_id, ticket_id, partition, epoch, state, prompt_ver, model_ver, deadline_at)
      VALUES ($1, 'T-1', 0, 1, $2, 'p', 'm', now() + interval '1 day')`,
     [runId, state],
+  );
+  return runId;
+}
+
+/**
+ * Everything about a case a hand-over must not touch (DEC-48).
+ *
+ * The hold is advisory: it says who is working a case and nothing else. So
+ * this is the whole of what a customer could see — the run row entire, the
+ * conversation it belongs to, every outbox record and every turn's text —
+ * read before and after a move. `SELECT *` and not a column list: a column
+ * this change does not know about is a column a later change could move.
+ *
+ * Out of scope, deliberately: `case_hold` and `case_hold_event`, which are
+ * what a move writes, and `step_journal`, which the holds module never
+ * writes. The outbox set and the turn set are asserted non-empty by the case
+ * below, because two empty sets are equal whatever the code does.
+ */
+async function customerFacing(runId: string): Promise<unknown> {
+  const run = await pool.query('SELECT * FROM run WHERE run_id = $1', [runId]);
+  const conversation = await pool.query(
+    `SELECT c.* FROM conversation c
+       JOIN run r ON r.conversation_id = c.conversation_id
+      WHERE r.run_id = $1`,
+    [runId],
+  );
+  const outbox = await pool.query(
+    'SELECT step_id, idem_key, status, payload, reply FROM outbox WHERE run_id = $1 ORDER BY step_id',
+    [runId],
+  );
+  const turns = await pool.query(
+    `SELECT t.* FROM turn t
+       JOIN run r ON r.conversation_id = t.conversation_id
+      WHERE r.run_id = $1 ORDER BY t.turn_number`,
+    [runId],
+  );
+  return { run: run.rows, conversation: conversation.rows, outbox: outbox.rows, turns: turns.rows };
+}
+
+/** A window that covers a run created now. */
+const FROM = new Date(Date.now() - 86_400_000);
+const TO = new Date(Date.now() + 86_400_000);
+
+/**
+ * A case with a customer behind it: one conversation, one turn carrying text,
+ * and a run that answers it.
+ *
+ * The wait is measured too (`enqueued_at` one second before creation), so the
+ * latency report computes a real duration from this run and a move that
+ * re-stamped `created_at` would show in it.
+ */
+async function caseWithACustomer(): Promise<string> {
+  const conversationId = randomUUID();
+  await pool.query(
+    `INSERT INTO conversation (conversation_id, primary_ticket_id, state)
+     VALUES ($1, 'T-1', 'open')`,
+    [conversationId],
+  );
+  await pool.query(
+    `INSERT INTO turn (conversation_id, turn_number, ticket_id, body_text, saved_reply_text)
+     VALUES ($1, 1, 'T-1', 'There are two charges for the same month.', 'We refunded the duplicate.')`,
+    [conversationId],
+  );
+  const runId = await runIn();
+  await pool.query(
+    `UPDATE run
+        SET conversation_id = $2, turn_number = 1,
+            enqueued_at = created_at - interval '1 second'
+      WHERE run_id = $1`,
+    [runId, conversationId],
   );
   return runId;
 }
@@ -293,6 +365,48 @@ describe('the case hold (DEC-46)', () => {
         ['take', 'anna@example.test', null],
         ['handover', 'bo@example.test', 'anna@example.test'],
       ]);
+  });
+
+  // Criterion 4, and DEC-48's row for this outcome: a hand-over moves the
+  // reservation and nothing else. The customer sees nothing — no record
+  // commits, no state moves, no reply text is written — and both published
+  // reports read the same before and after, which is what their "unchanged"
+  // cells claim.
+  it('hands the case over without anything reaching the customer', async () => {
+    const runId = await caseWithACustomer();
+    await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: LAPSE_MS });
+    // A record an earlier action left, so "no record was written" is
+    // distinguishable from "there was nothing to write".
+    await pool.query(
+      `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class, delivery, payload, status)
+       VALUES ($1, 'execute', $2, 1, 'route_ticket', 'at_most_once', '{}'::jsonb, 'sent')`,
+      [runId, `k-${runId}`],
+    );
+    const before = await customerFacing(runId);
+    const daysBefore = await readDays(pool, FROM, TO);
+    const latencyBefore = await readLatency(pool);
+    // The sets the comparison rests on are not empty, and the reports cover
+    // this run. Without these three lines the case would pass against a
+    // fixture that read nothing, and against a window that covered nothing.
+    expect((before as { turns: unknown[] }).turns).toHaveLength(1);
+    expect(daysBefore).toHaveLength(1);
+    expect(latencyBefore.runs).toBe(1);
+
+    expect(await handoverHold(pool, {
+      runId,
+      from: 'anna@example.test',
+      to: 'bo@example.test',
+      lapseMs: LAPSE_MS,
+      isReviewer: async () => true,
+    })).toEqual({ outcome: 'handed_over' });
+
+    // The reservation moved...
+    expect((await readHold(pool, runId))?.reviewer).toBe('bo@example.test');
+    // ...and every fact a customer could be affected by is byte for byte what
+    // it was.
+    expect(await customerFacing(runId)).toEqual(before);
+    expect(await readDays(pool, FROM, TO)).toEqual(daysBefore);
+    expect(await readLatency(pool)).toEqual(latencyBefore);
   });
 
   // One case per person, on the handover path too. The recipient is a
