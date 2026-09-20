@@ -26,9 +26,9 @@ import {
 // which action is the permanent one.
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
 import type { PolicyReason } from 'auracle/policy';
-import { MAX_CLOSE_REASON_CHARS, replyDigest } from 'auracle/ledger-read';
+import { MAX_CLOSE_REASON_CHARS, MAX_SNOOZE_MS, MIN_SNOOZE_MS, replyDigest } from 'auracle/ledger-read';
 import type {
-  CloseOutcome, MessageAbsence, OutboxStatus, ReplyAbsence,
+  CloseOutcome, MessageAbsence, OutboxStatus, ReplyAbsence, SnoozeOutcome,
 } from 'auracle/ledger-read';
 import type { ConsoleApproveOutcome, ConsoleSaveOutcome } from './approve.js';
 import { isFault } from './confirm.js';
@@ -67,6 +67,13 @@ export interface RunRow {
   readonly gateCoverage: number | null;
   /** When the ledger opened the run, so a surface ordered by time shows it. */
   readonly createdAt: Date | null;
+  /**
+   * DEC-48: when this run's snooze is due back, or null.
+   *
+   * Kept after the run returns to the queue, so the case can say the run was
+   * put aside rather than leaving a reader to guess from a journal row.
+   */
+  readonly snoozedUntil: Date | null;
   readonly stepsUsed: number;
   /**
    * DEC-47: the product of the channel this run's message arrived on, or
@@ -2173,6 +2180,14 @@ export interface CaseOptions {
    */
   readonly closed: string;
   /**
+   * The outcome of the snooze just posted, drawn above the case (DEC-48).
+   *
+   * Its own field for the reason `closed` has one: nothing was sent, nothing
+   * was closed and nothing was put aside are three answers, and one name —
+   * `shown_changed` — means all three.
+   */
+  readonly snoozed: string;
+  /**
    * Why an edit did not apply, off the query string. A code this console
    * knows, looked up rather than printed.
    */
@@ -2567,6 +2582,12 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       savedReply: view.request?.savedReplyText != null,
       ledgerReply: options.ledgerReply,
     }),
+    options.snoozed === '' ? '' : renderSnoozeOutcome(options.snoozed, {
+      state: view.state,
+      approved: view.approved,
+      savedReply: view.request?.savedReplyText != null,
+      ledgerReply: options.ledgerReply,
+    }),
     '<div class="case">',
     '<div class="casemain">',
     evidenceBlock(view.evidence, view.draftExternalId, view.request, {
@@ -2829,6 +2850,34 @@ function holdBar(view: CaseView, options: CaseOptions): string {
 }
 
 /**
+ * The snooze, beside the close (DEC-48).
+ *
+ * The period is a number of minutes rather than a list of choices: a reviewer
+ * knows how long the case needs, and a list would be the console choosing for
+ * them. Minutes and not hours, because the ledger's floor is a minute: a
+ * whole-hour field could not ask for the fifteen a case might need. A number
+ * input and not a `select`, because this package refuses a `<select>` for the
+ * reason `select-only.test.ts` states.
+ */
+function snoozeForm(view: CaseView, options: CaseOptions): string {
+  const minMinutes = Math.round(MIN_SNOOZE_MS / 60_000);
+  const maxMinutes = Math.round(MAX_SNOOZE_MS / 60_000);
+  return [
+    '<div class="snoozebar">',
+    '<p class="discl">Snoozing puts this case aside until the period ends or the customer'
+      + ' writes, whichever comes first. Nothing is sent.</p>',
+    `<form method="post" action="/snooze${escapeHtml(filtersQuery(options.rule, options.product))}">`,
+    `<input type="hidden" name="runId" value="${escapeHtml(view.runId)}">`,
+    `<input type="hidden" name="shown" value="${
+      escapeHtml(replyDigest(replyTextOf(view, options.ledgerReply) ?? ''))}">`,
+    `<input class="identity" name="minutes" type="number" min="${minMinutes}" max="${maxMinutes}"`
+      + ' step="1" value="120" required aria-label="minutes to put this case aside">',
+    '<button class="btn" type="submit">Snooze</button>',
+    '</form></div>',
+  ].join('');
+}
+
+/**
  * What a take, release or handover answered, in the words the case shows.
  *
  * A refusal that lost the hold names whoever holds it now (DEC-46, criterion
@@ -3006,6 +3055,89 @@ export function renderCloseOutcome(outcome: string, run: OutcomeRun | null): str
   ].join('');
 }
 
+/**
+ * A period in the plainest whole unit that states it.
+ *
+ * The sentence below names the bounds, and the bounds are constants: deriving
+ * the words from them keeps the page true when one moves. Stating the ceiling
+ * in the unit it is written in is the point — a period divided by the wrong
+ * unit told a reviewer a month was 720 days.
+ */
+function periodSays(ms: number): string {
+  const minutes = ms / 60_000;
+  if (minutes < 60) return minutes === 1 ? 'a minute' : `${minutes} minutes`;
+  const hours = minutes / 60;
+  if (hours < 48) return hours === 1 ? 'an hour' : `${hours} hours`;
+  const days = hours / 24;
+  return days === 1 ? 'a day' : `${days} days`;
+}
+
+/**
+ * What a snooze answered, in the words the case shows (DEC-48).
+ *
+ * Every outcome gets a sentence, and the compiler holds the set closed. The
+ * one that matters most is `snoozed` itself: a case a person put aside has to
+ * say so, and say that nothing was sent.
+ */
+const SNOOZE_SAYS = {
+  snoozed: 'The case is put aside. It returns to this queue when the period ends,'
+    + ' or ends if the customer writes first.',
+  // DEC-48: the period is bounded, and the page names the bounds rather than
+  // restating them.
+  period_out_of_range: `A snooze lasts between ${periodSays(MIN_SNOOZE_MS)} and`
+    + ` ${periodSays(MAX_SNOOZE_MS)}, so nothing was put aside.`,
+  // DEC-46: the reply moved under the reviewer.
+  shown_changed: 'The reply changed since this page was drawn, so nothing was put aside.'
+    + ' Open the case again to read it as it is now.',
+  not_awaiting_approval: 'That run is not waiting for approval, so nothing was put aside.',
+  unknown_run: 'That run is not in the ledger.',
+  stale_epoch: 'Another owner took this ticket, so nothing was put aside.',
+} as const satisfies Record<SnoozeOutcome['outcome'], string>;
+
+/** What a snooze outcome this page cannot vouch for is answered with. */
+const UNKNOWN_SNOOZE = 'That is not an answer this console knows.';
+
+/**
+ * Whether a snooze outcome can be the ledger's answer about `run`.
+ *
+ * A snooze takes the case out of the queue, so `snoozed` is checked against
+ * the state the page read. Every refusal leaves the run where it was, and
+ * each names a state the page can check.
+ */
+function snoozeOutcomeFits(outcome: string, run: OutcomeRun | null): boolean {
+  switch (outcome) {
+    case 'snoozed':
+      return run !== null && run.state === 'snoozed';
+    case 'period_out_of_range':
+    case 'shown_changed':
+    case 'stale_epoch':
+      return run !== null && run.state === 'awaiting_approval';
+    case 'not_awaiting_approval':
+      return run !== null && run.state !== 'awaiting_approval';
+    case 'unknown_run':
+      return run === null;
+    default:
+      return false;
+  }
+}
+
+/**
+ * What the ledger said about the snooze just posted, or that it said nothing
+ * this page can vouch for.
+ */
+export function renderSnoozeOutcome(outcome: string, run: OutcomeRun | null): string {
+  const known = Object.hasOwn(SNOOZE_SAYS, outcome) && snoozeOutcomeFits(outcome, run);
+  const said = known ? SNOOZE_SAYS[outcome as keyof typeof SNOOZE_SAYS] : UNKNOWN_SNOOZE;
+  return [
+    '<div class="wrap" style="padding-bottom:0">',
+    known
+      ? `<p class="outcome${outcome === 'snoozed' ? ' ok' : ' refused'}" data-snooze="${escapeHtml(outcome)}">`
+      : '<p class="outcome">',
+    escapeHtml(said),
+    '</p></div>',
+  ].join('');
+}
+
 /** What a take answered, in the words the case shows. */
 const TAKE_SAYS = {
   taken: 'You hold this case now.',
@@ -3034,8 +3166,14 @@ function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
   // approve is exactly the dead end this outcome exists to end, and a close
   // needs nothing from the park but the text the page drew.
   const close = view.state === 'awaiting_approval' ? closeForm(view, options) : '';
+  const snooze = view.state === 'awaiting_approval' ? snoozeForm(view, options) : '';
+  // A snoozed case says when it comes back. Without that a reviewer reading
+  // the case cannot tell it from one nobody has picked up.
+  const aside = view.state === 'snoozed' && view.snoozedUntil !== null
+    ? ` It returns to the queue at ${escapeHtml(whenSays(view.snoozedUntil))}.`
+    : '';
   const approval = view.state !== 'awaiting_approval'
-    ? `<p class="discl">This run is ${escapeHtml(view.state)}, so there is nothing here to approve.</p>`
+    ? `<p class="discl">This run is ${escapeHtml(view.state)}, so there is nothing here to approve.${aside}</p>`
     : act.kind === 'none'
       ? `<p class="discl">${escapeHtml(act.says)}</p>`
       // The digest is of the reply this page drew, which is the text the
@@ -3050,7 +3188,7 @@ function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
         replyDigest(replyTextOf(view, options.ledgerReply) ?? ''),
       )
         + (act.kind === 'reply' ? `<p class="readback">${escapeHtml(readBackSays(options.readBack, options.ledgerReply))}</p>` : '');
-  return `<div class="actionbar">${approval}${close}</div>`;
+  return `<div class="actionbar">${approval}${close}${snooze}</div>`;
 }
 
 /**
@@ -3285,6 +3423,9 @@ const REPLY_ABSENCE = {
   closed_without_reply: 'a person closed this case without replying to the customer',
   // Not "a reply is drafted": an internal write parks with no draft (DEC-34).
   awaiting_approval: 'this turn waits for a person to approve it',
+  // DEC-48. Neither sentence above is true of it: the case is not waiting for
+  // approval now, and nothing about it is in flight.
+  put_aside: 'a person put this case aside until its period ends',
   in_flight: 'this run has not finished',
   no_reply_sent: 'the run stopped without sending a reply',
   not_retained: 'no run joins this turn, so nothing here can say what happened',
@@ -3386,6 +3527,9 @@ function turnOutcome(turn: TurnView): { readonly says: string; readonly token: T
     // of the turn, and a reader who saw `closed` alone would have to guess
     // whether anything went out.
     case 'closed_without_reply': return { says: 'closed, no reply', token: 'dim' };
+    // DEC-48: the case left the queue for a period, so the chip says what a
+    // person did rather than the state's own word.
+    case 'put_aside': return { says: 'put aside', token: 'dim' };
     case 'in_flight': return withRow('in flight', 'dim', turn.outboxStatus);
     case 'not_retained': return { says: 'no run', token: 'dim' };
     default:

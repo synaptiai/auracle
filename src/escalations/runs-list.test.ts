@@ -39,7 +39,10 @@ describe('the runs SELECT', () => {
     }
     // Derived rather than retyped, so the two cannot fall out of step.
     expect(LEDGER_STATES.slice(0, RUN_STATES.length)).toEqual([...RUN_STATES]);
-    expect(LEDGER_STATES).toHaveLength(RUN_STATES.length + TERMINAL_RUN_STATES.length);
+    // DEC-48: a snoozed run has left the walk without ending, and the runs
+    // surface filters on it like any other state.
+    expect(LEDGER_STATES).toContain('snoozed');
+    expect(LEDGER_STATES).toHaveLength(RUN_STATES.length + TERMINAL_RUN_STATES.length + 1);
   });
 
   // The terminal states have no runtime list of their own in the coordinator

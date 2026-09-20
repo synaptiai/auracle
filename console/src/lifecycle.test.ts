@@ -66,14 +66,15 @@ describe('the console as a long-running process', () => {
     // from the adapter the read-back chose, never from the environment a
     // second time.
     //
-    // Counted, and not merely found. Three sites read it — the approval, the
-    // close whose guard compares the text a page drew, and the pages
-    // themselves — and the failure this guards is any of them disagreeing: an
-    // editor offered to a reviewer whose text the approval never sends, or a
-    // close refused against a text the case never drew. `indexOf` and
-    // `toMatch` both pass while one of the three says something else.
+    // Counted, and not merely found. Four sites read it — the approval, the
+    // close and the snooze, whose guards compare the text a page drew, and
+    // the pages themselves — and the failure this guards is any of them
+    // disagreeing: an editor offered to a reviewer whose text the approval
+    // never sends, or a close refused against a text the case never drew.
+    // `indexOf` and `toMatch` both pass while one of the four says something
+    // else.
     const declaration = /ledgerReply: readBack\?\.supportsLedgerReply \?\? false/g;
-    expect([...MAIN.matchAll(declaration)]).toHaveLength(3);
+    expect([...MAIN.matchAll(declaration)]).toHaveLength(4);
     expect(MAIN).not.toContain('approveFromConsole');
   });
 

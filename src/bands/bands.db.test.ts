@@ -373,6 +373,25 @@ describe('the control-band daily sample', () => {
     expect(edit.count + edit.notReached + edit.unrecorded).toBe(day!.runs);
   });
 
+  // DEC-48: a snoozed case has left the queue without ending, so it is still
+  // to land. Counting it as not pending would report a case nobody is working
+  // as one that is already settled.
+  it('counts a snoozed case as still to land, beside the ones waiting for a person', async () => {
+    await seedRun({ day: '2026-02-01', editDistance: 0.4 });
+    const snoozed = await seedRun({ day: '2026-02-01', state: 'snoozed' });
+    await pool.query(
+      "UPDATE run SET snoozed_until = now() + interval '2 hours' WHERE run_id = $1",
+      [snoozed],
+    );
+    await seedRun({ day: '2026-02-01', state: 'awaiting_approval' });
+
+    const [day] = await readDays(pool, FROM, TO);
+    const edit = day!.samples.approval_edit_distance;
+    expect(edit.pending).toBe(2);
+    // And the identity still holds: pending overlaps the exclusions.
+    expect(edit.count + edit.notReached + edit.unrecorded).toBe(day!.runs);
+  });
+
   it('counts a run with a stuck delivery once, however many records are stuck', async () => {
     await seedRun({ day: '2026-02-01', outbox: ['delivery_unknown', 'delivery_unknown'] });
     await seedRun({ day: '2026-02-01', outbox: ['sent'] });

@@ -43,6 +43,7 @@ import {
   renderOutcome,
   renderRuns,
   renderCloseOutcome,
+  renderSnoozeOutcome,
   renderUndoResult,
   replyTextOf,
 } from './surfaces.js';
@@ -63,7 +64,8 @@ import { logLine } from 'auracle/format';
 import type { ReviewerFor } from './reviewer.js';
 import { copyHoldsText, replyDigest } from 'auracle/ledger-read';
 import type {
-  ApprovalHold, CloseOutcome, HandoverOutcome, Hold, ReleaseOutcome, TakeOutcome, UndoOutcome,
+  ApprovalHold, CloseOutcome, HandoverOutcome, Hold, ReleaseOutcome, SnoozeOutcome, TakeOutcome,
+  UndoOutcome,
 } from 'auracle/ledger-read';
 
 /**
@@ -150,6 +152,18 @@ export interface ConsoleDeps {
     reason: string,
     shown: string,
   ) => Promise<CloseOutcome['outcome']>;
+  /**
+   * DEC-48: the case a reviewer puts aside for a period.
+   *
+   * The console's fifth write. The period's bounds, the DEC-46 guard and the
+   * journal row are the core's; this hands it the form and draws the answer.
+   */
+  readonly snooze: (
+    runId: string,
+    reviewer: string,
+    periodMs: number,
+    shown: string,
+  ) => Promise<SnoozeOutcome['outcome']>;
   /**
    * The copy the helpdesk holds for one parked draft (DEC-44), read when an
    * approval refused because a person edited it. Null when there is nothing
@@ -1150,6 +1164,8 @@ async function route(
     // Read here rather than beside the other outcome blocks, because the
     // branch below answers for a run this ledger does not hold.
     const closed = url.searchParams.get('closed') ?? '';
+    // DEC-48: what the snooze route answered, drawn beside the case.
+    const snoozed = url.searchParams.get('snoozed') ?? '';
     const { rule, product } = queueFilters(url);
     if (runId === null || !isRunId(runId)) {
       send(res, 404, page('Case', nothingFound(), shell(NOT_A_SURFACE)));
@@ -1183,6 +1199,7 @@ async function route(
         'Case',
         (outcome === '' ? '' : renderOutcome(outcome, null))
           + (closed === '' ? '' : renderCloseOutcome(closed, null))
+          + (snoozed === '' ? '' : renderSnoozeOutcome(snoozed, null))
           + nothingFound(),
         shell(NOT_A_SURFACE),
       ));
@@ -1268,8 +1285,8 @@ async function route(
     send(res, 200, page(
       `Case ${run.ticketId}`,
       renderCase({ ...run, customer }, {
-        outcome, edit, why, closed, rule, product, readBack: options.readBack, hold, taken,
-        handoverTo, ledgerReply: options.ledgerReply, writing, copy, sendHold,
+        outcome, edit, why, closed, snoozed, rule, product, readBack: options.readBack, hold,
+        taken, handoverTo, ledgerReply: options.ledgerReply, writing, copy, sendHold,
       }),
       { ...shell(`/case/${runId}`), back: caseHref(runId, rule, product) },
     ));
@@ -1464,6 +1481,13 @@ async function route(
   // this console's writes should read a name that says so.
   if (req.method === 'POST' && path === '/close') {
     await closeRoute(req, res, deps, reviewer, url, theme);
+    return;
+  }
+
+  // DEC-48: the case a reviewer puts aside. Its own route, as every outcome
+  // has: nothing is sent, and the case waits.
+  if (req.method === 'POST' && path === '/snooze') {
+    await snoozeRoute(req, res, deps, reviewer, url, theme);
     return;
   }
 
@@ -2196,6 +2220,125 @@ async function closeRoute(
   res.writeHead(303, {
     ...SAFETY_HEADERS,
     location: `/case/${encodeURIComponent(runId)}?closed=${encodeURIComponent(outcome)}${kept}`,
+  });
+  res.end();
+}
+
+/**
+ * The snooze a reviewer posts from a case (DEC-48).
+ *
+ * Two things are checked here: the run id and the digest of the reply the
+ * page drew. The period's own rules belong to `snoozeRun`, which refuses one
+ * outside its bounds before it writes, and the page words the answer.
+ *
+ * The period arrives in minutes, the unit the bound is stated in, so a
+ * reviewer can ask for the fifteen a case might need. A value that is not a
+ * number reaches the ledger as one, and is refused there with the rest of the
+ * bounds.
+ */
+async function snoozeRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ConsoleDeps,
+  reviewer: string,
+  url: URL,
+  theme: Theme,
+): Promise<void> {
+  const from = req.socket.remoteAddress ?? null;
+  let form;
+  try {
+    form = await readForm(req);
+  } catch (error) {
+    if (!(error instanceof OversizedForm)) {
+      if (req.destroyed || req.readableAborted) {
+        console.error(logLine({
+          event: 'console_refused', reason: 'client_aborted',
+          host: req.headers.host ?? null, from,
+        }));
+        return;
+      }
+      throw error;
+    }
+    req.destroy();
+    send(res, 413, bare(
+      'Refused',
+      'The snooze form is larger than this console accepts. Nothing was put aside.',
+      theme,
+      backToQueue(url),
+    ));
+    return;
+  }
+
+  const runId = (form.get('runId') ?? '').trim();
+  if (!isRunId(runId)) {
+    console.error(logLine({
+      event: 'console_refused', reason: 'not_a_run_id',
+      runId: logged(runId), runIdLength: loggedLength(runId),
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 400, bare('Refused', 'That is not a run id, so nothing was put aside.', theme));
+    return;
+  }
+  const shown = (form.get('shown') ?? '').trim();
+  if (!SHOWN_DIGEST.test(shown)) {
+    console.error(logLine({
+      event: 'console_refused', reason: 'not_a_shown_digest',
+      runId, shownLength: loggedLength(shown),
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 400, bare(
+      'Refused',
+      'That request carries no reply digest, so this console will not put the case aside.'
+        + ' Open the case and snooze it there.',
+      theme,
+    ));
+    return;
+  }
+
+  // The period, in the unit the form posts. The bounds are the ledger's and
+  // are answered by `snoozeRun`; a value that is not a number at all is
+  // passed as one, which the ledger refuses as out of range.
+  const minutes = Number((form.get('minutes') ?? '').trim());
+  const periodMs = Number.isFinite(minutes)
+    ? Math.round(minutes * 60_000)
+    : Number.POSITIVE_INFINITY;
+  let outcome: string;
+  try {
+    outcome = await deps.snooze(runId, reviewer, periodMs, shown);
+  } catch (error) {
+    const tag = randomUUID().slice(0, 8);
+    console.error(logLine({
+      event: 'console_snooze_failed', tag, runId, minutes: Number.isFinite(minutes) ? minutes : null,
+      reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+      host: req.headers.host ?? null, from, error: describeFault(error),
+    }));
+    send(res, 500, bare(
+      'Error',
+      `Something failed during the snooze, and it may or may not have committed.`
+        + ` The console log names it ${tag}.`,
+      theme,
+      {
+        href: caseHref(runId, url.searchParams.get('rule'), url.searchParams.get('product')),
+        text: 'Open the case to see its state.',
+      },
+    ));
+    return;
+  }
+  console.error(logLine({
+    event: 'console_snoozed',
+    runId,
+    outcome,
+    minutes: Number.isFinite(minutes) ? minutes : null,
+    reviewer: logged(reviewer),
+    reviewerLength: loggedLength(reviewer),
+    host: req.headers.host ?? null,
+    from,
+  }));
+  const kept = filtersQuery(url.searchParams.get('rule'), url.searchParams.get('product'))
+    .replace(/^\?/, '&');
+  res.writeHead(303, {
+    ...SAFETY_HEADERS,
+    location: `/case/${encodeURIComponent(runId)}?snoozed=${encodeURIComponent(outcome)}${kept}`,
   });
   res.end();
 }

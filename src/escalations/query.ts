@@ -95,6 +95,13 @@ export interface EscalationItem {
    * times in hours, so age is exactly the quantity a person is triaging on.
    */
   readonly createdAt: Date | null;
+  /**
+   * DEC-48: when this run's snooze is due back, or null.
+   *
+   * Kept after the run returns to the queue, so a reader can tell a run that
+   * was put aside from one that never was.
+   */
+  readonly snoozedUntil: Date | null;
   /** Outbox status when a record is stuck: `delivery_unknown` or `malformed`. */
   readonly outboxStatus: string | null;
   /**
@@ -176,6 +183,9 @@ export const TERMINAL_RUN_STATES = [
 
 export const LEDGER_STATES = [
   ...RUN_STATES,
+  // DEC-48: a run that left the walk without ending. It filters like any
+  // other state, and the runs surface has to be able to ask for it.
+  'snoozed',
   ...TERMINAL_RUN_STATES,
 ] as const;
 
@@ -216,6 +226,9 @@ const RUN_SELECT_BODY = `
          r.cost_micros        AS cost_micros,
          r.steps_used        AS steps_used,
          r.created_at        AS created_at,
+         -- DEC-48: when a snoozed case is due back. Null on a run nobody
+         -- snoozed, which is not the epoch.
+         r.snoozed_until      AS snoozed_until,
          esc.result ->> 'reason'          AS reason,
          esc.result ->> 'fault'           AS fault,
          gate.result ->> 'reason'          AS gate_reason,
@@ -306,6 +319,7 @@ const OUTBOX_SELECT = `
          park.result ->> 'delivery'        AS delivery,
          (r.approved_by IS NOT NULL)       AS approved,
          r.product            AS product,
+         r.snoozed_until      AS snoozed_until,
          o.status             AS outbox_status
     FROM outbox o
     JOIN run r ON r.run_id = o.run_id
@@ -360,6 +374,7 @@ function toItem(row: Record<string, unknown>): EscalationItem {
       ? row['risk_tier'] as RiskTier
       : null,
     createdAt: row['created_at'] instanceof Date ? row['created_at'] : null,
+    snoozedUntil: row['snoozed_until'] instanceof Date ? row['snoozed_until'] : null,
     promptVer: String(row['prompt_ver'] ?? ''),
     outboxStatus: (row['outbox_status'] as string | null) ?? null,
     draftExternalId: (row['draft_external_id'] as string | null) ?? null,

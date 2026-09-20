@@ -284,6 +284,7 @@ received -> classified -> retrieved -> composed -> gated
   -> executing          (automatic path, internal writes only)
   -> awaiting_approval  (customer replies, DEC-12)
   -> resolved | escalated | superseded | abandoned | closed
+  -> snoozed           (waiting for a period or the customer, DEC-48)
 ```
 
 The coordinator does these tasks:

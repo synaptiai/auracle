@@ -115,6 +115,8 @@ describe('escalations CLI queries', () => {
       // DEC-47: a seeded run names no channel, so it records no product.
       // Null is that fact, and it is not a product named ''.
       product: null,
+      // DEC-48: a run nobody snoozed has no moment.
+      snoozedUntil: null,
       outboxStatus: null,
       draftExternalId: null,
       payloadRecorded: false,
@@ -431,6 +433,9 @@ describe('escalations CLI queries', () => {
        VALUES ($1, 'send', $2, 1, 'customer_reply', 'at_least_once', '{}', 'delivery_unknown')`,
       [run.runId, 'idem-' + randomUUID()],
     );
+    // DEC-48: a run that was put aside carries its moment, and an item read
+    // through the stuck-record arm reports it like any other.
+    await pool.query('UPDATE run SET snoozed_until = now() WHERE run_id = $1', [run.runId]);
 
     const items = await listEscalations(pool);
 
@@ -442,6 +447,7 @@ describe('escalations CLI queries', () => {
       payloadRecorded: true,
       actionClass: 'apply_credit',
       agreement: 0.9,
+      snoozedUntil: expect.any(Date),
     });
     expect(items[0]?.createdAt).toBeInstanceOf(Date);
   });

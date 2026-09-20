@@ -484,10 +484,13 @@ td a, dd a { display: inline-block; }
 /* DEC-48: the case a reviewer finishes with no reply. Its own row under the
  * approval, so the primary control stays the one a reviewer reaches for and
  * the close is never one stray press away from it. */
-.actionbar .closebar { flex:1 1 100%; display:flex; flex-wrap:wrap; align-items:center;
-  gap:8px 12px; border-top:1px solid var(--rule2); padding-top:9px; }
-.actionbar .closebar .discl { flex:1 1 100%; margin:0; }
-.actionbar .closebar form { flex:none; display:flex; gap:8px; align-items:center; margin:0; }
+.actionbar .closebar, .actionbar .snoozebar { flex:1 1 100%; display:flex; flex-wrap:wrap;
+  align-items:center; gap:8px 12px; border-top:1px solid var(--rule2); padding-top:9px; }
+.actionbar .closebar .discl, .actionbar .snoozebar .discl { flex:1 1 100%; margin:0; }
+.actionbar .closebar form, .actionbar .snoozebar form {
+  flex:none; display:flex; gap:8px; align-items:center; margin:0; }
+/* The period field is narrow: a number of minutes, not a paragraph. */
+.actionbar .snoozebar input[name="minutes"] { width:6.5em; }
 /* The gates one above the other, in a column too narrow for two cards. */
 .gates.rows { grid-template-columns:minmax(0, 1fr); }
 /* Why a gate has no value, beside its dash. */

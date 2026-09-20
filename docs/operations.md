@@ -1710,10 +1710,11 @@ removes them.
 Clearing a draft does not reach the helpdesk. The draft parks there as well
 (DEC-11), and the adapter's own retention governs that copy.
 
-**The console writes the ledger in eight places, and it names each one.** It
+**The console writes the ledger in nine places, and it names each one.** It
 approves a reply, saves an edited reply, and closes a case with no reply. It
-takes a case, releases a case, and hands a case to a teammate. It also clears
-a hold whose period ran out, and takes a send back inside its hold.
+puts a case aside for a period. It takes a case, releases a case, and hands a
+case to a teammate. It also clears a hold whose period ran out, and takes a
+send back inside its hold.
 
 Every other statement it issues is a SELECT. So it is otherwise as safe
 against a live database as `pnpm run bands` and `pnpm run latency`. That
@@ -1900,6 +1901,7 @@ names one cause, because each sends you somewhere different.
 | `unfinished` | The run has not reached a terminal state. | This separates an idle partition from a stalled one. Both show few finished runs. |
 | `unstamped` | The run finished before `db/005` added the column. | Nothing. The count falls as the ledger turns over. |
 | `never_ran` | The run reached a terminal state without executing, such as an intake abandonment. | Read `pnpm run escalations`. This count rises when a partition is failing. |
+| `snoozed` | A reviewer put the case aside (DEC-48). Its duration is the wait, not work. | Nothing. It is the wait the distribution leaves out, and it falls as those cases are answered. |
 
 A run the job could not measure never enters a figure as a zero. A zero would
 flatter exactly the runs the ledger understands least.
@@ -2002,7 +2004,7 @@ not the explanation.
 |---|---|
 | `pnpm run webhook` | Takes messages in over HTTP. |
 | `pnpm run imap` | Takes messages in over IMAP. |
-| `pnpm run consumer` | Walks the state machine for its partitions. |
+| `pnpm run consumer` | Walks the state machine for its partitions, and returns the cases whose snooze is due (DEC-48). |
 | `pnpm run relay` | Drains the outbox to the adapters. |
 
 Each daemon also starts from source with no build step, for a local session:

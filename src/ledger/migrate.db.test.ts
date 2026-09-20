@@ -271,6 +271,39 @@ describe('migrate', () => {
     expect(again.rows[0]?.description).toContain('closed');
   });
 
+  // DEC-48: when a snooze ends. Nullable, because a run that was never
+  // snoozed has no moment — and the column stays after the run returns to
+  // approval, because it is the record that says the run was ever snoozed.
+  it('installs the moment a snooze ends (db/029, DEC-48)', async () => {
+    await migrate(client);
+
+    const runId = await seedRun();
+    const before = await client.query<{ snoozed_until: Date | null }>(
+      'SELECT snoozed_until FROM run WHERE run_id = $1',
+      [runId],
+    );
+    // A run nobody snoozed has no moment, and that is not the epoch.
+    expect(before.rows[0]?.snoozed_until).toBeNull();
+
+    await client.query(
+      "UPDATE run SET snoozed_until = now() + interval '2 hours' WHERE run_id = $1",
+      [runId],
+    );
+    const set = await client.query<{ snoozed_until: Date }>(
+      'SELECT snoozed_until FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(set.rows[0]?.snoozed_until).toBeInstanceOf(Date);
+
+    // The column comment says what it holds, as every column here does.
+    const comment = await client.query<{ description: string }>(
+      `SELECT col_description('run'::regclass, attnum) AS description
+         FROM pg_attribute
+        WHERE attrelid = 'run'::regclass AND attname = 'snoozed_until'`,
+    );
+    expect(comment.rows[0]?.description).toContain('snooze');
+  });
+
   // DEC-47: the product of the channel a message arrived on, recorded at
   // arrival and copied onto the run. Nullable on both tables, because a
   // channel the map does not name is a real answer and not a gap.

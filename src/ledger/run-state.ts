@@ -12,9 +12,10 @@
 //   - the relay sends a finished run's record and refuses every other one
 //     (src/relay/relay.ts).
 //
-// A run parked in `awaiting_approval` has left every consumer's hands: the
-// walk ended at the park, and the next write is a person's, made through the
-// approval path. A terminal run has left them for good. Their writes are
+// A run parked in `awaiting_approval` or `snoozed` has left every consumer's
+// hands: the walk ended at the park, and the next write is a person's, made
+// through the approval path, or the clock's, made through the snooze
+// returner. A terminal run has left them for good. Their writes are
 // settled by their own guards — the run row lock, the state the transition
 // requires, and the DEC-24 key that records which run carries an action —
 // and not by a fence that another run's work moved.
@@ -41,10 +42,14 @@ export const IN_FLIGHT_RUN_STATES: readonly string[] = [
 ];
 
 /**
- * The state that waits for a person (DEC-12). One state, named once, so the
- * three callers cannot disagree about which one it is.
+ * The states that wait (DEC-12, DEC-48). One list, named once, so the three
+ * callers cannot disagree about which ones they are.
+ *
+ * `awaiting_approval` waits for a person. `snoozed` waits for the clock or
+ * for the customer, and the reviewer who set it is not standing over it.
+ * Either way the walk has ended and the next write is not a consumer's.
  */
-export const PARKED_RUN_STATES: readonly string[] = ['awaiting_approval'];
+export const PARKED_RUN_STATES: readonly string[] = ['awaiting_approval', 'snoozed'];
 
 /**
  * The states a run never leaves (V2 open item 7).

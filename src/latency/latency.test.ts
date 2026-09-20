@@ -31,6 +31,8 @@ function service(over: Record<string, unknown> = {}): Record<string, unknown> {
     unstamped: 0,
     unordered: 0,
     never_ran: 0,
+    // DEC-48: runs that were ever snoozed, whose duration is a wait.
+    snoozed: 0,
     ...over,
   };
 }

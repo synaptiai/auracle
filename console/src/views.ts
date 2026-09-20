@@ -21,6 +21,8 @@ export function toRow(item: {
   runId: string; ticketId: string; state: string; promptVer: string;
   reason: string | null; gateReason: string | null; intentId: string | null;
   coverage: number | null; createdAt: Date | null;
+  /** DEC-48: the moment a snooze is due back, or null. */
+  snoozedUntil: Date | null;
   costMicros: number; stepsUsed: number;
   /**
    * DEC-47: the product of the channel this run's message arrived on. Null
@@ -42,6 +44,7 @@ export function toRow(item: {
     intentId: item.intentId,
     gateCoverage: item.coverage,
     createdAt: item.createdAt,
+    snoozedUntil: item.snoozedUntil,
     stepsUsed: item.stepsUsed,
     product: item.product,
   };
@@ -229,6 +232,9 @@ export function latencyCaveats(p: PartitionLatency): string[] {
     [p.service.unstamped, 'no finish time'],
     [p.service.unordered, 'finish before start'],
     [p.service.neverRan, 'never ran'],
+    // DEC-48: the runs a reviewer put aside. Its own line, because the count
+    // is the wait the distribution leaves out rather than a fault.
+    [p.service.snoozed, 'snoozed'],
   ];
   return pairs.filter(([count]) => count > 0).map(([count, says]) => `${count} ${says}`);
 }

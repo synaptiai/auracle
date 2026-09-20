@@ -274,6 +274,7 @@ received -> classified -> retrieved -> composed -> gated
   -> executing          (automatic path, reversible internal writes)
   -> awaiting_approval  (customer replies, DEC-12)
   -> resolved | escalated | superseded | abandoned | closed
+  -> snoozed           (waiting for a period or the customer, DEC-48)
 ```
 
 Each step writes to `step_journal` before it acts.

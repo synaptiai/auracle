@@ -133,7 +133,7 @@ const APPROVAL_CALLERS = ['src/approve.ts'];
 const CALLED_BY_THE_ENTRY_POINT = ['handoverHold', 'readHold', 'releaseHold', 'takeHold'];
 
 /** The writes the entry point hands to a helper instead of calling. */
-const PASSED_ON_BY_THE_ENTRY_POINT = ['approveRun', 'closeRun'];
+const PASSED_ON_BY_THE_ENTRY_POINT = ['approveRun', 'closeRun', 'snoozeRun'];
 
 /**
  * Every symbol this console takes from the barrel, and whether it writes.
@@ -149,6 +149,9 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   // DEC-48: the case a reviewer finishes with no reply. The console's fourth
   // write, and the only one that ends a case without sending anything.
   closeRun: 'write',
+  // DEC-48: a case a reviewer puts aside for a period. It sends nothing and
+  // records no approver: the run leaves the queue and comes back.
+  snoozeRun: 'write',
   conversationOfRun: 'read',
   // DEC-44: whether a copy read back from the helpdesk holds text. A rule
   // read by the approval and by the page, and no statement either way.
@@ -161,6 +164,10 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   // is built with and the ledger enforces, from one definition. A number, and
   // no statement.
   MAX_CLOSE_REASON_CHARS: 'read',
+  // DEC-48: how long a snooze may last. The bounds the form is built with and
+  // the ledger enforces, from one definition. Two numbers, and no statement.
+  MAX_SNOOZE_MS: 'read',
+  MIN_SNOOZE_MS: 'read',
   // DEC-51: whether an approval's send is still held, and for how long. A
   // read of the record the approval wrote, and no statement.
   readApprovalHold: 'read',

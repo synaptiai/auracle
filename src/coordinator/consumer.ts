@@ -59,6 +59,7 @@ import { errorMessage } from '../errors.js';
 import type { ArrivalSignal } from './arrival-signal.js';
 import { ackTicket, pollPartition } from './intake.js';
 import { journalStep } from '../ledger/journal-write.js';
+import { unsnoozeExpired } from '../outcomes/snooze.js';
 import { PARKED_RUN_STATES, TERMINAL_RUN_STATE_NAMES } from '../ledger/run-state.js';
 
 /**
@@ -405,6 +406,39 @@ export async function processQueuedTickets(
   deps: CoordinatorDeps,
   options: ConsumerOptions,
 ): Promise<ConsumerScanOutcome[]> {
+  // DEC-48: a snoozed case whose period has ended goes back to the approval
+  // queue on every scan, so the console offers it again within one interval. The partitions are this consumer's own, and a snoozed run
+  // shares its conversation's partition, so the case returned here is one
+  // this consumer owns. A case the customer already superseded is not
+  // `snoozed` any more, and the return skips it.
+  //
+  // A fault here is the clock's, not the poll's, and the poll is this
+  // function's job: the case stays due and is returned on the next scan,
+  // while a scan that threw would leave every queued message of these
+  // partitions untouched. The abandonment path below guards itself for the
+  // same reason.
+  let returned: string[] = [];
+  try {
+    returned = await unsnoozeExpired(deps.pool, options.partitions);
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: 'snoozes_return_failed',
+        at: new Date().toISOString(),
+        error: errorMessage(error),
+      }),
+    );
+  }
+  if (returned.length > 0) {
+    console.error(
+      JSON.stringify({
+        event: 'snoozes_returned',
+        at: new Date().toISOString(),
+        count: returned.length,
+      }),
+    );
+  }
+
   const results: ConsumerScanOutcome[] = [];
   const batch =
     options.scanBatchSize ??

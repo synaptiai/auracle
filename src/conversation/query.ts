@@ -68,6 +68,7 @@ export type ReplyAbsence =
   | 'handled_automatically'
   | 'approved_without_reply'
   | 'awaiting_approval'
+  | 'put_aside'
   | 'in_flight'
   | 'no_reply_sent'
   | 'not_retained'
@@ -262,6 +263,10 @@ function messageAbsenceFor(bodyText: string | null): MessageAbsence | null {
 function replyAbsenceFor(runState: string | null, approvedBy: string | null): ReplyAbsence {
   if (runState === null) return 'not_retained';
   if (runState === 'awaiting_approval') return 'awaiting_approval';
+  // DEC-48: a person put the case aside for a period. Read before the
+  // in-flight test below, which would report a case a person deliberately
+  // parked as work nobody has got to yet.
+  if (runState === 'snoozed') return 'put_aside';
   // Tested against the ledger's own terminal set rather than by naming two
   // states. Six states are in flight, and every one of them fell through to
   // `no_reply_sent` — reporting a run that may yet answer as one that

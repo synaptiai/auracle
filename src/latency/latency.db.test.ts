@@ -29,6 +29,7 @@ const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 await pool.query('SELECT 1');
 
 const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
 
 /**
  * One run with timings this suite chose.
@@ -167,6 +168,35 @@ describe('the latency report (V2 open item 7)', () => {
     expect(row!.service.unfinished).toBe(0);
     expect(row!.service.count).toBe(1);
     expect(row!.service.maxMs).toBe(4 * MINUTE);
+  });
+
+  // DEC-48: a case a reviewer put aside is not work the system did. Its
+  // service time would include the whole snooze — hours the run spent
+  // waiting for the customer — so it is kept in a class of its own, and a run
+  // that was snoozed and later answered stays in that class: the mark
+  // outlives the wait.
+  it('keeps a case that was ever snoozed in a class of its own', async () => {
+    const snoozed = await seedRun({ partition: 0, waitMs: 1_000, serviceMs: 3 * HOUR, state: 'snoozed' });
+    await pool.query(
+      "UPDATE run SET snoozed_until = now() + interval '2 hours' WHERE run_id = $1",
+      [snoozed],
+    );
+    // Answered after the period ended, so it is finished: its service time
+    // would be the wait, and that is the number this class keeps out.
+    const returned = await seedRun({ partition: 0, waitMs: 1_000, serviceMs: 3 * HOUR, state: 'resolved' });
+    await pool.query(
+      "UPDATE run SET snoozed_until = now() - interval '2 hours' WHERE run_id = $1",
+      [returned],
+    );
+    // A run nobody snoozed, so the distribution is not empty.
+    await seedRun({ partition: 0, waitMs: 1_000, serviceMs: 30_000, state: 'resolved' });
+
+    const [row] = (await readLatency(pool)).partitions;
+    expect(row!.service.snoozed).toBe(2);
+    // Neither is unfinished, and neither is in the duration.
+    expect(row!.service.unfinished).toBe(0);
+    expect(row!.service.count).toBe(1);
+    expect(row!.service.maxMs).toBe(30_000);
   });
 
   it('reports no partitions over an empty ledger, rather than failing', async () => {

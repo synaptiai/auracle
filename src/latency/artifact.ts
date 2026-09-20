@@ -63,6 +63,8 @@ export interface ArtifactPartition {
     unordered: number;
     /** Terminal runs that never entered service, such as an intake abandonment. */
     never_ran: number;
+    /** Runs that were ever snoozed (DEC-48), whose duration is a wait. */
+    snoozed: number;
   };
 }
 
@@ -210,6 +212,7 @@ export function validateLatencyArtifact(raw: unknown): LatencyArtifact {
       'unstamped',
       'unordered',
       'never_ran',
+      'snoozed',
     ]);
     // The two distributions partition the same runs, so their totals must
     // agree. Nothing else in this file notices a wait figure written into the

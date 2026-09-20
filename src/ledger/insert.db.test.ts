@@ -395,6 +395,45 @@ describe('fencedTransition and the runs the fence still governs', () => {
     expect(moved).toEqual({ outcome: 'accepted' });
   });
 
+  // The escape decides the lock as well as the comparison. A parked write
+  // reads no fence, so it takes none, and that is what keeps it out of a
+  // cycle: a customer's message takes the fence row first and then the
+  // snoozed runs of that conversation (DEC-48), so a parked write that
+  // reached for the fence after its own run row would deadlock with it.
+  it('does not wait for the fence row a parked write never reads (DEC-28)', async () => {
+    const run = makeRun(1n, 'awaiting_approval');
+    expect((await fencedInsert(pool, run, null)).outcome).toBe('accepted');
+
+    const holder = await pool.connect();
+    let moved: ReturnType<typeof fencedTransition> | null = null;
+    try {
+      await holder.query('BEGIN');
+      // Intake's first lock, held until the transaction ends.
+      await holder.query('SELECT epoch FROM ticket_epoch WHERE ticket_id = $1 FOR UPDATE', [
+        run.ticketId,
+      ]);
+
+      moved = fencedTransition(pool, {
+        runId: run.runId,
+        state: 'resolved',
+        costMicros: 0,
+        stepsUsed: 1,
+        fromState: 'awaiting_approval',
+      });
+      const raced = await Promise.race([
+        moved,
+        new Promise<'waited'>((resolve) => setTimeout(() => resolve('waited'), 5_000)),
+      ]);
+      // Released before the assertion, so a write that waited leaves no
+      // blocked query behind.
+      await holder.query('COMMIT');
+      expect(raced).toEqual({ outcome: 'accepted' });
+    } finally {
+      if (moved !== null) await moved.catch(() => null);
+      holder.release();
+    }
+  });
+
   // The escape belongs to the write that requires the parked state (the
   // security review's SEC-3). A caller that names no precondition keeps the
   // comparison, so a sweep or a reject path added later inherits the guard

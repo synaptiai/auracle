@@ -18,7 +18,7 @@
 import type { Pool } from 'pg';
 import type {
   ApproveOptions, ApproveOutcome, CloseOptions, CloseOutcome, DraftReadBack, SaveOutcome,
-  SaveReplyOptions, UndoOutcome,
+  SaveReplyOptions, SnoozeOptions, SnoozeOutcome, UndoOutcome,
 } from 'auracle/ledger-read';
 
 import { ReadBackFailed } from './read-back.js';
@@ -357,6 +357,44 @@ export function closeFor(deps: {
       reason,
       closedBy: reviewer,
       closedBySource: 'roster',
+      ledgerReply: deps.ledgerReply,
+      shown,
+    })).outcome;
+  };
+}
+
+/**
+ * The snooze the console's entry point hands its server (DEC-48).
+ *
+ * A delegation, like the close: `snoozeRun` owns the transaction, the period,
+ * the DEC-46 guard and the journal row. The identity travels with the source
+ * `roster`, as it does on every other console write, because the gate
+ * resolved it against the ledger's roster before the route was reached.
+ *
+ * The adapter's declaration travels too: it decides which text a page drew,
+ * and so which text the guard compares.
+ */
+export function snoozeFor(deps: {
+  readonly pool: Pool;
+  readonly snoozeRun: (
+    pool: Pool,
+    runId: string,
+    options: SnoozeOptions,
+  ) => Promise<SnoozeOutcome>;
+  readonly ledgerReply: boolean;
+}): (
+  runId: string,
+  reviewer: string,
+  periodMs: number,
+  shown: string,
+) => Promise<SnoozeOutcome['outcome']> {
+  return async (runId, reviewer, periodMs, shown) => {
+    const id = runId.trim();
+    if (!RUN_ID.test(id)) throw new Error(`'${runId}' is not a run id`);
+    return (await deps.snoozeRun(deps.pool, id, {
+      periodMs,
+      snoozedBy: reviewer,
+      snoozedBySource: 'roster',
       ledgerReply: deps.ledgerReply,
       shown,
     })).outcome;

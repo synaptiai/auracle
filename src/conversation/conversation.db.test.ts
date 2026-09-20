@@ -435,6 +435,18 @@ describe('the reasons a turn shows no reply', () => {
     expect(thread?.turns[0]?.replyAbsence).toBe('closed_without_reply');
   });
 
+  // A person put the case aside for a period (DEC-48). Neither label beside
+  // it is true: the case is not waiting for approval now, and nothing about
+  // it is in flight.
+  it('names a case a person put aside', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'the parcel is late' });
+    await run(id, 1, 'snoozed');
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.replyText).toBeNull();
+    expect(thread?.turns[0]?.replyAbsence).toBe('put_aside');
+  });
+
   // Every code, every distinct answer. A surface reading these sends an
   // operator somewhere different for each, so two that rendered alike would
   // be worse than one that rendered nothing.
@@ -453,11 +465,13 @@ describe('the reasons a turn shows no reply', () => {
     await run(id, 6, 'composed');
     await turn(id, 7, { body: 'g' });
     await run(id, 7, 'closed');
+    await turn(id, 8, { body: 'h' });
+    await run(id, 8, 'snoozed');
     const thread = await readConversation(pool, id);
     const codes = thread?.turns.map((t) => t.replyAbsence) ?? [];
     expect(codes).toEqual([
       'handled_automatically', 'awaiting_approval', 'no_reply_sent', 'not_retained',
-      'approved_without_reply', 'in_flight', 'closed_without_reply',
+      'approved_without_reply', 'in_flight', 'closed_without_reply', 'put_aside',
     ]);
     expect(new Set(codes).size).toBe(codes.length);
   });

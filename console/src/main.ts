@@ -47,14 +47,14 @@ import { LEDGER_STATES, listEscalations, listRuns, readQueueToday, readRun } fro
 import { readRunJournal } from 'auracle/ledger-read';
 import { conversationOfRun, readConversation, turnAnsweredBy } from 'auracle/ledger-read';
 import { readDocument } from 'auracle/ledger-read';
-import { closeRun, readApprovalHold, saveReply, undoApproval } from 'auracle/ledger-read';
+import { closeRun, readApprovalHold, saveReply, snoozeRun, undoApproval } from 'auracle/ledger-read';
 import { readLatency } from 'auracle/ledger-read';
 import { humanMs } from 'auracle/format';
 // Every log line this process writes, so a value from a request cannot break
 // one line into two.
 import { logLine } from 'auracle/format';
 
-import { approvalFor, closeFor, saveFor, undoFor } from './approve.js';
+import { approvalFor, closeFor, saveFor, snoozeFor, undoFor } from './approve.js';
 import { developmentReviewer } from './dev-reviewer.js';
 import { readBackFor } from './read-back.js';
 import { SHUTDOWN_GRACE_MS } from './shutdown.js';
@@ -536,6 +536,8 @@ async function main(): Promise<void> {
     // adapter declaration the approval does, so the text the case drew and
     // the text the guard compares are one text (DEC-44).
     close: closeFor({ pool, closeRun, ledgerReply: readBack?.supportsLedgerReply ?? false }),
+    // DEC-48: the case a reviewer puts aside, on the same declaration.
+    snooze: snoozeFor({ pool, snoozeRun, ledgerReply: readBack?.supportsLedgerReply ?? false }),
     undo: undoFor({ pool, undoApproval }),
     // DEC-51: the read the pages use to count the window that is left.
     readApprovalHold: async (runId: string) => readApprovalHold(pool, runId),

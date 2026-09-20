@@ -526,17 +526,10 @@ export async function fencedTransition(
         return { outcome: 'wrong_state', currentState };
       }
 
-      const current = await client.query(
-        'SELECT epoch FROM ticket_epoch WHERE ticket_id = $1 FOR UPDATE',
-        [ticketId],
-      );
-      const highest =
-        current.rows.length > 0 ? BigInt(current.rows[0]!.epoch as string) : null;
-
       // Issue #113: the fence governs a run a consumer is still walking. A
       // run parked for a person is in no consumer's hands — the walk ended at
-      // the park, and the next write is a person's — so a fence another run
-      // raised says nothing about it. Refusing here stranded the reply: it
+      // the park, and the next writer is a person or the clock (DEC-48's
+      // returner) — so a fence another run raised says nothing about it. Refusing here stranded the reply: it
       // stayed `awaiting_approval`, every approval bounced, and nothing moved
       // it on. What guards this write instead is the row lock above, the
       // `fromState` it requires, and the DEC-24 key the record carries.
@@ -553,7 +546,25 @@ export async function fencedTransition(
       // person's write is not an old owner's write.
       const parkedEscape =
         runStateClass(currentState) === 'parked' && t.fromState === currentState;
-      if (highest !== null && runEpoch < highest && !parkedEscape) {
+
+      // The fence row is read only where its value can decide something, and
+      // a parked write reads nothing. Skipping the read also skips its row
+      // lock, and the lock is the reason the read is conditional: a customer's
+      // message takes the fence first and then the snoozed runs of that
+      // conversation (`endSnoozedIn`, DEC-48), so a parked write that reached
+      // for the fence after its own run row closed a cycle with intake and
+      // Postgres aborted one of the two. Nothing is compared here, so nothing
+      // is lost: `highest` stays null, and the check below cannot fire.
+      let highest: bigint | null = null;
+      if (!parkedEscape) {
+        const current = await client.query(
+          'SELECT epoch FROM ticket_epoch WHERE ticket_id = $1 FOR UPDATE',
+          [ticketId],
+        );
+        highest = current.rows.length > 0 ? BigInt(current.rows[0]!.epoch as string) : null;
+      }
+
+      if (highest !== null && runEpoch < highest) {
         await client.query('ROLLBACK');
         return { outcome: 'stale_epoch', highestAcceptedEpoch: highest };
       }

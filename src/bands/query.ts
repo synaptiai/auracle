@@ -202,7 +202,9 @@ const SELECT_BY_DAY = `
          count(*) FILTER (WHERE u.run_id IS NOT NULL)                   AS delivery_unknown,
          -- How much of this day is still to land. Both counts overlap the
          -- exclusions above rather than partitioning with them.
-         count(*) FILTER (WHERE d.state = 'awaiting_approval')          AS awaiting_approval,
+         -- DEC-48: a snoozed case left the queue without ending, so it is
+         -- still to land beside the ones waiting for a person.
+         count(*) FILTER (WHERE d.state IN ('awaiting_approval', 'snoozed')) AS still_to_land,
          count(*) FILTER (WHERE p.run_id IS NOT NULL)                   AS undelivered
     FROM day_run d
     LEFT JOIN composed c ON c.run_id = d.run_id
@@ -314,7 +316,7 @@ export async function readDays(pool: Pool, from: Date, to: Date): Promise<DayRow
           count: editCount,
           notReached: runs - editCount,
           unrecorded: 0,
-          pending: toCount(row['awaiting_approval'], 'awaiting_approval'),
+          pending: toCount(row['still_to_land'], 'still_to_land'),
           provider,
         },
         relay_delivery_unknown_count: {

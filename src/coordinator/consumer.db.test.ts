@@ -25,6 +25,7 @@ import type { ConsumerOptions } from './consumer.js';
 import { coordinateTicket } from './coordinator.js';
 import type { CoordinateInput, CoordinatorDeps } from './coordinator.js';
 import { ackTicket, enqueueTicket } from './intake.js';
+import { snoozeRun } from '../outcomes/snooze.js';
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { dbUrl } from '../db/config.js';
 import { fencedInsert, fencedTransition } from '../ledger/insert.js';
@@ -166,6 +167,60 @@ function wrappedPool(real: Pool, match: string, hook: () => Promise<void>): Pool
  * DEC-36 routes on the conversation id, which intake generates, so a test
  * cannot pick a ticket id that lands in a chosen partition. It asks instead.
  */
+/**
+ * DEC-48: a case parked for a person, with its partition.
+ *
+ * The action is the customer-reply one, so the walk parks it in the approval
+ * queue rather than resolving it — the state a snooze applies to.
+ */
+async function parkTicket(ticketId: string): Promise<{ runId: string; partition: number }> {
+  const enqueued = await enqueueTicket(
+    pool,
+    { ticketId, messageId: ticketId, ticketText: TICKET_TEXT },
+    PARTITION_COUNT,
+  );
+  // A customer reply parks: DEC-12 sends every one of them through a person.
+  // The same capabilities and egress the approval suites use, so the walk
+  // reaches `awaiting_approval` rather than resolving an internal write.
+  const outcome = await coordinateTicket(
+    {
+      ...makeDeps(happyScript(), 'parked'),
+      capabilities: {
+        supportsIdempotencyKey: true,
+        supportsReadBack: true,
+        supportsDraftState: true,
+        supportsStructuredFields: true,
+        supportsThreading: true,
+        supportsLedgerReply: false,
+      },
+      egress: new HelpdeskAdapter([
+        { ticketId, subject: 'Cannot sign in', queue: 'accounts', status: 'open', customerAddress: null },
+      ]),
+      partitionCount: PARTITION_COUNT,
+    },
+    {
+      ticketId,
+      ticketText: TICKET_TEXT,
+      epoch: 1n,
+      conversationId: enqueued.conversationId,
+      turnNumber: enqueued.turnNumber,
+      actionClass: 'customer_reply',
+      actionPayload: { summary: 'password reset answer' },
+      delivery: 'at_least_once',
+      isCustomerVisible: true,
+      disclosure: 'This reply was drafted by an automated assistant and approved by a person.',
+    },
+  );
+  if (outcome.outcome !== 'awaiting_approval') {
+    throw new Error(`expected awaiting_approval, got ${outcome.outcome}`);
+  }
+  const rows = await pool.query<{ partition: number }>(
+    'SELECT partition FROM run WHERE run_id = $1',
+    [outcome.runId],
+  );
+  return { runId: outcome.runId, partition: rows.rows[0]!.partition };
+}
+
 async function seedTicket(ticketId: string): Promise<number> {
   const { partition } = await enqueueTicket(
     pool,
@@ -1724,4 +1779,143 @@ describe('section 4.3 partition consumer', () => {
     const state = await pool.query('SELECT state FROM run WHERE run_id = $1', [runId]);
     expect(state.rows[0]?.state).toBe('received');
   });
+
+// DEC-48: a snoozed case is waiting for its period, and the consumer that
+// owns its partition is what brings it back. Without this a snooze would be a
+// case that never returns: the state says it waits, and nothing would end the
+// wait.
+describe('a snoozed case comes back when the period ends', () => {
+  it('returns a due case to the approval queue', async () => {
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkTicket(ticketId);
+    await snoozeRun(pool, parked.runId, {
+      periodMs: 2 * 60 * 60_000,
+      snoozedBy: 'anna@example.test',
+    });
+    // The customer did not write, and the period has run out.
+    await pool.query(
+      "UPDATE run SET snoozed_until = now() - interval '1 second' WHERE run_id = $1",
+      [parked.runId],
+    );
+
+    await processQueuedTickets(
+      { ...makeDeps(happyScript(), 'returns'), partitionCount: PARTITION_COUNT },
+      optionsFor([parked.partition]),
+    );
+
+    const run = await pool.query<{ state: string; snoozed_until: Date | null }>(
+      'SELECT state, snoozed_until FROM run WHERE run_id = $1',
+      [parked.runId],
+    );
+    expect(run.rows[0]?.state).toBe('awaiting_approval');
+    // The moment stays: it is the record the latency report reads.
+    expect(run.rows[0]?.snoozed_until).not.toBeNull();
+  });
+
+  it('leaves a case whose period has not ended', async () => {
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkTicket(ticketId);
+    await snoozeRun(pool, parked.runId, {
+      periodMs: 2 * 60 * 60_000,
+      snoozedBy: 'anna@example.test',
+    });
+
+    await processQueuedTickets(
+      { ...makeDeps(happyScript(), 'waits'), partitionCount: PARTITION_COUNT },
+      optionsFor([parked.partition]),
+    );
+
+    const run = await pool.query<{ state: string }>(
+      'SELECT state FROM run WHERE run_id = $1',
+      [parked.runId],
+    );
+    expect(run.rows[0]?.state).toBe('snoozed');
+  });
+
+  it('leaves the ticket fence alone for a case nobody is walking', async () => {
+    // DEC-28, through the real path: a snoozed run is parked, so a claim over
+    // its partition has nothing to cut off. Bumping the fence would put the
+    // ticket above every run of it and the return below the bump.
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkTicket(ticketId);
+    await snoozeRun(pool, parked.runId, {
+      periodMs: 2 * 60 * 60_000,
+      snoozedBy: 'anna@example.test',
+    });
+
+    expect(await claimPartition(pool, parked.partition)).toBe(0);
+
+    // And the case still returns, which is what the untouched fence is for.
+    await pool.query(
+      "UPDATE run SET snoozed_until = now() - interval '1 second' WHERE run_id = $1",
+      [parked.runId],
+    );
+    await processQueuedTickets(
+      { ...makeDeps(happyScript(), 'returns'), partitionCount: PARTITION_COUNT },
+      optionsFor([parked.partition]),
+    );
+    const run = await pool.query<{ state: string }>(
+      'SELECT state FROM run WHERE run_id = $1',
+      [parked.runId],
+    );
+    expect(run.rows[0]?.state).toBe('awaiting_approval');
+  });
+
+  it('hands the case to the new turn when the customer writes while it waits', async () => {
+    // The whole point of ending the snooze from intake: the message the
+    // customer sent is what answers the case, so its run takes the turn and
+    // the run that was put aside stops answering an older one.
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkTicket(ticketId);
+    await snoozeRun(pool, parked.runId, {
+      periodMs: 2 * 60 * 60_000,
+      snoozedBy: 'anna@example.test',
+    });
+    // The first message was answered by the walk above, so it leaves the queue.
+    await ackTicket(pool, ticketId, ticketId);
+
+    const again = await enqueueTicket(
+      pool,
+      { ticketId, messageId: `later-${ticketId}@example.test`, ticketText: 'Any news on this?' },
+      PARTITION_COUNT,
+    );
+    expect(again.turnNumber).toBe(2);
+
+    const scanned = await processQueuedTickets(
+      { ...makeDeps(happyScript(), 'second-turn'), partitionCount: PARTITION_COUNT },
+      optionsFor([parked.partition]),
+    );
+    // The suite's action is an internal write, so the second turn answers
+    // itself. What the case turns on is which run did it.
+    expect(scanned.map((r) => r.outcome)).toEqual(['resolved']);
+
+    const old = await pool.query<{ state: string }>(
+      'SELECT state FROM run WHERE run_id = $1',
+      [parked.runId],
+    );
+    expect(old.rows[0]?.state).toBe('superseded');
+
+    const fresh = await pool.query<{ run_id: string; state: string }>(
+      'SELECT run_id, state FROM run WHERE ticket_id = $1 AND turn_number = 2',
+      [ticketId],
+    );
+    expect(fresh.rows.map((row) => row.state)).toEqual(['resolved']);
+    expect(fresh.rows[0]?.run_id).not.toBe(parked.runId);
+
+    // And the clock leaves it alone: the case belongs to the newer turn now.
+    await pool.query(
+      "UPDATE run SET snoozed_until = now() - interval '1 second' WHERE run_id = $1",
+      [parked.runId],
+    );
+    await processQueuedTickets(
+      { ...makeDeps(happyScript(), 'third-pass'), partitionCount: PARTITION_COUNT },
+      optionsFor([parked.partition]),
+    );
+    const still = await pool.query<{ state: string }>(
+      'SELECT state FROM run WHERE run_id = $1',
+      [parked.runId],
+    );
+    expect(still.rows[0]?.state).toBe('superseded');
+  });
+});
 });

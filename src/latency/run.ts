@@ -79,6 +79,7 @@ export async function runLatencyJob(options: LatencyJobOptions): Promise<Latency
         unstamped: p.service.unstamped,
         unordered: p.service.unordered,
         never_ran: p.service.neverRan,
+        snoozed: p.service.snoozed,
         p50_ms: p.service.p50Ms,
         p95_ms: p.service.p95Ms,
         p99_ms: p.service.p99Ms,
@@ -188,6 +189,7 @@ async function main(): Promise<void> {
             ['unstamped', p.service.unstamped],
             ['unordered', p.service.unordered],
             ['never_ran', p.service.never_ran],
+            ['snoozed', p.service.snoozed],
           ]),
       );
     }

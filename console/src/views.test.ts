@@ -164,6 +164,8 @@ describe('what a run row carries onto a page', () => {
     runId: RUN, ticketId: 'SYN-4471', state: 'resolved', promptVer: 'p1',
     reason: null, gateReason: 'customer_visible', intentId: 'refund-request',
     coverage: 0.94, createdAt: new Date('2026-09-07T09:00:00.000Z'),
+    // DEC-48: a run nobody snoozed has no moment.
+    snoozedUntil: null,
     costMicros: 1234, stepsUsed: 6,
     agreement: 0.89, agreementThreshold: 0.8, coverageReviewThreshold: 0.75,
     riskTier: 'high' as const, approved: false,
@@ -305,7 +307,7 @@ describe('what a run row carries onto a page', () => {
 describe('the runs a partition could not measure', () => {
   const wait = { count: 10, unmeasured: 0, unordered: 0, p50Ms: 1, p95Ms: 2, p99Ms: 3, maxMs: 4 };
   const service = {
-    count: 10, unfinished: 0, unstamped: 0, unordered: 0, neverRan: 0,
+    count: 10, unfinished: 0, unstamped: 0, unordered: 0, neverRan: 0, snoozed: 0,
     p50Ms: 1, p95Ms: 2, p99Ms: 3, maxMs: 4,
   };
   const base = { partition: 0, runs: 10, wait, service };
@@ -319,6 +321,10 @@ describe('the runs a partition could not measure', () => {
       .toEqual(['3 no arrival time']);
     expect(latencyCaveats({ ...base, service: { ...service, neverRan: 2 } }))
       .toEqual(['2 never ran']);
+    // DEC-48: the runs a reviewer put aside, named as their own line — the
+    // count is the wait the distribution leaves out, not a fault.
+    expect(latencyCaveats({ ...base, service: { ...service, snoozed: 4 } }))
+      .toEqual(['4 snoozed']);
   });
 
   // The coverage guard. `excluded` in the latency job prints the ledger's own
@@ -328,8 +334,8 @@ describe('the runs a partition could not measure', () => {
   // named at all: a seventh would otherwise be invisible here.
   it('covers every excluded state the query module exposes', () => {
     const states = { ...base, wait: { ...wait, unmeasured: 1, unordered: 1 },
-      service: { ...service, unfinished: 1, unstamped: 1, unordered: 1, neverRan: 1 } };
-    expect(latencyCaveats(states)).toHaveLength(6);
+      service: { ...service, unfinished: 1, unstamped: 1, unordered: 1, neverRan: 1, snoozed: 1 } };
+    expect(latencyCaveats(states)).toHaveLength(7);
     // Read off the distributions rather than restated, so a new state fails
     // this rather than passing unnoticed.
     const countsOnly = new Set(['count', 'p50Ms', 'p95Ms', 'p99Ms', 'maxMs']);

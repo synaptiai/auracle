@@ -23,8 +23,16 @@ describe('what a run state means to the fence', () => {
       .toEqual(['awaiting_approval']);
     expect(classes.filter(([, cls]) => cls === 'in_flight').map(([state]) => state))
       .toEqual([...IN_FLIGHT_RUN_STATES]);
-    expect(PARKED_RUN_STATES).toEqual(['awaiting_approval']);
+    expect(PARKED_RUN_STATES).toEqual(['awaiting_approval', 'snoozed']);
     expect(IN_FLIGHT_RUN_STATES).not.toContain('awaiting_approval');
+    expect(IN_FLIGHT_RUN_STATES).not.toContain('snoozed');
+  });
+
+  // DEC-48: a snoozed run has left the walk. The next write on it is a
+  // person's or the clock's, so the fence does not govern it — exactly as it
+  // does not govern a run waiting for approval.
+  it('reads a snoozed run as parked, not as in flight', () => {
+    expect(runStateClass('snoozed')).toBe('parked');
   });
 
   it('reads the five terminal states as terminal', () => {

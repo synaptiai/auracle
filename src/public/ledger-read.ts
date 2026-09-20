@@ -35,6 +35,9 @@ export const LEDGER_WRITES: Readonly<Record<string, string>> = {
   // turn it answers. One statement under the run's row lock, and no state
   // moves with it.
   saveReply: 'the reply a reviewer saved: it writes the text the approval will send',
+  // DEC-48: a case a reviewer puts aside for a period. It writes no record
+  // and records no approver: the run leaves the queue and comes back.
+  snoozeRun: 'puts a waiting case aside for a period, and records when it is due back',
   takeHold: 'takes a case for one reviewer, and releases the taker\'s others',
   // DEC-51: the way back inside a held send. It removes every effect of the
   // approval — the record, the approver, the distance, the approved text and
@@ -80,6 +83,12 @@ export { approveRun } from '../approval/approve.js';
 // cannot disagree about how long one may be.
 export { MAX_CLOSE_REASON_CHARS, closeRun } from '../outcomes/close.js';
 export type { CloseOptions, CloseOutcome } from '../outcomes/close.js';
+
+// DEC-48: the case a reviewer puts aside. The bounds travel with the write,
+// so the form that posts a period and the ledger that records it cannot
+// disagree about how long one may be.
+export { MAX_SNOOZE_MS, MIN_SNOOZE_MS, snoozeRun } from '../outcomes/snooze.js';
+export type { SnoozeOptions, SnoozeOutcome } from '../outcomes/snooze.js';
 
 // DEC-46: the digest of the reply a page drew, which the console puts in its
 // approval form and the approval recomputes under the run's lock. One

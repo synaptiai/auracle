@@ -29,6 +29,7 @@ function item(over: Partial<EscalationItem> = {}): EscalationItem {
     riskTier: 'low',
     approved: false,
     createdAt: new Date('2026-09-07T09:00:00.000Z'),
+    snoozedUntil: null,
     promptVer: 'seed',
     outboxStatus: null,
     draftExternalId: 'SYN-DRAFT-0001',

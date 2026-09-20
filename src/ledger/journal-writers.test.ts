@@ -145,13 +145,14 @@ describe('the step_journal write path', () => {
   });
 
   it('hands a transaction its own client, never the pool', () => {
-    // Five writers journal inside a transaction they are already
-    // committing, and must pass that transaction's client. The coordinator's
-    // steps hold no transaction of their own and pass the pool.
+    // Six writers journal inside a transaction they are already committing,
+    // and must pass that transaction's client. The coordinator's steps hold no
+    // transaction of their own and pass the pool.
     const expected: Record<string, string> = {
       'src/approval/undo.ts': 'client',
       'src/coordinator/consumer.ts': 'client',
       'src/outcomes/close.ts': 'client',
+      'src/outcomes/snooze.ts': 'client',
       'src/relay/relay.ts': 'client',
       'src/seed/write.ts': 'client',
       'src/coordinator/steps/context.ts': 'ctx.pool',

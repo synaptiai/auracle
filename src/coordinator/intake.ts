@@ -21,6 +21,7 @@ import type { ConversationLinkage } from '../adapters/types.js';
 import { ARRIVAL_CHANNEL } from './arrival-signal.js';
 import { partitionOf } from './coordinator.js';
 import { errorMessage } from '../errors.js';
+import { endSnoozedIn } from '../outcomes/snooze.js';
 
 export interface IntakeTicket {
   ticketId: string;
@@ -325,6 +326,16 @@ export async function enqueueTicket(
             ticket.ticketText,
           ],
         );
+
+        // DEC-48: a newer turn replaces a run that was waiting for its
+        // period. The snoozed run ends `superseded`, in this transaction and
+        // under the conversation row's lock, so the new turn and the end of
+        // the old run commit together. A run already returned by the clock
+        // matches nothing, so a case is never both returned and superseded.
+        //
+        // Only for a message the conversation has not seen. A redelivery of
+        // an older message must not end a snooze a later turn's reviewer set.
+        await endSnoozedIn(client, conversationId);
       }
 
       // Issue #25: tell the consumer that owns this partition, so it stops

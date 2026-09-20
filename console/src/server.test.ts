@@ -12,10 +12,11 @@ import { request } from 'node:http';
 import { createHash } from 'node:crypto';
 
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
-import { MAX_CLOSE_REASON_CHARS, replyDigest } from 'auracle/ledger-read';
+import { MAX_CLOSE_REASON_CHARS, MAX_SNOOZE_MS, MIN_SNOOZE_MS, replyDigest } from 'auracle/ledger-read';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { escapeHtml, renderGates } from './render.js';
+import { whenSays } from './surfaces.js';
 
 import { allowedHosts } from './hosts.js';
 import { createConsole } from './server.js';
@@ -104,6 +105,8 @@ const EVIDENCE = {
  * case here. A case about time overrides it.
  */
 const ROW = {
+  // DEC-48: no snooze on the fixture rows unless a case is about one.
+  snoozedUntil: null,
   // DEC-47: the product of the channel the message arrived on. Every fixture
   // row carries one unless a case is about the runs whose channel mapped to
   // none, which is what a null says.
@@ -273,6 +276,10 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
     // the reason's rules and the hold are the core suite's subject; here the
     // harness answers that a case was closed.
     close: async () => 'closed',
+    // DEC-48: the case a reviewer puts aside. The period's bounds and the
+    // returner are the core suites' subject; here the harness answers that a
+    // case was put aside.
+    snooze: async () => 'snoozed',
     // DEC-51: the batch's way back. The window and the row lock are the core
     // suite's subject; here the harness answers that a case was taken back.
     undo: async () => ({ outcome: 'undone' }),
@@ -1846,6 +1853,25 @@ describe('the conversation a responder reads', () => {
     expect(block).not.toContain('no reply was sent to the customer');
     expect(block).not.toContain('approved an action here');
     expect(block).not.toContain('the system replied');
+  });
+
+  // DEC-48: a case a person put aside for a period. The state's own word
+  // would be readable, but the chip would then say a case nobody has got to
+  // yet, which is the opposite of what happened to it.
+  it('draws a case a person put aside as its own absence', async () => {
+    const base = await startGuarded(deps({
+      readConversation: async () => ({
+        ...THREAD,
+        turns: [turnOf(1, { replyAbsence: 'put_aside', runState: 'snoozed', outboxStatus: null })],
+      }) as never,
+    }));
+    const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
+    const block = blocks.get(1)!;
+    expect(block).toContain('<span class="chip" style="color:var(--dim)">put aside</span>');
+    expect(block).toMatch(
+      /<p class="absent">a person put this case aside until its period ends<\/p>/,
+    );
+    expect(block).not.toContain('in flight');
   });
 
   // A stopped run names its state. Only an escalation, or a row that confirms
@@ -7311,5 +7337,193 @@ describe('DEC-48: the console closes a case with no reply', () => {
     const base = await startGuarded(deps());
     const html = await (await fetch(base + CASE)).text();
     expect(html).toContain(`maxlength="${MAX_CLOSE_REASON_CHARS}"`);
+  });
+});
+
+describe('DEC-48: the console puts a case aside', () => {
+  /** The digest of the reply this harness's page draws (DEC-46). */
+  const DRAWN = createHash('sha256').update(EVIDENCE.draftBody).digest('hex');
+
+  async function postSnooze(base: string, fields: Record<string, string>): Promise<Response> {
+    return fetch(`${base}/snooze`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: new URLSearchParams(fields).toString(),
+      redirect: 'manual',
+    });
+  }
+
+  it('offers the snooze on a waiting case, with the period inside its own form', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + CASE)).text();
+
+    expect(buttonInForm(html, '/snooze')).toBe(true);
+    expect(html).toContain('Snooze');
+    // The period is a number of minutes, bounded by the ledger's own bounds.
+    expect(html).toMatch(/<input[^>]*name="minutes"[^>]*type="number"/);
+    expect(html).toContain(`min="${Math.round(MIN_SNOOZE_MS / 60_000)}"`);
+    expect(html).toContain(`max="${Math.round(MAX_SNOOZE_MS / 60_000)}"`);
+    // And the sentence says what putting it aside does: nothing is sent.
+    expect(html).toContain('Nothing is sent.');
+  });
+
+  // A case that is already aside offers no second snooze, and a case that has
+  // left the queue offers none at all.
+  it('offers the snooze only where a case is waiting', async () => {
+    for (const state of ['snoozed', 'closed', 'resolved']) {
+      const base = await startGuarded(deps({ readRun: caseOf({ state }) }));
+      const html = await (await fetch(base + CASE)).text();
+      expect(buttonInForm(html, '/snooze'), state).toBe(false);
+    }
+  });
+
+  it('says when a snoozed case comes back', async () => {
+    const due = new Date('2026-09-21T09:00:00.000Z');
+    const base = await startGuarded(deps({
+      readRun: caseOf({ state: 'snoozed', snoozedUntil: due }),
+    }));
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).toContain('This run is snoozed, so there is nothing here to approve.');
+    expect(html).toContain(`It returns to the queue at ${whenSays(due)}.`);
+  });
+
+  it('puts the case aside, and lands on the page that says so', async () => {
+    const snooze = vi.fn(async () => 'snoozed' as const);
+    const base = await startGuarded(deps({ snooze, readRun: caseOf({ state: 'snoozed' }) }));
+    const res = await postSnooze(base, { runId: RUN, shown: DRAWN, minutes: '180' });
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(`${CASE}?snoozed=snoozed`);
+    // The period travels in milliseconds, from the hours the form posts.
+    expect(snooze).toHaveBeenCalledWith(RUN, REVIEWER, 180 * 60_000, DRAWN);
+
+    const after = await (await fetch(`${base}${CASE}?snoozed=snoozed`, {
+      headers: { 'sec-fetch-site': 'same-origin' },
+    })).text();
+    expect(after).toContain('The case is put aside.');
+  });
+
+  it('passes a period that is not a number to the ledger, which refuses it', async () => {
+    // The bounds live in the write and not in the form, so the console hands
+    // over what it read rather than deciding for itself. A field that is not
+    // a number travels as a value no integer can be, and the ledger answers
+    // out of range: nothing is put aside, and the page says so.
+    const snooze = vi.fn(async () => 'period_out_of_range' as const);
+    const base = await startGuarded(deps({ snooze }));
+
+    const res = await postSnooze(base, { runId: RUN, shown: DRAWN, minutes: 'abc' });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(`${CASE}?snoozed=period_out_of_range`);
+    expect(snooze).toHaveBeenCalledWith(RUN, REVIEWER, Number.POSITIVE_INFINITY, DRAWN);
+
+    const after = await (await fetch(`${base}${CASE}?snoozed=period_out_of_range`, {
+      headers: { 'sec-fetch-site': 'same-origin' },
+    })).text();
+    expect(after).toContain('A snooze lasts between a minute and 30 days');
+  });
+
+  it('returns a snooze to the queue the reviewer narrowed to', async () => {
+    const snooze = vi.fn(async () => 'snoozed' as const);
+    const base = await startGuarded(deps({ snooze, readRun: caseOf({ state: 'snoozed' }) }));
+    const res = await fetch(`${base}/snooze?rule=customer_visible&product=aurora`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: new URLSearchParams({ runId: RUN, shown: DRAWN, minutes: '120' }).toString(),
+      redirect: 'manual',
+    });
+    expect(res.headers.get('location')).toBe(
+      `${CASE}?snoozed=snoozed&rule=customer_visible&product=aurora`,
+    );
+  });
+
+  it('writes nothing for a request this console did not render', async () => {
+    const snooze = vi.fn(async () => 'snoozed' as const);
+    const base = await startGuarded(deps({ snooze }));
+
+    const noDigest = await postSnooze(base, { runId: RUN, minutes: '120' });
+    expect(noDigest.status).toBe(400);
+    expect(await noDigest.text()).toContain('will not put the case aside');
+    const badRun = await postSnooze(base, { runId: 'not-a-run', shown: DRAWN, minutes: '120' });
+    expect(badRun.status).toBe(400);
+    expect(await badRun.text()).toContain('nothing was put aside');
+    const oversized = await fetch(`${base}/snooze`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: `runId=${RUN}&shown=${DRAWN}&minutes=${'9'.repeat(70 * 1024)}`,
+    });
+    expect(oversized.status).toBe(413);
+    expect(await oversized.text()).toContain('The snooze form is larger than this console accepts.');
+
+    expect(snooze).not.toHaveBeenCalled();
+  });
+
+  it('answers a failed snooze without claiming it did not commit', async () => {
+    const snooze = vi.fn(async () => { throw new Error('the pool is gone'); });
+    const base = await startGuarded(deps({ snooze }));
+    const res = await postSnooze(base, { runId: RUN, shown: DRAWN, minutes: '120' });
+
+    expect(snooze).toHaveBeenCalled();
+    expect(res.status).toBe(500);
+    const body = await res.text();
+    expect(body).toContain('may or may not have committed');
+    expect(body).not.toContain('nothing was put aside');
+  });
+
+  // Every outcome the ledger can answer, each against a case that fits it.
+  it('draws every snooze answer, and refuses one the case contradicts', async () => {
+    for (const [outcome, state] of [
+      ['snoozed', 'snoozed'],
+      ['period_out_of_range', 'awaiting_approval'],
+      ['shown_changed', 'awaiting_approval'],
+      ['stale_epoch', 'awaiting_approval'],
+      ['not_awaiting_approval', 'resolved'],
+    ] as const) {
+      const base = await startGuarded(deps({ readRun: caseOf({ state }) }));
+      const html = await (await fetch(`${base}${CASE}?snoozed=${outcome}`, {
+        headers: { 'sec-fetch-site': 'same-origin' },
+      })).text();
+      expect(html, outcome).toContain(`data-snooze="${outcome}"`);
+    }
+
+    // The bounds in that sentence are the ledger's own, in the units it
+    // enforces. A ceiling divided by the wrong unit told a reviewer that a
+    // month was 720 days.
+    const refused = await startGuarded(deps({ readRun: caseOf({ state: 'awaiting_approval' }) }));
+    const refusedHtml = await (await fetch(`${refused}${CASE}?snoozed=period_out_of_range`, {
+      headers: { 'sec-fetch-site': 'same-origin' },
+    })).text();
+    expect(refusedHtml).toContain(
+      'A snooze lasts between a minute and 30 days, so nothing was put aside.',
+    );
+
+    // A waiting case was not put aside, so that sentence is not drawn on it.
+    const waiting = await startGuarded(deps());
+    const html = await (await fetch(`${waiting}${CASE}?snoozed=snoozed`, {
+      headers: { 'sec-fetch-site': 'same-origin' },
+    })).text();
+    expect(html).not.toContain('The case is put aside.');
+
+    // And a name this console does not know is never echoed, nor one
+    // inherited from the prototype.
+    for (const outcome of ['toString', 'because']) {
+      const base = await startGuarded(deps());
+      const page = await (await fetch(`${base}${CASE}?snoozed=${outcome}`, {
+        headers: { 'sec-fetch-site': 'same-origin' },
+      })).text();
+      expect(page, outcome).toContain('That is not an answer this console knows.');
+      expect(page, outcome).not.toContain(`data-snooze="${outcome}"`);
+    }
   });
 });

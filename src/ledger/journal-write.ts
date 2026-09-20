@@ -32,7 +32,7 @@ import type { Pool, PoolClient } from 'pg';
 /**
  * A pool, or a client already inside a transaction.
  *
- * Five of the six callers journal inside an open transaction and must not
+ * Six of the seven callers journal inside an open transaction and must not
  * take a second connection: a `Pool` would deadlock against rows their own
  * uncommitted transaction holds. `src/ledger/journal-writers.test.ts` names
  * each caller and the handle it passes.
@@ -153,10 +153,11 @@ export async function journalStep(
 /**
  * The statement one `journalStep` call runs, from its option.
  *
- * `replace` writes the row the step already has, and it exists for one
- * writer: the undo (DEC-51). A reviewer confirms, undoes, confirms again, and
- * undoes again, and the row has to name the latest person who took a send
- * back. The columns the key does not hold are the outcome's, so replacing
+ * `replace` writes the row the step already has, and it exists for the writes
+ * a reviewer repeats: the undo (DEC-51), where a reviewer confirms, undoes,
+ * confirms again, and undoes again, and the snooze (DEC-48), where a case
+ * returns and is put aside again. The row then names the latest person and
+ * moment. The columns the key does not hold are the outcome's, so replacing
  * them changes the record and never the step's identity.
  *
  * The relay keeps `ifAbsent` and not this: an escalation's reason is the

@@ -118,6 +118,16 @@ export interface ServiceDistribution extends Distribution {
    * manufacture the figures that make it look fastest.
    */
   neverRan: number;
+  /**
+   * Runs that were ever snoozed (DEC-48), so their duration is a wait and
+   * never work.
+   *
+   * Read from the mark rather than the state: a run that was put aside, came
+   * back and was answered is finished, and its service time would otherwise
+   * be the hours it spent waiting for the customer. Its own name, so the wait
+   * is visible rather than silently dropped.
+   */
+  snoozed: number;
 }
 
 export interface PartitionLatency {
@@ -179,6 +189,7 @@ const SELECT_BY_PARTITION = `
          count(*) FILTER (WHERE service_state = 'unstamped')        AS service_unstamped,
          count(*) FILTER (WHERE service_state = 'unordered')        AS service_unordered,
          count(*) FILTER (WHERE service_state = 'never_ran')        AS service_never_ran,
+         count(*) FILTER (WHERE service_state = 'snoozed')          AS service_snoozed,
          percentile_disc(0.50) WITHIN GROUP (ORDER BY service_ms)   AS service_p50,
          percentile_disc(0.95) WITHIN GROUP (ORDER BY service_ms)   AS service_p95,
          percentile_disc(0.99) WITHIN GROUP (ORDER BY service_ms)   AS service_p99,
@@ -206,7 +217,13 @@ const SELECT_BY_PARTITION = `
                  -- db/005: service time = finished_at - created_at. Keyed on
                  -- the run's state: keying on a null finish reported every run
                  -- older than the migration as unfinished forever.
-                 CASE WHEN state <> ALL($2::text[])  THEN 'unfinished'
+                 -- DEC-48: a run that was ever snoozed is not work the
+                 -- system did. Its duration would be the wait itself, so it
+                 -- is kept out of the distribution and counted under its own
+                 -- name. Read first, because a snoozed run is not terminal
+                 -- either: the state test below would label it unfinished.
+                 CASE WHEN snoozed_until IS NOT NULL THEN 'snoozed'
+                      WHEN state <> ALL($2::text[])  THEN 'unfinished'
                       -- Both columns, because abandonMessage writes both and
                       -- a deployment is free to set PROMPT_VER. Matching on
                       -- one alone let PROMPT_VER=intake label every real run
@@ -268,6 +285,7 @@ export async function readLatency(
       unstamped: toCount(row['service_unstamped']),
       unordered: toCount(row['service_unordered']),
       neverRan: toCount(row['service_never_ran']),
+      snoozed: toCount(row['service_snoozed']),
       p50Ms: toMs(row['service_p50']),
       p95Ms: toMs(row['service_p95']),
       p99Ms: toMs(row['service_p99']),
