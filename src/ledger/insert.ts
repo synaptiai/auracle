@@ -56,6 +56,14 @@ export interface FencedRunInput {
    * received without one. The column takes null there, which is not turn one.
    */
   turnNumber?: number;
+  /**
+   * DEC-49: which attempt of that turn this run is.
+   *
+   * Absent is the first attempt, which is what every caller that knows of no
+   * send-back means, and what every run written before db/031 was. The
+   * consumer's sent-back scan names the turn's next one.
+   */
+  attempt?: number;
   stepsUsed?: number;
   deadlineAt: Date;
   /**
@@ -191,6 +199,11 @@ export function runInsertStatement(withClock: boolean, withFinish = false): stri
     // a run with no turn writes null here and a reader joins on the column
     // rather than assuming turn one.
     'turn_number',
+    // DEC-49: which attempt of that turn. Fixed for the same reason: the
+    // column is NOT NULL, so the statement always supplies it, and the
+    // default in db/031 is a fallback for writers outside this path rather
+    // than the value a reader may assume.
+    'attempt',
     // DEC-47: the product of the channel the message arrived on. Fixed for
     // the same reason: a run with no product writes null, and every reader
     // of the column — the console's filter, the retrieval scope — has to see
@@ -299,6 +312,9 @@ export async function fencedInsert(
         run.enqueuedAt ?? null,
         run.conversationId ?? null,
         run.turnNumber ?? null,
+        // DEC-49: the first attempt when the caller names none, which is what
+        // every run written before the column existed was.
+        run.attempt ?? 1,
         run.product ?? null,
       ];
       if (clock !== undefined) values.push(clock.createdAt.toISOString());

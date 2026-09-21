@@ -110,7 +110,7 @@ async function record(
   event: {
     runId: string;
     reviewer: string;
-    kind: 'take' | 'handover' | 'release' | 'send' | 'close' | 'lapse';
+    kind: 'take' | 'handover' | 'release' | 'send' | 'close' | 'send_back' | 'lapse';
     reason?: string;
     fromReviewer?: string;
   },
@@ -260,20 +260,20 @@ export type ReleaseOutcome =
  * Lets go of a case the reviewer holds.
  *
  * `kind` is why: a deliberate release, the send that ends the work on a
- * resolved case, or the close that ends it on one finished with no reply. On
+ * resolved case, the close that ends it on one finished with no reply, or
+ * the send-back that ends it on one a reviewer rejected (DEC-48, DEC-49). On
  * a release, a reviewer who does not hold the case is told who does, because
- * that means somebody took it over while they were reading. A send and a
- * close end the hold on the case they finish whoever holds it — see
- * `releaseHoldIn`. Neither is a word the other can borrow: a close sends
- * nothing, so a close recorded as a send would name an event that did not
- * happen.
+ * that means somebody took it over while they were reading. Every other kind
+ * ends the hold on the case it finishes whoever holds it — see
+ * `releaseHoldIn`. None is a word another can borrow: a close sends nothing,
+ * so a close recorded as a send would name an event that did not happen.
  */
 export async function releaseHold(
   pool: Pool,
   release: {
     readonly runId: string;
     readonly reviewer: string;
-    readonly kind: 'release' | 'send' | 'close';
+    readonly kind: 'release' | 'send' | 'close' | 'send_back';
   },
 ): Promise<ReleaseOutcome> {
   if (!UUID.test(release.runId)) return { outcome: 'unknown_run' };
@@ -317,7 +317,7 @@ export async function releaseHoldIn(
   release: {
     readonly runId: string;
     readonly reviewer: string;
-    readonly kind: 'release' | 'send' | 'close';
+    readonly kind: 'release' | 'send' | 'close' | 'send_back';
   },
 ): Promise<ReleaseOutcome> {
   if (!UUID.test(release.runId)) return { outcome: 'unknown_run' };

@@ -46,6 +46,7 @@ surface. A pointer to a section that does not cover them is worse than a gap.
 | `latency` | DEC-17, DEC-19 | `src/latency/latency.test.ts` | 7.1 Seeing a partition fall behind |
 | `ledger` | DEC-04, DEC-24, DEC-28, DEC-38 | `src/ledger/clock.db.test.ts` | 2. Schema migrations |
 | `models` | DEC-16, DEC-17, DEC-25, DEC-26 | `src/models/models.test.ts` | 1. Local setup |
+| `outcomes` | DEC-48, DEC-49 | `src/outcomes/send-back.db.test.ts` | 4. The approval workflow |
 | `policy` | DEC-03, DEC-05, DEC-06, DEC-13 | `src/policy/policy.test.ts` | 7. Observability |
 | `public` | DEC-05, DEC-06, DEC-12 | `src/public/surface.test.ts` | 7.0 The operator console |
 | `relay` | DEC-04, DEC-28, DEC-29, DEC-30 | `src/relay/relay.db.test.ts` | 3. Running the processes |
@@ -59,8 +60,7 @@ surface. A pointer to a section that does not cover them is worse than a gap.
 
 ## Decisions no row names
 
-DEC-01, DEC-08, DEC-15, DEC-33, DEC-44, DEC-47, DEC-48, DEC-49, DEC-50,
-DEC-51.
+DEC-01, DEC-08, DEC-15, DEC-33, DEC-44, DEC-47, DEC-50, DEC-51.
 
 DEC-08 and DEC-15 hold across the repository, so no directory owns either.
 DEC-08 fixes the language this system is written in. DEC-15 states that no
@@ -70,7 +70,7 @@ DEC-01 and DEC-33 do belong to directories. `adapters` cites DEC-01 in four
 module headers, and `adapters` and `approval` both carry DEC-33. Neither made
 a cell that holds four decisions at most. Read the module headers for those.
 
-The other six rows the register gained on 2026-09-14 have no directory that
+The other four rows the register gained on 2026-09-14 have no directory that
 implements them yet. Each joins the row of the directory that implements it,
 in the change that ships it. Until then a row names the decisions its code
 obeys today.

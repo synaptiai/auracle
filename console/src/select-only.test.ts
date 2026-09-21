@@ -133,7 +133,9 @@ const APPROVAL_CALLERS = ['src/approve.ts'];
 const CALLED_BY_THE_ENTRY_POINT = ['handoverHold', 'readHold', 'releaseHold', 'takeHold'];
 
 /** The writes the entry point hands to a helper instead of calling. */
-const PASSED_ON_BY_THE_ENTRY_POINT = ['approveRun', 'closeRun', 'rewriteReply', 'snoozeRun'];
+const PASSED_ON_BY_THE_ENTRY_POINT = [
+  'approveRun', 'closeRun', 'rewriteReply', 'sendBackRun', 'snoozeRun',
+];
 
 /**
  * Every symbol this console takes from the barrel, and whether it writes.
@@ -144,6 +146,11 @@ const PASSED_ON_BY_THE_ENTRY_POINT = ['approveRun', 'closeRun', 'rewriteReply', 
  * module other than the one above.
  */
 const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
+  // DEC-49: the length a send-back note may have. A value and not a write or
+  // a read, and named here because the sweep counts every symbol this console
+  // takes from the barrel: the form's own `maxlength` and the ledger's bound
+  // are one number, and a page that spelled its own would be the second.
+  MAX_SEND_BACK_NOTE_CHARS: 'read',
   activeReviewer: 'read',
   approveRun: 'write',
   // DEC-48: the case a reviewer finishes with no reply. The console's fourth
@@ -156,6 +163,9 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   // on the turn, and it is the one write that changes who authored the reply
   // the customer receives.
   rewriteReply: 'write',
+  // DEC-49: the case a reviewer sends back. It writes the run it ends and the
+  // note the next attempt reads; the attempt itself is the consumer's.
+  sendBackRun: 'write',
   conversationOfRun: 'read',
   // DEC-44: whether a copy read back from the helpdesk holds text. A rule
   // read by the approval and by the page, and no statement either way.

@@ -40,6 +40,13 @@ export interface DayRow {
    * recorded none or recorded more than one (issue #23).
    */
   provider: string | null;
+  /**
+   * DEC-49: how many of the day's runs are a case a reviewer's note steered.
+   *
+   * A count of runs and not a metric: the day's `runs` already counts each
+   * turn once, so this is a subset of it, and no band is evaluated over it.
+   */
+  assisted: number;
   samples: Record<MetricName, DailySample>;
 }
 
@@ -55,9 +62,36 @@ const SELECT_BY_DAY = `
     SELECT run_id,
            to_char((created_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS day,
            state,
-           approval_edit_distance
-      FROM run
+           approval_edit_distance,
+           attempt
+      FROM run r
      WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz
+       -- DEC-49: a turn a reviewer sent back is one case however many
+       -- attempts it took, and the day counts it once — from the attempt
+       -- that ended it. Counting every attempt would report a day's work as
+       -- larger than the day's cases, and every rate over it would move for
+       -- a reason that is not behaviour.
+       --
+       -- A newer attempt anywhere counts, including one outside this window:
+       -- the turn belongs to the day that ended it, so a day whose runs were
+       -- all superseded by a later attempt counts none of them. A run with
+       -- no turn has no case to fold into, and stays its own row, which is
+       -- what a V1-era run and a replay run are.
+       AND (r.turn_number IS NULL
+            OR NOT EXISTS (
+                 SELECT 1 FROM run later
+                  WHERE later.conversation_id = r.conversation_id
+                    AND later.turn_number = r.turn_number
+                    AND (later.attempt > r.attempt
+                         -- One turn, one row, even when two runs share its
+                         -- final attempt: a redelivered message reuses the
+                         -- attempt the turn is on, so the turn can hold two
+                         -- runs there. The newest is the one counted, and the
+                         -- tie is broken by the run's own identity so the
+                         -- answer cannot depend on a plan.
+                         OR (later.attempt = r.attempt
+                             AND (later.created_at, later.run_id)
+                                 > (r.created_at, r.run_id)))))
   ),
   -- The compose step's own outcome. A run that stopped earlier has no row
   -- here, and is counted as not reached rather than as a run that did not
@@ -205,7 +239,14 @@ const SELECT_BY_DAY = `
          -- DEC-48: a snoozed case left the queue without ending, so it is
          -- still to land beside the ones waiting for a person.
          count(*) FILTER (WHERE d.state IN ('awaiting_approval', 'snoozed')) AS still_to_land,
-         count(*) FILTER (WHERE p.run_id IS NOT NULL)                   AS undelivered
+         count(*) FILTER (WHERE p.run_id IS NOT NULL)                   AS undelivered,
+         -- DEC-49: how many of this day's cases a reviewer's note steered.
+         -- A case, not an attempt: day_run already holds one row per turn,
+         -- so this counts the turns whose final attempt a person asked for.
+         -- It is a day-level count beside the provider and not a metric:
+         -- bands.yaml has no band for it, and a number nobody declared a
+         -- band for must not be evaluated as one.
+         count(*) FILTER (WHERE d.attempt > 1)                          AS assisted
     FROM day_run d
     LEFT JOIN composed c ON c.run_id = d.run_id
     LEFT JOIN composed_by cb ON cb.run_id = d.run_id
@@ -288,6 +329,7 @@ export async function readDays(pool: Pool, from: Date, to: Date): Promise<DayRow
       day,
       runs,
       provider,
+      assisted: toCount(row['assisted'], 'assisted'),
       samples: {
         abstain_rate: {
           day,

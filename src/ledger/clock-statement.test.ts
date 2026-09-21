@@ -33,6 +33,7 @@ describe('the run insert statement without a clock', () => {
       'enqueued_at',
       'conversation_id',
       'turn_number',
+      'attempt',
       'product',
     ]) {
       expect(NO_CLOCK).toContain(column);
@@ -53,7 +54,7 @@ describe('the run insert statement without a clock', () => {
     expect(columns).toEqual([
       'run_id', 'ticket_id', 'partition', 'epoch', 'state', 'prompt_ver',
       'model_ver', 'cost_micros', 'steps_used', 'deadline_at', 'enqueued_at',
-      'conversation_id', 'turn_number', 'product',
+      'conversation_id', 'turn_number', 'attempt', 'product',
     ]);
     expect(NO_CLOCK).toContain(`$${columns.length}`);
     expect(NO_CLOCK).not.toContain(`$${columns.length + 1}`);

@@ -64,6 +64,12 @@ interface SeedOptions {
   editDistance?: number;
   /** Outbox rows to attach, by status. */
   outbox?: readonly string[];
+  /** DEC-49: the conversation the run belongs to, when it has one. */
+  conversationId?: string;
+  /** DEC-49: the turn of that conversation this run answers. */
+  turnNumber?: number;
+  /** DEC-49: which attempt of that turn the run is. */
+  attempt?: number;
 }
 
 async function seedRun(opts: SeedOptions): Promise<string> {
@@ -76,6 +82,9 @@ async function seedRun(opts: SeedOptions): Promise<string> {
     promptVer: 'p1',
     modelVer: 'm1',
     deadlineAt: new Date(Date.now() + MINUTE),
+    ...(opts.conversationId === undefined ? {} : { conversationId: opts.conversationId }),
+    ...(opts.turnNumber === undefined ? {} : { turnNumber: opts.turnNumber }),
+    ...(opts.attempt === undefined ? {} : { attempt: opts.attempt }),
   };
   expect(await fencedInsert(pool, run, null)).toEqual({ outcome: 'accepted' });
 
@@ -134,6 +143,94 @@ describe('the control-band daily sample', () => {
   beforeEach(async () => {
     await truncateLedger(pool);
   });
+
+  // DEC-49. A turn a reviewer sent back is one case however many attempts it
+  // took, so the day counts it once, from the attempt that ended it. Counting
+  // every attempt would report a day's work as larger than the day's cases,
+  // and every rate over it would move for a reason that is not behaviour.
+describe('a turn that took more than one attempt (DEC-49)', () => {
+  it('counts a turn once, on the day its final attempt was created', async () => {
+    const conversationId = randomUUID();
+    // An unrelated case on the same day, so the first day has a row at all.
+    await seedRun({ day: '2026-02-10' });
+    // Attempt one, rejected. Attempt two, the day after: the turn belongs to
+    // the day that ended it, and nothing is counted for it on the day before.
+    await seedRun({
+      day: '2026-02-10', conversationId, turnNumber: 3, attempt: 1, state: 'superseded',
+    });
+    await seedRun({ day: '2026-02-11', conversationId, turnNumber: 3, attempt: 2 });
+
+    const days = await readDays(pool, FROM, TO);
+    const first = days.find((row) => row.day === '2026-02-10')!;
+    const second = days.find((row) => row.day === '2026-02-11')!;
+
+    expect(first.runs).toBe(1);
+    expect(second.runs).toBe(1);
+    // And the attempt a reviewer's note steered is counted beside the day,
+    // not inside any metric.
+    expect(first.assisted).toBe(0);
+    expect(second.assisted).toBe(1);
+
+    // The day's own counts still partition its runs, which is the arithmetic
+    // every metric rests on.
+    expect(first.runs).toBe(
+      first.samples.gate_pass_rate.count
+        + first.samples.gate_pass_rate.notReached
+        + first.samples.gate_pass_rate.unrecorded,
+    );
+  });
+
+  it('counts a turn once when two runs share its final attempt', async () => {
+    // A redelivered message reuses the turn and the attempt the turn is on
+    // (DEC-49), so two runs of one turn can carry the same attempt number.
+    // They are one case: the customer sent one message.
+    const conversationId = randomUUID();
+    await seedRun({
+      day: '2026-02-14', conversationId, turnNumber: 1, attempt: 1, state: 'superseded',
+    });
+    await seedRun({ day: '2026-02-14', conversationId, turnNumber: 1, attempt: 2 });
+    await seedRun({ day: '2026-02-14', conversationId, turnNumber: 1, attempt: 2 });
+
+    const day = (await readDays(pool, FROM, TO)).find((row) => row.day === '2026-02-14')!;
+
+    expect(day.runs).toBe(1);
+    expect(day.assisted).toBe(1);
+  });
+
+  it('counts a run with no turn on its own, as it always did', async () => {
+    // A V1-era run and a replay run have no turn. There is no case to fold
+    // them into, so each is its own.
+    await seedRun({ day: '2026-02-12' });
+    await seedRun({ day: '2026-02-12' });
+    await seedRun({ day: '2026-02-12', conversationId: randomUUID(), attempt: 1 });
+
+    const day = (await readDays(pool, FROM, TO)).find((row) => row.day === '2026-02-12')!;
+
+    expect(day.runs).toBe(3);
+    expect(day.assisted).toBe(0);
+  });
+
+  it('reads an assisted count into the artifact, beside the day\'s provider', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bands-assisted-'));
+    try {
+      const conversationId = randomUUID();
+      await seedRun({
+        day: '2026-03-05', conversationId, turnNumber: 1, attempt: 1, state: 'superseded',
+      });
+      await seedRun({ day: '2026-03-05', conversationId, turnNumber: 1, attempt: 2 });
+      await seedRun({ day: '2026-03-05' });
+
+      const { artifact } = await runBandsJob({
+        pool: readOnlyPool, day: '2026-03-05', artifactDir: pathToFileURL(dir + '/'),
+      });
+
+      expect(artifact.runs).toBe(2);
+      expect(artifact.assisted).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
   afterAll(async () => {
     // The last case's rows would otherwise survive against an explicit

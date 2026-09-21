@@ -145,6 +145,23 @@ export interface CoordinateInput {
    */
   turnNumber?: number;
   /**
+   * DEC-49: which attempt of that turn this run is.
+   *
+   * Absent is the first attempt, which is what every caller that knows of no
+   * send-back means. The consumer's sent-back scan names the turn's next one,
+   * and only a person's request ever raises it: a crash retry and a
+   * redelivered message stay in the attempt they were already in (DEC-49).
+   */
+  attempt?: number;
+  /**
+   * DEC-49: the note a reviewer sent the case back with.
+   *
+   * It reaches the composer as an instruction and nothing else reads it. The
+   * classifier and retrieval never see it, so it cannot become a label or a
+   * retrieved span, and it never counts as coverage (DEC-37).
+   */
+  note?: string;
+  /**
    * DEC-35: the conversation this turn belongs to. Null on a V1-era run and
    * on a replay run, which have no conversation; the partition key then
    * falls back to the ticket id.

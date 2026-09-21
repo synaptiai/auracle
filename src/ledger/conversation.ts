@@ -100,6 +100,96 @@ export interface SavedReply {
  * somebody approves. The column holds what they last saved, which is what a
  * later reader shows them and what the approval sends.
  */
+/**
+ * The outbox statuses that close a turn to a new attempt (DEC-49).
+ *
+ * A record in any of these is a reply that has reached the customer, may have
+ * reached them, or will. `sent` has. `fenced` may have: the relay had begun
+ * the send when the fence moved (fact 14). `delivery_unknown` cannot be shown
+ * not to have, and DEC-30 makes it terminal for that reason. `pending` is an
+ * approved reply the relay has not drained yet — most plainly a console send
+ * held for the DEC-51 window — and it will go out. A new attempt beside any of
+ * them would put a second reply on one turn.
+ *
+ * Only `malformed` leaves the turn open: the relay escalated that record and
+ * will never send it. A reviewer who wants a new attempt over a held send
+ * undoes the approval first; the undo deletes the pending record.
+ *
+ * One list, read by the send-back, the consumer's scan and the approval, so
+ * the rules that refuse a request, drop one and refuse a second reply cannot
+ * drift apart.
+ */
+export const TURN_CLOSING_STATUSES = ['pending', 'sent', 'fenced', 'delivery_unknown'] as const;
+
+/**
+ * Whether the turn holds a record that closes it: a reply that reached the
+ * customer, may have, or will (DEC-49).
+ *
+ * The turn is the conversation and the turn number together (DEC-35): a turn
+ * number alone is not unique, and db/012 can put two conversations on one
+ * ticket. A run with no turn number is not read. Its record answered some
+ * message of the conversation, and nothing says which; reading it as every
+ * turn's record closed every later turn for good.
+ *
+ * `replies` narrows it to the records of a customer reply, which name the
+ * draft they send. The approval asks that question — a turn takes one reply,
+ * and a compensation on the same turn is not a second one (DEC-34). The
+ * send-back and the scan ask the wider one: any record that may have reached
+ * the customer closes the turn to a new attempt.
+ *
+ * A caller reads this under the turn row's lock (`lockTurnAttempt`), so no
+ * writer of the turn can add a record between the read and its own write.
+ */
+export async function turnIsClosed(
+  client: ConversationDb,
+  turn: { conversationId: string | null; turnNumber: number | null },
+  options: { replies: boolean } = { replies: false },
+): Promise<boolean> {
+  if (turn.conversationId === null || turn.turnNumber === null) return false;
+  const rows = await client.query(
+    `SELECT 1
+       FROM outbox o
+       JOIN run r ON r.run_id = o.run_id
+      WHERE r.conversation_id = $1
+        AND r.turn_number = $2
+        AND o.status = ANY ($3::text[])
+        AND ($4::boolean = false OR o.payload ? 'draftExternalId')
+      LIMIT 1`,
+    [turn.conversationId, turn.turnNumber, [...TURN_CLOSING_STATUSES], options.replies],
+  );
+  return rows.rows.length > 0;
+}
+
+/**
+ * The attempt a turn is on, read under the turn row's lock (DEC-49, db/033).
+ *
+ * Every decision about which attempt of a turn may act is ordered on this
+ * lock: a send-back raises the attempt under it, and an approval, a save and
+ * a rewrite read it under it before they write. So a reviewer cannot approve,
+ * save or rewrite a reply on an attempt another reviewer has just sent back,
+ * and two send-backs of one turn cannot both pass.
+ *
+ * Callers take it after their own run's row lock. That is the one order the
+ * writers of a turn follow — run, then turn — and no writer takes a turn and
+ * then a run, so no two of them can deadlock on it.
+ *
+ * Null when the turn row does not exist, which a caller reads as the first
+ * attempt: a run with no turn has only ever had one.
+ */
+export async function lockTurnAttempt(
+  client: ConversationDb,
+  turn: { conversationId: string; turnNumber: number },
+): Promise<number | null> {
+  const rows = await client.query<{ attempt: number }>(
+    `SELECT attempt FROM turn
+      WHERE conversation_id = $1 AND turn_number = $2
+      FOR UPDATE`,
+    [turn.conversationId, turn.turnNumber],
+  );
+  const attempt = rows.rows[0]?.attempt;
+  return attempt === undefined ? null : Number(attempt);
+}
+
 export async function recordSavedReply(
   client: ConversationDb,
   reply: SavedReply,

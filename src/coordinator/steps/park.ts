@@ -108,6 +108,10 @@ export async function park(ctx: RunContext): Promise<StepResult> {
       // turn has to survive the wait. Without it, one request per turn
       // would collapse into one key and the later turn would be dropped.
       ...(ctx.input.turnNumber === undefined ? {} : { turnNumber: ctx.input.turnNumber }),
+      // DEC-49: and the attempt with it, for the same reason. An approval of
+      // a later attempt that derived the first attempt's key would lose the
+      // outbox insert and stop the run superseded.
+      ...(ctx.input.attempt === undefined ? {} : { attempt: ctx.input.attempt }),
     });
     const awaiting = await transitionOrStop(ctx, 'awaiting_approval');
     if (awaiting !== null) return { kind: 'stop', outcome: awaiting };
@@ -131,14 +135,15 @@ export async function park(ctx: RunContext): Promise<StepResult> {
   // from this run. Two runs of the same park derive the same key, so the
   // adapter recognises the repeat and returns the first draft.
   //
-  // CAUTION for whoever adds rejection. Nothing in the key distinguishes a
-  // retry from a fresh attempt after a person rejected the draft. V1 has
-  // no reject path, and the consumer acks the ticket out of intake once
-  // the run reaches 'awaiting_approval', so a second run on one ticket
-  // does not occur. A reject path changes that: the new run would derive
-  // this same key and the adapter would hand back the rejected draft. Add
-  // something that separates the attempts and is still action semantics,
-  // such as a digest of the composed body. Never the run id (DEC-24).
+  // DEC-49 answered the caution this comment used to carry. Nothing in the
+  // key as it stood distinguished a retry from a fresh attempt after a
+  // person rejected the draft, so a reject path would have derived this same
+  // key and the adapter would have handed back the rejected draft. The
+  // attempt separates them, and it is action semantics: it says what a
+  // person asked for. A digest of the composed body fails — a crash retry
+  // retrieves again, and a document can pass its review date in between, so
+  // the retry would compose different text and park a second draft. The run
+  // id stays forbidden (DEC-24).
   const parkKey = deriveIdemKey({
     actionClass: `${ctx.input.actionClass}:park`,
     ticketId: ctx.input.ticketId,
@@ -146,6 +151,7 @@ export async function park(ctx: RunContext): Promise<StepResult> {
     // DEC-35: the conversation the turn belongs to. A turn number alone is
     // not unique — db/012 can put two conversations on one ticket.
     conversationId: ctx.input.conversationId ?? null,
+    ...(ctx.input.attempt === undefined ? {} : { attempt: ctx.input.attempt }),
     payload: ctx.input.actionPayload,
   });
   await journalFinish(ctx, 'park', 'parking', {
@@ -200,6 +206,10 @@ export async function park(ctx: RunContext): Promise<StepResult> {
     // DEC-38: the turn survives the wait, so approval derives the key this
     // turn's request deserves.
     ...(ctx.input.turnNumber === undefined ? {} : { turnNumber: ctx.input.turnNumber }),
+    // DEC-49: and the attempt with it. The approval derives its outbox key
+    // from this row, so an attempt left out here derived the first attempt's
+    // key — and only the draft handle in the payload kept the two apart.
+    ...(ctx.input.attempt === undefined ? {} : { attempt: ctx.input.attempt }),
     // The parked body, exactly as it entered the target system. The
     // approve entrypoint measures the person's edit against it
     // (section 4.10) from the ledger alone.

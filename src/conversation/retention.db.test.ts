@@ -70,9 +70,28 @@ async function seedOldConversation(): Promise<{
   );
   await pool.query(
     `INSERT INTO run (run_id, ticket_id, partition, epoch, state, prompt_ver, model_ver,
-                      cost_micros, steps_used, deadline_at, conversation_id, turn_number, created_at)
-     VALUES ($1, 'SYN-1', 0, 1, 'resolved', 'p', 'm', 0, 0, now(), $2, 1, ${OLD})`,
+                      cost_micros, steps_used, deadline_at, conversation_id, turn_number,
+                      created_at, send_back_note)
+     VALUES ($1, 'SYN-1', 0, 1, 'resolved', 'p', 'm', 0, 0, now(), $2, 1, ${OLD},
+             'ada@customer.example asked twice, so answer both')`,
     [runId, conversationId],
+  );
+  // The note a reviewer sent the case back with (DEC-49). It is written
+  // twice: on the run, where the next attempt reads it, and in the journal
+  // row that records who asked. A statement that cleared one and not the
+  // other would leave the words a reader sees.
+  await pool.query(
+    `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
+     VALUES ($1, 'send_back', 'done', $2::jsonb, 'p', 'm', 0)`,
+    [runId, JSON.stringify({
+      note: 'ada@customer.example asked twice, so answer both',
+      reviewer: 'reviewer@example.test', reviewerSource: 'roster', attempt: 1,
+      // DEC-49: the reply a person saved on the turn belongs to the attempt a
+      // reviewer rejects, so the send-back clears it and records what it
+      // cleared. A statement that reached the note and not this would leave
+      // the person's own words behind.
+      clearedReply: 'a reply a person saved, quoting ada@customer.example',
+    })],
   );
   await pool.query(
     `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
@@ -138,9 +157,10 @@ async function runPublished(): Promise<void> {
 describe('the erasure path the runbook publishes', () => {
   it('publishes statements the ledger accepts', async () => {
     const statements = publishedStatements();
-    // Three: the turn, the journal, the participant. Non-vacuity, because a
-    // block that lost one would otherwise pass every case below.
-    expect(statements).toHaveLength(3);
+    // Four: the turn, the journal, the note a reviewer sent a case back
+    // with, and the participant. Non-vacuity, because a block that lost one
+    // would otherwise pass every case below.
+    expect(statements).toHaveLength(4);
     await seedOldConversation();
     await runPublished();
   });
@@ -185,6 +205,8 @@ describe('the erasure path the runbook publishes', () => {
       (addresses.rows[0] as { named: string }).named,
     ].join(' ');
     for (const cleared of [
+      'asked twice, so answer both',
+      'a reply a person saved, quoting ada@customer.example',
       'the customer wrote this', 'and we answered that', 'the drafted reply',
       'the first claim', 'the courtesy opening', 'the first sentence of the reply',
       'the document body', 'ada@customer.example',

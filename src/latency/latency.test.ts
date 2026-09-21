@@ -33,6 +33,8 @@ function service(over: Record<string, unknown> = {}): Record<string, unknown> {
     never_ran: 0,
     // DEC-48: runs that were ever snoozed, whose duration is a wait.
     snoozed: 0,
+    // DEC-49: runs a reviewer sent back, whose duration is a reading time.
+    rejected: 0,
     ...over,
   };
 }

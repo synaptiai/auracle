@@ -18,7 +18,8 @@
 import type { Pool } from 'pg';
 import type {
   ApproveOptions, ApproveOutcome, CloseOptions, CloseOutcome, DraftReadBack, RewriteOptions,
-  RewriteOutcome, SaveOutcome, SaveReplyOptions, SnoozeOptions, SnoozeOutcome, UndoOutcome,
+  RewriteOutcome, SaveOutcome, SaveReplyOptions, SendBackOptions, SendBackOutcome, SnoozeOptions,
+  SnoozeOutcome, UndoOutcome,
 } from 'auracle/ledger-read';
 
 import { ReadBackFailed } from './read-back.js';
@@ -395,6 +396,49 @@ export function snoozeFor(deps: {
       periodMs,
       snoozedBy: reviewer,
       snoozedBySource: 'roster',
+      ledgerReply: deps.ledgerReply,
+      shown,
+    })).outcome;
+  };
+}
+
+/**
+ * The send-back the console's entry point hands its server (DEC-49).
+ *
+ * A delegation, like the snooze: `sendBackRun` owns the transaction, the two
+ * conditions, the DEC-46 guard and the journal row. The identity travels with
+ * the source `roster`, because the gate resolved it against the ledger's
+ * roster before the route was reached.
+ *
+ * The note travels unbounded, and that is deliberate: `sendBackRun` is what
+ * bounds it, so the console has one implementation of the bound rather than a
+ * second one that can drift from the page's field.
+ *
+ * The adapter's declaration travels too, and here it is half of the first
+ * condition: where the helpdesk can send the copy it parks, there is a copy a
+ * person could send and no new attempt is started.
+ */
+export function sendBackFor(deps: {
+  readonly pool: Pool;
+  readonly sendBackRun: (
+    pool: Pool,
+    runId: string,
+    options: SendBackOptions,
+  ) => Promise<SendBackOutcome>;
+  readonly ledgerReply: boolean;
+}): (
+  runId: string,
+  reviewer: string,
+  note: string,
+  shown: string,
+) => Promise<SendBackOutcome['outcome']> {
+  return async (runId, reviewer, note, shown) => {
+    const id = runId.trim();
+    if (!RUN_ID.test(id)) throw new Error(`'${runId}' is not a run id`);
+    return (await deps.sendBackRun(deps.pool, id, {
+      note,
+      sentBackBy: reviewer,
+      sentBackBySource: 'roster',
       ledgerReply: deps.ledgerReply,
       shown,
     })).outcome;

@@ -16,6 +16,7 @@ import { coordinateTicket } from '../coordinator/coordinator.js';
 import type { CoordinatorDeps } from '../coordinator/coordinator.js';
 import { enqueueTicket } from '../coordinator/intake.js';
 import { dbUrl } from '../db/config.js';
+import { deriveIdemKey } from '../ledger/keys.js';
 import { fencedInsert } from '../ledger/insert.js';
 import { journalFinish, journalStart } from '../ledger/journal-write.js';
 import { recordSavedReply } from '../ledger/conversation.js';
@@ -490,10 +491,24 @@ describe('DEC-44: the approval sends the reply the ledger holds', () => {
       },
     });
 
-    expect(await approveRun(pool, other, { ledgerReply: true })).toEqual({ outcome: 'superseded' });
+    // A turn takes one reply, so the second run's approval is refused before
+    // it derives anything (DEC-49): the first approval's record closes the
+    // turn. Before that refusal existed the key collision stopped it instead.
+    expect(await approveRun(pool, other, { ledgerReply: true })).toEqual({ outcome: 'turn_closed' });
     expect(await outboxRow(other)).toBeUndefined();
-    // The first approval's key is the one both runs derived.
     expect(await outboxRow(runId)).toEqual(first);
+    // And the key claim itself, which that refusal no longer exercises: the
+    // key the second run would derive is the first one's, because only its
+    // text differs and the text is not in the key (DEC-49).
+    const ticketId = (await pool.query('SELECT ticket_id FROM run WHERE run_id = $1', [runId]))
+      .rows[0]!.ticket_id as string;
+    expect(deriveIdemKey({
+      actionClass: CUSTOMER_REPLY_ACTION_CLASS,
+      ticketId,
+      turnNumber: 1,
+      conversationId,
+      payload: { draftExternalId },
+    })).toBe(first?.idem_key);
   });
 
   // DEC-44 governs a customer reply, and only a customer reply. A ledger-only

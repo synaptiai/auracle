@@ -148,6 +148,11 @@ describe('escalations CLI queries', () => {
       agreementThreshold: null,
       coverageReviewThreshold: null,
       riskTier: null,
+      // DEC-49: the moment a reviewer sent this run back, read beside the
+      // state. Null on a run nobody sent back, which is not the epoch.
+      sentBackAt: null,
+      attemptRejected: false,
+      turnClosed: false,
       intentId: null,
       // Nobody approved an escalated run, so the run records no approver.
       approved: false,

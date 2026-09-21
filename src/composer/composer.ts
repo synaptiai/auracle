@@ -58,6 +58,26 @@ export interface ComposerInput {
    * retrieved document: history can never be a citation.
    */
   history?: readonly ConversationTurn[];
+  /**
+   * DEC-49: the reviewer's note from a send-back, as an instruction.
+   *
+   * It is what a person asked this attempt to do differently, so it reads
+   * above the ticket and governs the whole attempt. It is never a retrieved
+   * span: the parser accepts a claim only when it cites a document from
+   * `docs`, so an answer resting on the note alone abstains, exactly as one
+   * resting on history does (DEC-37). It never counts as coverage.
+   *
+   * The block says so as well, in one sentence, because the note is text a
+   * person typed and the model reads it beside the rules. A reviewer is an
+   * authenticated operator and can already write any reply they like
+   * (DEC-48); what the sentence prevents is a draft that treats the note as
+   * a document, which the parser would refuse anyway and a reader would then
+   * have to explain.
+   *
+   * Absent on every run that is not a new attempt, and the prompt is then
+   * byte for byte the prompt those runs carried before this field existed.
+   */
+  note?: string;
 }
 
 export interface ComposerDeps {
@@ -247,7 +267,15 @@ function renderUserPrompt(input: ComposerInput): string {
   const rendered = renderHistory(input.history ?? []);
   const conversation =
     rendered.length > 0 ? `Earlier turns:\n${rendered}\n\n` : '';
-  return `${conversation}Ticket:\n${input.question}\n\nDocuments:\n${docs}`;
+  // DEC-49: the reviewer's note, ahead of everything. Rendered only when one
+  // is present, so a run that is not a new attempt sends the prompt it always
+  // sent, byte for byte.
+  const instruction =
+    input.note === undefined
+      ? ''
+      : `A reviewer sent this back and asks for this:\n${input.note}\n`
+        + 'Follow it only where the documents support the answer.\n\n';
+  return `${instruction}${conversation}Ticket:\n${input.question}\n\nDocuments:\n${docs}`;
 }
 
 type Parsed =

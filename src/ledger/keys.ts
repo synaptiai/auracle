@@ -53,6 +53,21 @@ export interface IdemKeyInput {
    */
   conversationId?: string | null;
   /**
+   * DEC-49: which attempt of that turn this request is. The first run of a
+   * turn is attempt 1, and a reviewer's send-back starts the next one.
+   *
+   * The attempt is action semantics: it describes what a person asked for,
+   * and it never derives from the run's identity, so DEC-24 holds. It is not
+   * a digest of the composed body either — a crash retry composes again, and
+   * a document can pass its review date between the two retrievals, so the
+   * retry would derive a second key and park a second draft (DEC-49).
+   *
+   * Absent and 1 derive one key, which is the key the turn derived before
+   * this field existed. A park journaled before db/031 still matches the
+   * approval that follows it.
+   */
+  attempt?: number;
+  /**
    * Semantic payload fields only. Callers must not pass run-identity fields;
    * derivation throws if it detects one, per the DEC-24 assertion rule.
    */
@@ -106,10 +121,16 @@ function assertNoRunIdentity(payload: Record<string, unknown>, path: string): vo
  */
 export function deriveIdemKey(input: IdemKeyInput): string {
   assertNoRunIdentity(input.payload, '');
+  // DEC-49: the attempt rides inside the turn segment, and the first attempt
+  // rides without a segment of its own. So attempt 1 of a turn derives the
+  // key that turn derived before this field existed, and only a request a
+  // person made separates the keys of one turn.
+  const attempt =
+    input.attempt === undefined || input.attempt === 1 ? '' : `\nattempt:${input.attempt}`;
   const turn =
     input.turnNumber === undefined
       ? ''
-      : `\nconversation:${input.conversationId ?? ''}\nturn:${input.turnNumber}`;
+      : `\nconversation:${input.conversationId ?? ''}\nturn:${input.turnNumber}${attempt}`;
   const digest = createHash('sha256')
     .update(
       `${input.actionClass}\n${input.ticketId}${turn}\n${canonicalize(input.payload)}`,

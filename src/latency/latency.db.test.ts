@@ -199,6 +199,37 @@ describe('the latency report (V2 open item 7)', () => {
     expect(row!.service.maxMs).toBe(30_000);
   });
 
+  // DEC-49: a rejected attempt is not work the system did. Its duration is
+  // the time between the attempt and the reviewer's decision, which is a
+  // person reading a case — the wait this class keeps out of the service
+  // distribution.
+  it('keeps a rejected attempt in a class of its own, apart from service time', async () => {
+    const rejected = await seedRun({
+      partition: 0, waitMs: 1_000, serviceMs: 4 * HOUR, state: 'superseded',
+    });
+    await pool.query('UPDATE run SET sent_back_at = now() WHERE run_id = $1', [rejected]);
+    // A case that was put aside and then sent back reads as rejected: the
+    // attempt ended because a person rejected it, and the snooze's wait is
+    // recorded by its own column on the row that ended.
+    const both = await seedRun({
+      partition: 0, waitMs: 1_000, serviceMs: 2 * HOUR, state: 'superseded',
+    });
+    await pool.query(
+      "UPDATE run SET sent_back_at = now(), snoozed_until = now() - interval '1 hour'"
+        + ' WHERE run_id = $1',
+      [both],
+    );
+    // The attempt that answered the turn, so the distribution is not empty.
+    await seedRun({ partition: 0, waitMs: 1_000, serviceMs: 30_000, state: 'resolved' });
+
+    const [row] = (await readLatency(pool)).partitions;
+    expect(row!.service.rejected).toBe(2);
+    // Neither is unfinished, and neither is in the duration.
+    expect(row!.service.unfinished).toBe(0);
+    expect(row!.service.count).toBe(1);
+    expect(row!.service.maxMs).toBe(30_000);
+  });
+
   it('reports no partitions over an empty ledger, rather than failing', async () => {
     const report = await readLatency(pool);
     expect(report.partitions).toEqual([]);

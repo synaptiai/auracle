@@ -44,6 +44,7 @@ import {
   renderRuns,
   renderCloseOutcome,
   renderRewriteOutcome,
+  renderSendBackOutcome,
   renderSnoozeOutcome,
   renderUndoResult,
   replyTextOf,
@@ -66,7 +67,7 @@ import type { ReviewerFor } from './reviewer.js';
 import { copyHoldsText, replyDigest } from 'auracle/ledger-read';
 import type {
   ApprovalHold, CloseOutcome, HandoverOutcome, Hold, ReleaseOutcome, RewriteOutcome,
-  SnoozeOutcome, TakeOutcome,
+  SendBackOutcome, SnoozeOutcome, TakeOutcome,
   UndoOutcome,
 } from 'auracle/ledger-read';
 
@@ -178,6 +179,21 @@ export interface ConsoleDeps {
     text: string,
     shown: string,
   ) => Promise<RewriteOutcome['outcome']>;
+  /**
+   * DEC-49: the case a reviewer sends back for a new attempt.
+   *
+   * The console's seventh write, and the only one that starts no run itself:
+   * it ends the rejected one and records the note, and the consumer that owns
+   * the conversation's partition starts the next attempt on its scan. The
+   * conditions, the bound and the journal row are the core's; this hands it
+   * the form and draws the answer.
+   */
+  readonly sendBack: (
+    runId: string,
+    reviewer: string,
+    note: string,
+    shown: string,
+  ) => Promise<SendBackOutcome['outcome']>;
   /**
    * The copy the helpdesk holds for one parked draft (DEC-44), read when an
    * approval refused because a person edited it. Null when there is nothing
@@ -709,6 +725,14 @@ async function outcomeRuns(
         // case may be confirmed: no rewrite claim rests on it.
         ledgerReply: false,
         replyRewritten: run.replyRewritten,
+        // The batch draws no outcome banner either, and these two are read
+        // only by one. They are read off the run rather than defaulted, so a
+        // future banner cannot draw a claim nothing checked.
+        sentBack: run.sentBackAt !== null,
+        parkedDraft: run.draftExternalId !== null,
+        hasTurn: run.request !== null,
+        attemptRejected: run.attemptRejected,
+        turnClosed: run.turnClosed,
       });
     } catch (error) {
       // Named as unread rather than left out: an outcome drawn against no run
@@ -1187,6 +1211,12 @@ async function route(
     // here for the reason the close's is: the branch below answers for a run
     // this ledger does not hold.
     const rewritten = url.searchParams.get('rewritten') ?? '';
+    // DEC-49: what the send-back route answered, drawn beside the case. Read
+    // here for the reason the close's is: the branch below answers for a run
+    // this ledger does not hold.
+    const sentBack = url.searchParams.get('sentback') ?? '';
+    // Whether the page should draw the send-back field rather than its link.
+    const sendingBack = url.searchParams.get('sendback') === '1';
     // Whether the page should draw the rewrite field rather than its link.
     const rewriting = url.searchParams.get('rewrite') === '1';
     const { rule, product } = queueFilters(url);
@@ -1224,6 +1254,7 @@ async function route(
           + (closed === '' ? '' : renderCloseOutcome(closed, null))
           + (snoozed === '' ? '' : renderSnoozeOutcome(snoozed, null))
           + (rewritten === '' ? '' : renderRewriteOutcome(rewritten, null))
+          + (sentBack === '' ? '' : renderSendBackOutcome(sentBack, null))
           + nothingFound(),
         shell(NOT_A_SURFACE),
       ));
@@ -1311,7 +1342,7 @@ async function route(
       renderCase({ ...run, customer }, {
         outcome, edit, why, closed, snoozed, rule, product, readBack: options.readBack, hold,
         taken, handoverTo, ledgerReply: options.ledgerReply, writing, copy, sendHold,
-        rewritten, rewriting,
+        rewritten, rewriting, sentBack, sendingBack,
       }),
       { ...shell(`/case/${runId}`), back: caseHref(runId, rule, product) },
     ));
@@ -1506,6 +1537,14 @@ async function route(
   // this console's writes should read a name that says so.
   if (req.method === 'POST' && path === '/close') {
     await closeRoute(req, res, deps, reviewer, url, theme);
+    return;
+  }
+
+  // DEC-49: the case a reviewer sends back for a new attempt. Its own route,
+  // as every outcome has: the run ends, a new one takes the turn, and nothing
+  // is sent.
+  if (req.method === 'POST' && path === '/send-back') {
+    await sendBackRoute(req, res, deps, reviewer, url, theme);
     return;
   }
 
@@ -2253,6 +2292,119 @@ async function closeRoute(
   res.writeHead(303, {
     ...SAFETY_HEADERS,
     location: `/case/${encodeURIComponent(runId)}?closed=${encodeURIComponent(outcome)}${kept}`,
+  });
+  res.end();
+}
+
+/**
+ * The send-back a reviewer posts from a case (DEC-49).
+ *
+ * Two things are checked here: the run id and the digest of the reply the
+ * page drew. The note's own rules — that it says something, that it fits, and
+ * that the ledger can store it — belong to `sendBackRun`, which refuses each
+ * before it writes, and the page words the answer.
+ *
+ * The note is not bounded here beyond the form's own size. The ledger bounds
+ * what it will record, and a console that also refused a length would be the
+ * second place the number lives.
+ */
+async function sendBackRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ConsoleDeps,
+  reviewer: string,
+  url: URL,
+  theme: Theme,
+): Promise<void> {
+  const from = req.socket.remoteAddress ?? null;
+  let form;
+  try {
+    form = await readForm(req);
+  } catch (error) {
+    if (!(error instanceof OversizedForm)) {
+      if (req.destroyed || req.readableAborted) {
+        console.error(logLine({
+          event: 'console_refused', reason: 'client_aborted',
+          host: req.headers.host ?? null, from,
+        }));
+        return;
+      }
+      throw error;
+    }
+    req.destroy();
+    send(res, 413, bare(
+      'Refused',
+      'The send-back form is larger than this console accepts. Nothing was sent back.',
+      theme,
+      backToQueue(url),
+    ));
+    return;
+  }
+
+  const runId = (form.get('runId') ?? '').trim();
+  if (!isRunId(runId)) {
+    console.error(logLine({
+      event: 'console_refused', reason: 'not_a_run_id',
+      runId: logged(runId), runIdLength: loggedLength(runId),
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 400, bare('Refused', 'That is not a run id, so nothing was sent back.', theme));
+    return;
+  }
+  const shown = (form.get('shown') ?? '').trim();
+  if (!SHOWN_DIGEST.test(shown)) {
+    console.error(logLine({
+      event: 'console_refused', reason: 'not_a_shown_digest',
+      runId, shownLength: loggedLength(shown),
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 400, bare(
+      'Refused',
+      'That request carries no reply digest, so this console will not send the case back.'
+        + ' Open the case and send it back there.',
+      theme,
+    ));
+    return;
+  }
+
+  const note = form.get('note') ?? '';
+  let outcome: string;
+  try {
+    outcome = await deps.sendBack(runId, reviewer, note, shown);
+  } catch (error) {
+    const tag = randomUUID().slice(0, 8);
+    console.error(logLine({
+      event: 'console_send_back_failed', tag, runId, noteLength: loggedLength(note),
+      reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+      host: req.headers.host ?? null, from, error: describeFault(error),
+    }));
+    send(res, 500, bare(
+      'Error',
+      `Something failed during the send-back, and it may or may not have committed.`
+        + ` The console log names it ${tag}.`,
+      theme,
+      {
+        href: caseHref(runId, url.searchParams.get('rule'), url.searchParams.get('product')),
+        text: 'Open the case to see its state.',
+      },
+    ));
+    return;
+  }
+  console.error(logLine({
+    event: 'console_sent_back',
+    runId,
+    outcome,
+    noteLength: loggedLength(note),
+    reviewer: logged(reviewer),
+    reviewerLength: loggedLength(reviewer),
+    host: req.headers.host ?? null,
+    from,
+  }));
+  const kept = filtersQuery(url.searchParams.get('rule'), url.searchParams.get('product'))
+    .replace(/^\?/, '&');
+  res.writeHead(303, {
+    ...SAFETY_HEADERS,
+    location: `/case/${encodeURIComponent(runId)}?sentback=${encodeURIComponent(outcome)}${kept}`,
   });
   res.end();
 }

@@ -22,6 +22,7 @@ import { ARRIVAL_CHANNEL } from './arrival-signal.js';
 import { partitionOf } from './coordinator.js';
 import { errorMessage } from '../errors.js';
 import { endSnoozedIn } from '../outcomes/snooze.js';
+import { PARKED_RUN_STATES, TERMINAL_RUN_STATE_NAMES } from '../ledger/run-state.js';
 
 export interface IntakeTicket {
   ticketId: string;
@@ -397,6 +398,19 @@ export interface PolledTicket {
    * queued it.
    */
   product: string | null;
+  /**
+   * DEC-49: the attempt its turn is on (`turn.attempt`, db/033), or null for
+   * a message that names no turn.
+   *
+   * The run this pickup files joins that attempt. A message redelivered after
+   * its ack reuses its turn, and a run that took an earlier attempt would
+   * derive a rejected attempt's keys — so the adapter would hand it the draft
+   * the reviewer rejected, and two replies could reach one customer.
+   *
+   * Only a send-back raises it, and a message whose raised attempt has not
+   * landed is not polled at all: the scan starts that attempt, with the note.
+   */
+  currentAttempt: number | null;
 }
 
 /**
@@ -416,13 +430,36 @@ export async function pollPartition(
   if (partitions.length === 0) return [];
   const rows = await pool.query(
     `SELECT i.ticket_id, i.message_id, i.partition, i.ticket_text, i.enqueued_at,
-            i.conversation_id, i.turn_number, i.product, c.customer_address
+            i.conversation_id, i.turn_number, i.product, c.customer_address,
+            t.attempt AS current_attempt
        FROM intake i
        LEFT JOIN conversation c ON c.conversation_id = i.conversation_id
+       -- DEC-49: the attempt the turn is on (db/033). A message redelivered
+       -- after its ack reuses its turn, and the run it files joins that
+       -- attempt — never an earlier one, whose keys belong to a draft a
+       -- reviewer may have rejected.
+       LEFT JOIN turn t
+              ON t.conversation_id = i.conversation_id
+             AND t.turn_number = i.turn_number
       WHERE i.partition = ANY ($1)
+        -- And a message whose turn a reviewer has sent back waits, until the
+        -- attempt they asked for has landed. The scan starts that attempt
+        -- with their note; a run filed here first would take the attempt
+        -- without it, and the request would be served by a walk that never
+        -- read what the reviewer asked for. The message stays queued, exactly
+        -- as a message refused by the fence does, and the next pass after the
+        -- attempt lands files it as an ordinary retry of that attempt.
+        AND NOT (
+              t.attempt IS NOT NULL AND t.attempt > 1
+          AND NOT EXISTS (
+                SELECT 1 FROM run landed
+                 WHERE landed.conversation_id = t.conversation_id
+                   AND landed.turn_number = t.turn_number
+                   AND landed.attempt >= t.attempt
+                   AND landed.state = ANY ($3::text[])))
       ORDER BY i.enqueued_at, i.ticket_id, i.message_id
       LIMIT $2`,
-    [partitions, limit],
+    [partitions, limit, [...PARKED_RUN_STATES, ...TERMINAL_RUN_STATE_NAMES]],
   );
   return rows.rows.map((row) => ({
     ticketId: row['ticket_id'] as string,
@@ -434,6 +471,11 @@ export async function pollPartition(
     customerAddress: (row['customer_address'] as string | null) ?? null,
     enqueuedAt: row['enqueued_at'] as Date,
     product: (row['product'] as string | null) ?? null,
+    // DEC-49: the attempt the turn is on, or null for a message with no
+    // turn — a V1-era row, whose run keeps the first attempt's keys.
+    currentAttempt: row['current_attempt'] === null || row['current_attempt'] === undefined
+      ? null
+      : Number(row['current_attempt']),
   }));
 }
 

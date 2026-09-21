@@ -48,7 +48,7 @@ import { readRunJournal } from 'auracle/ledger-read';
 import { conversationOfRun, readConversation, turnAnsweredBy } from 'auracle/ledger-read';
 import { readDocument } from 'auracle/ledger-read';
 import {
-  closeRun, readApprovalHold, rewriteReply, saveReply, snoozeRun, undoApproval,
+  closeRun, readApprovalHold, rewriteReply, saveReply, sendBackRun, snoozeRun, undoApproval,
 } from 'auracle/ledger-read';
 import { readLatency } from 'auracle/ledger-read';
 import { humanMs } from 'auracle/format';
@@ -56,7 +56,9 @@ import { humanMs } from 'auracle/format';
 // one line into two.
 import { logLine } from 'auracle/format';
 
-import { approvalFor, closeFor, rewriteFor, saveFor, snoozeFor, undoFor } from './approve.js';
+import {
+  approvalFor, closeFor, rewriteFor, saveFor, sendBackFor, snoozeFor, undoFor,
+} from './approve.js';
 import { developmentReviewer } from './dev-reviewer.js';
 import { readBackFor } from './read-back.js';
 import { SHUTDOWN_GRACE_MS } from './shutdown.js';
@@ -554,6 +556,13 @@ async function main(): Promise<void> {
     // too: only where the ledger holds the reply does a reply written here
     // reach the customer.
     rewrite: rewriteFor({ pool, rewriteReply, ledgerReply: readBack?.supportsLedgerReply ?? false }),
+    // DEC-49: the case a reviewer sends back for a new attempt, on the same
+    // declaration. Where the helpdesk can send the copy it parks, there is a
+    // copy a person could send, and `sendBackRun` refuses on it — so the
+    // declaration decides here and in the ledger, and only once.
+    sendBack: sendBackFor({
+      pool, sendBackRun, ledgerReply: readBack?.supportsLedgerReply ?? false,
+    }),
     undo: undoFor({ pool, undoApproval }),
     // DEC-51: the read the pages use to count the window that is left.
     readApprovalHold: async (runId: string) => readApprovalHold(pool, runId),

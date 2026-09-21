@@ -27,6 +27,10 @@ export async function execute(ctx: RunContext): Promise<StepResult> {
     // DEC-35: the conversation the turn belongs to. A turn number alone is
     // not unique — db/012 can put two conversations on one ticket.
     conversationId: ctx.input.conversationId ?? null,
+    // DEC-49: the attempt, so a new attempt of a turn that is not
+    // customer-visible derives a key of its own rather than losing the
+    // outbox insert to the first attempt's record.
+    ...(ctx.input.attempt === undefined ? {} : { attempt: ctx.input.attempt }),
     payload: ctx.input.actionPayload,
   });
   ctx.progress.stepsUsed++;

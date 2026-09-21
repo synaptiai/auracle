@@ -55,7 +55,15 @@ export async function compose(ctx: RunContext): Promise<StepResult> {
   let composed;
   try {
     composed = await composeAnswer(
-      { question: ctx.input.ticketText, docs, history: ctx.input.history ?? [] },
+      {
+        question: ctx.input.ticketText,
+        docs,
+        history: ctx.input.history ?? [],
+        // DEC-49: the note a reviewer sent the case back with. It reaches the
+        // composer and no other step, so it is an instruction and never a
+        // retrieved span, and the gates never count it as coverage (DEC-37).
+        ...(ctx.input.note === undefined ? {} : { note: ctx.input.note }),
+      },
       { provider: ctx.meter.provider, ...ctx.deps.pins },
     );
   } catch (error) {

@@ -24,6 +24,17 @@ export function toRow(item: {
   coverage: number | null; createdAt: Date | null;
   /** DEC-48: the moment a snooze is due back, or null. */
   snoozedUntil: Date | null;
+  /**
+   * DEC-49: the moment a reviewer sent this run back, or null.
+   *
+   * Read so a surface can tell a run a person rejected from one that reached
+   * `superseded` another way. The state alone cannot say it.
+   */
+  sentBackAt: Date | null;
+  /** DEC-49: whether the attempt this run is on was sent back. */
+  attemptRejected: boolean;
+  /** DEC-49: whether the turn already holds a reply that went out or will. */
+  turnClosed: boolean;
   /** DEC-48: whether a person wrote the reply this run holds. */
   replyRewritten: boolean;
   costMicros: number; stepsUsed: number;
@@ -48,6 +59,9 @@ export function toRow(item: {
     gateCoverage: item.coverage,
     createdAt: item.createdAt,
     snoozedUntil: item.snoozedUntil,
+    sentBackAt: item.sentBackAt,
+    attemptRejected: item.attemptRejected,
+    turnClosed: item.turnClosed,
     // DEC-48: read from the same statement as the row. A rewritten reply has
     // no coverage of its own, and every surface that says so reads this.
     replyRewritten: item.replyRewritten,
@@ -188,6 +202,15 @@ export function stepSays(step: JournalStep, journal: RunJournal): string | null 
       if (closed === null || closed.reason === null) return null;
       return `closed by ${closed.reviewer ?? 'nobody named'} · ${closed.reason}`;
     }
+    case 'send_back': {
+      // DEC-49: the note a reviewer wrote when they sent the case back. It is
+      // the instruction the attempt under it was walked with, so a reviewer
+      // reading the new reply can see what was asked for — and never
+      // invented: a row holding no note says nothing.
+      const sentBack = step.sendBack;
+      if (sentBack === null || sentBack.note === null) return null;
+      return `sent back by ${sentBack.reviewer ?? 'nobody named'} · ${sentBack.note}`;
+    }
     case 'escalate':
       return escalationHead(step.escalationReason);
     default:
@@ -241,6 +264,9 @@ export function latencyCaveats(p: PartitionLatency): string[] {
     // DEC-48: the runs a reviewer put aside. Its own line, because the count
     // is the wait the distribution leaves out rather than a fault.
     [p.service.snoozed, 'snoozed'],
+    // DEC-49: and the attempts a reviewer rejected, whose duration is the
+    // time a person spent reading the case.
+    [p.service.rejected, 'sent back'],
   ];
   return pairs.filter(([count]) => count > 0).map(([count, says]) => `${count} ${says}`);
 }

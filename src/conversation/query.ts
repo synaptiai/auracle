@@ -109,9 +109,11 @@ export interface ConversationTurnRow {
   /**
    * How many runs worked this turn.
    *
-   * Usually one. More means the consumer retried: it files one orphan run per
-   * failed attempt, and abandoning the message files another. Zero means no
-   * run joins this turn at all, which `runId` also says.
+   * Usually one. More means the consumer retried — it files one orphan run
+   * per failed attempt, and abandoning the message files another — or that a
+   * reviewer sent the case back for a new attempt (DEC-49), which starts a
+   * run of its own on the same turn. Zero means no run joins this turn at
+   * all, which `runId` also says.
    *
    * Counted rather than shown as extra turns. A turn that took three runs to
    * abandon is one turn, and a reader that returned it three times would be

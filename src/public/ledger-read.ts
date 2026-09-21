@@ -42,6 +42,10 @@ export const LEDGER_WRITES: Readonly<Record<string, string>> = {
   // DEC-48: a case a reviewer puts aside for a period. It writes no record
   // and records no approver: the run leaves the queue and comes back.
   snoozeRun: 'puts a waiting case aside for a period, and records when it is due back',
+  // DEC-49: a case a reviewer sends back for a new attempt. It ends the run,
+  // records the note the next attempt reads, and starts no run itself — the
+  // consumer that owns the conversation's partition does that on its scan.
+  sendBackRun: 'ends a waiting case for a new attempt, and records the note that steers it',
   takeHold: 'takes a case for one reviewer, and releases the taker\'s others',
   // DEC-51: the way back inside a held send. It removes every effect of the
   // approval — the record, the approver, the distance, the approved text and
@@ -93,6 +97,12 @@ export type { CloseOptions, CloseOutcome } from '../outcomes/close.js';
 // disagree about how long one may be.
 export { MAX_SNOOZE_MS, MIN_SNOOZE_MS, snoozeRun } from '../outcomes/snooze.js';
 export type { SnoozeOptions, SnoozeOutcome } from '../outcomes/snooze.js';
+
+// DEC-49: the case a reviewer sends back for a new attempt. The bound travels
+// with the write for the reason the snooze's does: the field that posts a note
+// and the ledger that records one must not disagree about how long it may be.
+export { MAX_SEND_BACK_NOTE_CHARS, sendBackRun } from '../outcomes/send-back.js';
+export type { SendBackOptions, SendBackOutcome } from '../outcomes/send-back.js';
 
 // DEC-46: the digest of the reply a page drew, which the console puts in its
 // approval form and the approval recomputes under the run's lock. One

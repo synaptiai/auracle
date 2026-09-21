@@ -12,7 +12,9 @@ import { request } from 'node:http';
 import { createHash } from 'node:crypto';
 
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
-import { MAX_CLOSE_REASON_CHARS, MAX_SNOOZE_MS, MIN_SNOOZE_MS, replyDigest } from 'auracle/ledger-read';
+import {
+  MAX_CLOSE_REASON_CHARS, MAX_SEND_BACK_NOTE_CHARS, MAX_SNOOZE_MS, MIN_SNOOZE_MS, replyDigest,
+} from 'auracle/ledger-read';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { escapeHtml, renderGates } from './render.js';
@@ -112,6 +114,12 @@ const EVIDENCE = {
 const ROW = {
   // DEC-48: no snooze on the fixture rows unless a case is about one.
   snoozedUntil: null,
+  // DEC-49: and no send-back on a fixture row unless a case is about one, so
+  // a superseded row is one that reached the state another way.
+  sentBackAt: null,
+  // DEC-49: and no fixture run is on an attempt a reviewer sent back.
+  attemptRejected: false,
+  turnClosed: false,
   // DEC-48: and no person rewrote the reply on the fixture rows unless a
   // case is about one, so their coverage above is the gate's own reading.
   replyRewritten: false,
@@ -292,6 +300,10 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
     // turn it writes on are the core suite's subject; here the harness
     // answers that a reply was written.
     rewrite: async () => 'rewritten',
+    // DEC-49: the case a reviewer sends back. The conditions and the run the
+    // next attempt starts are the core suites' subject; here the harness
+    // answers that a case was sent back.
+    sendBack: async () => 'sent_back',
     // DEC-51: the batch's way back. The window and the row lock are the core
     // suite's subject; here the harness answers that a case was taken back.
     undo: async () => ({ outcome: 'undone' }),
@@ -7540,6 +7552,272 @@ describe('DEC-48: the console puts a case aside', () => {
   });
 });
 
+describe('DEC-49: the console sends a case back for a new attempt', () => {
+  async function postSendBack(base: string, fields: Record<string, string>): Promise<Response> {
+    return fetch(`${base}/send-back`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: new URLSearchParams(fields).toString(),
+      redirect: 'manual',
+    });
+  }
+
+  const SAME_ORIGIN = { headers: { 'sec-fetch-site': 'same-origin' } };
+  // The digest of the reply the page drew, as the form carries it (DEC-46).
+  const DRAWN = createHash('sha256').update(EVIDENCE.draftBody).digest('hex');
+  const NOTE = 'The customer asked twice. Say what happens to the second request.';
+
+  it('offers the send-back where the ledger holds the reply, behind a link', async () => {
+    const base = await startGuarded(deps(), undefined, undefined, true);
+
+    const page = await (await fetch(`${base}${CASE}`, SAME_ORIGIN)).text();
+    expect(page).toContain('Send back with a hint');
+    // Behind the link, as the rewrite is: a reviewer who came to approve
+    // should not have to scroll past a textarea.
+    expect(page).not.toContain('id="note"');
+
+    const revealed = await (await fetch(`${base}${CASE}?sendback=1`, SAME_ORIGIN)).text();
+    expect(revealed).toContain('<textarea id="note" name="note"');
+    // The field carries the ledger's own bound, so a reviewer learns the
+    // length before a round trip rather than after one.
+    expect(revealed).toContain(`maxlength="${MAX_SEND_BACK_NOTE_CHARS}"`);
+    expect(revealed).toContain('Send back for a new attempt</button>');
+  });
+
+  // DEC-49: on the draft path the helpdesk holds a copy a person could send,
+  // so a new attempt over it is not offered at all.
+  it('offers no send-back where the helpdesk holds a copy a person could send', async () => {
+    const base = await startGuarded(deps());
+    const page = await (await fetch(`${base}${CASE}`, SAME_ORIGIN)).text();
+    expect(page).not.toContain('Send back with a hint');
+  });
+
+  // And it is offered where the park created no draft, whichever adapter
+  // this is: there is nothing in the helpdesk to send.
+  it('offers the send-back on a park that created no draft, on either adapter', async () => {
+    for (const ledgerReply of [false, true]) {
+      const base = await startGuarded(
+        deps({ readRun: caseOf({ draftExternalId: null, actionClass: 'refund' }) }),
+        undefined,
+        undefined,
+        ledgerReply,
+      );
+      const page = await (await fetch(`${base}${CASE}`, SAME_ORIGIN)).text();
+      expect(page, `ledgerReply=${String(ledgerReply)}`).toContain('Send back with a hint');
+    }
+  });
+
+  it('posts the note with the drawn digest, and answers with what the ledger said', async () => {
+    const sendBack = vi.fn(async () => 'sent_back' as const);
+    const base = await startGuarded(deps({ sendBack }), undefined, undefined, true);
+
+    const res = await postSendBack(base, { runId: RUN, shown: DRAWN, note: NOTE });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(`${CASE}?sentback=sent_back`);
+    expect(sendBack).toHaveBeenCalledWith(RUN, REVIEWER, NOTE, DRAWN);
+
+    // The page then draws what the ledger answered. A send-back that
+    // succeeded leaves the run `superseded`, so that is the case the sentence
+    // is checked against: the harness answers the write, and this reads the
+    // state a real one leaves.
+    const settled = await startGuarded(
+      deps({
+        sendBack,
+        readRun: caseOf({ state: 'superseded', sentBackAt: new Date('2026-09-20T12:00:00.000Z') }),
+      }),
+      undefined,
+      undefined,
+      true,
+    );
+    const after = await (await fetch(`${settled}${CASE}?sentback=sent_back`, SAME_ORIGIN)).text();
+    expect(after).toContain('data-sentback="sent_back"');
+    expect(after).toContain('The case is sent back for a new attempt');
+  });
+
+  it('draws every send-back answer, and refuses one the case contradicts', async () => {
+    const MARKED = {
+      state: 'superseded',
+      sentBackAt: new Date('2026-09-20T12:00:00.000Z'),
+    };
+    for (const [outcome, over] of [
+      // DEC-49: the success sentence needs the marker, not the state. The
+      // other two writers of `superseded` — a customer's next message and a
+      // lost outbox key — leave no attempt coming, and a link must not make
+      // the console say one is.
+      ['sent_back', MARKED],
+      ['note_empty', { state: 'awaiting_approval' }],
+      ['note_too_long', { state: 'awaiting_approval' }],
+      ['unprintable_note', { state: 'awaiting_approval' }],
+      // The copy sentence is drawn on the draft-path console, which is the
+      // one whose helpdesk holds a copy a person could send.
+      ['copy_could_send', { state: 'awaiting_approval' }],
+      ['turn_may_have_reached', { state: 'awaiting_approval' }],
+      ['attempt_pending', { state: 'awaiting_approval' }],
+      // `no_turn` says the run serves no turn, so its case has none.
+      ['no_turn', { state: 'awaiting_approval', request: null }],
+      ['shown_changed', { state: 'awaiting_approval' }],
+      ['not_awaiting_approval', { state: 'resolved' }],
+      ['unknown_run', null],
+    ] as const) {
+      const base = await startGuarded(
+        over === null
+          ? deps({ readRun: async () => null })
+          : deps({ readRun: caseOf(over) }),
+        undefined,
+        undefined,
+        // The ledger-reply console, where the send-back is offered. The one
+        // outcome that needs the draft path is drawn below.
+        outcome !== 'copy_could_send',
+      );
+      const html = await (await fetch(`${base}${CASE}?sentback=${outcome}`, SAME_ORIGIN)).text();
+      expect(html, outcome).toContain(`data-sentback="${outcome}"`);
+    }
+
+    const draftPath = await startGuarded(
+      deps({ readRun: caseOf({ state: 'awaiting_approval' }) }),
+    );
+    expect(await (await fetch(`${draftPath}${CASE}?sentback=copy_could_send`, SAME_ORIGIN)).text())
+      .toContain('data-sentback="copy_could_send"');
+
+    // The marker is what the success sentence rests on. A superseded run
+    // nobody sent back — the customer wrote again, or the key was lost —
+    // must not draw it.
+    const unmarked = await startGuarded(
+      deps({ readRun: caseOf({ state: 'superseded' }) }), undefined, undefined, true,
+    );
+    const unmarkedHtml = await (await fetch(
+      `${unmarked}${CASE}?sentback=sent_back`, SAME_ORIGIN,
+    )).text();
+    expect(unmarkedHtml).not.toContain('data-sentback="sent_back"');
+    expect(unmarkedHtml).toContain('That is not an answer this console knows.');
+
+    // And the copy sentence needs the two facts it claims: a handle in the
+    // helpdesk, on an adapter that can send it. This console's adapter holds
+    // the reply, so no copy exists and the sentence is not drawn.
+    const capable = await startGuarded(
+      deps({ readRun: caseOf({ state: 'awaiting_approval' }) }), undefined, undefined, true,
+    );
+    const capableHtml = await (await fetch(
+      `${capable}${CASE}?sentback=copy_could_send`, SAME_ORIGIN,
+    )).text();
+    expect(capableHtml).not.toContain('data-sentback="copy_could_send"');
+
+    // `no_turn` on a case that has a turn is a sentence a link must not draw.
+    const withTurn = await startGuarded(
+      deps({ readRun: caseOf({ state: 'awaiting_approval' }) }), undefined, undefined, true,
+    );
+    expect(await (await fetch(`${withTurn}${CASE}?sentback=no_turn`, SAME_ORIGIN)).text())
+      .not.toContain('data-sentback="no_turn"');
+
+    // A waiting case was not sent back, so the sentence that says it was is
+    // not drawn on it: a link anyone can send must not put those words on a
+    // case that still waits.
+    const waiting = await startGuarded(deps(), undefined, undefined, true);
+    const html = await (await fetch(`${waiting}${CASE}?sentback=sent_back`, SAME_ORIGIN)).text();
+    expect(html).not.toContain('data-sentback="sent_back"');
+    expect(html).toContain('That is not an answer this console knows.');
+
+    // A name this console does not know is never echoed.
+    const forged = await startGuarded(deps(), undefined, undefined, true);
+    const forgedHtml = await (await fetch(`${forged}${CASE}?sentback=not_a_real_outcome`, SAME_ORIGIN))
+      .text();
+    expect(forgedHtml).not.toContain('data-sentback=');
+  });
+
+  // DEC-49: the approval, the save and the rewrite of an attempt a reviewer
+  // sent back are refused, and each says so in words that are true of any
+  // case a link names: the run waits until the consumer ends it, or has ended.
+  it('words the refusal of a rejected attempt on the approval, the save and the rewrite', async () => {
+    for (const state of ['awaiting_approval', 'superseded']) {
+      const base = await startGuarded(
+        deps({ readRun: caseOf({ state, attemptRejected: true }) }), undefined, undefined, true,
+      );
+      const approval = await (await fetch(`${base}${CASE}?outcome=sent_back`, SAME_ORIGIN)).text();
+      expect(approval, state).toContain('cannot be sent, so nothing was sent.');
+      const save = await (await fetch(`${base}${CASE}?edit=sent_back`, SAME_ORIGIN)).text();
+      expect(save, state).toContain('cannot be saved, so nothing was saved.');
+      const rewrite = await (await fetch(`${base}${CASE}?rewritten=sent_back`, SAME_ORIGIN)).text();
+      expect(rewrite, state).toContain('cannot be rewritten, so nothing was written.');
+    }
+    // A waiting case on the attempt its turn is on was not refused for this
+    // reason, so a link naming it draws nothing: the fact is read, not
+    // assumed from the state.
+    const healthy = await startGuarded(
+      deps({ readRun: caseOf({ state: 'awaiting_approval' }) }), undefined, undefined, true,
+    );
+    for (const [param, words] of [
+      ['outcome', 'cannot be sent, so nothing was sent.'],
+      ['edit', 'cannot be saved, so nothing was saved.'],
+      ['rewritten', 'cannot be rewritten, so nothing was written.'],
+    ] as const) {
+      expect(await (await fetch(`${healthy}${CASE}?${param}=sent_back`, SAME_ORIGIN)).text(), param)
+        .not.toContain(words);
+    }
+    // DEC-49: the approval's refusal of a turn that already has a reply is
+    // drawn only where the run read says the turn holds one.
+    const closed = await startGuarded(
+      deps({ readRun: caseOf({ state: 'awaiting_approval', turnClosed: true }) }),
+      undefined, undefined, true,
+    );
+    expect(await (await fetch(`${closed}${CASE}?outcome=turn_closed`, SAME_ORIGIN)).text())
+      .toContain('This turn already has a reply that went out or is on its way');
+    expect(await (await fetch(`${healthy}${CASE}?outcome=turn_closed`, SAME_ORIGIN)).text())
+      .not.toContain('This turn already has a reply that went out or is on its way');
+    // A resolved case was sent, so the refusal is not drawn on it.
+    const resolved = await startGuarded(
+      deps({ readRun: caseOf({ state: 'resolved', approved: true }) }), undefined, undefined, true,
+    );
+    expect(await (await fetch(`${resolved}${CASE}?outcome=sent_back`, SAME_ORIGIN)).text())
+      .not.toContain('cannot be sent, so nothing was sent.');
+  });
+
+  it('returns the answer to the queue the reviewer narrowed to', async () => {
+    const sendBack = vi.fn(async () => 'sent_back' as const);
+    const base = await startGuarded(deps({ sendBack }), undefined, undefined, true);
+
+    const res = await fetch(`${base}/send-back?rule=customer_visible&product=aurora`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'sec-fetch-site': 'same-origin',
+        origin: base,
+      },
+      body: new URLSearchParams({ runId: RUN, shown: DRAWN, note: NOTE }).toString(),
+      redirect: 'manual',
+    });
+    expect(res.headers.get('location')).toBe(
+      `${CASE}?sentback=sent_back&rule=customer_visible&product=aurora`,
+    );
+  });
+
+  it('refuses a form with no reply digest, and calls no write', async () => {
+    const sendBack = vi.fn(async () => 'sent_back' as const);
+    const base = await startGuarded(deps({ sendBack }), undefined, undefined, true);
+
+    const res = await postSendBack(base, { runId: RUN, note: NOTE });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('That request carries no reply digest');
+    expect(sendBack).not.toHaveBeenCalled();
+  });
+
+  it('answers a failed send-back without claiming it did not commit', async () => {
+    const sendBack = vi.fn(async () => {
+      throw new Error('the pool is gone');
+    });
+    const base = await startGuarded(deps({ sendBack }), undefined, undefined, true);
+
+    const res = await postSendBack(base, { runId: RUN, shown: DRAWN, note: NOTE });
+    expect(res.status).toBe(500);
+    const body = await res.text();
+    expect(body).toContain('may or may not have committed');
+    expect(body).not.toContain('nothing was sent back');
+  });
+});
+
 describe('DEC-48: the console rewrites the reply from scratch', () => {
   async function postRewrite(base: string, fields: Record<string, string>): Promise<Response> {
     return fetch(`${base}/rewrite`, {
@@ -7656,12 +7934,18 @@ describe('DEC-48: the console rewrites the reply from scratch', () => {
       ['no_turn', false],
       ['no_reply', false],
       ['not_ledger_reply', false],
+      ['sent_back', false],
     ] as const) {
       const base = await startGuarded(
         deps({
           readRun: caseOf({
             state: 'awaiting_approval',
             replyRewritten: outcome === 'rewritten',
+            // `no_turn` says the run serves no turn, so it is drawn only on a
+            // run that serves none; `sent_back`, only on a run whose attempt
+            // was rejected.
+            ...(outcome === 'no_turn' ? { request: null } : {}),
+            ...(outcome === 'sent_back' ? { attemptRejected: true } : {}),
           }),
         }),
         undefined,
@@ -7671,6 +7955,12 @@ describe('DEC-48: the console rewrites the reply from scratch', () => {
       const html = await (await fetch(`${base}${CASE}?rewritten=${outcome}`, SAME_ORIGIN)).text();
       expect(html, outcome).toContain(`data-rewrite="${outcome}"`);
     }
+
+    // And `no_turn` is not drawn on a case that has one: a link must not put
+    // a sentence on a case it is false of.
+    const withTurn = await startGuarded(deps({ readRun: caseOf({ state: 'awaiting_approval' }) }));
+    expect(await (await fetch(`${withTurn}${CASE}?rewritten=no_turn`, SAME_ORIGIN)).text())
+      .not.toContain('data-rewrite="no_turn"');
 
     // The two claims, each on the console it is true of.
     const draftPath = await startGuarded(deps({

@@ -86,6 +86,20 @@ export interface BandsArtifact {
    * leaving a reader to assume they are comparable.
    */
   provider: string | null;
+  /**
+   * DEC-49: how many of this day's cases a reviewer's note steered.
+   *
+   * A day-level count, beside the provider and outside `metrics`, because it
+   * is not a metric: bands.yaml declares no band for it, and the evaluator
+   * judges only what the file declares. It is a subset of `runs` — the day
+   * counts a turn once, from its final attempt, and this counts the turns
+   * whose final attempt a person asked for.
+   *
+   * Read as zero when absent. A file written before this field existed came
+   * from a ledger in which no reviewer could send a case back, so zero is
+   * what it means rather than a gap in the record.
+   */
+  assisted: number;
   /** One row per metric, in the order bands.yaml declares them. */
   metrics: ArtifactMetric[];
 }
@@ -165,6 +179,16 @@ export function validateBandsArtifact(raw: unknown): BandsArtifact {
   assert(
     provider === null || typeof provider === 'string',
     'artifact.provider is not a string or null',
+  );
+
+  // Absent on every artifact written before the field existed, and such a
+  // day steered no attempt: a reviewer could not send a case back yet. Zero
+  // is the honest reading, and a missing field is not a fault.
+  const assisted = raw['assisted'] ?? 0;
+  assertCount(assisted, 'assisted');
+  assert(
+    (assisted as number) <= runs,
+    'artifact.assisted is larger than artifact.runs',
   );
 
   const metrics = raw['metrics'];
@@ -278,7 +302,7 @@ export function validateBandsArtifact(raw: unknown): BandsArtifact {
   }
   // `provider` is normalised rather than passed through, so a caller reading
   // an older artifact gets null and never undefined.
-  return { ...raw, provider } as unknown as BandsArtifact;
+  return { ...raw, provider, assisted } as unknown as BandsArtifact;
 }
 
 /**

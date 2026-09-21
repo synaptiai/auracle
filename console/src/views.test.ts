@@ -32,7 +32,8 @@ function journal(step: Partial<JournalStep>): { step: JournalStep; journal: RunJ
     stepId: 'park', recognized: true, status: 'done',
     resultRecorded: true, resultMalformed: false, awaitingOutcome: false,
     promptVer: 'p1', modelVer: 'm1', runCostMicrosAtStep: 0,
-    compose: null, park: null, idemKey: null, escalationReason: null, faultShape: null,
+    compose: null, park: null, close: null,
+    sendBack: null, idemKey: null, escalationReason: null, faultShape: null,
     ...step,
   } as unknown as JournalStep;
   return {
@@ -135,6 +136,42 @@ describe('what a park step says', () => {
   });
 });
 
+// DEC-49: the note a reviewer wrote when they sent a case back. It is the
+// instruction the attempt under it was walked with, so a reviewer reading
+// the new reply can see what was asked for. Until this arm existed the note
+// was recorded in two places and drawn in none.
+describe('what a send-back step says', () => {
+  function sendBack(fields: Record<string, unknown>): { step: JournalStep; journal: RunJournal } {
+    return journal({
+      stepId: 'send_back',
+      sendBack: { note: null, reviewer: null, reviewerSource: null, ...fields },
+    } as Partial<JournalStep>);
+  }
+
+  it('names the reviewer and the note', () => {
+    const { step, journal: j } = sendBack({
+      note: 'The customer asked twice. Answer the second request.',
+      reviewer: 'anna@example.test',
+    });
+    expect(stepSays(step, j)).toBe(
+      'sent back by anna@example.test · The customer asked twice. Answer the second request.',
+    );
+  });
+
+  it('names nobody when the row named nobody, rather than leaving a gap', () => {
+    const { step, journal: j } = sendBack({ note: 'Try again.' });
+    expect(stepSays(step, j)).toBe('sent back by nobody named · Try again.');
+  });
+
+  // The write refuses an empty note, so a row with none is a ledger written
+  // by something else, and the sentence says what it holds rather than
+  // inventing an instruction.
+  it('says nothing it cannot support when the row recorded no note', () => {
+    const { step, journal: j } = sendBack({});
+    expect(stepSays(step, j)).toBeNull();
+  });
+});
+
 // DEC-48: the case a person closed with no reply. The reason is the whole
 // point of the record — it is what the team reads afterwards — so the run
 // detail draws it, beside the name of whoever closed it.
@@ -170,6 +207,9 @@ describe('what a run row carries onto a page', () => {
     coverage: 0.94, createdAt: new Date('2026-09-07T09:00:00.000Z'),
     // DEC-48: a run nobody snoozed has no moment.
     snoozedUntil: null,
+    sentBackAt: null,
+    attemptRejected: false,
+    turnClosed: false,
     // DEC-48: and nobody rewrote this run's reply, so its coverage above is
     // the gate's own reading.
     replyRewritten: false,
@@ -314,7 +354,7 @@ describe('what a run row carries onto a page', () => {
 describe('the runs a partition could not measure', () => {
   const wait = { count: 10, unmeasured: 0, unordered: 0, p50Ms: 1, p95Ms: 2, p99Ms: 3, maxMs: 4 };
   const service = {
-    count: 10, unfinished: 0, unstamped: 0, unordered: 0, neverRan: 0, snoozed: 0,
+    count: 10, unfinished: 0, unstamped: 0, unordered: 0, neverRan: 0, snoozed: 0, rejected: 0,
     p50Ms: 1, p95Ms: 2, p99Ms: 3, maxMs: 4,
   };
   const base = { partition: 0, runs: 10, wait, service };
@@ -341,8 +381,10 @@ describe('the runs a partition could not measure', () => {
   // named at all: a seventh would otherwise be invisible here.
   it('covers every excluded state the query module exposes', () => {
     const states = { ...base, wait: { ...wait, unmeasured: 1, unordered: 1 },
-      service: { ...service, unfinished: 1, unstamped: 1, unordered: 1, neverRan: 1, snoozed: 1 } };
-    expect(latencyCaveats(states)).toHaveLength(7);
+      service: {
+        ...service, unfinished: 1, unstamped: 1, unordered: 1, neverRan: 1, snoozed: 1, rejected: 1,
+      } };
+    expect(latencyCaveats(states)).toHaveLength(8);
     // Read off the distributions rather than restated, so a new state fails
     // this rather than passing unnoticed.
     const countsOnly = new Set(['count', 'p50Ms', 'p95Ms', 'p99Ms', 'maxMs']);

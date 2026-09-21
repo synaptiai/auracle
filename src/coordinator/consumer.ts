@@ -58,6 +58,8 @@ import type {
 import { errorMessage } from '../errors.js';
 import type { ArrivalSignal } from './arrival-signal.js';
 import { ackTicket, pollPartition } from './intake.js';
+import { fencedTransition } from '../ledger/insert.js';
+import { TURN_CLOSING_STATUSES } from '../ledger/conversation.js';
 import { journalStep } from '../ledger/journal-write.js';
 import { unsnoozeExpired } from '../outcomes/snooze.js';
 import { PARKED_RUN_STATES, TERMINAL_RUN_STATE_NAMES } from '../ledger/run-state.js';
@@ -185,6 +187,27 @@ const SIGNAL_STOP_BUDGET_MS = 2000;
  */
 export const MAX_INTAKE_ATTEMPTS = 50;
 
+/**
+ * Failed attempts of one turn a consumer walks before it stops and escalates.
+ *
+ * The poll's ceiling is fifty because its messages wait in a queue and a
+ * shared outage must not empty it. A re-attempt is not queued: a reviewer is
+ * waiting for it, and each try costs a classifier sample, a retrieval and a
+ * composition. Five consecutive walks of one turn failing is a fault that a
+ * sixth will not clear, so the sixth is not run — the turn is escalated with
+ * the failure named, and a person decides.
+ */
+export const MAX_ATTEMPT_FAILURES = 5;
+
+/**
+ * Requests one scan serves, so a backlog of turns cannot hold up the queue.
+ *
+ * A re-attempt is a whole walk with the provider in it. The poll's own batch
+ * is what bounds the messages beside it, and without a bound here a busy day
+ * of send-backs would put every queued message of the partition behind them.
+ */
+export const SEND_BACK_BATCH = 10;
+
 /** Counts one failed attempt and returns the new total. */
 async function recordAttempt(pool: Pool, ticketId: string, messageId: string): Promise<number> {
   const row = await pool.query<{ attempts: number }>(
@@ -222,6 +245,14 @@ async function abandonMessage(
     turnNumber: number | null;
     /** DEC-47: the product recorded at arrival, which this run inherits. */
     product: string | null;
+    /**
+     * DEC-49: the attempt the failing walks were at, read when the message was
+     * polled. Not the turn's attempt now: a reviewer may have sent the case
+     * back while the walk was failing, and an abandonment filed at the new
+     * attempt would land it — the scan would then read the requested attempt
+     * as served, and the note would reach no composer.
+     */
+    currentAttempt: number | null;
   },
   reason: string,
 ): Promise<boolean> {
@@ -274,9 +305,12 @@ async function abandonMessage(
     const run = await client.query<{ run_id: string }>(
       `INSERT INTO run (run_id, ticket_id, partition, epoch, state,
                         prompt_ver, model_ver, deadline_at, finished_at,
-                        conversation_id, turn_number, product)
+                        conversation_id, turn_number, product, attempt)
        VALUES (gen_random_uuid(), $1, $2, $4, 'escalated',
-               'intake', 'intake', now(), now(), $3, $5, $6)
+               'intake', 'intake', now(), now(), $3, $5, $6,
+               -- DEC-49: at the attempt the failing walks were at. A message
+               -- with no turn is on the first attempt.
+               $7)
        RETURNING run_id`,
       // DEC-35: the turn this abandoned message was. Without it the run that
       // records an abandoned turn is the one run a conversation surface
@@ -294,6 +328,7 @@ async function abandonMessage(
         epoch,
         polled.turnNumber,
         polled.product,
+        polled.currentAttempt ?? 1,
       ],
     );
     // The escalations view reads its reason from this step, so the operator
@@ -393,6 +428,454 @@ export async function conversationHistory(
   return history;
 }
 
+/** The states a run can be in once its walk has ended: parked or terminal. */
+const LANDED_STATES: readonly string[] = [...PARKED_RUN_STATES, ...TERMINAL_RUN_STATE_NAMES];
+
+/** One turn a reviewer sent back, as the scan reads it. */
+interface SentBackTurn {
+  ticketId: string;
+  partition: number;
+  conversationId: string;
+  turnNumber: number;
+  /** The attempt the turn is on: the one the send-back asked for (db/033). */
+  attempt: number;
+  /** The run that was sent back, which the log names. */
+  sentBackRunId: string;
+  note: string | null;
+  product: string | null;
+  bodyText: string | null;
+  customerAddress: string | null;
+}
+
+/**
+ * Files the run an operator reads when a turn's requested attempt will not
+ * be walked: its attempts kept dying, its question is gone, or its reply
+ * already went out.
+ *
+ * A fresh run, at the ticket's current fence, in the shape `abandonMessage`
+ * uses: the row is written under the fence's row lock, so no later run on the
+ * ticket can refuse it, and the journal row names what happened. It lands at
+ * the turn's attempt, so it is the landed run that ends the request — the
+ * scan does not read the turn again. The dead attempts are left where they
+ * are, with their own spend and step counts.
+ *
+ * Returns the run id an operator reads, or null when another owner already
+ * landed the attempt.
+ */
+async function fileSendBackEnd(
+  pool: Pool,
+  turn: SentBackTurn,
+  reason: string,
+  options: { removeHeld: boolean } = { removeHeld: true },
+): Promise<string | null> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // The fence row is materialised first: `FOR UPDATE` locks no row that is
+    // not there. Zero is the floor the ledger already treats as "no epoch
+    // accepted yet".
+    await client.query(
+      'INSERT INTO ticket_epoch (ticket_id, epoch) VALUES ($1, 0) ON CONFLICT DO NOTHING',
+      [turn.ticketId],
+    );
+    const fence = await client.query<{ epoch: string }>(
+      'SELECT epoch::text AS epoch FROM ticket_epoch WHERE ticket_id = $1 FOR UPDATE',
+      [turn.ticketId],
+    );
+    const epoch = fence.rows[0]?.epoch ?? '0';
+    // The request read again before anything is filed. Two owners can both
+    // reach here during a rebalance overlap. The fence's row lock above is
+    // what serialises them — both take it for one ticket — and the first to
+    // commit lands the attempt, so the second finds it landed and files
+    // nothing. The turn's lock is taken as well, after the fence's (the order
+    // intake follows), so that no writer of the turn can change it between
+    // the read and the insert.
+    await client.query(
+      'SELECT attempt FROM turn WHERE conversation_id = $1 AND turn_number = $2 FOR UPDATE',
+      [turn.conversationId, turn.turnNumber],
+    );
+    const landed = await client.query(
+      `SELECT 1 FROM run
+        WHERE conversation_id = $1 AND turn_number = $2 AND attempt >= $3
+          AND state = ANY ($4::text[])
+        LIMIT 1`,
+      [turn.conversationId, turn.turnNumber, turn.attempt, LANDED_STATES],
+    );
+    if (landed.rows.length > 0) {
+      await client.query('COMMIT');
+      return null;
+    }
+    const run = await client.query<{ run_id: string }>(
+      `INSERT INTO run (run_id, ticket_id, partition, epoch, state,
+                        prompt_ver, model_ver, deadline_at, finished_at,
+                        conversation_id, turn_number, attempt, product)
+       VALUES (gen_random_uuid(), $1, $2, $3, 'escalated',
+               'intake', 'intake', now(), now(), $4, $5, $6, $7)
+       RETURNING run_id`,
+      [
+        turn.ticketId, turn.partition, epoch, turn.conversationId,
+        turn.turnNumber, turn.attempt, turn.product,
+      ],
+    );
+    const filed: unknown = run.rows[0]?.run_id;
+    if (typeof filed !== 'string') {
+      throw new Error(`the send-back escalation for ${turn.ticketId} returned no run id`);
+    }
+    // The queue holds this turn's messages while its attempt is due, and the
+    // run filed above lands the attempt — which is what releases them. A
+    // message released here would walk the attempt this function exists to
+    // stop: a turn whose reply went out, a turn with no question, or a turn
+    // whose attempts keep dying. So they leave the queue with it. Each is a
+    // redelivery of the message the turn already records, and the escalation
+    // is the answer an operator reads for it.
+    //
+    // Scoped to this turn and nothing wider: another turn of the conversation
+    // is another message the customer sent. The count is journalled, and the
+    // text is not: it is the customer's, and the turn holds it — which is why
+    // a turn with no text keeps its held messages (`removeHeld: false`).
+    const removed = options.removeHeld
+      ? await client.query(
+        'DELETE FROM intake WHERE conversation_id = $1 AND turn_number = $2',
+        [turn.conversationId, turn.turnNumber],
+      )
+      : { rowCount: 0 };
+    await journalStep(client, {
+      runId: filed,
+      stepId: 'escalate',
+      status: 'done',
+      result: { reason, heldMessagesRemoved: removed.rowCount ?? 0 },
+      promptVer: 'intake',
+      modelVer: 'intake',
+      costMicros: 0,
+    });
+    await client.query('COMMIT');
+    return filed;
+  } catch (error) {
+    await client.query('ROLLBACK').catch((rollbackError: unknown) => {
+      console.error(
+        JSON.stringify({
+          event: 'rollback_failed',
+          at: new Date().toISOString(),
+          error: errorMessage(rollbackError),
+        }),
+      );
+    });
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Ends the waiting runs that can never be approved (DEC-49): those of an
+ * attempt a reviewer rejected, and a reply on a turn that already holds one.
+ *
+ * Two runs of one turn can wait at one attempt: a message redelivered after
+ * its ack joins the attempt its turn is on. A reviewer who sends one of them
+ * back rejects the attempt, and the other still waits with the same reply.
+ * The approval, the save and the rewrite already refuse it, because the turn
+ * is on a later attempt; this takes it out of the queue as well.
+ *
+ * The send-back does not do this itself. It holds its own run's lock and then
+ * the turn's, and ending a sibling would take a third lock another writer may
+ * hold in the opposite order. Here each run is moved in a transaction of its
+ * own, under its own lock alone, and a run a person already moved is skipped
+ * by the state it requires.
+ *
+ * Returns the runs it ended.
+ */
+async function endRejectedAttempts(
+  pool: Pool,
+  partitions: readonly number[],
+): Promise<string[]> {
+  const stale = await pool.query<{ run_id: string; state: string; cost_micros: number; steps_used: number }>(
+    `SELECT r.run_id, r.state, r.cost_micros, r.steps_used
+       FROM run r
+       JOIN turn t
+         ON t.conversation_id = r.conversation_id AND t.turn_number = r.turn_number
+      WHERE r.partition = ANY ($1::int[])
+        AND r.state IN ('awaiting_approval', 'snoozed')
+        AND (r.attempt < t.attempt
+             -- A waiting reply on a turn that already holds a reply: the
+             -- approval refuses it, so it can never go out. Twin runs of one
+             -- attempt reach this when the other is approved first.
+             OR (EXISTS (SELECT 1 FROM step_journal park
+                          WHERE park.run_id = r.run_id AND park.step_id = 'park'
+                            AND park.result ? 'draftExternalId')
+                 AND EXISTS (SELECT 1 FROM outbox o JOIN run other ON other.run_id = o.run_id
+                              WHERE other.conversation_id = r.conversation_id
+                                AND other.turn_number = r.turn_number
+                                AND o.payload ? 'draftExternalId'
+                                AND o.status = ANY ($2::text[]))))`,
+    [partitions, [...TURN_CLOSING_STATUSES]],
+  );
+  const ended: string[] = [];
+  for (const row of stale.rows) {
+    const moved = await fencedTransition(pool, {
+      runId: row.run_id,
+      state: 'superseded',
+      costMicros: row.cost_micros,
+      stepsUsed: row.steps_used,
+      fromState: row.state,
+    });
+    if (moved.outcome === 'accepted') ended.push(row.run_id);
+  }
+  return ended;
+}
+
+/**
+ * Starts the attempt a reviewer's send-back asked for (DEC-49).
+ *
+ * The console cannot walk the state machine, so `sendBackRun` ends the
+ * rejected run, records the note and raises the turn's attempt. This is the
+ * other half: the consumer that owns the conversation's partition starts the
+ * attempt the turn is now on. The shape is `unsnoozeExpired`'s — a scan over
+ * this consumer's own partitions, on every pass.
+ *
+ * What makes a turn due, and what clears it. The turn is on an attempt above
+ * the first, and no run at that attempt has landed. The attempt is
+ * `turn.attempt` (db/033), which only a send-back raises, so every writer
+ * reads one number and nothing here counts runs to decide it. A run of that
+ * attempt that lands — parked for a person, or ended — clears the request,
+ * and a crash between the read and the landing leaves it due for the next
+ * scan.
+ *
+ * The queue holds a message whose turn is due (`pollPartition`), so the run
+ * that takes the attempt is the one started here, and it reads the note.
+ *
+ * An attempt whose walk throws leaves a run in an active state with nobody
+ * walking it. The request stays due, and the next scan retries the same
+ * attempt — a crash retry stays in its attempt, so its keys are the keys the
+ * dead one derived (DEC-49). `MAX_ATTEMPT_FAILURES` bounds the retries. At the
+ * bound the turn is escalated with the failure named, and it stops there.
+ *
+ * Two more ways a request ends without a walk. A turn whose text is gone has
+ * no question to answer, and the note is not one (DEC-37). And a turn with a
+ * record that closes it is answered already. The send-back refuses such a
+ * turn, and every approval of a rejected attempt is refused, so the console
+ * cannot write one after the request; this is the guard for a record another
+ * path writes — a run of the conversation with no turn, a seed, a replay. A
+ * new attempt there would put a second reply on the wire. Both are escalated,
+ * so the case reaches a person who sees why, and the turn's held messages
+ * leave the queue with the escalation rather than walking the attempt it
+ * stopped.
+ *
+ * The re-attempt walks the machine from the top, with the note. It is not a
+ * replay: it classifies, retrieves and composes again, because the request
+ * exists because the answer was wrong. Its keys carry the new attempt, so the
+ * adapter does not hand it the draft the reviewer rejected.
+ */
+export async function startSentBackAttempts(
+  deps: CoordinatorDeps,
+  options: ConsumerOptions,
+): Promise<string[]> {
+  if (options.partitions.length === 0) return [];
+
+  // The rejected attempts' siblings leave the queue first. A fault here is
+  // logged and the scan goes on: the approval already refuses those runs, so
+  // leaving one a pass longer costs a row in the queue and nothing else.
+  try {
+    const ended = await endRejectedAttempts(deps.pool, options.partitions);
+    if (ended.length > 0) {
+      console.error(
+        JSON.stringify({
+          event: 'rejected_attempts_ended',
+          at: new Date().toISOString(),
+          count: ended.length,
+        }),
+      );
+    }
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: 'rejected_attempts_end_failed',
+        at: new Date().toISOString(),
+        error: errorMessage(error),
+      }),
+    );
+  }
+
+  // Read outside any transaction: each attempt below takes its own locks, and
+  // holding one here would hold it across every turn in the list.
+  const due = await deps.pool.query<{
+    ticket_id: string;
+    partition: number;
+    conversation_id: string;
+    turn_number: number;
+    attempt: number;
+    sent_back_run_id: string;
+    note: string | null;
+    product: string | null;
+    body_text: string | null;
+    customer_address: string | null;
+    reached: boolean;
+  }>(
+    `SELECT sb.ticket_id, sb.partition, t.conversation_id, t.turn_number, t.attempt,
+            sb.run_id AS sent_back_run_id, sb.send_back_note AS note, sb.product,
+            -- The customer's words: the turn's, or a held redelivery's when
+            -- the turn holds none (a turn recorded before db/010). Either way
+            -- the attempt the reviewer asked for walks with the question and
+            -- the note together.
+            COALESCE(NULLIF(btrim(t.body_text), ''), (
+              SELECT held.ticket_text FROM intake held
+               WHERE held.conversation_id = t.conversation_id
+                 AND held.turn_number = t.turn_number
+                 AND btrim(held.ticket_text) <> ''
+               ORDER BY held.enqueued_at LIMIT 1)) AS body_text,
+            c.customer_address,
+            EXISTS (
+              SELECT 1 FROM outbox o JOIN run r ON r.run_id = o.run_id
+               WHERE r.conversation_id = t.conversation_id
+                 AND r.turn_number = t.turn_number
+                 AND o.status = ANY ($4::text[])) AS reached
+       FROM turn t
+       JOIN LATERAL (
+              SELECT run_id, ticket_id, partition, send_back_note, product
+                FROM run
+               WHERE conversation_id = t.conversation_id
+                 AND turn_number = t.turn_number
+                 AND sent_back_at IS NOT NULL
+               ORDER BY attempt DESC, sent_back_at DESC
+               LIMIT 1
+            ) sb ON true
+       LEFT JOIN conversation c ON c.conversation_id = t.conversation_id
+      WHERE t.attempt > 1
+        AND sb.partition = ANY ($1::int[])
+        AND NOT EXISTS (
+              SELECT 1 FROM run landed
+               WHERE landed.conversation_id = t.conversation_id
+                 AND landed.turn_number = t.turn_number
+                 AND landed.attempt >= t.attempt
+                 AND landed.state = ANY ($2::text[]))
+      -- Bounded per scan, so a backlog of turns cannot hold up the queue the
+      -- scan also polls.
+      ORDER BY t.turn_number, t.conversation_id
+      LIMIT $3`,
+    [
+      options.partitions,
+      LANDED_STATES,
+      options.scanBatchSize ?? SEND_BACK_BATCH,
+      [...TURN_CLOSING_STATUSES],
+    ],
+  );
+
+  const started: string[] = [];
+  for (const row of due.rows) {
+    const turn: SentBackTurn = {
+      ticketId: row.ticket_id,
+      partition: row.partition,
+      conversationId: row.conversation_id,
+      turnNumber: row.turn_number,
+      attempt: Number(row.attempt),
+      sentBackRunId: row.sent_back_run_id,
+      note: row.note,
+      product: row.product,
+      bodyText: row.body_text,
+      customerAddress: row.customer_address,
+    };
+
+    // Per turn, and never out of this function. The scan runs beside the
+    // queue, and a turn that threw here would otherwise stop every other turn
+    // of these partitions from being looked at. The failure is logged, the
+    // request stands, and the next scan retries it.
+    try {
+      const ended = await endWithoutAWalk(deps, turn, row.reached);
+      if (ended !== null) {
+        console.error(
+          JSON.stringify({
+            event: 'send_back_ended',
+            at: new Date().toISOString(),
+            runId: turn.sentBackRunId,
+            escalatedRunId: ended.runId,
+            reason: ended.reason,
+          }),
+        );
+        continue;
+      }
+
+      // DEC-49: the attempt the turn is on, and the note that asked for it.
+      const outcome = await coordinateTicket(deps, {
+        ticketId: turn.ticketId,
+        ticketText: turn.bodyText ?? '',
+        // DEC-28: the ledger allocates the fence under the ticket's row lock,
+        // in the insert this walks into.
+        epoch: 'next',
+        partition: turn.partition,
+        conversationId: turn.conversationId,
+        customerAddress: turn.customerAddress,
+        turnNumber: turn.turnNumber,
+        // DEC-47: the product the run recorded at arrival, so the new attempt
+        // retrieves the documents of the same product.
+        ...(turn.product === null ? {} : { product: turn.product }),
+        attempt: turn.attempt,
+        ...(turn.note === null ? {} : { note: turn.note }),
+        // The turns before this one, exactly as the first attempt read them.
+        history: await conversationHistory(deps.pool, turn.conversationId, turn.turnNumber),
+        ...options.action,
+      });
+      if (outcome.outcome !== 'stale_epoch') started.push(outcome.runId);
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: 'send_back_attempt_failed',
+          at: new Date().toISOString(),
+          runId: turn.sentBackRunId,
+          error: errorMessage(error),
+        }),
+      );
+    }
+  }
+  return started;
+}
+
+/**
+ * Ends a request that must not be walked, or answers null.
+ *
+ * Three reasons, checked in the order an operator would want them named: a
+ * record that closes the turn, a turn with no question, and an attempt that
+ * has died `MAX_ATTEMPT_FAILURES` times. The run id is null when another owner
+ * landed the attempt first, which ends the request just the same.
+ */
+async function endWithoutAWalk(
+  deps: CoordinatorDeps,
+  turn: SentBackTurn,
+  reached: boolean,
+): Promise<{ runId: string | null; reason: string } | null> {
+  if (reached) {
+    const reason = `send_back_dropped on turn ${String(turn.turnNumber)}:`
+      + ' a reply on this turn may already have reached the customer';
+    return { runId: await fileSendBackEnd(deps.pool, turn, reason), reason };
+  }
+  if (turn.bodyText === null || turn.bodyText.trim().length === 0) {
+    const reason = `send_back_no_question on turn ${String(turn.turnNumber)}:`
+      + ' the turn holds no question';
+    // No held message has text either — the scan reads a held redelivery's
+    // words when the turn holds none. The held messages stay queued: they are
+    // the only copy the queue has, and removing them would lose them.
+    return {
+      runId: await fileSendBackEnd(deps.pool, turn, reason, { removeHeld: false }),
+      reason,
+    };
+  }
+  // An attempt still in flight when this scan reads it died on its way
+  // through the walk: nothing else walks a turn that is due, because the
+  // queue holds its messages. Within a scan it is unambiguous, since scans
+  // never overlap.
+  const dead = await deps.pool.query<{ n: string }>(
+    `SELECT count(*) AS n FROM run
+      WHERE conversation_id = $1 AND turn_number = $2 AND attempt = $3
+        AND NOT (state = ANY ($4::text[]))`,
+    [turn.conversationId, turn.turnNumber, turn.attempt, LANDED_STATES],
+  );
+  const failures = Number(dead.rows[0]?.n ?? 0);
+  if (failures >= MAX_ATTEMPT_FAILURES) {
+    const reason = `send_back_failed after ${String(failures)} attempts of turn`
+      + ` ${String(turn.turnNumber)}`;
+    return { runId: await fileSendBackEnd(deps.pool, turn, reason), reason };
+  }
+  return null;
+}
+
 /**
  * Runs one scan over the consumer's partitions: poll, then drive
  * coordinateTicket per ticket with a fresh fencing epoch. A ticket that
@@ -465,6 +948,13 @@ export async function processQueuedTickets(
         product: polled.product,
         // DEC-38: the turn joins the idempotency key.
         ...(polled.turnNumber === null ? {} : { turnNumber: polled.turnNumber }),
+        // DEC-49: and the attempt the ledger is on. A redelivered message is
+        // a retry of that attempt, never a new first attempt: the keys of a
+        // turn a reviewer sent back belong to the attempt they were asked
+        // for, and attempt 1's key is the rejected draft's.
+        ...(polled.currentAttempt === null || polled.currentAttempt === 1
+          ? {}
+          : { attempt: polled.currentAttempt }),
         history: await conversationHistory(
           deps.pool,
           polled.conversationId,
@@ -522,6 +1012,35 @@ export async function processQueuedTickets(
       });
     }
   }
+  // DEC-49: and the attempts a reviewer asked for. Served AFTER the poll, so
+  // a queued customer message is never behind them: a re-attempt is a whole
+  // walk with the provider in it, and the queue is the work this consumer
+  // exists for. Its own guard, because a fault in it is not a fault in the
+  // poll: the request stands and is served by the next scan, while a scan
+  // that threw would leave every queued message of these partitions
+  // untouched.
+  let started: string[] = [];
+  try {
+    started = await startSentBackAttempts(deps, options);
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: 'send_back_scan_failed',
+        at: new Date().toISOString(),
+        error: errorMessage(error),
+      }),
+    );
+  }
+  if (started.length > 0) {
+    console.error(
+      JSON.stringify({
+        event: 'send_back_attempts_started',
+        at: new Date().toISOString(),
+        count: started.length,
+      }),
+    );
+  }
+
   return results;
 }
 

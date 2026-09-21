@@ -484,18 +484,24 @@ td a, dd a { display: inline-block; }
 /* DEC-48: the case a reviewer finishes with no reply. Its own row under the
  * approval, so the primary control stays the one a reviewer reaches for and
  * the close is never one stray press away from it. */
-.actionbar .closebar, .actionbar .snoozebar, .actionbar .rewritebar {
+.actionbar .closebar, .actionbar .snoozebar, .actionbar .rewritebar,
+.actionbar .sendbackbar {
   flex:1 1 100%; display:flex; flex-wrap:wrap;
   align-items:center; gap:8px 12px; border-top:1px solid var(--rule2); padding-top:9px; }
 .actionbar .closebar .discl, .actionbar .snoozebar .discl,
-.actionbar .rewritebar .discl { flex:1 1 100%; margin:0; }
-.actionbar .closebar form, .actionbar .snoozebar form, .actionbar .rewritebar form {
+.actionbar .rewritebar .discl, .actionbar .sendbackbar .discl { flex:1 1 100%; margin:0; }
+.actionbar .closebar form, .actionbar .snoozebar form, .actionbar .rewritebar form,
+.actionbar .sendbackbar form {
   flex:none; display:flex; gap:8px; align-items:center; margin:0; }
 /* The period field is narrow: a number of minutes, not a paragraph. */
 .actionbar .snoozebar input[name="minutes"] { width:6.5em; }
 /* The rewritten reply is a textarea, so the bar stacks it over its button. */
 .actionbar .rewritebar form { flex:1 1 100%; flex-wrap:wrap; }
 .actionbar .rewritebar textarea { flex:1 1 100%; width:auto; min-height:96px; }
+/* DEC-49: the note a send-back carries. Shorter than a reply: a reviewer
+ * writes an instruction, not a draft. */
+.actionbar .sendbackbar form { flex:1 1 100%; flex-wrap:wrap; }
+.actionbar .sendbackbar textarea { flex:1 1 100%; width:auto; min-height:64px; }
 /* The gates one above the other, in a column too narrow for two cards. */
 .gates.rows { grid-template-columns:minmax(0, 1fr); }
 /* Why a gate has no value, beside its dash. */

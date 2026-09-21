@@ -53,7 +53,9 @@ import type { Pool, PoolClient } from 'pg';
 import type {
   DraftReadBack, PersonProvenance, Provenance, ReplyProvenance,
 } from '../adapters/types.js';
-import { readSavedReply, recordApprovedReply } from '../ledger/conversation.js';
+import {
+  lockTurnAttempt, readSavedReply, recordApprovedReply, turnIsClosed,
+} from '../ledger/conversation.js';
 import { fencedTransition } from '../ledger/insert.js';
 import { deriveIdemKey } from '../ledger/keys.js';
 import { UNATTRIBUTED, approverFrom } from './approver.js';
@@ -132,7 +134,29 @@ export type ApproveOutcome =
    * because naming the model instead would name an author who did not write
    * the text, and the remedy `no_disclosure` gives an operator does not apply.
    */
-  | { readonly outcome: 'rewrite_incomplete' };
+  | { readonly outcome: 'rewrite_incomplete' }
+  /**
+   * DEC-49: a reviewer sent this attempt back, so the turn is on a later one.
+   *
+   * Two runs of one turn can wait at one attempt — a message redelivered
+   * after its ack joins the attempt its turn is on — and a send-back of one
+   * rejects the attempt, not the run. The other still shows the same reply,
+   * and approving it would send the reply the reviewer rejected beside the
+   * new attempt's. Nothing is sent.
+   */
+  | { readonly outcome: 'sent_back' }
+  /**
+   * DEC-49: the turn already holds a reply that reached the customer, may
+   * have, or will. A turn takes one reply, and a second would reach a
+   * customer who has one. Nothing is sent.
+   *
+   * The console cannot reach this after a send-back on its own: it refuses a
+   * send-back on a closed turn and an approval of a rejected attempt. It
+   * guards a turn another path wrote to — a seed, a replay, a run of the
+   * conversation with no turn — and a twin run of the turn, refused here
+   * rather than on the key collision.
+   */
+  | { readonly outcome: 'turn_closed' };
 
 /** Optional inputs for one approval. */
 export interface ApproveOptions {
@@ -253,6 +277,13 @@ interface ParkRecord {
    */
   readonly turnNumber?: number;
   /**
+   * DEC-49: which attempt of that turn the park was. The approval derives
+   * the outbox key from this record, so the attempt has to survive the wait
+   * beside the turn, exactly as the turn survives it. Absent on a park
+   * written before db/031, which was the first attempt of its turn.
+   */
+  readonly attempt?: number;
+  /**
    * DEC-44: the adopter's disclosure and the reply's provenance (DEC-14,
    * DEC-33), journaled so an approval that sends this reply from the ledger
    * attaches what the adapter would have attached. Absent on a park
@@ -316,6 +347,7 @@ function parkRecordFrom(journalResult: unknown): ParkRecord {
   const body = r['body'];
   const payload = r['payload'];
   const turnNumber = r['turnNumber'];
+  const attempt = r['attempt'];
   const disclosure = r['disclosure'];
   const provenance = r['provenance'];
   if (
@@ -328,6 +360,12 @@ function parkRecordFrom(journalResult: unknown): ParkRecord {
     || (payload !== undefined && !isPlainObject(payload))
     || (turnNumber !== undefined
         && (typeof turnNumber !== 'number' || !Number.isInteger(turnNumber)))
+    // DEC-49: the attempt a park was written for. A zero, a fraction or a
+    // string is not an attempt this approval can derive a key from, and
+    // reading it as the first attempt would send the key of a record that
+    // belongs to another request.
+    || (attempt !== undefined
+        && (typeof attempt !== 'number' || !Number.isInteger(attempt) || attempt < 1))
     || (disclosure !== undefined && (typeof disclosure !== 'string' || disclosure.length === 0))
     || (provenance !== undefined && !isProvenance(provenance))
   ) {
@@ -340,6 +378,7 @@ function parkRecordFrom(journalResult: unknown): ParkRecord {
     body,
     ...(payload === undefined ? {} : { payload }),
     ...(turnNumber === undefined ? {} : { turnNumber }),
+    ...(attempt === undefined ? {} : { attempt }),
     ...(disclosure === undefined ? {} : { disclosure }),
     ...(provenance === undefined ? {} : { provenance }),
   };
@@ -427,6 +466,10 @@ export async function approveRun(
     // approval path exactly as on the automatic one.
     ...(park.turnNumber === undefined ? {} : { turnNumber: park.turnNumber }),
     conversationId,
+    // DEC-49: the attempt the park belongs to. An approval of a later
+    // attempt without it would derive the first attempt's key, lose the
+    // outbox insert and stop the run superseded.
+    ...(park.attempt === undefined ? {} : { attempt: park.attempt }),
     payload: outboxPayload,
   });
 
@@ -460,6 +503,10 @@ export async function approveRun(
   let ledgerAuthor: unknown;
   /** DEC-51: how long the record is held, when this caller holds it. */
   let holdMs: number | undefined;
+  /** DEC-49: set by the precondition when the turn is on a later attempt. */
+  let attemptRejected = false;
+  /** DEC-49: set by the precondition when the turn already holds a reply. */
+  let turnClosed = false;
   // DEC-44 governs a customer reply, and only a customer reply: that is the
   // park which carries a handle into the target system. A ledger-only park
   // (DEC-34 compensation) holds no reply and journals no disclosure, so it
@@ -666,45 +713,69 @@ export async function approveRun(
     // holds now — read here, inside the transaction that takes the row lock,
     // and before anything is written. Read outside it, the guard has a window
     // between the check and the write, which is the change it exists to catch.
-    ...(guardDigest === undefined ? {} : {
-      refuseIf: async (client: PoolClient): Promise<boolean> => {
-        const held = await client.query(
-          "SELECT result->>'body' AS body FROM step_journal WHERE run_id = $1 AND step_id = 'park'",
-          [runId],
-        );
-        // A row that is gone, or a body that is not text, refuses: the
-        // approval cannot show what the reviewer read, so it does not send.
-        const body = held.rows[0]?.body as unknown;
-        if (typeof body !== 'string') return true;
-        // DEC-44: on a path where the ledger holds the reply, what the
-        // reviewer read is the text that sends — the saved reply when a
-        // person saved one, the parked body otherwise — so that is what the
-        // digest is recomputed against.
-        const saved = ledgerReply
-          ? await readSavedReply(client, { conversationId, turnNumber: park.turnNumber })
-          : null;
-        const current = saved ?? body;
-        if (replyDigest(current) !== guardDigest) return true;
-        // And the text about to be sent is the text this read returned. It
-        // was resolved outside the lock, so a save that landed between that
-        // read and this one would otherwise be sent while the case records
-        // the text this guard just approved.
-        if (ledgerText !== undefined && replyDigest(current) !== replyDigest(ledgerText)) {
+    refuseIf: async (client: PoolClient): Promise<boolean> => {
+      // DEC-49: the turn's lock first, whatever else this approval checks. A
+      // send-back raises the turn's attempt under the same lock, so an
+      // attempt a reviewer rejected cannot be approved by a second reviewer
+      // who read it a moment before — the two writes are ordered here.
+      if (conversationId !== null && park.turnNumber !== undefined) {
+        const turnAttempt = await lockTurnAttempt(client, {
+          conversationId, turnNumber: park.turnNumber,
+        });
+        if (turnAttempt !== null && turnAttempt > (park.attempt ?? 1)) {
+          attemptRejected = true;
           return true;
         }
-        // DEC-48: and its author, which the text cannot vouch for — a rewrite
-        // that repeats the text it replaced leaves every digest unchanged, and
-        // the act is what decides who wrote it. Read under the lock and
-        // compared with what the payload was built from.
-        if (!ledgerReply) return false;
-        const author = await client.query<{ provenance: unknown }>(
-          'SELECT saved_reply_provenance AS provenance FROM turn'
-            + ' WHERE conversation_id = $1 AND turn_number = $2',
-          [conversationId, park.turnNumber ?? null],
-        );
-        return authorKey(author.rows[0]?.provenance) !== authorKey(ledgerAuthor);
-      },
-    }),
+        // DEC-49: and a reply on a turn that already holds a reply that went
+        // out, may have, or will. Read under the same lock, so a second
+        // approval on the turn cannot add its record between this read and
+        // that one's. A ledger-only park is not a reply (DEC-34), so it is
+        // not asked.
+        if (park.draftExternalId !== undefined
+          && await turnIsClosed(
+            client, { conversationId, turnNumber: park.turnNumber }, { replies: true },
+          )) {
+          turnClosed = true;
+          return true;
+        }
+      }
+      if (guardDigest === undefined) return false;
+      const held = await client.query(
+        "SELECT result->>'body' AS body FROM step_journal WHERE run_id = $1 AND step_id = 'park'",
+        [runId],
+      );
+      // A row that is gone, or a body that is not text, refuses: the
+      // approval cannot show what the reviewer read, so it does not send.
+      const body = held.rows[0]?.body as unknown;
+      if (typeof body !== 'string') return true;
+      // DEC-44: on a path where the ledger holds the reply, what the
+      // reviewer read is the text that sends — the saved reply when a
+      // person saved one, the parked body otherwise — so that is what the
+      // digest is recomputed against.
+      const saved = ledgerReply
+        ? await readSavedReply(client, { conversationId, turnNumber: park.turnNumber })
+        : null;
+      const current = saved ?? body;
+      if (replyDigest(current) !== guardDigest) return true;
+      // And the text about to be sent is the text this read returned. It
+      // was resolved outside the lock, so a save that landed between that
+      // read and this one would otherwise be sent while the case records
+      // the text this guard just approved.
+      if (ledgerText !== undefined && replyDigest(current) !== replyDigest(ledgerText)) {
+        return true;
+      }
+      // DEC-48: and its author, which the text cannot vouch for — a rewrite
+      // that repeats the text it replaced leaves every digest unchanged, and
+      // the act is what decides who wrote it. Read under the lock and
+      // compared with what the payload was built from.
+      if (!ledgerReply) return false;
+      const author = await client.query<{ provenance: unknown }>(
+        'SELECT saved_reply_provenance AS provenance FROM turn'
+          + ' WHERE conversation_id = $1 AND turn_number = $2',
+        [conversationId, park.turnNumber ?? null],
+      );
+      return authorKey(author.rows[0]?.provenance) !== authorKey(ledgerAuthor);
+    },
     outbox: {
       stepId: 'approve',
       idemKey,
@@ -737,8 +808,11 @@ export async function approveRun(
     case 'stale_epoch':
       return { outcome: 'stale_epoch', highestAcceptedEpoch: moved.highestAcceptedEpoch };
     case 'refused':
-      // The only precondition this entrypoint passes is the reply digest, so
-      // a refusal is the reply having changed under the reviewer.
+      // Three preconditions, and the flags say which refused: the turn moved
+      // to a later attempt, the turn already holds a reply, or the reply
+      // changed under the reviewer.
+      if (attemptRejected) return { outcome: 'sent_back' };
+      if (turnClosed) return { outcome: 'turn_closed' };
       return { outcome: 'shown_changed' };
     case 'unknown_run':
       // The row existed above; runs are never deleted.

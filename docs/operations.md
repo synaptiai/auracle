@@ -1637,6 +1637,8 @@ for the life of its row, and nothing removes any of it.
 | `step_journal.result` on `compose` | the body of each cited document | every run that cited one |
 | `step_journal.result` on `escalate` | the reason, which interpolates adapter text | the relay and the consumer |
 | `step_journal.result` on `close` | the reason the reviewer closed the case | the console's close |
+| `run.send_back_note` | the note that steers a new attempt | the console's send-back |
+| `step_journal.result` on `send_back` | the same note | the console's send-back |
 | `conversation.customer_address` | the participant the messages come from | the first sender that names itself |
 
 The park fault and the escalation reason hold an address rather than a message.
@@ -1645,6 +1647,16 @@ quotes one. Both reach a journal row verbatim.
 
 A close reason is a reviewer's own words, and it can quote the customer. It is
 recorded on the run, and the console draws it on the case.
+
+A send-back note is a reviewer's own words too. It is written in two places.
+The next attempt reads `run.send_back_note` as an instruction. The journal row
+records who asked. Clearing the column stops a later attempt from reading it.
+Clearing the journal row removes the copy a person reads.
+
+A send-back also clears the reply a person saved on that turn. It records
+what it cleared in `clearedReply`, on the same row. The approval prefers the
+saved text over the new attempt's reply, so the save cannot stand. The key is
+in the statement above for that reason.
 
 `intake.ticket_text` holds the inbound message as well, and is not listed. The
 consumer deletes that row on the ack and on the abandon, so it clears itself.
@@ -1672,14 +1684,20 @@ UPDATE turn
  WHERE created_at < now() - interval '90 days';
 
 -- The drafted reply, the cited document bodies, the adapter fault, the
--- escalation reason and the close reason, past 90 days.
+-- escalation reason, the close reason and the send-back note, past 90 days.
 UPDATE step_journal j
    SET result = j.result - 'body' - 'sentences' - 'claims' - 'citedBodies'
-                         - 'error' - 'reason'
+                         - 'error' - 'reason' - 'note' - 'clearedReply'
   FROM run r
  WHERE r.run_id = j.run_id
-   AND j.step_id IN ('park', 'compose', 'escalate', 'close')
+   AND j.step_id IN ('park', 'compose', 'escalate', 'close', 'send_back')
    AND r.created_at < now() - interval '90 days';
+
+-- The note that steers a new attempt, past 90 days. The step_journal
+-- statement above clears the copy a person reads.
+UPDATE run
+   SET send_back_note = NULL
+ WHERE created_at < now() - interval '90 days';
 
 -- The participant of a conversation nobody will add a turn to.
 UPDATE conversation
@@ -1699,7 +1717,8 @@ escalations report reads that key, so a cleared run reports no reason. Choose
 the age with that in mind, or leave `reason` and accept the addresses it can
 carry.
 
-The three statements read three clocks: the turn's, the run's and the
+Four statements, and one of them reads runs rather than turns. The three
+turn, journal and conversation statements read three clocks: the turn's, the run's and the
 conversation's. A turn older than the window whose run is a recent retry loses
 its message and keeps the drafted reply.
 
@@ -1710,11 +1729,13 @@ removes them.
 Clearing a draft does not reach the helpdesk. The draft parks there as well
 (DEC-11), and the adapter's own retention governs that copy.
 
-**The console writes the ledger in ten places, and it names each one.** It
-approves a reply, saves an edited reply, and rewrites one from scratch. It
-closes a case with no reply, and puts a case aside for a period. It takes a
-case, releases a case, and hands a case to a teammate. It also clears a hold
-whose period ran out, and takes a send back inside its hold.
+**The console writes the ledger in eleven places.** Each one is named here.
+
+It approves a reply, saves an edited reply, and rewrites one from scratch. It
+closes a case with no reply. It puts a case aside for a period, and sends one
+back for a new attempt. It takes a case, releases a case, and hands a case to
+a teammate. It also clears a hold whose period ran out, and takes a send back
+inside its hold.
 
 Every other statement it issues is a SELECT. So it is otherwise as safe
 against a live database as `pnpm run bands` and `pnpm run latency`. That

@@ -324,6 +324,8 @@ export interface JournalStep {
   readonly park: ParkRecord | null;
   /** Present on a `close` row: who finished the case, and why (DEC-48). */
   readonly close: CloseRecord | null;
+  /** Present on a `send_back` row: who asked for a new attempt, and why (DEC-49). */
+  readonly sendBack: SendBackRecord | null;
   /** DEC-24: the action-derived key, on an `execute` row. */
   readonly idemKey: string | null;
   /** The coordinator's EscalationReason, on an `escalate` row. */
@@ -869,6 +871,46 @@ export interface CloseRecord {
 }
 
 /**
+ * What the send-back step recorded (DEC-49).
+ *
+ * The note a reviewer wrote when they sent a case back for a new attempt.
+ * Drawn by the run detail, because it is the instruction the attempt under it
+ * was walked with: a reviewer reading the new reply is owed the words that
+ * asked for it.
+ *
+ * Written by `src/outcomes/send-back.ts` and not by a coordinator step, so it
+ * is outside `STEP_ORDER` like the close row.
+ */
+export interface SendBackRecord {
+  /** The note, or null when the row recorded none. */
+  readonly note: string | null;
+  /** Who sent it back, or null when the row named nobody at all. */
+  readonly reviewer: string | null;
+  /** DEC-45: what the name proves, when the row recorded it. */
+  readonly reviewerSource: string | null;
+}
+
+/**
+ * The send-back record, or null when the row is not one a reader can take at
+ * its word.
+ *
+ * `malformed` is the same refusal `toCloseRecord` makes, for the same reason:
+ * an empty record would answer "no note recorded" about a row that holds one
+ * nobody can read.
+ */
+function toSendBackRecord(
+  result: Record<string, unknown> | null,
+  malformed: boolean,
+): SendBackRecord | null {
+  if (malformed) return null;
+  return {
+    note: stringAt(result, 'note'),
+    reviewer: stringAt(result, 'reviewer'),
+    reviewerSource: stringAt(result, 'reviewerSource'),
+  };
+}
+
+/**
  * The record, or null when the row is not one a reader can take at its word.
  *
  * `malformed` is a result that was recorded and is not an object. Returning
@@ -1036,6 +1078,9 @@ function toStep(row: Record<string, unknown>): JournalStep {
     // DEC-48. Read on any status: a close is one row written complete, so
     // there is no intent row to separate from an outcome.
     close: stepId === 'close' ? toCloseRecord(result, recorded && result === null) : null,
+    sendBack: stepId === 'send_back'
+      ? toSendBackRecord(result, recorded && result === null)
+      : null,
     idemKey: stepId === 'execute' ? stringAt(result, 'idemKey') : null,
     escalationReason:
       stepId === 'escalate' ? escalationHead(stringAt(result, 'reason')) : null,

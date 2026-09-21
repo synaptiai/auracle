@@ -26,9 +26,12 @@ import {
 // which action is the permanent one.
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
 import type { PolicyReason } from 'auracle/policy';
-import { MAX_CLOSE_REASON_CHARS, MAX_SNOOZE_MS, MIN_SNOOZE_MS, replyDigest } from 'auracle/ledger-read';
+import {
+  MAX_CLOSE_REASON_CHARS, MAX_SEND_BACK_NOTE_CHARS, MAX_SNOOZE_MS, MIN_SNOOZE_MS, replyDigest,
+} from 'auracle/ledger-read';
 import type {
-  CloseOutcome, MessageAbsence, OutboxStatus, ReplyAbsence, RewriteOutcome, SnoozeOutcome,
+  CloseOutcome, MessageAbsence, OutboxStatus, ReplyAbsence, RewriteOutcome, SendBackOutcome,
+  SnoozeOutcome,
 } from 'auracle/ledger-read';
 import type { ConsoleApproveOutcome, ConsoleSaveOutcome } from './approve.js';
 import { isFault } from './confirm.js';
@@ -82,6 +85,23 @@ export interface RunRow {
    * put aside rather than leaving a reader to guess from a journal row.
    */
   readonly snoozedUntil: Date | null;
+  /**
+   * DEC-49: the moment a reviewer sent this run back, or null.
+   *
+   * The state cannot say it: a run the customer's next message replaced, a
+   * run that lost its outbox key and a run a person rejected all read
+   * `superseded`. Only the marker tells them apart, and the send-back's
+   * success sentence is drawn on it.
+   */
+  readonly sentBackAt: Date | null;
+  /**
+   * DEC-49: whether the attempt this run is on was sent back: its turn is on
+   * a later attempt. The approval, the save and the rewrite refuse such a
+   * run, and their refusal is drawn only where this is true.
+   */
+  readonly attemptRejected: boolean;
+  /** DEC-49: whether the turn already holds a reply that went out, may have, or will. */
+  readonly turnClosed: boolean;
   readonly stepsUsed: number;
   /**
    * DEC-47: the product of the channel this run's message arrived on, or
@@ -2260,6 +2280,19 @@ export interface CaseOptions {
    */
   readonly rewriting: boolean;
   /**
+   * The outcome of the send-back just posted, drawn above the case (DEC-49).
+   *
+   * Its own field for the reason `closed`, `snoozed` and `rewritten` have
+   * one: five outcomes on a case now share the name `shown_changed`, and the
+   * sentence that follows it says which act did not happen.
+   */
+  readonly sentBack: string;
+  /**
+   * Whether the page should draw the send-back field rather than its link
+   * (DEC-49). Read from the query string, as `rewriting` is.
+   */
+  readonly sendingBack: boolean;
+  /**
    * Why an edit did not apply, off the query string. A code this console
    * knows, looked up rather than printed.
    */
@@ -2406,6 +2439,10 @@ const EDIT_SAYS = {
   shown_changed: 'The reply changed since this page was drawn, so nothing was saved.'
     + ' Open the case again to read it as it is now.',
   no_turn: 'This run serves no conversation turn, so there is nowhere to save a reply.',
+  // DEC-49: worded as the rule rather than as an event, so the sentence is
+  // true of any case a link names: the page reads the run, not the turn.
+  sent_back: 'A reply on an attempt a reviewer has already sent back cannot be saved,'
+    + ' so nothing was saved.',
   unknown_run: 'That run is not in the ledger.',
   not_awaiting_approval: 'That run is not waiting for approval, so no reply was saved.',
   // An edit that did not apply. Its own reason travels beside it, because
@@ -2479,11 +2516,17 @@ function editOutcomeFits(outcome: string, run: OutcomeRun | null): boolean {
         && run.ledgerReply;
     case 'empty_reply':
     case 'shown_changed':
-    case 'no_turn':
     // An edit that did not apply saved nothing, so the run still waits. That
     // is the fact a link cannot fake: the run is where it was.
     case 'not_an_edit':
       return run !== null && run.state === 'awaiting_approval';
+    case 'no_turn':
+      return run !== null && run.state === 'awaiting_approval' && !run.hasTurn;
+    // DEC-49: the rejected attempt waits until the consumer ends it, so the
+    // run is waiting or already superseded.
+    case 'sent_back':
+      return run !== null && run.attemptRejected
+        && (run.state === 'awaiting_approval' || run.state === 'superseded');
     case 'not_awaiting_approval':
       return run !== null && run.state !== 'awaiting_approval';
     case 'unknown_run':
@@ -2636,6 +2679,11 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       savedReply: view.request?.savedReplyText != null,
       ledgerReply: options.ledgerReply,
       replyRewritten: view.replyRewritten,
+      sentBack: view.sentBackAt !== null,
+      parkedDraft: view.draftExternalId !== null,
+      hasTurn: view.request !== null,
+      attemptRejected: view.attemptRejected,
+      turnClosed: view.turnClosed,
     }),
     sendHoldBar(options.sendHold, view.runId, options),
     options.outcome === 'copy_changed'
@@ -2653,6 +2701,11 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       savedReply: view.request?.savedReplyText != null,
       ledgerReply: options.ledgerReply,
       replyRewritten: view.replyRewritten,
+      sentBack: view.sentBackAt !== null,
+      parkedDraft: view.draftExternalId !== null,
+      hasTurn: view.request !== null,
+      attemptRejected: view.attemptRejected,
+      turnClosed: view.turnClosed,
     }, options.why),
     options.closed === '' ? '' : renderCloseOutcome(options.closed, {
       state: view.state,
@@ -2660,6 +2713,11 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       savedReply: view.request?.savedReplyText != null,
       ledgerReply: options.ledgerReply,
       replyRewritten: view.replyRewritten,
+      sentBack: view.sentBackAt !== null,
+      parkedDraft: view.draftExternalId !== null,
+      hasTurn: view.request !== null,
+      attemptRejected: view.attemptRejected,
+      turnClosed: view.turnClosed,
     }),
     options.snoozed === '' ? '' : renderSnoozeOutcome(options.snoozed, {
       state: view.state,
@@ -2667,6 +2725,11 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       savedReply: view.request?.savedReplyText != null,
       ledgerReply: options.ledgerReply,
       replyRewritten: view.replyRewritten,
+      sentBack: view.sentBackAt !== null,
+      parkedDraft: view.draftExternalId !== null,
+      hasTurn: view.request !== null,
+      attemptRejected: view.attemptRejected,
+      turnClosed: view.turnClosed,
     }),
     options.rewritten === '' ? '' : renderRewriteOutcome(options.rewritten, {
       state: view.state,
@@ -2674,6 +2737,23 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       savedReply: view.request?.savedReplyText != null,
       ledgerReply: options.ledgerReply,
       replyRewritten: view.replyRewritten,
+      sentBack: view.sentBackAt !== null,
+      parkedDraft: view.draftExternalId !== null,
+      hasTurn: view.request !== null,
+      attemptRejected: view.attemptRejected,
+      turnClosed: view.turnClosed,
+    }),
+    options.sentBack === '' ? '' : renderSendBackOutcome(options.sentBack, {
+      state: view.state,
+      approved: view.approved,
+      savedReply: view.request?.savedReplyText != null,
+      ledgerReply: options.ledgerReply,
+      replyRewritten: view.replyRewritten,
+      sentBack: view.sentBackAt !== null,
+      parkedDraft: view.draftExternalId !== null,
+      hasTurn: view.request !== null,
+      attemptRejected: view.attemptRejected,
+      turnClosed: view.turnClosed,
     }),
     '<div class="case">',
     '<div class="casemain">',
@@ -3245,6 +3325,9 @@ const REWRITE_SAYS = {
   unprintable_reply: 'That reply holds a character the ledger cannot store, so nothing was rewritten.'
     + ' Paste it again without the invisible character.',
   no_turn: 'That run holds no conversation turn to write a reply on, so nothing was rewritten.',
+  // DEC-49: worded as the rule, for the reason the save's is.
+  sent_back: 'A reply on an attempt a reviewer has already sent back cannot be rewritten,'
+    + ' so nothing was written.',
   // DEC-34: the park holds an action rather than a reply. The same sentence
   // the edit route refuses this shape with, word for word (criterion 10).
   no_reply: 'This case holds no reply to edit: it parked an action rather than a reply,'
@@ -3254,6 +3337,145 @@ const REWRITE_SAYS = {
   not_ledger_reply: 'This case sends the copy the helpdesk holds, not a reply written here,'
     + ' so nothing was rewritten.',
 } as const satisfies Record<RewriteOutcome['outcome'], string>;
+
+/**
+ * What a send-back answered, in the words the case shows (DEC-49).
+ *
+ * Every outcome gets a sentence, and the compiler holds the set closed. The
+ * two conditions are worded for what the reviewer can do about them, which is
+ * not the same thing: a copy in the helpdesk is sent or edited there, and a
+ * turn with a record that may have reached the customer is done with.
+ */
+const SEND_BACK_SAYS = {
+  sent_back: 'The case is sent back for a new attempt, which reads your note.'
+    + ' The customer is sent nothing.',
+  // DEC-49: the note is the whole of what the reviewer asked for. A
+  // send-back without one would ask the run to compose the same reply again.
+  note_empty: 'A send-back carries the note that says what to do differently,'
+    + ' and that one was empty, so nothing was sent back.',
+  note_too_long: `That note is longer than a send-back records (${MAX_SEND_BACK_NOTE_CHARS} characters),`
+    + ' so nothing was sent back.',
+  unprintable_note: 'That note holds a character this ledger cannot store, so nothing was sent back.',
+  // DEC-49: the case is on the path where the helpdesk can send the copy it
+  // parks, so a person may have sent it already and nothing can see that.
+  // The advice is the refusal alone: naming a control ("write the reply here
+  // first") sends a reviewer to a page that offers none, because the editor
+  // is drawn from the same declaration this refusal came from.
+  copy_could_send: 'The helpdesk holds this reply and can send it, so this console will not'
+    + ' start a second attempt over it.',
+  // DEC-49: worded as the rule rather than as an event. The page reads the
+  // run and not the turn, so a sentence asserting that this turn waits would
+  // be a claim a link could put on a case that does not.
+  attempt_pending: 'Only a case on the attempt its turn is on can be sent back, and a turn waits'
+    + ' for one new attempt at a time. Nothing was sent back.',
+  // The run names no conversation or no turn, so there is nothing to attempt
+  // again. The save and the rewrite refuse the same shape by the same name.
+  no_turn: 'This run names no turn, so there is nothing to attempt again. Nothing was sent back.',
+  // DEC-49: a record on the turn that may have reached the customer. Worded
+  // as the condition rather than as an observation: the page reads the run
+  // and not the turn's outbox rows, so a sentence that asserted the record
+  // would be a claim a link could put on a healthy case. This one is true of
+  // any waiting case and explains the refusal to the reviewer whose case it
+  // is.
+  turn_may_have_reached: 'A reply that may already have reached the customer stops a new attempt,'
+    + ' because that would answer the turn twice. Nothing was sent back.',
+  // DEC-46: the reply moved under the reviewer. The page that drew the case
+  // is stale, so the answer says to read it again rather than to retry.
+  shown_changed: 'The reply changed since this page was drawn, so nothing was sent back.'
+    + ' Open the case again to read it as it is now.',
+  not_awaiting_approval: 'That run is not waiting for approval, so nothing was sent back.',
+  unknown_run: 'That run is not in the ledger.',
+  stale_epoch: 'Another owner took this ticket, so nothing was sent back.',
+} as const satisfies Record<SendBackOutcome['outcome'], string>;
+
+/** What a send-back outcome this page cannot vouch for is answered with. */
+const UNKNOWN_SEND_BACK = 'That is not an answer this console knows.';
+
+/**
+ * The sentence for one known send-back outcome, on the run it fits.
+ *
+ * `not_awaiting_approval` is the one outcome whose sentence depends on the
+ * run, as it is on the close: a send-back that lost a race is answered with
+ * the state the winning write left, and a page that said only "nothing was
+ * sent back" beside a superseded case would read as "this case still waits".
+ */
+function sendBackSays(outcome: string, run: OutcomeRun | null): string {
+  if (outcome === 'not_awaiting_approval' && run !== null) {
+    return `That run is not waiting for approval. It is ${run.state} now, so nothing was sent back.`;
+  }
+  return SEND_BACK_SAYS[outcome as keyof typeof SEND_BACK_SAYS];
+}
+
+/**
+ * Whether a send-back outcome can be the ledger's answer about `run`.
+ *
+ * The refusals divide into two kinds and the states they need differ. The
+ * three a reviewer can fix by rewriting the note need the case to be waiting,
+ * as the close's do. The two conditions — a copy a person could send, and a
+ * record that may have reached the customer — are read from the park and the
+ * turn, and the run they are answered about is one the ledger still holds, so
+ * they need the state the send-back refuses in.
+ *
+ * A link anyone can send must not make the console say a waiting case was
+ * sent back, which is what the `sent_back` row is checked against.
+ */
+function sendBackOutcomeFits(outcome: string, run: OutcomeRun | null): boolean {
+  switch (outcome) {
+    case 'sent_back':
+      // The run a send-back ends is `superseded`, and its marker is what says
+      // so: a customer's next message and a lost outbox key land a run there
+      // too, and neither leaves an attempt coming.
+      return run !== null && run.state === 'superseded' && run.sentBack;
+    case 'note_empty':
+    case 'note_too_long':
+    case 'unprintable_note':
+    case 'turn_may_have_reached':
+    case 'attempt_pending':
+    case 'stale_epoch':
+      return run !== null && run.state === 'awaiting_approval';
+    case 'no_turn':
+      return run !== null && run.state === 'awaiting_approval' && !run.hasTurn;
+    case 'copy_could_send':
+      // Both facts, from the page: a copy in the helpdesk, on an adapter that
+      // can send it. A forged link on a case whose reply the ledger holds
+      // would otherwise draw a claim about a copy that does not exist.
+      return run !== null && run.state === 'awaiting_approval'
+        && run.parkedDraft && !run.ledgerReply;
+    case 'shown_changed':
+      // A save or a rewrite lands between the page and the send-back, so the
+      // run can still be waiting when this is drawn — or have moved, which is
+      // the same answer about a newer state.
+      return run !== null;
+    case 'not_awaiting_approval':
+      return run !== null && run.state !== 'awaiting_approval';
+    case 'unknown_run':
+      return run === null;
+    default:
+      return false;
+  }
+}
+
+/**
+ * What the ledger said about the send-back just posted, or that it said
+ * nothing this page can vouch for.
+ *
+ * The same discipline as `renderOutcome`: a known name whose fact the page
+ * contradicts is not printed as the ledger's answer, and a name this console
+ * does not know is never echoed.
+ */
+export function renderSendBackOutcome(outcome: string, run: OutcomeRun | null): string {
+  const known = Object.hasOwn(SEND_BACK_SAYS, outcome) && sendBackOutcomeFits(outcome, run);
+  const said = known ? sendBackSays(outcome, run) : UNKNOWN_SEND_BACK;
+  return [
+    '<div class="wrap" style="padding-bottom:0">',
+    known
+      ? `<p class="outcome${outcome === 'sent_back' ? ' ok' : ' refused'}" data-sentback="${
+        escapeHtml(outcome)}">`
+      : '<p class="outcome">',
+    escapeHtml(said),
+    '</p></div>',
+  ].join('');
+}
 
 /** What a rewrite outcome this page cannot vouch for is answered with. */
 const UNKNOWN_REWRITE = 'That is not an answer this console knows.';
@@ -3284,9 +3506,13 @@ function rewriteOutcomeFits(outcome: string, run: OutcomeRun | null): boolean {
     case 'shown_changed':
     case 'empty_reply':
     case 'unprintable_reply':
-    case 'no_turn':
     case 'no_reply':
       return run !== null && run.state === 'awaiting_approval';
+    case 'no_turn':
+      return run !== null && run.state === 'awaiting_approval' && !run.hasTurn;
+    case 'sent_back':
+      return run !== null && run.attemptRejected
+        && (run.state === 'awaiting_approval' || run.state === 'superseded');
     default:
       return false;
   }
@@ -3353,6 +3579,55 @@ function rewriteBar(view: CaseView, options: CaseOptions): string {
   ].join('');
 }
 
+/**
+ * The send-back, beside the approval and the rewrite (DEC-49).
+ *
+ * Offered only where no helpdesk copy of the reply exists that a person could
+ * send. Two cases qualify: the adapter whose helpdesk cannot send the copy it
+ * parks, so the ledger holds the reply, and a park that created no draft at
+ * all — a compensation, or any gated write with nothing to park. On the draft
+ * path the copy is in the helpdesk, a person may have sent it already, and
+ * nothing in this system can see that.
+ *
+ * What follows is not a state of this run: the run ends `superseded` and a
+ * new run takes the same turn with the note as an instruction. So the page
+ * says what the reviewer is asking for, and that the customer is sent
+ * nothing.
+ *
+ * Behind a link rather than always open, as the rewrite is: it is a textarea,
+ * and a reviewer who came to approve should not have to scroll past one. The
+ * note is bounded in the form as well as in the ledger, so a reviewer learns
+ * the length before a round trip.
+ */
+function sendBackBar(view: CaseView, options: CaseOptions): string {
+  const offered = view.state === 'awaiting_approval'
+    && view.request !== null
+    && (options.ledgerReply || view.draftExternalId === null);
+  if (!offered) return '';
+  return [
+    '<div class="sendbackbar">',
+    '<p class="discl">Sending this case back asks for a new attempt on the same turn.'
+      + ' Your note is what it is asked to do differently, and nothing reaches the customer'
+      + ' until a person approves the reply it produces.</p>',
+    options.sendingBack
+      ? [
+        `<form method="post" action="/send-back${escapeHtml(filtersQuery(options.rule, options.product))}">`,
+        `<input type="hidden" name="runId" value="${escapeHtml(view.runId)}">`,
+        `<input type="hidden" name="shown" value="${
+          escapeHtml(replyDigest(replyTextOf(view, options.ledgerReply) ?? ''))}">`,
+        '<label class="lbl" for="note">What should the new attempt do differently?</label>',
+        `<textarea id="note" name="note" rows="4" required maxlength="${
+          String(MAX_SEND_BACK_NOTE_CHARS)}"></textarea>`,
+        '<button class="btn" type="submit">Send back for a new attempt</button>',
+        '</form>',
+      ].join('')
+      : `<a class="btn" href="${
+        escapeHtml(withQuery(caseHref(view.runId, options.rule, options.product), 'sendback', '1'))
+      }">Send back with a hint →</a>`,
+    '</div>',
+  ].join('');
+}
+
 /** What a take answered, in the words the case shows. */
 const TAKE_SAYS = {
   taken: 'You hold this case now.',
@@ -3404,7 +3679,8 @@ function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
         replyDigest(replyTextOf(view, options.ledgerReply) ?? ''),
       )
         + (act.kind === 'reply' ? `<p class="readback">${escapeHtml(readBackSays(options.readBack, options.ledgerReply))}</p>` : '');
-  return `<div class="actionbar">${approval}${close}${snooze}${rewrite}</div>`;
+  const sendBack = sendBackBar(view, options);
+  return `<div class="actionbar">${approval}${close}${snooze}${rewrite}${sendBack}</div>`;
 }
 
 /**
@@ -3851,9 +4127,10 @@ function turnBlock(turn: TurnView): string {
         ? `<a class="m turnfact" href="/case/${encodeURIComponent(turn.runId)}">open the case</a>`
         : `<a class="m turnfact" href="/run/${encodeURIComponent(turn.runId)}">${
           escapeHtml(turn.runState ?? 'run')}</a>`,
-    // More than one run worked this turn, which means the consumer retried.
-    // Counted rather than drawn as extra turns: a turn that took three runs
-    // to abandon is one message the customer sent.
+    // More than one run worked this turn: the consumer retried, or a
+    // reviewer sent the case back for a new attempt (DEC-49). Counted rather
+    // than drawn as extra turns: a turn that took three runs to abandon is
+    // one message the customer sent.
     turn.runAttempts > 1
       ? `<span class="m turnfact warn">${
         escapeHtml(String(turn.runAttempts))} attempts</span>`
@@ -4270,6 +4547,13 @@ const OUTCOMES = {
   rewrite_incomplete: 'The ledger holds this reply without the record of who wrote it,'
     + ' so nothing was sent. The run journal names the rewrite; the turn row should'
     + ' carry its provenance beside the text.',
+  // DEC-49: a turn takes one reply.
+  turn_closed: 'This turn already has a reply that went out or is on its way, so a second one'
+    + ' was not sent.',
+  // DEC-49: worded as the rule rather than as an event, so the sentence is
+  // true of any case a link names.
+  sent_back: 'A reply on an attempt a reviewer has already sent back cannot be sent,'
+    + ' so nothing was sent.',
   // DEC-30: a fault a retry can clear. The page names both classes, because
   // the read that failed cannot say which one it was: the fault itself is in
   // the log line the sentence points at.
@@ -4321,6 +4605,49 @@ export interface OutcomeRun {
    * rewrite read as an answer this console does not know.
    */
   readonly replyRewritten: boolean;
+  /**
+   * DEC-49: whether the ledger holds the moment a reviewer sent this run
+   * back.
+   *
+   * Read by `sent_back`, and it is the whole of that check. The state cannot
+   * stand in for it: three writers land a run `superseded` — a customer's
+   * next message, a lost outbox key, and a send-back — and a link that named
+   * the outcome on either of the other two would say a case was sent back
+   * when no attempt is coming for it.
+   *
+   * Required, for the reason above it.
+   */
+  readonly sentBack: boolean;
+  /**
+   * DEC-49: whether this run's park left a copy in the helpdesk.
+   *
+   * Read by `copy_could_send` beside the adapter's declaration, because that
+   * sentence makes a claim about where the reply is: on an adapter whose
+   * ledger holds the reply, or on a park that created no draft, there is no
+   * such copy and the sentence would be false.
+   *
+   * Required, for the reason above it.
+   */
+  readonly parkedDraft: boolean;
+  /**
+   * Whether the run serves a conversation turn, as the page read it.
+   *
+   * Read by `no_turn`, whose sentence says the run serves none. A link that
+   * named it on a case with a turn would put a false sentence there.
+   */
+  readonly hasTurn: boolean;
+  /**
+   * DEC-49: whether the attempt this run is on was sent back, as the page read
+   * it. Read by the `sent_back` refusal of the approval, the save and the
+   * rewrite: a link that named it on a healthy case would say a reply was
+   * refused for a reason that is not true of it.
+   */
+  readonly attemptRejected: boolean;
+  /**
+   * DEC-49: whether the turn already holds a reply that went out, may have, or
+   * will, as the page read it. Read by the approval's `turn_closed` refusal.
+   */
+  readonly turnClosed: boolean;
 }
 
 /**
@@ -4358,6 +4685,14 @@ function outcomeFits(outcome: string, run: OutcomeRun | null): boolean {
       return state === 'awaiting_approval';
     case 'not_awaiting_approval':
       return state !== 'awaiting_approval';
+    // DEC-49: the rejected attempt waits until the consumer ends it, so the
+    // run is waiting or already superseded.
+    case 'sent_back':
+      return run.attemptRejected && (state === 'awaiting_approval' || state === 'superseded');
+    // DEC-49: nothing was sent, so the run still waits, and the turn holds
+    // the reply the sentence names.
+    case 'turn_closed':
+      return run.turnClosed && state === 'awaiting_approval';
     case 'unknown_run':
       return false;
     default:

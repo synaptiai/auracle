@@ -304,6 +304,94 @@ describe('migrate', () => {
     expect(comment.rows[0]?.description).toContain('snooze');
   });
 
+  // DEC-49: the attempt a sent-back case starts, the moment it was rejected
+  // and the note that steered the next one. The attempt is NOT NULL with a
+  // default of 1, so every run written before the column existed reads as the
+  // first attempt of its turn, which is what it was.
+  it('installs the attempt a sent-back case starts (db/031, DEC-49)', async () => {
+    await migrate(client);
+
+    const runId = await seedRun();
+    const fresh = await client.query<{ attempt: number; sent_back_at: Date | null; send_back_note: string | null }>(
+      'SELECT attempt, sent_back_at, send_back_note FROM run WHERE run_id = $1',
+      [runId],
+    );
+    // The first run of a turn is attempt 1, and the insert names no column.
+    expect(fresh.rows[0]?.attempt).toBe(1);
+    // Nobody has rejected it, so it carries no moment and no note.
+    expect(fresh.rows[0]?.sent_back_at).toBeNull();
+    expect(fresh.rows[0]?.send_back_note).toBeNull();
+
+    // An attempt above 1, and the two records that travel with a rejection.
+    await client.query(
+      `UPDATE run SET attempt = 2, sent_back_at = now(), send_back_note = 'cite the refund policy'
+        WHERE run_id = $1`,
+      [runId],
+    );
+    const rejected = await client.query<{ attempt: number; sent_back_at: Date; send_back_note: string }>(
+      'SELECT attempt, sent_back_at, send_back_note FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(rejected.rows[0]?.attempt).toBe(2);
+    expect(rejected.rows[0]?.sent_back_at).toBeInstanceOf(Date);
+    expect(rejected.rows[0]?.send_back_note).toBe('cite the refund policy');
+
+    // The attempt cannot be absent: a run that recorded none would derive the
+    // first attempt's key and collide with it.
+    await expect(
+      client.query('UPDATE run SET attempt = NULL WHERE run_id = $1', [runId]),
+    ).rejects.toThrow(/not-null|NULL/i);
+
+    // Each column comment says what it holds, as every column here does.
+    const comments = await client.query<{ attname: string; description: string }>(
+      `SELECT attname, col_description('run'::regclass, attnum) AS description
+         FROM pg_attribute
+        WHERE attrelid = 'run'::regclass
+          AND attname IN ('attempt', 'sent_back_at', 'send_back_note')`,
+    );
+    const byName = new Map(comments.rows.map((row) => [row.attname, row.description]));
+    expect(byName.get('attempt')).toContain('DEC-49');
+    expect(byName.get('sent_back_at')).toContain('DEC-49');
+    expect(byName.get('send_back_note')).toContain('DEC-49');
+
+    // Re-applying the file is a no-op rather than an error.
+    await client.query('DELETE FROM schema_version WHERE version >= 31');
+    await expect(migrate(client)).resolves.toBeDefined();
+    const again = await client.query<{ attempt: number }>(
+      'SELECT attempt FROM run WHERE run_id = $1',
+      [runId],
+    );
+    expect(again.rows[0]?.attempt).toBe(2);
+  });
+
+  // DEC-49: the attempt a turn is on. NOT NULL with a default of 1, so every
+  // turn written before the column existed is on its first attempt.
+  it('installs the attempt a turn is on (db/033, DEC-49)', async () => {
+    await migrate(client);
+    await client.query(
+      `INSERT INTO conversation (conversation_id, primary_ticket_id)
+       VALUES ('00000000-0000-4000-8000-000000000033', 'T-1')`,
+    );
+    await client.query(
+      `INSERT INTO turn (conversation_id, turn_number, ticket_id)
+       VALUES ('00000000-0000-4000-8000-000000000033', 1, 'T-1')`,
+    );
+    const fresh = await client.query<{ attempt: number }>(
+      "SELECT attempt FROM turn WHERE conversation_id = '00000000-0000-4000-8000-000000000033'",
+    );
+    expect(fresh.rows[0]?.attempt).toBe(1);
+    await expect(client.query(
+      "UPDATE turn SET attempt = NULL WHERE conversation_id = '00000000-0000-4000-8000-000000000033'",
+    )).rejects.toThrow(/not-null|NULL/i);
+    const comment = await client.query<{ description: string }>(
+      `SELECT col_description('turn'::regclass, attnum) AS description
+         FROM pg_attribute WHERE attrelid = 'turn'::regclass AND attname = 'attempt'`,
+    );
+    expect(comment.rows[0]?.description).toContain('DEC-49');
+    await client.query('DELETE FROM schema_version WHERE version >= 33');
+    await expect(migrate(client)).resolves.toBeDefined();
+  });
+
   // DEC-47: the product of the channel a message arrived on, recorded at
   // arrival and copied onto the run. Nullable on both tables, because a
   // channel the map does not name is a real answer and not a gap.

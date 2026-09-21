@@ -103,6 +103,27 @@ export interface EscalationItem {
    */
   readonly snoozedUntil: Date | null;
   /**
+   * DEC-49: when a reviewer sent this run back, or null.
+   *
+   * Read so a surface can tell a run a person rejected from one that reached
+   * `superseded` another way — a run the customer's next message replaced, or
+   * one that lost its outbox key. The state alone cannot: three writers land a
+   * run there, and only one of them is a send-back.
+   */
+  readonly sentBackAt: Date | null;
+  /**
+   * DEC-49: whether the attempt this run is on was sent back — its turn is on
+   * a later attempt. The approval, the save and the rewrite refuse such a
+   * run, and a surface reads this to say so only where it is true.
+   */
+  readonly attemptRejected: boolean;
+  /**
+   * DEC-49: whether the turn already holds a reply that went out, may have,
+   * or will. The approval refuses such a turn, and a surface reads this to
+   * say so only where it is true.
+   */
+  readonly turnClosed: boolean;
+  /**
    * DEC-48: whether a person wrote the reply this run holds.
    *
    * It says why `coverage` above is null on such a run: the gate judged the
@@ -238,6 +259,9 @@ const RUN_SELECT_BODY = `
          -- DEC-48: when a snoozed case is due back. Null on a run nobody
          -- snoozed, which is not the epoch.
          r.snoozed_until      AS snoozed_until,
+         -- DEC-49: the moment a reviewer sent this run back, beside the
+         -- state, because the state alone does not say it.
+         r.sent_back_at       AS sent_back_at,
          esc.result ->> 'reason'          AS reason,
          esc.result ->> 'fault'           AS fault,
          gate.result ->> 'reason'          AS gate_reason,
@@ -246,6 +270,18 @@ const RUN_SELECT_BODY = `
          -- by every run that answers it, and a sibling run would otherwise
          -- report a reply a person wrote as the model's.
          (saved.saved_reply_provenance IS NOT NULL) AS reply_rewritten,
+         -- DEC-49: whether a reviewer sent back the attempt this run is on:
+         -- its turn has moved to a later one (db/033).
+         COALESCE(saved.attempt > r.attempt, false) AS attempt_rejected,
+         -- DEC-49: whether this run is a reply on a turn that already holds
+         -- a reply that went out, may have, or will: the approval refuses it.
+         (park.result ? 'draftExternalId'
+          AND EXISTS (SELECT 1 FROM outbox co JOIN run cr ON cr.run_id = co.run_id
+                       WHERE cr.conversation_id = r.conversation_id
+                         AND cr.turn_number = r.turn_number
+                         AND co.payload ? 'draftExternalId'
+                         AND co.status IN ('pending', 'sent', 'fenced', 'delivery_unknown')))
+           AS turn_closed,
          CASE WHEN jsonb_typeof(gate.result -> 'groundedness') = 'number'
               THEN gate.result ->> 'groundedness' END AS coverage,
          CASE WHEN jsonb_typeof(cls.result -> 'agreement') = 'number'
@@ -325,6 +361,18 @@ const OUTBOX_SELECT = `
          -- by every run that answers it, and a sibling run would otherwise
          -- report a reply a person wrote as the model's.
          (saved.saved_reply_provenance IS NOT NULL) AS reply_rewritten,
+         -- DEC-49: whether a reviewer sent back the attempt this run is on:
+         -- its turn has moved to a later one (db/033).
+         COALESCE(saved.attempt > r.attempt, false) AS attempt_rejected,
+         -- DEC-49: whether this run is a reply on a turn that already holds
+         -- a reply that went out, may have, or will: the approval refuses it.
+         (park.result ? 'draftExternalId'
+          AND EXISTS (SELECT 1 FROM outbox co JOIN run cr ON cr.run_id = co.run_id
+                       WHERE cr.conversation_id = r.conversation_id
+                         AND cr.turn_number = r.turn_number
+                         AND co.payload ? 'draftExternalId'
+                         AND co.status IN ('pending', 'sent', 'fenced', 'delivery_unknown')))
+           AS turn_closed,
          CASE WHEN jsonb_typeof(gate.result -> 'groundedness') = 'number'
               THEN gate.result ->> 'groundedness' END AS coverage,
          CASE WHEN jsonb_typeof(cls.result -> 'agreement') = 'number'
@@ -341,6 +389,7 @@ const OUTBOX_SELECT = `
          (r.approved_by IS NOT NULL)       AS approved,
          r.product            AS product,
          r.snoozed_until      AS snoozed_until,
+         r.sent_back_at       AS sent_back_at,
          o.status             AS outbox_status
     FROM outbox o
     JOIN run r ON r.run_id = o.run_id
@@ -398,6 +447,9 @@ function toItem(row: Record<string, unknown>): EscalationItem {
       : null,
     createdAt: row['created_at'] instanceof Date ? row['created_at'] : null,
     snoozedUntil: row['snoozed_until'] instanceof Date ? row['snoozed_until'] : null,
+    sentBackAt: row['sent_back_at'] instanceof Date ? row['sent_back_at'] : null,
+    attemptRejected: row['attempt_rejected'] === true,
+    turnClosed: row['turn_closed'] === true,
     // DEC-48. True only for a row the SELECT says carries a rewrite: a reader
     // that defaulted it to false would report a person's reply as the
     // model's wherever the column was missing.

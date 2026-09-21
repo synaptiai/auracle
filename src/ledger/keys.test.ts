@@ -194,3 +194,74 @@ describe('the turn joins the key (DEC-38)', () => {
     expect(v1).toBe(deriveIdemKey({ ...base }));
   });
 });
+
+describe('the attempt joins the key (DEC-49)', () => {
+  const base = {
+    actionClass: 'reply:park',
+    ticketId: 'T-1',
+    turnNumber: 2,
+    conversationId: 'C-1',
+    payload: { intent: 'refund' },
+  };
+
+  it('gives two attempts of one turn two keys', () => {
+    // The adapter finds drafts by key. A new attempt that derived the first
+    // attempt's key would be handed the draft the reviewer rejected.
+    const first = deriveIdemKey({ ...base, attempt: 1 });
+    const second = deriveIdemKey({ ...base, attempt: 2 });
+
+    expect(first).not.toBe(second);
+  });
+
+  it('gives the attempts after the first one different keys', () => {
+    // DEC-24 holds across the upgrade: every attempt above the first
+    // separates from the one before it.
+    //
+    // There is no case here asserting that a caller which names one attempt
+    // twice gets one key. That is determinism in a pure function of its
+    // arguments, which the first case in this file already asserts, and it
+    // cannot fail. The claim that a retry stays in its attempt belongs to the
+    // caller that chooses the number, and it is asserted there: the poll
+    // carries the turn's current attempt into a redelivery, in
+    // `src/outcomes/send-back.db.test.ts`.
+    expect(deriveIdemKey({ ...base, attempt: 3 })).not.toBe(
+      deriveIdemKey({ ...base, attempt: 2 }),
+    );
+  });
+
+  it('leaves the first attempt on the key the turn always derived', () => {
+    // Every run written before db/031 is attempt 1, and so is every run no
+    // reviewer has sent back. A caller that names attempt 1, a caller that
+    // names none, and a park journaled before the column existed must all
+    // derive one key: an approval in flight across the upgrade still matches
+    // the record its park wrote.
+    const named = deriveIdemKey({ ...base, attempt: 1 });
+    const unnamed = deriveIdemKey({ ...base });
+
+    expect(named).toBe(unnamed);
+  });
+
+  it('holds the key itself steady across releases', () => {
+    // Literal, for the reason the DEC-38 case above is literal: every other
+    // case here is relative, and the attempt is folded into a key that
+    // identifies a request beyond this process.
+    expect(deriveIdemKey({ ...base, attempt: 1 })).toBe(
+      'reply:park:T-1:1433a4f20d64d06b797f818ae194f34b7561f9adc915160d0bed8b2a9050e756',
+    );
+    expect(deriveIdemKey({ ...base, attempt: 2 })).toBe(
+      'reply:park:T-1:a217e7c2e30c210ec928c578d2ebc469afbf29a376186e6a160dda20ee76caca',
+    );
+  });
+
+  it('separates an attempt from a turn of the same number', () => {
+    // The attempt is folded inside the turn segment, so attempt 2 of turn 2
+    // cannot collide with attempt 1 of a turn whose number reads the same.
+    // A caller that named a turn and no attempt is attempt 1, and attempt 2
+    // of that turn is a different request.
+    const turnTwo = deriveIdemKey({ ...base, attempt: 2 });
+    const otherTurn = deriveIdemKey({ ...base, turnNumber: 22, attempt: 1 });
+
+    expect(turnTwo).not.toBe(otherTurn);
+    expect(turnTwo).not.toBe(deriveIdemKey({ ...base, turnNumber: 2 }));
+  });
+});

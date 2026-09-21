@@ -159,6 +159,9 @@ export async function runBandsJob(options: BandsJobOptions): Promise<BandsJobRes
     // The day's own provider, from the row the query answered with. Absent
     // when the day held no runs, which records honestly that nothing composed.
     provider: today?.provider ?? null,
+    // DEC-49: the day's own count, from the same row. A day with no runs
+    // steered none.
+    assisted: today?.assisted ?? 0,
     metrics: METRICS.map((definition) => {
       // A day with no row records no provider, which is honest: nothing
       // composed, so nothing answered. It never reaches the provider check,

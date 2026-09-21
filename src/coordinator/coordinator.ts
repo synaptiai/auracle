@@ -113,6 +113,9 @@ export async function coordinateTicket(
       // answered it without going through the park journal. An automatic run
       // parks nothing, so that join reached no automatic run at all.
       ...(input.turnNumber === undefined ? {} : { turnNumber: input.turnNumber }),
+      // DEC-49: the attempt every key of this run's turn folds in. Absent on
+      // an ordinary run, which is the first attempt of its turn.
+      ...(input.attempt === undefined ? {} : { attempt: input.attempt }),
       epoch: input.epoch,
       state: 'received',
       promptVer: deps.pins.promptVer,

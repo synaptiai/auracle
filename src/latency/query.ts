@@ -128,6 +128,16 @@ export interface ServiceDistribution extends Distribution {
    * is visible rather than silently dropped.
    */
   snoozed: number;
+  /**
+   * Runs a reviewer rejected with a send-back (DEC-49), so their duration is
+   * a person's reading time and never work.
+   *
+   * Read from `sent_back_at` rather than from the state, as the snooze class
+   * is: a rejected attempt is terminal and stamped, so the state test above
+   * would measure it and the number an operator reads as how long the system
+   * takes would be how long a reviewer took to disagree.
+   */
+  rejected: number;
 }
 
 export interface PartitionLatency {
@@ -190,6 +200,7 @@ const SELECT_BY_PARTITION = `
          count(*) FILTER (WHERE service_state = 'unordered')        AS service_unordered,
          count(*) FILTER (WHERE service_state = 'never_ran')        AS service_never_ran,
          count(*) FILTER (WHERE service_state = 'snoozed')          AS service_snoozed,
+         count(*) FILTER (WHERE service_state = 'rejected')         AS service_rejected,
          percentile_disc(0.50) WITHIN GROUP (ORDER BY service_ms)   AS service_p50,
          percentile_disc(0.95) WITHIN GROUP (ORDER BY service_ms)   AS service_p95,
          percentile_disc(0.99) WITHIN GROUP (ORDER BY service_ms)   AS service_p99,
@@ -222,7 +233,12 @@ const SELECT_BY_PARTITION = `
                  -- is kept out of the distribution and counted under its own
                  -- name. Read first, because a snoozed run is not terminal
                  -- either: the state test below would label it unfinished.
-                 CASE WHEN snoozed_until IS NOT NULL THEN 'snoozed'
+                 -- DEC-49: read before the snooze, because a case that was
+                 -- put aside and then sent back ended because a person
+                 -- rejected it. Both columns stay on the row, and one class
+                 -- has to win; the rejection is what ended the attempt.
+                 CASE WHEN sent_back_at IS NOT NULL THEN 'rejected'
+                      WHEN snoozed_until IS NOT NULL THEN 'snoozed'
                       WHEN state <> ALL($2::text[])  THEN 'unfinished'
                       -- Both columns, because abandonMessage writes both and
                       -- a deployment is free to set PROMPT_VER. Matching on
@@ -286,6 +302,7 @@ export async function readLatency(
       unordered: toCount(row['service_unordered']),
       neverRan: toCount(row['service_never_ran']),
       snoozed: toCount(row['service_snoozed']),
+      rejected: toCount(row['service_rejected']),
       p50Ms: toMs(row['service_p50']),
       p95Ms: toMs(row['service_p95']),
       p99Ms: toMs(row['service_p99']),

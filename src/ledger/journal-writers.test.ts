@@ -155,6 +155,9 @@ describe('the step_journal write path', () => {
       'src/approval/undo.ts': 'client',
       'src/coordinator/consumer.ts': 'client',
       'src/outcomes/close.ts': 'client',
+      // DEC-49: the case a reviewer sends back. It journals inside its own
+      // transaction, under the run row lock, so it passes that client.
+      'src/outcomes/send-back.ts': 'client',
       'src/outcomes/snooze.ts': 'client',
       'src/relay/relay.ts': 'client',
       'src/seed/write.ts': 'client',

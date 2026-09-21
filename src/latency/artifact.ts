@@ -65,6 +65,8 @@ export interface ArtifactPartition {
     never_ran: number;
     /** Runs that were ever snoozed (DEC-48), whose duration is a wait. */
     snoozed: number;
+    /** Runs a reviewer sent back (DEC-49), whose duration is a reading time. */
+    rejected: number;
   };
 }
 
@@ -213,6 +215,7 @@ export function validateLatencyArtifact(raw: unknown): LatencyArtifact {
       'unordered',
       'never_ran',
       'snoozed',
+      'rejected',
     ]);
     // The two distributions partition the same runs, so their totals must
     // agree. Nothing else in this file notices a wait figure written into the

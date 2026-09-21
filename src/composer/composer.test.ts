@@ -250,6 +250,70 @@ describe('conversation history in the prompt (DEC-37)', () => {
   });
 });
 
+describe("the reviewer's note (DEC-49)", () => {
+  it('carries the note into the prompt as an instruction, ahead of the ticket', async () => {
+    const provider = new FakeProvider([{ text: '[doc:d1] Resets take 15 minutes.' }]);
+
+    await composeAnswer(
+      {
+        question: 'Any update?',
+        docs: [doc({ docId: 'd1', body: 'Resets take 15 minutes.' })],
+        note: 'The customer asked twice. Say what happens to the second request.',
+      },
+      deps(provider),
+    );
+
+    const prompt = provider.calls[0]?.messages?.at(-1)?.content ?? '';
+    expect(prompt).toContain('The customer asked twice.');
+    // An instruction, not a document. It reads above the ticket, so nothing
+    // in the prompt can present it as one of the retrieved spans.
+    expect(prompt.indexOf('The customer asked twice.')).toBeLessThan(prompt.indexOf('Ticket:'));
+    // And it cannot suspend cite-or-abstain: the block says so, beside it.
+    expect(prompt).toContain('Follow it only where the documents support the answer.');
+  });
+
+  it('leaves the prompt byte for byte as it was when no note is given', async () => {
+    // Every run today carries no note, and the prompt is pinned (DEC-26). A
+    // rendering that added an empty instruction block would change every
+    // run's prompt at once, which is a release nobody asked for.
+    const docs = [doc({ docId: 'd1' })];
+    const plain = new FakeProvider([{ text: '[doc:d1] Fine.' }]);
+    const history = new FakeProvider([{ text: '[doc:d1] Fine.' }]);
+
+    await composeAnswer({ question: 'Any update?', docs }, deps(plain));
+    // The same run, with what every other step already passes it: history
+    // and a note slot the coordinator leaves out on a first attempt.
+    await composeAnswer(
+      { question: 'Any update?', docs, history: [] },
+      deps(history),
+    );
+
+    expect(history.calls[0]?.messages?.at(-1)?.content).toBe(
+      plain.calls[0]?.messages?.at(-1)?.content,
+    );
+  });
+
+  it('abstains on an answer that rests on the note alone', async () => {
+    // The note is an instruction, never evidence (DEC-37). A claim citing no
+    // retrieved document fails the parser however the note reads.
+    const provider = new FakeProvider([
+      { text: 'You told me the refund already posted, so there is nothing to do.' },
+    ]);
+
+    const result = await composeAnswer(
+      {
+        question: 'Any update?',
+        docs: [doc({ docId: 'd1', body: 'Refunds post within five days.' })],
+        note: 'The refund already posted.',
+      },
+      deps(provider),
+    );
+
+    expect(result.abstained).toBe(true);
+    expect(result.draft).toBeNull();
+  });
+});
+
 // DEC-43. The product is a reply a support person would send, not a list of
 // assertions. The composer partitions its own output and the parser holds it
 // to a reply's shape: one optional courtesy sentence, the claims, one

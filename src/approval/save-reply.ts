@@ -18,7 +18,7 @@
 import type { Pool } from 'pg';
 
 import { errorMessage } from '../errors.js';
-import { readSavedReply, recordSavedReply } from '../ledger/conversation.js';
+import { lockTurnAttempt, readSavedReply, recordSavedReply } from '../ledger/conversation.js';
 import { replyDigest } from './shown.js';
 import { isStorableText } from '../ledger/storable-text.js';
 
@@ -46,7 +46,13 @@ export type SaveOutcome =
    * A V1-era run and a park journalled before DEC-38 are the two shapes that
    * reach this; neither can hold a reply the ledger would send.
    */
-  | { readonly outcome: 'no_turn' };
+  | { readonly outcome: 'no_turn' }
+  /**
+   * DEC-49: a reviewer sent this attempt back, so the turn is on a later one.
+   * A reply saved here would shadow the new attempt's: the approval prefers
+   * the saved text. Nothing is saved.
+   */
+  | { readonly outcome: 'sent_back' };
 
 export interface SaveReplyOptions {
   /**
@@ -86,7 +92,7 @@ export async function saveReply(
   try {
     await client.query('BEGIN');
     const run = await client.query(
-      'SELECT state, conversation_id FROM run WHERE run_id = $1 FOR UPDATE',
+      'SELECT state, conversation_id, attempt FROM run WHERE run_id = $1 FOR UPDATE',
       [runId],
     );
     if (run.rows.length === 0) {
@@ -117,6 +123,15 @@ export async function saveReply(
       return { outcome: 'no_turn' };
     }
     const turn = Number(turnNumber);
+    // DEC-49: the turn's lock, after the run's — the order every writer of a
+    // turn follows. A reviewer who sent this attempt back raised the turn's
+    // attempt under it, and a reply written on the attempt they rejected
+    // would shadow the new one's.
+    const turnAttempt = await lockTurnAttempt(client, { conversationId, turnNumber: turn });
+    if (turnAttempt !== null && turnAttempt > Number(run.rows[0]!.attempt ?? 1)) {
+      await client.query('ROLLBACK');
+      return { outcome: 'sent_back' };
+    }
 
     const current = (await readSavedReply(client, { conversationId, turnNumber: turn }))
       ?? (parked.rows[0]!.body as string);
