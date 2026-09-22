@@ -31,7 +31,31 @@ const RAW_IN_JSON = /[\u007f-\u009f\u2028\u2029\p{Cf}\p{Default_Ignorable_Code_P
  * `undefined`, a function or a symbol.
  */
 export function logLine(entry: Readonly<Record<string, unknown>>): string {
-  return JSON.stringify(entry).replace(
+  return escapeRaw(JSON.stringify(entry));
+}
+
+/**
+ * The indented JSON of `value`, escaped as a log line is (issue #114).
+ *
+ * For the report a command prints for a person to read in a terminal: the
+ * approval's outcome, the escalations list, the replay and gold reports.
+ * It spans many lines on purpose, so it is not a log line, but it carries
+ * values from outside — an escalation reason quoting an adapter, a helpdesk
+ * copy a person edited — and a terminal reorders and hides the same
+ * characters a log reader does.
+ *
+ * `JSON.parse` returns the same value. The indentation puts whitespace only
+ * between tokens, so every escaped character is still inside a string.
+ *
+ * An object or an array, for the reason `logLine` takes one: `JSON.stringify`
+ * returns no string at all for `undefined`.
+ */
+export function reportJson(value: object): string {
+  return escapeRaw(JSON.stringify(value, null, 2));
+}
+
+function escapeRaw(json: string): string {
+  return json.replace(
     RAW_IN_JSON,
     (ch) => Array.from({ length: ch.length }, (_, i) =>
       `\\u${ch.charCodeAt(i).toString(16).padStart(4, '0')}`).join(''),

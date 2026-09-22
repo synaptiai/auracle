@@ -23,6 +23,7 @@ import { partitionOf } from './coordinator.js';
 import { errorMessage } from '../errors.js';
 import { endSnoozedIn } from '../outcomes/snooze.js';
 import { PARKED_RUN_STATES, TERMINAL_RUN_STATE_NAMES } from '../ledger/run-state.js';
+import { logLine } from '../log/line.js';
 
 export interface IntakeTicket {
   ticketId: string;
@@ -358,7 +359,7 @@ export async function enqueueTicket(
         // failed, and the pool destroys such a client on release, so the cost
         // is diagnostics alone.
         console.error(
-          JSON.stringify({
+          logLine({
             event: 'rollback_failed',
             at: new Date().toISOString(),
             error: errorMessage(rollbackError),

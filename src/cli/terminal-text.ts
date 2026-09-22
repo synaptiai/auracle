@@ -22,8 +22,11 @@
  * a log is JSON, which escapes them already, and a terminal is not. Two
  * characters a person reading a reply needs are held out by name, because
  * they are C0 controls too: `\n` and `\t`. A reply is read as paragraphs.
+ *
+ * The backslash that begins an escape is in the class as well, for the
+ * reason `terminalText` gives.
  */
-const INVISIBLE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
+const ESCAPED = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\p{Cf}\p{Default_Ignorable_Code_Point}\\]/gu;
 
 /**
  * The same text, with every invisible character written as an escape.
@@ -32,11 +35,16 @@ const INVISIBLE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\p{Cf}\p{
  * `\u202e` where a control character sat, which is what makes the two blocks
  * below it readable. A character outside the basic plane is two UTF-16 units
  * and each unit is escaped on its own, so no half character is written.
+ *
+ * A backslash is written twice. Without that, a person who types the six
+ * characters `\u202e` gets output identical to an escaped control, and a
+ * reader cannot tell the two apart. JSON makes the same choice for the same
+ * reason.
  */
 export function terminalText(text: string): string {
   return text.replace(
-    INVISIBLE,
-    (ch) => Array.from({ length: ch.length }, (_, i) =>
+    ESCAPED,
+    (ch) => ch === '\\' ? '\\\\' : Array.from({ length: ch.length }, (_, i) =>
       `\\u${ch.charCodeAt(i).toString(16).padStart(4, '0')}`).join(''),
   );
 }

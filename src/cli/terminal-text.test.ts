@@ -16,17 +16,17 @@ describe('text written for a terminal to print', () => {
   });
 
   it('writes a bidi override as an escape', () => {
-    expect(terminalText('a‮b')).toBe('a\\u202eb');
-    expect(terminalText('a‬b')).toBe('a\\u202cb');
+    expect(terminalText('a\u202eb')).toBe('a\\u202eb');
+    expect(terminalText('a\u202cb')).toBe('a\\u202cb');
     // Zero-width and word-joiner characters draw nothing, so a reader cannot
     // see them; they are written out for the same reason.
-    expect(terminalText('a​b')).toBe('a\\u200bb');
-    expect(terminalText('a⁠b')).toBe('a\\u2060b');
+    expect(terminalText('a\u200bb')).toBe('a\\u200bb');
+    expect(terminalText('a\u2060b')).toBe('a\\u2060b');
   });
 
   it('writes a line or paragraph separator as an escape', () => {
-    expect(terminalText('a b')).toBe('a\\u2028b');
-    expect(terminalText('a b')).toBe('a\\u2029b');
+    expect(terminalText('a\u2028b')).toBe('a\\u2028b');
+    expect(terminalText('a\u2029b')).toBe('a\\u2029b');
   });
 
   // A reply is read as paragraphs. These two are C0 controls and a person
@@ -47,5 +47,14 @@ describe('text written for a terminal to print', () => {
   it('escapes each unit of a character it does escape', () => {
     // U+1D173 (musical symbol begin beam) is a format character.
     expect(terminalText('\u{1d173}')).toBe('\\ud834\\udd73');
+  });
+
+  // A typed `\u202e` and an escaped control would print alike, and the
+  // approval's two blocks exist so a person can tell such texts apart.
+  it('writes a backslash twice, so typed text never reads as an escape', () => {
+    const typed = String.raw`a\u202eb`;
+    expect(terminalText(typed)).toBe(String.raw`a\\u202eb`);
+    expect(terminalText(typed)).not.toBe(terminalText('a\u202eb'));
+    expect(terminalText(String.raw`C:\files`)).toBe(String.raw`C:\\files`);
   });
 });

@@ -23,6 +23,8 @@ import { Pool } from 'pg';
 import { requireDbUrl } from '../db/config.js';
 import { listEscalations, parseSince, type EscalationItem } from './query.js';
 import { runEntry } from '../cli/entry.js';
+import { terminalText } from '../cli/terminal-text.js';
+import { reportJson } from '../log/line.js';
 
 function optionValue(argv: readonly string[], name: string): string | undefined {
   const i = argv.indexOf(name);
@@ -50,6 +52,10 @@ export function renderTable(items: readonly EscalationItem[]): string {
   const header = [
     'RUN', 'TICKET', 'STATE', 'PIN', 'INTENT', 'REASON', 'OUTBOX', 'COSTµ$', 'STEPS', 'DRAFT',
   ];
+  // Every cell through `terminalText`, before the widths are read. A ticket
+  // id, an adapter's reason and a fault message all come from outside, and
+  // this table is printed for a person to read in a terminal: a raw escape
+  // sequence moves the cursor over a row and a bidi override reorders it.
   const rows = items.map((item) => [
     item.runId.slice(0, 8),
     item.ticketId,
@@ -71,7 +77,7 @@ export function renderTable(items: readonly EscalationItem[]): string {
     // its payload in the ledger and is still approvable (DEC-34), and a `-`
     // here read as a run nothing could be done with.
     item.draftExternalId ?? (item.payloadRecorded ? 'payload' : '-'),
-  ]);
+  ].map((cell) => terminalText(cell)));
   const widths = header.map((h, i) =>
     Math.max(h.length, ...rows.map((row) => row[i]!.length)),
   );
@@ -90,7 +96,7 @@ export function renderTable(items: readonly EscalationItem[]): string {
   // this block.
   const faults = items.filter((item) => item.fault !== null);
   if (faults.length === 0) return table;
-  const notes = faults.map((item) => `${item.runId.slice(0, 8)}  ${item.fault}`);
+  const notes = faults.map((item) => `${item.runId.slice(0, 8)}  ${terminalText(item.fault!)}`);
   return [table, '', 'FAULTS', ...notes].join('\n');
 }
 
@@ -129,7 +135,7 @@ async function main(): Promise<void> {
         items.length === 0 ? 'Nothing needs a person.' : renderTable(items),
       );
     } else {
-      console.log(JSON.stringify(items, null, 2));
+      console.log(reportJson(items));
     }
   } finally {
     await pool.end();

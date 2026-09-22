@@ -6,6 +6,8 @@
 // and a teardown hook that could mask the fault that caused it.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { HOSTILE } from '../test-support/raw-log.js';
+
 import { describeFault, runEntry } from './entry.js';
 
 /** Restores the exit code the runner itself depends on. */
@@ -186,6 +188,25 @@ describe('runEntry', () => {
     });
     expect(process.exitCode).toBe(1);
     expect(stderr).toHaveBeenCalledWith('the ledger refused the row');
+  });
+
+  // Issue #114. A fault's text is often a provider's or a server's, so it
+  // reaches the operator's terminal and a CI log carrying whatever that side
+  // sent: an escape sequence, a bidi override, a line separator.
+  it('prints the fault with every character a terminal acts on escaped', async () => {
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const esc = String.fromCharCode(0x1b);
+    await runEntry(async () => {
+      await Promise.resolve();
+      throw new Error('provider said', { cause: new Error(`${esc}[2K${HOSTILE}`) });
+    });
+    const printed = String(stderr.mock.calls[0]?.[0]);
+    for (const code of [0x1b, 0x85, 0x2028, 0x2029, 0x202e]) {
+      expect(printed, `U+${code.toString(16)} reached the terminal raw`)
+        .not.toContain(String.fromCharCode(code));
+    }
+    expect(printed).toBe(`provider said: \\u001b[2Kdana\\u0085{"event":"forged"}`
+      + '\\u2028x\\u2029y\\u202eevil\\u009b\\u2066\\u200f');
   });
 
   it('prints the cause chain, not the head alone', async () => {

@@ -1,7 +1,7 @@
 // One structured log line, safe to read line by line.
 import { describe, expect, it } from 'vitest';
 
-import { logLine } from './line.js';
+import { logLine, reportJson } from './line.js';
 
 const char = (code: number): string => String.fromCharCode(code);
 
@@ -60,5 +60,31 @@ describe('a structured log line', () => {
       nested: { list: [char(0x2029)] },
     };
     expect(JSON.parse(logLine(entry))).toEqual(entry);
+  });
+});
+
+// Issue #114: a command prints a report for a person to read in a terminal,
+// indented across lines. It is not one line, and it carries values from
+// outside — an escalation reason quoting an adapter, a helpdesk copy a
+// person edited. The same characters reorder or hide what a person reads.
+describe('a printed report', () => {
+  it('is the indented JSON of the value when every string is plain', () => {
+    const value = { outcome: 'approved', items: [{ reason: 'policy_escalated' }] };
+    expect(reportJson(value)).toBe(JSON.stringify(value, null, 2));
+  });
+
+  it('escapes every character a log line escapes, and parses back', () => {
+    const codes = [0x7f, 0x85, 0x2028, 0x202e, 0x200b];
+    const value = { copyText: codes.map(char).join('x'), list: [char(0x2029)] };
+    const text = reportJson(value);
+    for (const code of [...codes, 0x2029]) {
+      expect(text, `U+${code.toString(16)}`).not.toContain(char(code));
+    }
+    expect(JSON.parse(text)).toEqual(value);
+  });
+
+  // An array is a report too: the escalations command prints a list.
+  it('accepts a list', () => {
+    expect(JSON.parse(reportJson([char(0x202e)]))).toEqual([char(0x202e)]);
   });
 });

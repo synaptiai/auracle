@@ -41,6 +41,7 @@ import type { GoldReportArtifact } from './artifact.js';
 import { aggregateReport } from './score.js';
 import { startedAsCommand } from '../corpus/output-path.js';
 import { runEntry } from '../cli/entry.js';
+import { logLine, reportJson } from '../log/line.js';
 
 /**
  * The report needs the risk tier per intent; the classifier's own taxonomy
@@ -395,7 +396,7 @@ async function main(): Promise<void> {
   // is stdout, which put a JSON object in front of the artifact and made the
   // command's output unparseable.
   const { thresholds, provenance, coverageProvenance } = await resolveThresholds({
-    log: (entry) => { console.error(JSON.stringify(entry)); },
+    log: (entry) => { console.error(logLine(entry)); },
   });
   const selected = selectHalf('report');
   if (selected.half !== undefined) {
@@ -414,7 +415,7 @@ async function main(): Promise<void> {
     ...(selected.half === undefined ? {} : { reportHalf: selected.half }),
     ...(selected.counterpart === undefined ? {} : { fitIdentity: selected.counterpart }),
   });
-  console.log(JSON.stringify(artifact, null, 2));
+  console.log(reportJson(artifact));
 }
 
 const invokedDirectly =

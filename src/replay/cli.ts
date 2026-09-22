@@ -14,6 +14,7 @@ import { loadDotEnv } from '../config/env.js';
 import { ReplayStubProvider } from './fake-model.js';
 import { runReplay } from './replay.js';
 import { runEntry } from '../cli/entry.js';
+import { reportJson } from '../log/line.js';
 
 const PINS = { promptVer: 'classify-p1', modelVer: 'replay-stub' };
 
@@ -32,7 +33,7 @@ async function main(): Promise<void> {
     report: gold.report,
     thresholds,
   });
-  console.log(JSON.stringify(report, null, 2));
+  console.log(reportJson(report));
 }
 
 void runEntry(main);

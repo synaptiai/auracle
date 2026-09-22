@@ -13,13 +13,14 @@
 import { randomUUID } from 'node:crypto';
 import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   MAX_INTAKE_ATTEMPTS,
   claimPartition,
   conversationHistory,
   processQueuedTickets,
+  startConsumer,
 } from './consumer.js';
 import type { ConsumerOptions } from './consumer.js';
 import { coordinateTicket } from './coordinator.js';
@@ -34,6 +35,7 @@ import { FakeProvider, ONE_CENT_IN_MICROS } from '../models/fake.js';
 import type { FakeStep } from '../models/fake.js';
 import type { AdapterCapabilities } from '../policy/policy.js';
 import { indexDocument } from '../retriever/retriever.js';
+import { expectEscaped, HOSTILE } from '../test-support/raw-log.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
@@ -1918,4 +1920,47 @@ describe('a snoozed case comes back when the period ends', () => {
     expect(still.rows[0]?.state).toBe('superseded');
   });
 });
+});
+
+// Issue #114: the consumer's own log path, with a provider's error text in it.
+// A model provider answers a refused call with a body the far side wrote, and
+// the consumer logs the failed ticket with that fault, so it reaches the line.
+describe('the consumer log', () => {
+  beforeEach(async () => {
+    await truncateLedger(pool);
+  });
+
+  it('escapes a provider fault on the default log, and the line parses back', async () => {
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    await enqueueTicket(pool, { ticketId, messageId: `m-${ticketId}`, ticketText: TICKET_TEXT }, PARTITION_COUNT);
+    const base = makeDeps([], 'log-test-prompt');
+    const provider = new Proxy(base.provider, {
+      get(target, key, receiver) {
+        if (key === 'complete') {
+          return async () => {
+            throw new Error(`provider answered 400: ${HOSTILE}`);
+          };
+        }
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    try {
+      const consumer = startConsumer(
+        { ...base, provider },
+        { partitions: [...Array(PARTITION_COUNT).keys()], intervalMs: 60_000, action: actionSpec() },
+      );
+      await vi.waitFor(() => {
+        expect(lines.some((line) => line.includes('ticket_failed'))).toBe(true);
+      }, { timeout: 5_000, interval: 10 });
+      await consumer.stop();
+    } finally {
+      spy.mockRestore();
+    }
+    const carrier = expectEscaped(lines, HOSTILE);
+    expect(carrier['event']).toBe('ticket_failed');
+  });
 });

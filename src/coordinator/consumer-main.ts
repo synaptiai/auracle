@@ -76,6 +76,7 @@ import { claimPartition, startConsumer } from './consumer.js';
 import type { CoordinatorDeps } from './coordinator.js';
 import { runEntry } from '../cli/entry.js';
 import { errorMessage } from '../errors.js';
+import { logLine } from '../log/line.js';
 
 const EGRESS_ADAPTERS: Readonly<Record<string, () => EgressAdapter>> = {
   helpdesk: () => new HelpdeskAdapter(),
@@ -258,7 +259,7 @@ async function main(): Promise<void> {
   };
 
   console.log(
-    JSON.stringify({
+    logLine({
       event: 'rebalanced',
       at: new Date().toISOString(),
       partitions,
@@ -300,7 +301,7 @@ async function main(): Promise<void> {
           // already consumed, and the process dies on an unhandled rejection
           // instead of reporting why it could not stop.
           console.error(
-            JSON.stringify({
+            logLine({
               event: 'shutdown_failed',
               at: new Date().toISOString(),
               error: errorMessage(error),

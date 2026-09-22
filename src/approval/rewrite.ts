@@ -31,6 +31,7 @@ import { errorMessage } from '../errors.js';
 import { lockTurnAttempt, readSavedReply, recordSavedReply } from '../ledger/conversation.js';
 import { journalStep } from '../ledger/journal-write.js';
 import { isStorableText } from '../ledger/storable-text.js';
+import { logLine } from '../log/line.js';
 
 import { replyDigest } from './shown.js';
 
@@ -216,7 +217,7 @@ export async function rewriteReply(
   } catch (error) {
     await client.query('ROLLBACK').catch((rollbackError: unknown) => {
       console.error(
-        JSON.stringify({
+        logLine({
           event: 'rollback_failed',
           at: new Date().toISOString(),
           runId,

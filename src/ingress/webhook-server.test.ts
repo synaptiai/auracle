@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -10,6 +10,7 @@ import {
   WEBHOOK_FULL_PAYLOAD_REDELIVERY,
   WEBHOOK_MINIMAL_PAYLOAD,
 } from './fixtures.js';
+import { expectEscaped, HOSTILE } from '../test-support/raw-log.js';
 import { createWebhookServer, MAX_BODY_BYTES, SIGNATURE_HEADER } from './webhook-server.js';
 
 const adapter = new WebhookAdapter();
@@ -263,5 +264,36 @@ describe('webhook signature check', () => {
 
     expect((await post(url, FULL_BODY)).status).toBe(204);
     expect(received).toHaveLength(1);
+  });
+});
+
+// Issue #114: the webhook's own log path, with a value from the request in it.
+// Intake's fault quotes what it refused, as a Postgres constraint violation
+// quotes the key it saw, so the message id the caller sent reaches the line.
+describe('the webhook log', () => {
+  it('escapes a value from the request, and the line parses back', async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    try {
+      server = createWebhookServer({
+        onEvent: (event) => {
+          throw new Error(`duplicate key: Key (message_id)=(${event.message.messageId ?? ''})`);
+        },
+      });
+      await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
+      const { port } = server.address() as AddressInfo;
+      const body = JSON.stringify({
+        ...WEBHOOK_FULL_PAYLOAD,
+        message: { ...WEBHOOK_FULL_PAYLOAD.message, id: HOSTILE },
+      });
+      expect((await post(`http://127.0.0.1:${port}/webhooks/support`, body)).status).toBe(500);
+    } finally {
+      spy.mockRestore();
+    }
+    const carrier = expectEscaped(lines, HOSTILE);
+    expect(carrier['event']).toBe('delivery_failed');
+    expect(String(carrier['error'])).toContain(HOSTILE);
   });
 });

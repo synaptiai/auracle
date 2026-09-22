@@ -36,6 +36,7 @@ import type {
 import { errorMessage } from '../errors.js';
 import { journalStep } from '../ledger/journal-write.js';
 import { runStateClass } from '../ledger/run-state.js';
+import { logLine } from '../log/line.js';
 
 /** The delivery rule an action class declares for one record (DEC-29). */
 export type DeliveryRule = 'at_least_once' | 'at_most_once';
@@ -542,7 +543,7 @@ export async function relayOne(
       await client.query('ROLLBACK').catch((failed: unknown) => {
         rollbackError = failed;
         console.error(
-          JSON.stringify({
+          logLine({
             event: 'rollback_failed',
             at: new Date().toISOString(),
             error: errorText(failed),
@@ -700,7 +701,7 @@ const client = await pool.connect();
     await client.query('ROLLBACK').catch((rollbackError: unknown) => {
       rolledBack = rollbackError;
       console.error(
-        JSON.stringify({
+        logLine({
           event: 'rollback_failed',
           at: new Date().toISOString(),
           error: errorMessage(rollbackError),

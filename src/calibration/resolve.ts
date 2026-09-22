@@ -28,6 +28,7 @@ import { defaultCalibrationDir, loadCalibrationArtifact } from './artifact.js';
 import type { CalibrationScope } from './artifact.js';
 import { defaultGroundednessDir, loadGroundednessArtifact } from '../groundedness/artifact.js';
 import type { GoldSource } from '../domain/gold-types.js';
+import { logLine } from '../log/line.js';
 
 /** Where a threshold set came from. Recorded by every job that publishes numbers. */
 export type ThresholdProvenance =
@@ -95,7 +96,7 @@ export interface ResolveOptions {
 }
 
 function defaultLog(entry: Record<string, unknown>): void {
-  console.log(JSON.stringify(entry));
+  console.log(logLine(entry));
 }
 
 /**

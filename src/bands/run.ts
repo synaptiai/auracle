@@ -34,6 +34,7 @@ import type { DailySample } from './evaluate.js';
 import { LOOKBACK_DAYS, METRICS, WINDOW_DAYS } from './metrics.js';
 import { readDays } from './query.js';
 import { runEntry } from '../cli/entry.js';
+import { terminalText } from '../cli/terminal-text.js';
 import { humanValue } from './format.js';
 import { lastCompleteDay } from '../time/day.js';
 
@@ -255,7 +256,7 @@ async function main(): Promise<void> {
   // An idle client that fails reaches the pool as an 'error' event, and with
   // no listener Node rethrows it outside this function's promise chain.
   pool.on('error', (error: Error & { code?: string }) => {
-    console.error(`bands: database connection lost: ${error.message}`
+    console.error(`bands: database connection lost: ${terminalText(error.message)}`
       + `${error.code === undefined ? '' : ` (${error.code})`}`);
     process.exitCode = 1;
   });

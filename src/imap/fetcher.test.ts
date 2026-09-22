@@ -4,6 +4,8 @@
 // Synthetic data only (DEC-18).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { expectEscaped, HOSTILE } from '../test-support/raw-log.js';
+
 import { ImapMailboxFetcher } from './fetcher.js';
 import type { ImapClientFactory, ImapClientLike } from './fetcher.js';
 
@@ -31,7 +33,7 @@ class FakeServer {
 }
 
 class FakeClient implements ImapClientLike {
-  private listeners = new Map<string, () => void>();
+  private listeners = new Map<string, (error?: Error) => void>();
   fetchAllCalls = 0;
   flagsAdded: number[][] = [];
   closed = false;
@@ -43,12 +45,12 @@ class FakeClient implements ImapClientLike {
   on(event: 'error', listener: (error: Error) => void): unknown;
   on(event: 'close', listener: () => void): unknown;
   on(event: 'error' | 'close', listener: (...args: never[]) => void): unknown {
-    this.listeners.set(event, listener as () => void);
+    this.listeners.set(event, listener as (error?: Error) => void);
     return this;
   }
 
-  emit(event: 'error' | 'close'): void {
-    this.listeners.get(event)?.();
+  emit(event: 'error' | 'close', error?: Error): void {
+    this.listeners.get(event)?.(error);
   }
 
   async connect(): Promise<void> {
@@ -238,5 +240,28 @@ describe('ImapMailboxFetcher', () => {
     await vi.advanceTimersByTimeAsync(60_000);
 
     expect(server.clients).toHaveLength(1);
+  });
+
+  // Issue #114. The client's error text is the server's or the network's, and
+  // the fetcher's own default sink writes it. It was a prose line with the
+  // text pasted in, so nothing escaped it.
+  it('writes the client error as an escaped JSON line on its default sink', async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    try {
+      const fetcher = new ImapMailboxFetcher(
+        { host: 'imap.example.test', port: 993, user: 'u', pass: 'p' },
+        () => server.makeClient(),
+      );
+      await fetcher.fetchUnseen();
+      server.clients[0]!.emit('error', new Error(`BAD ${HOSTILE}`));
+      fetcher.stop();
+    } finally {
+      spy.mockRestore();
+    }
+    const carrier = expectEscaped(lines, HOSTILE);
+    expect(carrier['event']).toBe('imap_client_error');
   });
 });

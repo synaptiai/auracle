@@ -34,6 +34,7 @@ import { buildCorpusTickets, idDigest, validateCorpusFile } from './corpus.js';
 import { resolveCorpusOutput, startedAsCommand } from './output-path.js';
 import { runEntry } from '../cli/entry.js';
 import { errorMessage } from '../errors.js';
+import { terminalText } from '../cli/terminal-text.js';
 
 const execAsync = promisify(exec);
 const MAX_FETCH_BUFFER_BYTES = 512 * 1024 * 1024;
@@ -126,7 +127,7 @@ async function main(): Promise<void> {
     // result, and ImapPoller routes to onError only from its interval loop.
     // Kept honest rather than empty, in case this ever calls loop().
     onError: (err) => {
-      console.error(`poll error: ${errorMessage(err)}`);
+      console.error(`poll error: ${terminalText(errorMessage(err))}`);
     },
   });
   const result = await poller.pollOnce();

@@ -27,6 +27,7 @@ import { loadDotEnv, positiveIntEnv } from '../config/env.js';
 import { productCatalogueFromEnv } from '../config/products.js';
 import { intakeEnqueuer } from './adapter.js';
 import { runEntry } from '../cli/entry.js';
+import { logLine } from '../log/line.js';
 
 async function main(): Promise<void> {
   loadDotEnv();
@@ -52,7 +53,7 @@ async function main(): Promise<void> {
     server.listen(port, () => resolve());
   });
   console.log(
-    JSON.stringify({
+    logLine({
       event: 'listening',
       at: new Date().toISOString(),
       port,

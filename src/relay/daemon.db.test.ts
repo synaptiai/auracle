@@ -16,6 +16,7 @@ import type {
 } from '../adapters/types.js';
 import { dbUrl } from '../db/config.js';
 import { fencedInsert, type FencedOutboxInput, type FencedRunInput } from '../ledger/insert.js';
+import { expectEscaped, HOSTILE } from '../test-support/raw-log.js';
 import { startRelayDaemon, type RelayDaemon, type RelayLogEntry } from './daemon.js';
 import type { PendingOutboxRow } from './relay.js';
 
@@ -204,6 +205,39 @@ describe('relay daemon loop', () => {
       outcome: 'sent',
     });
     expect(logs.some((e) => e.event === 'record_failed')).toBe(false);
+  });
+
+  // Issue #114: the relay's own log path, with an adapter's error text in it.
+  // An SMTP rejection quotes the recipient it refused, and the relay logs the
+  // cause beside the outcome, so text the far side wrote reaches the line.
+  it('escapes an adapter error on the default log, and the line parses back', async () => {
+    const key = 'idem:hostile-send';
+    await seedPending('T-' + randomUUID().slice(0, 8), key);
+    const adapter = new ScriptedEgress(
+      IDEMPOTENT,
+      async () => {
+        throw new Error(`550 5.1.1 <${HOSTILE}>: recipient rejected`);
+      },
+      async () => {
+        throw new Error('read-back is not declared');
+      },
+    );
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    try {
+      daemon = startRelayDaemon({ pool, adapter, intervalMs: 60_000 });
+      await vi.waitFor(() => {
+        expect(lines.some((line) => line.includes('record_relayed'))).toBe(true);
+      }, { timeout: 2_000, interval: 10 });
+      await daemon.stop();
+    } finally {
+      spy.mockRestore();
+    }
+    const carrier = expectEscaped(lines, HOSTILE);
+    expect(carrier['event']).toBe('record_relayed');
+    expect(String(carrier['sendError'])).toContain(HOSTILE);
   });
 
   it('stop drains the in-flight record and skips the rest of the scan', async () => {

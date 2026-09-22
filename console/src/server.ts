@@ -21,7 +21,7 @@ import { createServer } from 'node:http';
 
 import { isRunId } from './approve.js';
 import { closestDocumentSentence, withSentenceReplaced, withoutSentence } from './reply-edit.js';
-import { escapeHtml } from './render.js';
+import { escapeHtml, isolated } from './render.js';
 import { CONSOLE_SCRIPT } from './script.js';
 import {
   caseHref,
@@ -473,8 +473,8 @@ function bare(
     `<title>${escapeHtml(title)} — Auracle console</title>`,
     '<link rel="stylesheet" href="/console.css">',
     `</head><body><div class="root" data-theme="${theme}"><div class="wrap">`,
-    `<div class="hdt">${escapeHtml(title)}</div>`,
-    `<p class="mut">${escapeHtml(says)}</p>`,
+    `<div class="hdt">${isolated(title)}</div>`,
+    `<p class="mut">${isolated(says)}</p>`,
     link === undefined ? '' : `<p><a href="${escapeHtml(link.href)}">${escapeHtml(link.text)}</a></p>`,
     '</div></div></body></html>',
   ].join('');

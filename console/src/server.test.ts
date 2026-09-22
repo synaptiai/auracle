@@ -17,7 +17,7 @@ import {
 } from 'auracle/ledger-read';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { escapeHtml, renderGates } from './render.js';
+import { escapeHtml, isolated, renderGates } from './render.js';
 import { whenSays } from './surfaces.js';
 
 import { allowedHosts } from './hosts.js';
@@ -8099,5 +8099,253 @@ describe('DEC-48: the console rewrites the reply from scratch', () => {
     const page = await (await fetch(`${base}${CASE}`, SAME_ORIGIN)).text();
     expect(page).toContain('The draft this run wrote');
     expect(page).not.toContain('The draft this replaced');
+  });
+});
+
+// Issue #114. A value from outside can carry a bidi override. Drawn raw, it
+// reverses the text after it on the line, so a reviewer reads one case's text
+// as another's. Every outside value drawn as text is isolated in `<bdi>`, and
+// each control that opens or closes a run is drawn as its name.
+describe('a value that could reorder the page around it', () => {
+  // A stray PDI first: drawn raw, it closes the isolate `<bdi>` makes, and the
+  // override after it reverses the rest of the line. Then an isolate never
+  // closed, a mark, and a Hebrew letter.
+  // A paragraph separator before that letter: it ends every isolate open at
+  // it, so drawn raw it would let the letter lay out the rest of the line.
+  const REORDER = [0x2069, 0x202e].map((c) => String.fromCharCode(c)).join('')
+    + 'evil' + [0x2066, 0x200f, 0x2029, 0x5d0].map((c) => String.fromCharCode(c)).join('');
+  const hostile = (text: string): string => `${text}${REORDER}`;
+  /** How a hostile value is drawn: its own text, then the stray PDI's name. */
+  const drawn = (text: string): string => `${escapeHtml(text)}<span class="ctl" dir="ltr">U+2069</span>`;
+  const PAIRED = /[\u001c-\u001e\u0085\u202a-\u202e\u2029\u2066-\u2069]/u;
+  const CONTROL = /[\p{Bidi_Control}\u001c-\u001e\u0085\u2029]/u;
+
+  /**
+   * Every bidi control the page draws where it can reach past its value.
+   *
+   * A walk over the markup, not a match. Inside a tag, a `<textarea>` or a
+   * `<title>` a control is allowed: a tag there is text, and the value must
+   * post back as the reviewer saw it. In text, a control that opens or closes
+   * a run is never allowed, isolate or not, and a mark must sit in a `<bdi>`.
+   */
+  function unisolated(html: string): string[] {
+    const outside: string[] = [];
+    let depth = 0;
+    let rcdata: string | null = null;
+    for (let i = 0; i < html.length; i++) {
+      const ch = html[i]!;
+      if (ch === '<') {
+        const close = html.indexOf('>', i);
+        const tag = html.slice(i + 1, close).toLowerCase();
+        const name = /^\/?([a-z0-9]+)/.exec(tag)?.[1] ?? '';
+        const closing = tag.startsWith('/');
+        if (rcdata !== null) {
+          if (closing && name === rcdata) rcdata = null;
+          else continue;
+        } else if (!closing && (name === 'textarea' || name === 'title')) rcdata = name;
+        if (name === 'bdi') depth += closing ? -1 : 1;
+        i = close;
+        continue;
+      }
+      if (rcdata !== null || !CONTROL.test(ch)) continue;
+      if (PAIRED.test(ch) || depth === 0) outside.push(html.slice(Math.max(0, i - 60), i + 10));
+    }
+    return outside;
+  }
+
+  const HOLDER = 'anna@example.test';
+  const PAYLOAD_NOTE = 'duplicate charge';
+
+  function hostileDeps(over: Partial<ConsoleDeps> = {}): ConsoleDeps {
+    const d = deps();
+    const approvals = d.listApprovals;
+    const runs = d.listRuns;
+    const conversation = d.readConversation;
+    const document = d.readDocument;
+    const hold = {
+      reviewer: hostile(HOLDER),
+      takenAt: new Date(Date.now() - 60_000),
+      lapsesAt: new Date(Date.now() + 8 * 60_000),
+    };
+    return {
+      ...d,
+      listApprovals: async (...args) => (await approvals(...args)).map((run) => ({
+        ...run, ticketId: hostile(run.ticketId), reason: hostile(run.reason ?? 'r'),
+        draftExternalId: hostile(run.draftExternalId ?? 'D'),
+      })) as never,
+      listRuns: async (...args) => (await runs(...args)).map((run) => ({
+        ...run, ticketId: hostile(run.ticketId), reason: hostile(run.reason ?? 'r'),
+      })) as never,
+      readRun: caseOf({
+        ticketId: hostile('SYN-1'),
+        reason: hostile('policy_escalated'),
+        draftExternalId: hostile('D-1'),
+        steps: WAITING.steps.map((step) => ({ ...step, says: hostile(step.says ?? 'said') })),
+        request: { ...REQUEST, bodyText: hostile(REQUEST.bodyText) },
+        evidence: {
+          ...EVIDENCE,
+          draftBody: hostile(EVIDENCE.draftBody),
+          // The model names the document it cites, so the id is outside too.
+          sentences: EVIDENCE.sentences.map((s) => ({ ...s, text: hostile(s.text), docId: hostile(s.docId) })),
+          claims: EVIDENCE.claims.map((c) => ({ ...c, text: hostile(c.text) })),
+          documents: EVIDENCE.documents.map((doc) => ({
+            ...doc,
+            title: doc.title === null ? null : hostile(doc.title),
+            titleAtRun: hostile(doc.titleAtRun),
+            owner: doc.owner === null ? null : hostile(doc.owner),
+          })),
+        },
+      }),
+      readConversation: async (...args) => {
+        const read = await conversation(...args);
+        return read === null ? null : {
+          ...read,
+          primaryTicketId: hostile(read.primaryTicketId),
+          turns: read.turns.map((turn) => ({
+            ...turn,
+            ticketId: hostile(turn.ticketId),
+            bodyText: turn.bodyText === null ? null : hostile(turn.bodyText),
+            replyText: turn.replyText === null ? null : hostile(turn.replyText),
+          })),
+        } as never;
+      },
+      readDocument: async (...args) => {
+        const read = await document(...args);
+        return read === null ? null : {
+          ...read, title: hostile(read.title), body: hostile(read.body), owner: hostile(read.owner ?? 'o'),
+        } as never;
+      },
+      readHold: async () => hold,
+      readHolds: async () => new Map([[RUN, hold]]),
+      reviewerFor: async () => ({ reviewer: hostile(REVIEWER) }),
+      ...over,
+    };
+  }
+
+  /** A page, how it is reached, and outside values it must draw. */
+  interface Page {
+    readonly name: string;
+    readonly path: string;
+    readonly draws: readonly string[];
+    readonly over?: Partial<ConsoleDeps>;
+    readonly ledgerReply?: boolean;
+    readonly post?: Record<string, string>;
+  }
+
+  const PAGES: readonly Page[] = [
+    { name: 'the queue', path: '/', draws: ['SYN-1', HOLDER, REVIEWER] },
+    { name: 'the approvals list', path: '/approvals', draws: ['SYN-1'] },
+    { name: 'the runs list', path: '/runs', draws: ['SYN-1'] },
+    {
+      name: 'the case', path: CASE,
+      draws: ['SYN-1', REQUEST.bodyText, 'We refunded the duplicate charge.', 'Refund policy', HOLDER],
+    },
+    { name: 'the run', path: `/run/${RUN}`, draws: ['SYN-1', 'D-1', 'policy_escalated', 'intent refund-request'] },
+    {
+      name: 'the conversation', path: `/conversation/${CONVERSATION}`,
+      draws: ['SYN-1', 'There are two charges for the same month.', 'We refunded the duplicate charge.'],
+    },
+    { name: 'the document', path: '/document/SYN-DOC-01', draws: ['Refund policy', 'support'] },
+    { name: 'a take somebody else holds', path: `${CASE}?taken=held_by_other`, draws: [HOLDER] },
+    {
+      // The editable case draws the refused claim's callout.
+      name: 'the editable case', path: CASE, ledgerReply: true,
+      draws: ['Refund policy', 'Your bank decides when it lands.'],
+    },
+    {
+      name: 'the copy refusal', path: `${CASE}?outcome=copy_changed`, ledgerReply: true,
+      over: { readCopy: async () => hostile('Your bank posts it in five minutes.') },
+      draws: ['Your bank posts it in five minutes.'],
+    },
+    {
+      name: 'the payload', path: CASE,
+      over: {
+        readRun: caseOf({
+          reason: null, gateReason: 'irreversible', policyReason: 'irreversible', draftExternalId: null,
+          payloadRecorded: true, actionClass: 'compensate', delivery: 'at_most_once',
+          payload: { amountMicros: 4200, ticket: 'SYN-1', reason: hostile(PAYLOAD_NOTE) },
+        }),
+      },
+      draws: [PAYLOAD_NOTE],
+    },
+    {
+      name: 'the batch confirm', path: '/confirm', ledgerReply: true, post: { runId: RUN },
+      over: {
+        readRun: caseOf({
+          ticketId: hostile('SYN-1'), riskTier: 'medium', reason: null,
+          coverage: null, agreement: 0.91, agreementThreshold: 0.8,
+          gateCoverage: 0.86, coverageReviewThreshold: 0.8,
+          request: { ...REQUEST, savedReplyText: hostile('We refunded it.') },
+        }),
+      },
+      draws: ['SYN-1', 'We refunded it.'],
+    },
+  ];
+
+  for (const page of PAGES) {
+    it(`isolates every one on ${page.name}`, async () => {
+      const base = await startGuarded(hostileDeps(page.over), undefined, undefined, page.ledgerReply ?? false);
+      const response = page.post === undefined
+        ? await fetch(base + page.path)
+        : await fetch(base + page.path, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded',
+            'sec-fetch-site': 'same-origin',
+            origin: base,
+          },
+          body: new URLSearchParams(page.post).toString(),
+        });
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      // Non-vacuity: the page drew each value this case made hostile.
+      for (const value of page.draws) {
+        expect(html, value).toContain(drawn(value));
+      }
+      // Joined, so a failure names every site with the markup around it.
+      expect(unisolated(html).join('\n---\n')).toBe('');
+      // An isolate in an attribute would post back as part of the value.
+      // `escapeHtml` writes every `<` there as an entity, so a raw one is
+      // markup that should not be there.
+      const attributes = [...html.matchAll(/="([^"]*)"/g)].map((m) => m[1]!);
+      expect(attributes.filter((value) => value.includes('<'))).toEqual([]);
+    });
+  }
+
+  // The reply editor posts back what it holds, so an isolate there would be
+  // saved into the reply. The textarea keeps the value byte for byte.
+  it('keeps the reply editor free of markup, so it posts back what it holds', async () => {
+    const text = hostile('We refunded it.');
+    const base = await startGuarded(deps({
+      readRun: caseOf({ request: { ...REQUEST, savedReplyText: text } }),
+    }), undefined, undefined, true);
+    const html = await (await fetch(base + CASE)).text();
+    const area = /<textarea name="text"[^>]*>([^<]*)<\/textarea>/.exec(html);
+    expect(area, 'the editor').not.toBeNull();
+    expect(area![1]).toBe(escapeHtml(text));
+  });
+
+  it('names each control that opens or closes a run, and isolates a right-to-left value', () => {
+    const rlo = String.fromCharCode(0x202e);
+    const pdi = String.fromCharCode(0x2069);
+    const rlm = String.fromCharCode(0x200f);
+    expect(isolated('SYN-1 <b>')).toBe('SYN-1 &lt;b&gt;');
+    expect(isolated(`SYN-1${pdi}${rlo}x`))
+      .toBe('<bdi>SYN-1<span class="ctl" dir="ltr">U+2069</span><span class="ctl" dir="ltr">U+202E</span>x</bdi>');
+    // Every control that opens or closes a run, and every paragraph separator,
+    // is drawn by its name, each one on its own.
+    for (const code of [
+      0x1c, 0x1d, 0x1e, 0x85, 0x2029,
+      0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
+    ]) {
+      const name = `U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
+      expect(isolated(`a${String.fromCharCode(code)}b`), name)
+        .toBe(`<bdi>a<span class="ctl" dir="ltr">${name}</span>b</bdi>`);
+    }
+    // A mark opens nothing, and right-to-left mail uses it, so it stays.
+    expect(isolated(`12${rlm}`)).toBe(`<bdi>12${rlm}</bdi>`);
+    expect(isolated(`ticket ${String.fromCharCode(0x5e9)}`)).toBe(`<bdi>ticket ${String.fromCharCode(0x5e9)}</bdi>`);
+    // Phoenician, a right-to-left script no list of names would think to hold.
+    expect(isolated('id \u{10900}')).toBe('<bdi>id \u{10900}</bdi>');
   });
 });

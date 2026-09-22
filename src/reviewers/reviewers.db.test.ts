@@ -133,7 +133,7 @@ describe('the reviewer roster (DEC-45)', () => {
     // be a reviewer: no approval could ever record it.
     expect(await addReviewer(pool, '')).toEqual({ outcome: 'refused_name' });
     expect(await addReviewer(pool, 'x'.repeat(257))).toEqual({ outcome: 'refused_name' });
-    expect(await addReviewer(pool, 'anna‍@example.test')).toEqual({
+    expect(await addReviewer(pool, 'anna\u200d@example.test')).toEqual({
       outcome: 'refused_name',
     });
     // `unattributed` is DEC-42's recorded absence of a name. A reviewer

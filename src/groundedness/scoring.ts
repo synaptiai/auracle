@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 
 import type { ResumeCost, ResumeStore } from './resume.js';
 import { errorMessage } from '../errors.js';
+import { terminalText } from '../cli/terminal-text.js';
 
 /**
  * Attempts a draft gets when the transport, not the answer, fails.
@@ -225,7 +226,7 @@ export async function scoreHalf(
         // effect. The case identifier is redacted on a real half (DEC-18).
         console.warn(
           `transport fault on gold case ${label(ticket.ticket_id, source)}, `
-            + `attempt ${attempt} of ${TRANSPORT_ATTEMPTS}: ${errorText(error)}`,
+            + `attempt ${attempt} of ${TRANSPORT_ATTEMPTS}: ${terminalText(errorText(error))}`,
         );
         // Exponential, because the faults arrive in a cluster: three immediate
         // attempts all landed inside one outage and the run died with the

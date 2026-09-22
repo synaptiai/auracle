@@ -12,6 +12,7 @@
 //
 // One shape now, and it is the corrected one.
 import { errorMessage } from '../errors.js';
+import { terminalText } from './terminal-text.js';
 
 /**
  * How deep the cause walk goes.
@@ -94,7 +95,7 @@ function causeOf(error: unknown): unknown {
  */
 function report(error: unknown): void {
   try {
-    console.error(describeFault(error));
+    console.error(terminalText(describeFault(error)));
   } catch {
     try {
       console.error('the entry point failed, and describing the fault failed too');
@@ -156,7 +157,7 @@ export async function runEntry(
         // escaping rejection here would become an unhandled one and replace
         // a controlled exit 1 with a crash.
         console.error(
-          `the entry point could not release its resources: ${describeFault(teardownFault)}`,
+          `the entry point could not release its resources: ${terminalText(describeFault(teardownFault))}`,
         );
       }
     }

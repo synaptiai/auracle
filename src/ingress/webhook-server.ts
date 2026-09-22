@@ -24,6 +24,7 @@ import type { IngressEvent } from '../adapters/types.js';
 import { WebhookAdapter } from '../adapters/webhook.js';
 import type { IntakeHandler } from './types.js';
 import { errorMessage } from '../errors.js';
+import { logLine } from '../log/line.js';
 
 /** Largest request body the driver reads before answering 413. */
 export const MAX_BODY_BYTES = 1_048_576;
@@ -78,7 +79,7 @@ export interface WebhookServerDeps {
 }
 
 function defaultLog(entry: Record<string, unknown>): void {
-  console.error(JSON.stringify(entry));
+  console.error(logLine(entry));
 }
 
 export function createWebhookServer(deps: WebhookServerDeps): Server {

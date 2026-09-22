@@ -47,6 +47,7 @@ import type {
 } from './types.js';
 import { AdapterCapabilityError } from './types.js';
 import { errorMessage } from '../errors.js';
+import { logLine } from '../log/line.js';
 
 export const IMAP_SMTP_CAPABILITIES: Readonly<AdapterCapabilities> = Object.freeze({
   supportsIdempotencyKey: false,
@@ -452,7 +453,7 @@ async function ensureMailbox(client: ImapFlow, path: string): Promise<void> {
     // surface later as a misleading append error.
     const message = errorMessage(error);
     if (!/alreadyexists|already exists/i.test(message)) {
-      console.error(JSON.stringify({ event: 'mailbox_create_failed', path, error: message }));
+      console.error(logLine({ event: 'mailbox_create_failed', path, error: message }));
     }
   });
 }

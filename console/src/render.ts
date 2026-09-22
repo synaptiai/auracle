@@ -30,6 +30,60 @@ export function escapeHtml(text: string): string {
 }
 
 /**
+ * Text that can reorder what is drawn around it: every bidi control, every
+ * paragraph separator, and a code point in a block Unicode assigns
+ * right-to-left by default. A range, not a list of scripts, because an
+ * unassigned code point in those blocks is right-to-left too
+ * (DerivedBidiClass.txt). A value with none of these draws the same with or
+ * without an isolate, so it is left as it is.
+ */
+const REORDERS = /[\p{Bidi_Control}\u001c-\u001e\u0085\u2029\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff\u{10800}-\u{10fff}\u{1e800}-\u{1efff}]/u;
+
+/**
+ * The controls that open or close an embedding, an override or an isolate,
+ * and the paragraph separators (U+001C to U+001E, NEL and U+2029).
+ *
+ * Drawn raw, one reaches past any element around it: a stray PDI closes the
+ * isolate `<bdi>` makes, and an override after it reverses the rest of the
+ * line. A paragraph separator ends every isolate open at it, so a
+ * right-to-left letter after one lays out the rest of the line. So each is
+ * drawn as its name instead.
+ *
+ * LF and CR are paragraph separators too, and they stay. This stylesheet
+ * draws them as a space, and where one is kept it is a forced line break,
+ * which a browser keeps inside the isolate. A segment separator (TAB, U+000B,
+ * U+001F) resets only its own level, so it stays. The marks (LRM, RLM, ALM)
+ * stay as well: they open nothing, and right-to-left mail uses them to lay
+ * out a number.
+ */
+const PAIRED = /[\u001c-\u001e\u0085\u202a-\u202e\u2029\u2066-\u2069]/gu;
+
+/**
+ * A value from outside, escaped for text content and isolated when it could
+ * reorder the page around it.
+ *
+ * A ticket id, a customer's message or a reason quoting an adapter can carry
+ * a bidi override. Drawn raw, it reverses the text after it on the line, so a
+ * reviewer reads one case's text as another's. Each control that opens or
+ * closes a run, and each paragraph separator, is drawn as a named mark. A
+ * value holding one is isolated even when it holds no right-to-left letter.
+ * The value is drawn inside `<bdi>`, which keeps a right-to-left value's
+ * direction inside it.
+ *
+ * Text content only. In an attribute, a `<textarea>` or a `<title>`, a tag is
+ * text, and it would travel into the value a form posts back. Those keep
+ * `escapeHtml`, so the text a reviewer saves is the text they were shown.
+ */
+export function isolated(text: string): string {
+  if (!REORDERS.test(text)) return escapeHtml(text);
+  const drawn = escapeHtml(text).replace(PAIRED, (ch) =>
+    // `dir="ltr"`, so the name is not the first strong character the `<bdi>`
+    // reads its own direction from: right-to-left mail stays right to left.
+    `<span class="ctl" dir="ltr">U+${ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}</span>`);
+  return `<bdi>${drawn}</bdi>`;
+}
+
+/**
  * Whether a timestamp from the ledger is a date a surface can use.
  *
  * Typed `Date`, and not always one. The driver reads an infinite timestamp

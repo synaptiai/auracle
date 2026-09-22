@@ -130,6 +130,20 @@ describe('what the command prints for a refusal', () => {
     expect(says).not.toContain('\u202e');
   });
 
+  // A typed escape and a real control must not print alike, so a backslash
+  // prints twice. Both blocks are escaped the same way, so they still compare.
+  it('prints a backslash in either text twice', () => {
+    const says = refusalSays({
+      outcome: 'copy_changed',
+      ledgerText: String.raw`Open C:\files, then type \u202e.`,
+      copyText: 'Open C:\\files, then \u202e.',
+    }, 'run-1');
+    expect(says).toContain(String.raw`--- the reply the ledger holds ---
+Open C:\\files, then type \\u202e.`);
+    expect(says).toContain(String.raw`--- the copy the helpdesk holds ---
+Open C:\\files, then \u202e.`);
+  });
+
   it('says a reply the ledger cannot disclose is refused (DEC-14)', () => {
     expect(refusalSays({ outcome: 'no_disclosure' }, 'run-1')).toContain('no disclosure');
   });

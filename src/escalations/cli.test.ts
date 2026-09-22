@@ -7,6 +7,8 @@
 // waiting run by construction.
 import { describe, expect, it } from 'vitest';
 
+import { HOSTILE } from '../test-support/raw-log.js';
+
 import { renderTable } from './cli.js';
 import type { EscalationItem } from './query.js';
 
@@ -118,5 +120,24 @@ describe('the escalations table', () => {
     for (const column of ['RUN', 'TICKET', 'STATE', 'PIN', 'INTENT', 'REASON', 'DRAFT']) {
       expect(lines[0], column).toContain(column);
     }
+  });
+
+  // Issue #114. A ticket id arrives from a webhook or a Message-ID with no
+  // character check, and a reason or a fault quotes an adapter. This table is
+  // printed for a person, so a raw control there moves the cursor or
+  // reorders the row they read.
+  it('writes every character a terminal would act on as an escape', () => {
+    const esc = String.fromCharCode(0x1b);
+    const hostile = `T${esc}]8;;http://x${String.fromCharCode(7)}${HOSTILE}`;
+    const table = renderTable([
+      item({ ticketId: hostile, reason: hostile, state: 'escalated', fault: hostile }),
+    ]);
+    // Exact, so a narrower escape fails: every hidden character in the value,
+    // including the C1 control, isolate and mark HOSTILE ends with.
+    const escaped = String.raw`T\u001b]8;;http://x\u0007dana\u0085{"event":"forged"}`
+      + String.raw`\u2028x\u2029y\u202eevil\u009b\u2066\u200f`;
+    // Three copies: the ticket cell, the reason cell and the fault note.
+    expect(table.split(escaped)).toHaveLength(4);
+    expect(table).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u0080-\u009f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/u);
   });
 });

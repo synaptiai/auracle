@@ -21,6 +21,23 @@ import { ImapFlow } from 'imapflow';
 
 import type { ImapInboundMessage } from '../ingress/imap-poller.js';
 import { errorMessage } from '../errors.js';
+import { logLine } from '../log/line.js';
+
+/**
+ * One structured line about the connection, written as the daemon's are.
+ *
+ * The error text is the server's or the network's, so it is a value from
+ * outside, and `logLine` escapes it (issue #114).
+ */
+export type ImapFetcherLogEntry =
+  | { readonly event: 'imap_client_error'; readonly at: string; readonly error: string }
+  | { readonly event: 'imap_connection_closed'; readonly at: string }
+  | { readonly event: 'imap_reconnect_failed'; readonly at: string; readonly error: string };
+
+/** One JSON line per entry on stderr, the stream the fetcher always used. */
+function defaultFetcherLog(entry: ImapFetcherLogEntry): void {
+  console.error(logLine(entry));
+}
 
 /**
  * The subset of the imapflow client this module uses. Kept structural so
@@ -86,7 +103,7 @@ export class ImapMailboxFetcher {
   constructor(
     private readonly config: ImapMailboxConfig,
     private readonly createClient: ImapClientFactory,
-    private readonly log: (message: string) => void = console.error,
+    private readonly log: (entry: ImapFetcherLogEntry) => void = defaultFetcherLog,
   ) {}
 
   /**
@@ -176,13 +193,13 @@ export class ImapMailboxFetcher {
   private async doConnect(): Promise<void> {
     const client = this.createClient();
     client.on('error', (error) => {
-      this.log(`imap client error: ${errorMessage(error)}`);
+      this.log({ event: 'imap_client_error', at: new Date().toISOString(), error: errorMessage(error) });
     });
     client.on('close', () => {
       if (this.client !== client) return;
       this.client = null;
       if (!this.stopped) {
-        this.log('imap connection closed; scheduling reconnect');
+        this.log({ event: 'imap_connection_closed', at: new Date().toISOString() });
         this.scheduleReconnect();
       }
     });
@@ -210,7 +227,11 @@ export class ImapMailboxFetcher {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.ensureConnected().catch((error) => {
-        this.log(`imap reconnect failed: ${errorMessage(error)}`);
+        this.log({
+          event: 'imap_reconnect_failed',
+          at: new Date().toISOString(),
+          error: errorMessage(error),
+        });
         this.scheduleReconnect();
       });
     }, delay);

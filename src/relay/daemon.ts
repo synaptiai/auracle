@@ -21,6 +21,7 @@ import type { EgressAdapter } from '../adapters/types.js';
 import type { RelayResult } from './relay.js';
 import { pendingRows, relayOne } from './relay.js';
 import { errorMessage } from '../errors.js';
+import { logLine } from '../log/line.js';
 
 /** One structured log line, emitted as a single JSON object. */
 export type RelayLogEntry =
@@ -62,7 +63,7 @@ export function startRelayDaemon(options: RelayDaemonOptions): RelayDaemon {
   const log =
     options.logger ??
     ((entry: RelayLogEntry): void => {
-      console.log(JSON.stringify(entry));
+      console.log(logLine(entry));
     });
 
   let stopped = false;

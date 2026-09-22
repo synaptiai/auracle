@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 
 import { errorMessage } from '../errors.js';
+import { logLine } from '../log/line.js';
 
 import {
   LedgerClockError,
@@ -164,7 +165,7 @@ async function rollbackQuietly(client: PoolClient): Promise<unknown | null> {
     // connection whose rollback failed has a transaction state nobody read,
     // and the caller destroys it rather than returning it to the pool.
     console.error(
-      JSON.stringify({
+      logLine({
         event: 'rollback_failed',
         at: new Date().toISOString(),
         error: errorMessage(rollbackError),

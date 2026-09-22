@@ -39,6 +39,7 @@ import { replyDigest } from './shown.js';
 import { terminalText } from '../cli/terminal-text.js';
 import { runEntry } from '../cli/entry.js';
 import { startedAsCommand } from '../corpus/output-path.js';
+import { reportJson } from '../log/line.js';
 
 /** The shape a digest has, so a mistyped one is refused rather than ignored. */
 const DIGEST = /^[0-9a-f]{64}$/;
@@ -154,7 +155,7 @@ async function main(): Promise<void> {
   const pool = new Pool({ connectionString: requireDbUrl('the approval CLI'), max: 1 });
   try {
     const result = await approveRun(pool, runId, options);
-    console.log(JSON.stringify(result, null, 2));
+    console.log(reportJson(result));
     const says = refusalSays(result, runId);
     if (says !== null) console.error(says);
     if (result.outcome !== 'approved') {

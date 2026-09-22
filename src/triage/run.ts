@@ -27,6 +27,7 @@ import { label } from '../fixtures/validate.js';
 import type { GoldSource } from '../domain/gold-types.js';
 import { startedAsCommand } from '../corpus/output-path.js';
 import { runEntry } from '../cli/entry.js';
+import { reportJson } from '../log/line.js';
 
 export interface TriageRunOptions {
   /** Defaults to the deterministic offline stub judge over the fixture taxonomy. */
@@ -162,8 +163,8 @@ async function main(): Promise<void> {
  * artifact is on disk under the gitignored `triage/` either way.
  */
 export function summariseForStdout(artifact: TriageArtifact): string {
-  if (artifact.gold_source === 'synthetic') return JSON.stringify(artifact, null, 2);
-  return JSON.stringify(
+  if (artifact.gold_source === 'synthetic') return reportJson(artifact);
+  return reportJson(
     {
       artifact: artifact.artifact,
       version: artifact.version,
@@ -172,8 +173,6 @@ export function summariseForStdout(artifact: TriageArtifact): string {
       cases_selected: artifact.cases_selected,
       selections: `withheld: ${String(artifact.selections.length)} selection(s) name real cases (DEC-18)`,
     },
-    null,
-    2,
   );
 }
 

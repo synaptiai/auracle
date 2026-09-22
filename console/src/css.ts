@@ -82,6 +82,8 @@ a:hover { color:var(--ink); text-decoration:underline; }
 .lbl { font-size:10px; letter-spacing:.09em; text-transform:uppercase; color:var(--dim); font-weight:500; }
 .chip { display:inline-flex; align-items:center; gap:5px; padding:2px 7px; border:1px solid var(--rule2);
   border-radius:3px; font-size:11px; font-family:var(--mono); color:var(--mut); white-space:nowrap; }
+.ctl { font-family:var(--mono); font-size:10px; color:var(--warn); border:1px solid var(--rule2);
+  border-radius:2px; padding:0 2px; margin:0 1px; unicode-bidi:isolate; }
 .dot { width:6px; height:6px; border-radius:50%; background:currentColor; flex:none; }
 .mut { color:var(--mut); }
 

@@ -27,6 +27,7 @@ import type { TriageArtifact } from './artifact.js';
 import { goldSetCases, runTriageJob, summariseForStdout } from './run.js';
 import { FIT_COUNT, REPORT_COUNT, goldCaseText } from '../domain/gold-types.js';
 import { loadGoldSet, loadTaxonomy } from '../fixtures/load.js';
+import { expectEscaped, HOSTILE } from '../test-support/raw-log.js';
 
 function tempDirUrl(): URL {
   return pathToFileURL(mkdtempSync(join(tmpdir(), 'auracle-triage-')));
@@ -256,6 +257,17 @@ describe('triage run', () => {
     expect(real).not.toContain('customer-domain.example');
     const synthetic = summariseForStdout(shape as never);
     expect(JSON.parse(synthetic)).toMatchObject({ gold_source: 'synthetic' });
+  });
+
+  // Issue #114. A selection's reason is a sentence the judge model wrote
+  // about a customer's message, so it can carry any character, and this is
+  // the report a person reads in a terminal.
+  it('prints the report with every raw character escaped, and it parses back', () => {
+    const shape = makeArtifactShape();
+    const selections = [{ ticket_id: 't-1', origin: 'report', reason: HOSTILE }];
+    const printed = summariseForStdout({ ...shape, selections } as never);
+    const carrier = expectEscaped([printed], HOSTILE);
+    expect(carrier).toEqual({ ...shape, selections });
   });
 
   it('records the provenance the caller declared', async () => {

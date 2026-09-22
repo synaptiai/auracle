@@ -63,6 +63,7 @@ import { TURN_CLOSING_STATUSES } from '../ledger/conversation.js';
 import { journalStep } from '../ledger/journal-write.js';
 import { unsnoozeExpired } from '../outcomes/snooze.js';
 import { PARKED_RUN_STATES, TERMINAL_RUN_STATE_NAMES } from '../ledger/run-state.js';
+import { logLine } from '../log/line.js';
 
 /**
  * The rebalance procedure DEC-27 charges as the cost of partitions. At each
@@ -111,7 +112,7 @@ export async function claimPartition(pool: Pool, partition: number): Promise<num
       // transport failed, so the cost is diagnostics and nothing else.
       await client.query('ROLLBACK').catch((rollbackError: unknown) => {
         console.error(
-          JSON.stringify({
+          logLine({
             event: 'rollback_failed',
             at: new Date().toISOString(),
             error: errorMessage(rollbackError),
@@ -360,7 +361,7 @@ async function abandonMessage(
     // reported rather than dropped.
     await client.query('ROLLBACK').catch((rollbackError: unknown) => {
       console.error(
-        JSON.stringify({
+        logLine({
           event: 'rollback_failed',
           at: new Date().toISOString(),
           error: errorMessage(rollbackError),
@@ -553,7 +554,7 @@ async function fileSendBackEnd(
   } catch (error) {
     await client.query('ROLLBACK').catch((rollbackError: unknown) => {
       console.error(
-        JSON.stringify({
+        logLine({
           event: 'rollback_failed',
           at: new Date().toISOString(),
           error: errorMessage(rollbackError),
@@ -678,7 +679,7 @@ export async function startSentBackAttempts(
     const ended = await endRejectedAttempts(deps.pool, options.partitions);
     if (ended.length > 0) {
       console.error(
-        JSON.stringify({
+        logLine({
           event: 'rejected_attempts_ended',
           at: new Date().toISOString(),
           count: ended.length,
@@ -687,7 +688,7 @@ export async function startSentBackAttempts(
     }
   } catch (error) {
     console.error(
-      JSON.stringify({
+      logLine({
         event: 'rejected_attempts_end_failed',
         at: new Date().toISOString(),
         error: errorMessage(error),
@@ -782,7 +783,7 @@ export async function startSentBackAttempts(
       const ended = await endWithoutAWalk(deps, turn, row.reached);
       if (ended !== null) {
         console.error(
-          JSON.stringify({
+          logLine({
             event: 'send_back_ended',
             at: new Date().toISOString(),
             runId: turn.sentBackRunId,
@@ -816,7 +817,7 @@ export async function startSentBackAttempts(
       if (outcome.outcome !== 'stale_epoch') started.push(outcome.runId);
     } catch (error) {
       console.error(
-        JSON.stringify({
+        logLine({
           event: 'send_back_attempt_failed',
           at: new Date().toISOString(),
           runId: turn.sentBackRunId,
@@ -905,7 +906,7 @@ export async function processQueuedTickets(
     returned = await unsnoozeExpired(deps.pool, options.partitions);
   } catch (error) {
     console.error(
-      JSON.stringify({
+      logLine({
         event: 'snoozes_return_failed',
         at: new Date().toISOString(),
         error: errorMessage(error),
@@ -914,7 +915,7 @@ export async function processQueuedTickets(
   }
   if (returned.length > 0) {
     console.error(
-      JSON.stringify({
+      logLine({
         event: 'snoozes_returned',
         at: new Date().toISOString(),
         count: returned.length,
@@ -1024,7 +1025,7 @@ export async function processQueuedTickets(
     started = await startSentBackAttempts(deps, options);
   } catch (error) {
     console.error(
-      JSON.stringify({
+      logLine({
         event: 'send_back_scan_failed',
         at: new Date().toISOString(),
         error: errorMessage(error),
@@ -1033,7 +1034,7 @@ export async function processQueuedTickets(
   }
   if (started.length > 0) {
     console.error(
-      JSON.stringify({
+      logLine({
         event: 'send_back_attempts_started',
         at: new Date().toISOString(),
         count: started.length,
@@ -1102,7 +1103,7 @@ export function startConsumer(
     for (const result of results) {
       if (result.outcome === 'error') {
         console.error(
-          JSON.stringify({ event: 'ticket_failed', at: new Date().toISOString(), ...result }),
+          logLine({ event: 'ticket_failed', at: new Date().toISOString(), ...result }),
         );
         continue;
       }
@@ -1139,7 +1140,7 @@ export function startConsumer(
         foundWork = await scanOnce();
       } catch (error) {
         console.error(
-          JSON.stringify({
+          logLine({
             event: 'scan_failed',
             at: new Date().toISOString(),
             error: errorMessage(error),
@@ -1192,7 +1193,7 @@ export function startConsumer(
   // few seconds of latency for an outage.
   void options.signal?.start(onArrival).catch((error: unknown) => {
     console.error(
-      JSON.stringify({
+      logLine({
         event: 'arrival_signal_unavailable',
         at: new Date().toISOString(),
         error: errorMessage(error),
@@ -1233,7 +1234,7 @@ export function startConsumer(
         ]);
         if (!released) {
           console.error(
-            JSON.stringify({
+            logLine({
               event: 'arrival_signal_stop_timeout',
               at: new Date().toISOString(),
               budgetMs: SIGNAL_STOP_BUDGET_MS,

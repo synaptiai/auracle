@@ -14,7 +14,7 @@
 // operator should see; a rendered page is a claim about what the ledger
 // holds, and the two are not the same document. Every omission of that kind
 // is named in `docs/operations.md`.
-import { escapeHtml, initialsOf, isReadableTime, renderGates, renderMetricValue } from './render.js';
+import { escapeHtml, initialsOf, isolated, isReadableTime, renderGates, renderMetricValue } from './render.js';
 // The engine's own record of which rules reach which gate. Re-deriving that
 // order here would be a second copy of it, free to drift from the one the
 // policy engine runs.
@@ -216,9 +216,9 @@ function themeLink(shell: Shell): string {
 function reviewerBlock(reviewer: string): string {
   return [
     '<div class="reviewer">',
-    `<span class="avatar m">${escapeHtml(initialsOf(reviewer))}</span>`,
+    `<span class="avatar m">${isolated(initialsOf(reviewer))}</span>`,
     '<div>',
-    `<div class="rname">${escapeHtml(reviewer)}</div>`,
+    `<div class="rname">${isolated(reviewer)}</div>`,
     '<div class="rsub">on the reviewer roster</div>',
     '</div>',
     '</div>',
@@ -286,8 +286,8 @@ export function page(title: string, body: string, shell: Shell): string {
 function head(title: string, says: string, chips: readonly string[] = []): string {
   return [
     '<div class="top">',
-    `<div><div class="hdt">${escapeHtml(title)}</div>`,
-    `<div class="hds">${escapeHtml(says)}</div></div>`,
+    `<div><div class="hdt">${isolated(title)}</div>`,
+    `<div class="hds">${isolated(says)}</div></div>`,
     chips.length === 0 ? '' : `<div class="hol">${chips.join('')}</div>`,
     '</div>',
   ].join('');
@@ -306,7 +306,7 @@ type Token = 'ok' | 'warn' | 'hot' | 'crit' | 'accent' | 'dim' | 'mut';
 
 function chip(text: string, token?: Token): string {
   const style = token === undefined ? '' : ` style="color:var(--${token})"`;
-  return `<span class="chip"${style}>${escapeHtml(text)}</span>`;
+  return `<span class="chip"${style}>${isolated(text)}</span>`;
 }
 
 /**
@@ -416,18 +416,18 @@ export function renderRuns(view: RunsPage): string {
     '<tr>',
     `<td class="m"><a href="/run/${encodeURIComponent(run.runId)}">`,
     `${escapeHtml(run.runId.slice(0, 8))}</a></td>`,
-    `<td class="m">${escapeHtml(run.ticketId)}</td>`,
+    `<td class="m">${isolated(run.ticketId)}</td>`,
     // The column this table was ordered by and never showed. "Newest first"
     // is a claim about time, and nothing on the page said what time.
     `<td class="m">${escapeHtml(whenSays(run.createdAt))}`
       + `<span class="dim"> · ${escapeHtml(ageSays(run.createdAt))}</span></td>`,
     `<td><span class="st">${escapeHtml(run.state)}</span></td>`,
-    `<td class="m">${escapeHtml(run.intentId ?? '—')}</td>`,
+    `<td class="m">${isolated(run.intentId ?? '—')}</td>`,
     // Both reasons, because they answer different questions and only one of
     // them can be non-null for any given run.
     // The escalation reason, or the gate rule for a run that has not
     // escalated. Vetted, like every other place this field is drawn.
-    `<td class="m">${escapeHtml(run.reason ?? gateRuleOrDash(run.gateReason))}</td>`,
+    `<td class="m">${isolated(run.reason ?? gateRuleOrDash(run.gateReason))}</td>`,
     // Kept. A backdated history writes runs in the same states a produced
     // one reaches, and the pin is what tells an operator pointed at a demo
     // ledger that they are not working real customer traffic.
@@ -714,7 +714,7 @@ function timeline(steps: readonly StepView[]): string {
         ? '<div class="mut" style="font-size:11.5px">A result was recorded and could not be read.</div>'
         : step.says === null
           ? ''
-          : `<div class="mut" style="font-size:11.5px">${escapeHtml(step.says)}</div>`,
+          : `<div class="mut" style="font-size:11.5px">${isolated(step.says)}</div>`,
     '</div></div>',
   ].join('')).join('')}</div>`;
 }
@@ -743,10 +743,10 @@ function evidence(documents: readonly DocumentView[] | null): string {
       doc.title === null
         // The journal holds no foreign key to `document`, so an id can point
         // at a row that is gone. Saying so beats printing an id as a title.
-        ? `<span class="mut">${escapeHtml(doc.docId)} — no such document today</span>`
-        : `<span>${escapeHtml(doc.title)}</span>`,
-      `<span class="m" style="font-size:11px; color:var(--mut)">${escapeHtml(doc.kind ?? '—')}</span>`,
-      `<span class="m" style="font-size:11px; color:var(--mut)">${escapeHtml(doc.owner ?? '—')}</span>`,
+        ? `<span class="mut">${isolated(doc.docId)} — no such document today</span>`
+        : `<span>${isolated(doc.title)}</span>`,
+      `<span class="m" style="font-size:11px; color:var(--mut)">${isolated(doc.kind ?? '—')}</span>`,
+      `<span class="m" style="font-size:11px; color:var(--mut)">${isolated(doc.owner ?? '—')}</span>`,
       '</div>',
     ].join('')),
   ].join('');
@@ -803,7 +803,7 @@ function evidenceBlock(
       // A draft with no partition is a run journalled before the sentences
       // were written. The reply is shown whole, and the citations are not
       // available for it — which is a different thing from having none.
-      : `<div class="prose">${escapeHtml(view.draftBody)}</div>`
+      : `<div class="prose">${isolated(view.draftBody)}</div>`
         + '<p class="discl">This run recorded no claim list, so no sentence here'
         + ' carries its source. The reply is shown as it was drafted.</p>'
     // A recorded list with nothing in it. Rare and real, and it is not a
@@ -881,7 +881,7 @@ function evidenceBlock(
           : chip(`helpdesk draft ${draftId}`),
     '</header><div class="body">',
     sent
-      ? `<div class="prose">${escapeHtml(sentText)}</div>`
+      ? `<div class="prose">${isolated(sentText)}</div>`
       : !editable || edit === null
         ? drafted
         : [
@@ -960,8 +960,8 @@ function callouts(
     const title = sources.get(claim.docId)?.title ?? claim.docId;
     const writing = edit.writing === claim.text;
     return [
-      `<div class="callout"><p>Sentence ${claim.index + 1} cites ${escapeHtml(claim.docId)}`
-        + ` (${escapeHtml(title)}), which does not say this — and that document may have changed`
+      `<div class="callout"><p>Sentence ${claim.index + 1} cites ${isolated(claim.docId)}`
+        + ` (${isolated(title)}), which does not say this — and that document may have changed`
         + ' since this run read it.</p>',
       `<form method="post" action="/edit${escapeHtml(filtersQuery(edit.rule, edit.product))}">`,
       editFormFields(edit.runId, edit.shown, 'replace', claim.text),
@@ -1056,7 +1056,7 @@ function requestBlock(request: RequestView | null): string {
     // and was drawn as text, which is the blank the name exists to prevent.
     request.absence !== null || request.bodyText === null
       ? `<p class="absent">${escapeHtml(absenceSays(MESSAGE_ABSENCE, request.absence ?? 'not_retained'))}</p>`
-      : `<div class="prose">${escapeHtml(request.bodyText)}</div>`,
+      : `<div class="prose">${isolated(request.bodyText)}</div>`,
     // A later turn is context this does not show, so the whole thread is one
     // click away rather than assumed to be unnecessary.
     `<p class="discl">Read the whole conversation <a href="/conversation/${
@@ -1082,7 +1082,7 @@ function replyProse(
     // no verdict mark. It is still part of the reply and still shown, because
     // the customer reads it.
     if (sentence.docId === null || sentence.claimIndex === null) {
-      return `<span class="courtesy">${escapeHtml(sentence.text)}</span>${verdictWord('courtesy')}`;
+      return `<span class="courtesy">${isolated(sentence.text)}</span>${verdictWord('courtesy')}`;
     }
     const mark = sentence.supported === false
       ? ' unsupported'
@@ -1092,7 +1092,7 @@ function replyProse(
     return [
       `<span class="claim${mark}" id="claim-${escapeHtml(String(sentence.claimIndex))}"`,
       ` data-source="${escapeHtml(sentence.docId)}">`,
-      escapeHtml(sentence.text),
+      isolated(sentence.text),
       `<a class="cite" href="#src-${escapeHtml(sentence.docId)}"`,
       ` title="${escapeHtml(title)}">${escapeHtml(String(sentence.claimIndex + 1))}</a>`,
       verdictWord(sentence.supported === true ? 'accepted' : sentence.supported === false ? 'refused' : 'unread'),
@@ -1212,7 +1212,7 @@ function sourceList(
       const doc = sources.get(docId);
       return [
         `<div class="src" id="src-${escapeHtml(docId)}" data-source="${escapeHtml(docId)}">`,
-        `<a class="m" href="/document/${encodeURIComponent(docId)}">${escapeHtml(docId)}</a>`,
+        `<a class="m" href="/document/${encodeURIComponent(docId)}">${isolated(docId)}</a>`,
         ' ',
         doc === undefined
           ? retrieved === null
@@ -1222,7 +1222,7 @@ function sourceList(
             : '<span class="mut" style="color:var(--hot)">not among the documents this run retrieved</span>'
           : doc.title === null
             ? '<span class="mut">no such document today</span>'
-            : `<span>${escapeHtml(doc.title)}</span>`,
+            : `<span>${isolated(doc.title)}</span>`,
         ' ',
         bodyFlag(doc),
         '</div>',
@@ -1262,15 +1262,15 @@ export function renderRunDetail(run: RunView): string {
     '<div class="wrap">',
     '<div class="hd"><div>',
     `<div class="m" style="font-size:17px; font-weight:600">${escapeHtml(run.runId)}</div>`,
-    `<div class="hds">ticket ${escapeHtml(run.ticketId)}</div>`,
+    `<div class="hds">ticket ${isolated(run.ticketId)}</div>`,
     '</div>',
     '<dl class="kv">',
-    `<dt>intent</dt><dd>${escapeHtml(run.intentId ?? '—')}</dd>`,
-    `<dt>decision</dt><dd>${escapeHtml(run.decision ?? '—')}</dd>`,
-    `<dt>policy reason</dt><dd>${escapeHtml(run.policyReason ?? '—')}</dd>`,
-    `<dt>escalation</dt><dd>${escapeHtml(run.reason ?? '—')}</dd>`,
+    `<dt>intent</dt><dd>${isolated(run.intentId ?? '—')}</dd>`,
+    `<dt>decision</dt><dd>${isolated(run.decision ?? '—')}</dd>`,
+    `<dt>policy reason</dt><dd>${isolated(run.policyReason ?? '—')}</dd>`,
+    `<dt>escalation</dt><dd>${isolated(run.reason ?? '—')}</dd>`,
     `<dt>steps</dt><dd>${escapeHtml(String(run.stepsUsed))}</dd>`,
-    `<dt>draft</dt><dd>${escapeHtml(run.draftExternalId ?? '—')}</dd>`,
+    `<dt>draft</dt><dd>${isolated(run.draftExternalId ?? '—')}</dd>`,
     '</dl></div>',
     '<div class="cols">',
     '<div class="card"><header>',
@@ -1787,7 +1787,7 @@ export function renderApprovals(
     const hold = heldByAnother(runId);
     return hold === null
       ? ''
-      : `held by ${escapeHtml(hold.reviewer)} · ${escapeHtml(ageSays(hold.takenAt))} · `;
+      : `held by ${isolated(hold.reviewer)} · ${escapeHtml(ageSays(hold.takenAt))} · `;
   };
   const row = (run: RunDetail, pickable = false): string => [
     // DEC-51: the batch picks cases from this group. The box rides beside the
@@ -1799,7 +1799,7 @@ export function renderApprovals(
       : '',
     `<a class="item" href="${escapeHtml(caseHref(run.runId, keptRule, keptProduct))}">`,
     '<div class="itop">',
-    `<span class="m isubj">${escapeHtml(run.ticketId)}</span>`,
+    `<span class="m isubj">${isolated(run.ticketId)}</span>`,
     // How long it has waited, on the row. The header says the oldest is on
     // this list and nothing on it said how old anything was.
     `<span class="age">${escapeHtml(ageSays(run.createdAt))}</span>`,
@@ -1809,7 +1809,7 @@ export function renderApprovals(
     // construction, so the queue read "no reason journalled" 161 times.
     `<div class="m imeta">`,
     `${heldSays(run.runId)}`,
-    `${escapeHtml(run.intentId ?? 'intent unrecorded')}`,
+    `${isolated(run.intentId ?? 'intent unrecorded')}`,
     // DEC-47: which product this case is for, said on the row. A reviewer
     // reading a queue ordered by their own products has to see why a case
     // sits where it does, and `no product` is a fact rather than a blank.
@@ -1975,16 +1975,16 @@ export function renderConfirm(
         : 'sends each one at once: nothing is held here, so there is no undo.') + '</p>',
     ...cases.map((one) => [
       '<div class="card"><header>',
-      `<span class="lbl">${escapeHtml(one.ticketId)}</span>`,
+      `<span class="lbl">${isolated(one.ticketId)}</span>`,
       `<span class="chip">run ${escapeHtml(one.runId.slice(0, 8))}</span>`,
       '</header><div class="body">',
-      `<div class="prose">${escapeHtml(one.text)}</div>`,
+      `<div class="prose">${isolated(one.text)}</div>`,
       `<input type="hidden" name="runId" value="${escapeHtml(one.runId)}">`,
       `<input type="hidden" name="shown" value="${escapeHtml(one.shown)}">`,
       '</div></div>',
     ].join('')),
     ...dropped.map((one) => '<div class="callout"><p>'
-      + `${escapeHtml(one.runId.slice(0, 8))}: ${escapeHtml(one.says)}</p></div>`),
+      + `${isolated(one.runId.slice(0, 8))}: ${isolated(one.says)}</p></div>`),
     '<div class="actionbar">'
       + `<button class="btn primary" type="submit">Confirm ${
         escapeHtml(String(cases.length))} · send each reply</button>`
@@ -2576,9 +2576,9 @@ function copyChoice(
     '<p>Both texts are below. Choose the one to send: the ledger sends the reply it holds,'
       + ' so choosing the helpdesk copy saves it as the reply first.</p>',
     '<span class="lbl">The reply the ledger holds</span>',
-    `<div class="prose">${escapeHtml(reply ?? 'the run holds no reply text')}</div>`,
+    `<div class="prose">${isolated(reply ?? 'the run holds no reply text')}</div>`,
     '<span class="lbl">The copy the helpdesk holds</span>',
-    `<div class="prose">${escapeHtml(copy.text)}</div>`,
+    `<div class="prose">${isolated(copy.text)}</div>`,
     `<form method="post" action="/edit${filters}">`,
     `<input type="hidden" name="runId" value="${escapeHtml(runId)}">`,
     `<input type="hidden" name="shown" value="${escapeHtml(shown)}">`,
@@ -2657,13 +2657,13 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       + `<a class="back" href="${escapeHtml(queueHref(options.rule, options.product))}">← Needs a person</a>`
       + '<span class="backkey">esc returns to the queue</span></div>',
     '<div class="casetitle">',
-    `<span class="m casesubj">${escapeHtml(view.ticketId)}</span>`,
+    `<span class="m casesubj">${isolated(view.ticketId)}</span>`,
     chip(rule === null ? 'no rule journalled' : gateRuleSays(rule), 'hot'),
     chip(view.riskTier === null ? 'tier unrecorded' : `${view.riskTier} risk`),
     chip(view.state, waiting ? 'accent' : 'dim'),
     '</div>',
     '<div class="m casemeta">',
-    escapeHtml([
+    isolated([
       view.request === null ? 'no turn' : `turn ${view.request.turnNumber}`,
       view.intentId ?? 'intent unrecorded',
       // An age says how long a case has waited, which is true only while it
@@ -2965,11 +2965,11 @@ function holdBar(view: CaseView, options: CaseOptions): string {
   const readable = options.hold.kind !== 'unread' || options.taken === 'not_waiting';
   const answered = options.taken === '' || !readable
     ? ''
-    : `<p class="discl">${escapeHtml(takeSays(
+    : `<p class="discl">${takeSays(
       options.taken,
       options.hold.kind === 'unread' ? null : options.hold.hold,
       view.state,
-    ))}</p>`;
+    )}</p>`;
   // A case nobody can take answers nothing about a hold — but it still owes
   // the reviewer the answer to the take they just posted. `not_waiting` and
   // `unknown_run` are exactly the outcomes a case that left the queue
@@ -3011,7 +3011,7 @@ function holdBar(view: CaseView, options: CaseOptions): string {
       + ` value="${escapeHtml(options.handoverTo)}">`
       + `<button class="btn" type="submit">Hand it over</button></form>${said}</div>`;
   }
-  return `<div class="holdbar"><p class="discl">Held by ${escapeHtml(hold.reviewer)}`
+  return `<div class="holdbar"><p class="discl">Held by ${isolated(hold.reviewer)}`
     + ` · ${escapeHtml(remainingSays(hold.remainingMs))}.</p>`
     + `<form method="post" action="/take${filters}">${field}`
     + '<input type="hidden" name="over" value="1">'
@@ -3057,11 +3057,14 @@ function snoozeForm(view: CaseView, options: CaseOptions): string {
  * The read finds nobody when the hold moved again, or lapsed in the instant
  * between the refusal and this page. The sentence says that, rather than
  * naming a holder who is gone or claiming a holder at all.
+ *
+ * Markup, escaped here: the holder's name is a value from outside, and it is
+ * isolated inside the sentence the way every other one is.
  */
 function takeSays(outcome: string, hold: CaseHold | null, state: string): string {
   if (outcome === 'held_by_other' || outcome === 'not_yours') {
-    if (hold === null) return 'The hold moved, and nobody holds this case now.';
-    if (!hold.mine) return `${hold.reviewer} holds this case now. Take it over to move it to you.`;
+    if (hold === null) return escapeHtml('The hold moved, and nobody holds this case now.');
+    if (!hold.mine) return `${isolated(hold.reviewer)} holds this case now. Take it over to move it to you.`;
   }
   // `Object.hasOwn`, never a bare read, for the reason `renderOutcome` gives:
   // a plain object literal inherits from `Object.prototype`, so `?taken=
@@ -3075,7 +3078,7 @@ function takeSays(outcome: string, hold: CaseHold | null, state: string): string
   // taken` on a page that reloaded after the hold lapsed drew "You hold this
   // case now" beside "Nobody holds this case", and a link can carry any of
   // these values — the approval outcome is checked the same way.
-  return takenFits(outcome, hold, state) ? known : UNKNOWN_TAKE;
+  return escapeHtml(takenFits(outcome, hold, state) ? known : UNKNOWN_TAKE);
 }
 
 /** What an outcome this console does not know is answered with. */
@@ -3829,8 +3832,8 @@ function payloadBlock(payload: Readonly<Record<string, unknown>> | null): string
     '<span class="lbl">What approving this performs</span>',
     chip('the payload the run journalled'),
     '</header><div class="body"><dl class="kv">',
-    ...rows.map(([key, value]) => `<dt>${escapeHtml(key)}</dt>`
-      + `<dd>${escapeHtml(typeof value === 'string' ? value : JSON.stringify(value) ?? 'null')}</dd>`),
+    ...rows.map(([key, value]) => `<dt>${isolated(key)}</dt>`
+      + `<dd>${isolated(typeof value === 'string' ? value : JSON.stringify(value) ?? 'null')}</dd>`),
     '</dl></div></div>',
   ].join('');
 }
@@ -3964,7 +3967,7 @@ export function renderConversation(thread: ThreadView): string {
   return [
     '<div class="casehd">',
     '<div class="casetitle">',
-    `<span class="m casesubj">${escapeHtml(thread.primaryTicketId)}</span>`,
+    `<span class="m casesubj">${isolated(thread.primaryTicketId)}</span>`,
     chip(thread.state, thread.state === 'open' ? 'accent' : 'dim'),
     '</div>',
     '<div class="m casemeta">',
@@ -4118,7 +4121,7 @@ function turnBlock(turn: TurnView): string {
     `<span class="lbl">turn ${escapeHtml(String(turn.turnNumber))}</span>`,
     `<span class="m turnfact">${escapeHtml(whenSays(turn.createdAt))}</span>`,
     chip(outcome.says, outcome.token),
-    `<span class="m turnfact">${escapeHtml(turn.ticketId)}</span>`,
+    `<span class="m turnfact">${isolated(turn.ticketId)}</span>`,
     turn.runId === null
       ? ''
       // A waiting turn opens as a case, where it can be approved. Any other
@@ -4142,7 +4145,7 @@ function turnBlock(turn: TurnView): string {
     // The absence decides here too, for the reason above.
     turn.messageAbsence !== null || turn.bodyText === null
       ? `<p class="absent">${escapeHtml(absenceSays(MESSAGE_ABSENCE, turn.messageAbsence ?? 'not_retained'))}</p>`
-      : `<div class="prose">${escapeHtml(turn.bodyText)}</div>`,
+      : `<div class="prose">${isolated(turn.bodyText)}</div>`,
     '</div>',
     '<div class="said">',
     `<div class="who">${escapeHtml(replyHeading(turn))}</div>`,
@@ -4154,7 +4157,7 @@ function turnBlock(turn: TurnView): string {
       // draws, so the blank is named.
       : turn.replyText.trim() === ''
         ? '<p class="absent">a person approved a reply that holds no text</p>'
-        : `<div class="prose">${escapeHtml(turn.replyText)}</div>`,
+        : `<div class="prose">${isolated(turn.replyText)}</div>`,
     '</div>',
     '</div>',
     '</div>',
@@ -4186,8 +4189,8 @@ export function renderDocument(doc: DocumentPage): string {
     ]),
     '<div class="wrap">',
     '<div class="hd"><div>',
-    `<div style="font-size:17px; font-weight:600">${escapeHtml(doc.title)}</div>`,
-    `<div class="hds m">${escapeHtml(doc.docId)}</div>`,
+    `<div style="font-size:17px; font-weight:600">${isolated(doc.title)}</div>`,
+    `<div class="hds m">${isolated(doc.docId)}</div>`,
     '</div></div>',
     '<div class="card"><header>',
     '<span class="lbl">What this document says today</span>',
@@ -4195,7 +4198,7 @@ export function renderDocument(doc: DocumentPage): string {
     // reindex, and a run detail says whether the text moved since it read it.
     chip('rewritten in place on reindex'),
     '</header><div class="body">',
-    `<div class="prose">${escapeHtml(doc.body)}</div>`,
+    `<div class="prose">${isolated(doc.body)}</div>`,
     '</div></div>',
     '</div>',
   ].join('');

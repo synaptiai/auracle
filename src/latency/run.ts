@@ -29,6 +29,7 @@ import type { LatencyArtifact } from './artifact.js';
 import { readLatency } from './query.js';
 import type { LatencyWindow } from './query.js';
 import { runEntry } from '../cli/entry.js';
+import { terminalText } from '../cli/terminal-text.js';
 import { humanMs } from './format.js';
 
 export interface LatencyJobOptions {
@@ -158,7 +159,7 @@ async function main(): Promise<void> {
   // client to this one, and printing it buries the single useful line under
   // fifty lines of connection state.
   pool.on('error', (error: Error & { code?: string }) => {
-    console.error(`latency: database connection lost: ${error.message}`
+    console.error(`latency: database connection lost: ${terminalText(error.message)}`
       + `${error.code === undefined ? '' : ` (${error.code})`}`);
     process.exitCode = 1;
   });

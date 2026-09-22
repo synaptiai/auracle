@@ -26,6 +26,7 @@ import type { Pool } from 'pg';
 
 import { errorMessage } from '../errors.js';
 import { journalStep } from '../ledger/journal-write.js';
+import { logLine } from '../log/line.js';
 
 /**
  * The step id the approval writes its outbox record under. The undo names it
@@ -269,7 +270,7 @@ export async function undoApproval(
       await client.query('ROLLBACK').catch((rollbackError: unknown) => {
         rolledBack = false;
         console.error(
-          JSON.stringify({
+          logLine({
             event: 'rollback_failed',
             at: new Date().toISOString(),
             runId,
@@ -286,7 +287,7 @@ export async function undoApproval(
     await client.query('ROLLBACK').catch((rollbackError: unknown) => {
       rolledBack = false;
       console.error(
-        JSON.stringify({
+        logLine({
           event: 'rollback_failed',
           at: new Date().toISOString(),
           runId,

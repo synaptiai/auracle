@@ -21,6 +21,7 @@ import { errorMessage } from '../errors.js';
 import { lockTurnAttempt, readSavedReply, recordSavedReply } from '../ledger/conversation.js';
 import { replyDigest } from './shown.js';
 import { isStorableText } from '../ledger/storable-text.js';
+import { logLine } from '../log/line.js';
 
 /** What one save did, or why it did nothing. */
 export type SaveOutcome =
@@ -150,7 +151,7 @@ export async function saveReply(
     // in a state nobody read — the line is what says so.
     await client.query('ROLLBACK').catch((rollbackError: unknown) => {
       console.error(
-        JSON.stringify({
+        logLine({
           event: 'rollback_failed',
           at: new Date().toISOString(),
           runId,

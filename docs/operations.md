@@ -807,6 +807,34 @@ describe your deployment and nobody else's. Never commit one.
 
 ## 7. Observability
 
+### How a log line holds a value from outside
+
+Every process writes each structured log line as one JSON object. Some values
+come from outside, such as a request, an inbound message or an adapter's error.
+Such a value can hold a character that a log reader treats as a line break. It
+can also hold one that changes the order a person sees.
+
+JSON leaves those characters raw, so every process writes each one as a JSON
+escape. They are the C1 controls, the Unicode line and paragraph separators,
+and the format characters, which include the bidi controls. So `\u2028` in a
+line is a character the logged value holds. It is not damage to the log. A JSON
+reader returns the value unchanged.
+
+A command that prints a report for a person escapes the same characters. The
+approval outcome, the escalations list and table, and the triage, replay and
+gold reports do this. The fault a command prints when it fails does too.
+
+A command also prints plain text: the escalations table, a fault or warning,
+and the approval refusal. That text has one more rule. A backslash prints as
+two backslashes. So `\u202e` there is a character the
+value holds. `\\u202e` is the six characters a person typed.
+
+The console draws a page, not a line, so it isolates such a value instead. A
+value that holds a bidi control or a right-to-left letter is drawn inside a
+`<bdi>` element. A run control or a paragraph separator shows as its name,
+such as `U+202E`. So a value cannot reverse the text after it. The reply editor, a page title and a form field hold the text as it is.
+There a tag would be text, and it would be saved with the reply.
+
 ### Which gate numbers a process runs on
 
 Every process that evaluates policy resolves its gate numbers once at startup.
@@ -1772,6 +1800,10 @@ That second choice carries the digest of the copy the page drew. A copy that
 changed since refuses again. The command line takes the same decision, with
 `--read-back --accept-copy-edit <digest>`. Its refusal prints the digest. A
 copy a person cleared holds no text, so the case draws no choice.
+
+The command line prints both texts with each hidden character as an escape.
+It also prints each backslash twice, so `C:\files` in a reply appears as
+`C:\\files`. The text the relay sends holds one backslash.
 
 The approval reads the copy once, before its transaction opens. An edit that
 lands after that read is not seen by anything. The relay posts what the outbox

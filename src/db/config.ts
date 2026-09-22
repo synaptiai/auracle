@@ -1,6 +1,8 @@
 import { Pool } from 'pg';
 
 import { errorMessage } from '../errors.js';
+import { terminalText } from '../cli/terminal-text.js';
+import { logLine } from '../log/line.js';
 
 // Mirrors the credentials in docker-compose.yml. Compose cannot export
 // environment variables to the host shell, so this fallback is the default.
@@ -74,7 +76,7 @@ export async function tryConnect(): Promise<Pool | null> {
     // The caller only learns "no pool", which reads the same for a database
     // that is down, a wrong password and an SSL requirement.
     console.error(
-      JSON.stringify({
+      logLine({
         event: 'db_connect_failed',
         error: errorMessage(error),
       }),
@@ -102,7 +104,7 @@ export async function tryConnect(): Promise<Pool | null> {
  */
 export async function closeLedger(pool: Pool, jobName: string): Promise<void> {
   await pool.end().catch((error: unknown) => {
-    console.error(`${jobName}: the connection pool did not close cleanly: ${errorMessage(error)}`);
+    console.error(`${jobName}: the connection pool did not close cleanly: ${terminalText(errorMessage(error))}`);
     process.exitCode = 1;
   });
 }

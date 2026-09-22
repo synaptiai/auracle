@@ -35,6 +35,7 @@
 import { Client } from 'pg';
 
 import { errorMessage } from '../errors.js';
+import { logLine } from '../log/line.js';
 
 /**
  * The channel name, written once so the emitter and the listener cannot
@@ -142,7 +143,7 @@ export function pgArrivalSignal(connectionString: string): ArrivalSignal {
     next.on('error', (error) => {
       if (mine !== generation) return;
       console.error(
-        JSON.stringify({
+        logLine({
           event: 'arrival_signal_lost',
           at: new Date().toISOString(),
           error: errorMessage(error),
@@ -173,7 +174,7 @@ export function pgArrivalSignal(connectionString: string): ArrivalSignal {
         // enforced here rather than assumed, because the cost of the
         // assumption being wrong is the whole daemon.
         console.error(
-          JSON.stringify({
+          logLine({
             event: 'arrival_wake_failed',
             at: new Date().toISOString(),
             error: errorMessage(error),
@@ -243,7 +244,7 @@ export function pgArrivalSignal(connectionString: string): ArrivalSignal {
         // otherwise log the same failure twice.
         if (mine === generation) {
           console.error(
-            JSON.stringify({
+            logLine({
               event: 'arrival_signal_lost',
               at: new Date().toISOString(),
               error: errorMessage(error),
@@ -274,7 +275,7 @@ export function pgArrivalSignal(connectionString: string): ArrivalSignal {
         // its own retry: the path that establishes the listener and the
         // path that re-establishes it are the same path.
         console.error(
-          JSON.stringify({
+          logLine({
             event: 'arrival_signal_lost',
             at: new Date().toISOString(),
             error: errorMessage(error),

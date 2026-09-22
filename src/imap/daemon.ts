@@ -24,6 +24,7 @@ import type { IntakeHandler } from '../ingress/types.js';
 
 import type { ImapMailboxFetcher } from './fetcher.js';
 import { errorMessage } from '../errors.js';
+import { logLine } from '../log/line.js';
 
 /** One structured log line, emitted as a single JSON object. */
 export type ImapDaemonLogEntry =
@@ -101,7 +102,7 @@ export function startImapDaemon(options: ImapDaemonOptions): ImapDaemon {
   const log =
     options.logger ??
     ((entry: ImapDaemonLogEntry): void => {
-      console.log(JSON.stringify(entry));
+      console.log(logLine(entry));
     });
 
   const poller = new ImapPoller({

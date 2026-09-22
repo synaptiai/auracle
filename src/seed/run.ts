@@ -21,6 +21,7 @@ import { planHistory } from './plan.js';
 import { writeHistory } from './write.js';
 import { runEntry } from '../cli/entry.js';
 import { errorMessage } from '../errors.js';
+import { terminalText } from '../cli/terminal-text.js';
 import { lastCompleteDay } from '../time/day.js';
 
 /** 'Arca', the same constant `scripts/generate-fixtures.mjs` uses. */
@@ -92,7 +93,7 @@ async function main(): Promise<void> {
   try {
     args = parseArgs(process.argv.slice(2), lastCompleteDay(new Date()));
   } catch (error) {
-    console.error(`seed-history: ${errorMessage(error)}`);
+    console.error(`seed-history: ${terminalText(errorMessage(error))}`);
     process.exitCode = 1;
     return;
   }
@@ -102,7 +103,7 @@ async function main(): Promise<void> {
   // whichever database happened to answer.
   const pool = new Pool({ connectionString: requireDbUrl('the traffic seeder'), max: 4 });
   pool.on('error', (error: Error) => {
-    console.error(`seed-history: database connection lost: ${error.message}`);
+    console.error(`seed-history: database connection lost: ${terminalText(error.message)}`);
     process.exitCode = 1;
   });
   try {
