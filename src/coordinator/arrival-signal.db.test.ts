@@ -27,22 +27,49 @@ afterAll(async () => {
 });
 
 /**
- * Waits until a backend is listening on the arrival channel again.
+ * The sessions listening on the arrival channel in this file's database.
  *
- * `pg_listening_channels()` reads the calling session only, so the check goes
- * through `pg_stat_activity`: the listener's session sits idle after its
- * LISTEN, and that statement is the last one it ran.
+ * `pg_listening_channels()` reads the calling session only, so this goes
+ * through `pg_stat_activity`. A listener's session sits idle after its
+ * LISTEN, and that statement is the last one it ran. Idle, because a session
+ * still running its LISTEN has not registered yet, and a notification sent
+ * then reaches nobody. The database, because other files run in parallel on
+ * the same server.
  */
-async function awaitListener(): Promise<void> {
+async function listeners(): Promise<number[]> {
+  const { rows } = await pool.query<{ pid: number }>(
+    `SELECT pid FROM pg_stat_activity
+      WHERE datname = current_database() AND query = $1 AND state = 'idle'
+        AND pid <> pg_backend_pid()`,
+    [`LISTEN ${ARRIVAL_CHANNEL}`],
+  );
+  return rows.map((row) => row.pid);
+}
+
+/**
+ * Waits until a session other than `old` listens, and `old` itself is gone.
+ *
+ * Issue #118. `pg_terminate_backend` returns once the signal is sent, not
+ * once the backend has exited, so the terminated session can still be listed
+ * as listening. A wait that took any listening session could return on it at
+ * once, the ticket went out before the new listener existed, and the
+ * notification reached nobody. The wait names the session it is waiting for.
+ */
+async function awaitNewListener(old: number): Promise<number> {
   const deadline = Date.now() + 20_000;
   for (;;) {
-    const { rows } = await pool.query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE query = $1 AND pid <> pg_backend_pid()`,
-      [`LISTEN ${ARRIVAL_CHANNEL}`],
-    );
-    if ((rows[0]?.n ?? 0) > 0) return;
-    if (Date.now() >= deadline) throw new Error('the listener did not come back in 20 s');
+    const found = await listeners();
+    const gone = (await pool.query('SELECT 1 FROM pg_stat_activity WHERE pid = $1', [old])).rowCount === 0;
+    const fresh = found.find((pid) => pid !== old);
+    if (gone && fresh !== undefined) return fresh;
+    if (Date.now() >= deadline) {
+      // Two causes with two owners: a backend the server never let go, or
+      // a reconnect that never listened again. The message says which.
+      throw new Error(
+        `no new listener came back in 20 s: the terminated session ${old} `
+          + `${gone ? 'is gone' : 'is still listed'}, listening now ${JSON.stringify(found)}`,
+      );
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
@@ -189,16 +216,18 @@ describe('the arrival signal', () => {
     const signal = pgArrivalSignal(dbUrl());
     await signal.start((partition) => seen.push(partition));
     try {
-      await pool.query(
-        `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-          WHERE query LIKE 'LISTEN %' AND pid <> pg_backend_pid()`,
-      );
+      // The signal's own session, and only it: a terminate by query text
+      // reached every listener on the server.
+      const [old, ...others] = await listeners();
+      expect(old).toBeDefined();
+      expect(others).toEqual([]);
+      await pool.query('SELECT pg_terminate_backend($1)', [old]);
       // Wait for the condition, never for a duration. The backoff is 1000
       // to 2000 ms plus a dial, an authentication and a LISTEN, so a fixed
       // sleep here is the margin pattern this branch already rejected twice.
       // A notification delivered before the listener is back reaches nobody
       // and nothing retries it, so the case would fail on working code.
-      await awaitListener();
+      await awaitNewListener(old!);
       await enqueueTicket(
         pool,
         { ticketId: randomUUID(), messageId: randomUUID(), ticketText: 'a synthetic ticket' },
