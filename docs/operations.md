@@ -235,8 +235,8 @@ The consumer reads this configuration:
 | `PROMPT_VER` | Prompt version pin (DEC-26). | `consumer-prompt-v1` |
 | `ACTION_CLASS` | Action class each run executes. | `route_ticket` |
 | `ACTION_DELIVERY` | Delivery rule: `at_most_once` or `at_least_once`. | `at_most_once` |
-| `ACTION_IS_CUSTOMER_VISIBLE` | `true` gates every action as a customer reply (DEC-12). | `false` |
-| `DISCLOSURE_TEXT` | Disclosure on gated replies (DEC-14). Required when `ACTION_IS_CUSTOMER_VISIBLE=true`. Startup fails fast without it. | `This reply was drafted by an automated assistant and reviewed by a person.` |
+| `ACTION_IS_CUSTOMER_VISIBLE` | `true` gates every action as a customer reply (DEC-12). It must be `true` for `customer_reply` and `false` for every other class. Startup refuses any other pairing. | `false` |
+| `DISCLOSURE_TEXT` | Disclosure on gated replies (DEC-14). Required when `ACTION_IS_CUSTOMER_VISIBLE=true`. Startup fails fast without it. A blank value counts as unset: a visible profile refuses it, and a hidden one takes the default. | `This reply was drafted by an automated assistant and reviewed by a person.` |
 | `EGRESS_ADAPTER` | Egress adapter that parks gated replies: `helpdesk` or `imap-smtp`. The policy engine reads the selected adapter's capabilities. | `helpdesk` |
 
 A reply-generating profile for dogfood looks like this:
@@ -249,6 +249,19 @@ export DISCLOSURE_TEXT='This reply was drafted by an automated assistant and rev
 
 Each customer-visible action then parks as a draft and waits in the approval
 workflow (section 4).
+
+The consumer refuses to start when the two settings disagree. The relay sends
+a draft only for `customer_reply`, and it performs every other class as an
+internal write. So a customer-visible profile with another class parks a draft
+that nobody sends. The reply class with `ACTION_IS_CUSTOMER_VISIBLE=false`
+can skip approval (DEC-12), and it parks no draft that the relay can send.
+
+The refusal names both settings and the value it read. The consumer also
+refuses a near-miss of `customer_reply`, such as `Customer_Reply` or
+`customer-reply`. Each remedy names every setting the next start checks. Hiding
+the action makes its writes automatic wherever the gates pass (DEC-12). A
+`compensate` write still waits for approval, because it cannot be undone
+(DEC-34).
 
 ### Relay daemon
 

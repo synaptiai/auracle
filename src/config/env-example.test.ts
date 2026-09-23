@@ -46,8 +46,8 @@ const SHARED_HELPERS = ['requiredEnv', 'positiveIntEnv'];
  * Literals that look like a variable name and are not one.
  *
  * Every entry is a word this codebase passes to something that is not the
- * environment: two SQL statements, two HTTP methods, a mailbox name and two
- * signals. The list is short and each entry is obvious, which is the point —
+ * environment: three SQL statements, two HTTP methods, a mailbox name, two
+ * signals and a Unicode normal form. The list is short and each entry is obvious, which is the point —
  * a name that has to be argued about is probably a variable.
  */
 const NOT_A_VARIABLE = new Set([
@@ -55,6 +55,7 @@ const NOT_A_VARIABLE = new Set([
   'GET', 'POST', // src/adapters/freescout.ts
   'INBOX', // src/adapters/imap-smtp.ts
   'SIGINT', 'SIGTERM', // every daemon's shutdown handler
+  'NFKC', // src/config/action-profile.ts
 ]);
 
 /**
