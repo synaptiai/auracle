@@ -39,14 +39,18 @@ const WRITER = 'src/ledger/journal-write.ts';
  *
  * A test file may hand-write a journal row — `coordinator.db.test.ts`
  * inserts a `'parking'` marker to drive the DEC-11 crash path — so the scan
- * covers production modules only.
+ * covers production modules only. `src/test-support/` is not one: the build
+ * excludes it in `tsconfig.json`, beside the test files, and
+ * `race-twin.ts` there hides a park row to build a twin.
  */
 function productionFiles(directory: string): string[] {
   const found: string[] = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const full = join(directory, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name !== 'node_modules') found.push(...productionFiles(full));
+      if (entry.name !== 'node_modules' && full !== join(SRC, 'test-support')) {
+        found.push(...productionFiles(full));
+      }
       continue;
     }
     if (entry.name.endsWith('.ts') && !entry.name.includes('.test.')) found.push(full);
@@ -145,9 +149,10 @@ describe('the step_journal write path', () => {
   });
 
   it('hands a transaction its own client, never the pool', () => {
-    // Six writers journal inside a transaction they are already committing,
+    // These writers journal inside a transaction they are already committing,
     // and must pass that transaction's client. The coordinator's steps hold no
-    // transaction of their own and pass the pool.
+    // transaction of their own and pass the pool, except where a step's
+    // record rides the commit of the transition it explains.
     const expected: Record<string, string> = {
       // DEC-48: the reply a person wrote from scratch. It journals inside its
       // own transaction, under the run row lock, so it passes that client.
@@ -162,6 +167,9 @@ describe('the step_journal write path', () => {
       'src/relay/relay.ts': 'client',
       'src/seed/write.ts': 'client',
       'src/coordinator/steps/context.ts': 'ctx.pool',
+      // #122: the park's record of a turn already answered. It journals in
+      // the commit that ends the run superseded, so it passes that client.
+      'src/coordinator/steps/park.ts': 'client',
     };
     const seen: Record<string, string[]> = {};
     for (const file of FILES) {

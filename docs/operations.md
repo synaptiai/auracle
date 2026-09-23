@@ -1573,6 +1573,30 @@ A newest run that waits for a person says `waiting for you` and opens its case.
 This holds even when an earlier run of the turn sent a reply. The approval queue
 lists that run, so the page agrees with it.
 
+A message source can deliver a message again. The run that walks it parks
+nothing when the turn is answered. It also parks nothing when another run
+already waits with the reply. It stops `superseded`, and its run page names that run, as in
+`superseded · the turn was answered by run 4f1c2b8e`. The consumer records the
+same kind of reason for a waiting run it ends.
+
+Two walks of one message on one ticket can overlap. A rebalance or a crash
+retry causes this. The older walk parks a draft and then stops stale (DEC-28).
+
+The newer walk gives the turn back to the older run. That run then waits for a
+person with its own draft. The newer run stops, and its run page says
+`superseded · run 4f1c2b8e had parked the turn's draft`. No second draft
+exists.
+
+The park writes a marker before it calls the helpdesk, and the ledger fences
+that write. A stale walk stops there and makes no draft. Its park row records
+`superseded`. A marker the ledger accepted stays until the park records its
+outcome. A newer walk that finds that marker escalates as `park_unresolved`.
+
+A turn can still hold two waiting runs. Runs parked before this rule can do
+so, and so can two tickets of one conversation. The approval and the consumer
+hold such a turn to one reply. On a helpdesk that takes no idempotency key, the
+second draft stays until a person deletes it.
+
 The heading over reply text says what the customer has, and reads the row alone.
 "The system replied" needs approved text and a sent row. A pending row says the
 send is pending. A malformed row says the relay never sent the reply, because

@@ -53,6 +53,7 @@ import type { Pool, PoolClient } from 'pg';
 import type {
   DraftReadBack, PersonProvenance, Provenance, ReplyProvenance,
 } from '../adapters/types.js';
+import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
 import {
   lockTurnAttempt, readSavedReply, recordApprovedReply, turnIsClosed,
 } from '../ledger/conversation.js';
@@ -729,9 +730,10 @@ export async function approveRun(
         // DEC-49: and a reply on a turn that already holds a reply that went
         // out, may have, or will. Read under the same lock, so a second
         // approval on the turn cannot add its record between this read and
-        // that one's. A ledger-only park is not a reply (DEC-34), so it is
-        // not asked.
-        if (park.draftExternalId !== undefined
+        // that one's. A reply is a park that names a draft, or the reply's
+        // action class parked in the ledger alone (#122); a compensation is
+        // not one (DEC-34), so it is not asked.
+        if ((park.draftExternalId !== undefined || park.actionClass === CUSTOMER_REPLY_ACTION_CLASS)
           && await turnIsClosed(
             client, { conversationId, turnNumber: park.turnNumber }, { replies: true },
           )) {

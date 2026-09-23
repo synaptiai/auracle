@@ -13,12 +13,16 @@
 // that asymmetry shut.
 import type { Pool } from 'pg';
 
-import { PermanentEgressError } from '../../adapters/types.js';
+import { CUSTOMER_REPLY_ACTION_CLASS, PermanentEgressError } from '../../adapters/types.js';
 import type { ReplyProvenance } from '../../adapters/types.js';
 import { parkGatedReply } from '../../approval/bridge.js';
 import { errorMessage } from '../../errors.js';
+import { strandedReplyPark, turnReplyHolder } from '../../ledger/conversation.js';
+import { resumeStrandedRun } from '../../ledger/insert.js';
+import { journalFinish as writeJournalFinish, journalStep } from '../../ledger/journal-write.js';
 import { deriveIdemKey } from '../../ledger/keys.js';
 import type { PinnedVersions } from '../../models/provider.js';
+import { CoordinatorFaultError } from '../fault.js';
 import {
   journalFinish,
   journalStart,
@@ -70,6 +74,84 @@ async function priorParkUnresolved(
   return rows.rows.length > 0;
 }
 
+/**
+ * Whether this park is a customer reply: the reply branch, or the reply's
+ * action class parked in the ledger under a profile that shows no customer.
+ * A compensation on the same turn is not a second reply (DEC-34).
+ */
+function repliesToCustomer(ctx: RunContext): boolean {
+  return ctx.input.isCustomerVisible || ctx.input.actionClass === CUSTOMER_REPLY_ACTION_CLASS;
+}
+
+/** Ends the run superseded, with the reason and the run it names on record. */
+async function supersedeWith(ctx: RunContext, result: Record<string, string>): Promise<StepResult> {
+  const stopped = await transitionOrStop(ctx, 'superseded', undefined, (client) =>
+    journalStep(client, {
+      runId: ctx.runId,
+      stepId: 'supersede',
+      status: 'done',
+      result,
+      promptVer: ctx.deps.pins.promptVer,
+      modelVer: ctx.deps.pins.modelVer,
+      costMicros: ctx.meter.cost(),
+    }));
+  return { kind: 'stop', outcome: stopped ?? { runId: ctx.runId, outcome: 'superseded' } };
+}
+
+/**
+ * Hands the turn back to a run of this ticket that parked its draft and was
+ * stopped stale, and stops this run superseded, naming it. Null when there is
+ * none, and the walk parks as it would have.
+ */
+async function resumeStranded(ctx: RunContext): Promise<StepResult | null> {
+  const turn = {
+    ticketId: ctx.input.ticketId,
+    conversationId: ctx.input.conversationId ?? null,
+    turnNumber: ctx.input.turnNumber ?? null,
+    attempt: ctx.input.attempt ?? 1,
+    runId: ctx.runId,
+    actionClass: ctx.input.actionClass,
+  };
+  const stranded = await strandedReplyPark(ctx.pool, turn);
+  if (stranded === null) return null;
+  const resumed = await resumeStrandedRun(ctx.pool, {
+    runId: ctx.runId,
+    strandedRunId: stranded,
+    costMicros: ctx.meter.cost(),
+    stepsUsed: ctx.progress.stepsUsed,
+    afterWrite: (client) =>
+      journalStep(client, {
+        runId: ctx.runId,
+        stepId: 'supersede',
+        status: 'done',
+        result: { reason: 'draft_parked', parkedBy: stranded },
+        promptVer: ctx.deps.pins.promptVer,
+        modelVer: ctx.deps.pins.modelVer,
+        costMicros: ctx.meter.cost(),
+      }),
+  });
+  switch (resumed.outcome) {
+    case 'resumed':
+      return { kind: 'stop', outcome: { runId: ctx.runId, outcome: 'superseded' } };
+    case 'stale_epoch':
+      return {
+        kind: 'stop',
+        outcome: {
+          runId: ctx.runId,
+          outcome: 'stale_epoch',
+          highestAcceptedEpoch: resumed.highestAcceptedEpoch,
+        },
+      };
+    case 'not_stranded':
+      return null;
+    case 'unknown_run':
+    case 'wrong_state':
+      throw new CoordinatorFaultError(
+        `run ${ctx.runId} could not hand its turn back to ${stranded}: ${resumed.outcome}`,
+      );
+  }
+}
+
 export async function park(ctx: RunContext): Promise<StepResult> {
   const draft = stateAfter(ctx.state, 'draft', 'park', 'compose');
 
@@ -85,6 +167,45 @@ export async function park(ctx: RunContext): Promise<StepResult> {
   if (ctx.input.isCustomerVisible
     && await priorParkUnresolved(ctx.pool, ctx.input.ticketId, ctx.runId)) {
     return { kind: 'escalate', reason: 'park_unresolved' };
+  }
+
+  // Issue #122: a reply on a turn whose reply is answered or already waits.
+  // A message source delivers at least once, so a message can arrive again,
+  // and intake files it on the same turn (DEC-38). On a helpdesk that takes
+  // no idempotency key, parking again makes a second draft with a handle of
+  // its own. The approval refuses a second reply (DEC-49), but a helpdesk
+  // agent could still send that draft by hand. So the run parks nothing,
+  // stops superseded, and records the run that holds the turn's reply.
+  //
+  // One read, so one snapshot answers both questions: an approval that
+  // commits during it is seen either as a waiting run or as its record. No
+  // lock: this refuses and writes nothing to the world. A turn that holds two
+  // waiting runs anyway, from runs parked before this check, is held to one
+  // reply by the approval's own check and the consumer's scan.
+  if (repliesToCustomer(ctx)) {
+    const holder = await turnReplyHolder(ctx.pool, {
+      conversationId: ctx.input.conversationId ?? null,
+      turnNumber: ctx.input.turnNumber ?? null,
+      attempt: ctx.input.attempt ?? 1,
+      runId: ctx.runId,
+      replyActionClass: CUSTOMER_REPLY_ACTION_CLASS,
+    });
+    if (holder !== null) {
+      return supersedeWith(ctx, holder.reason === 'turn_answered'
+        ? { reason: 'turn_answered', answeredBy: holder.runId }
+        : { reason: 'reply_waiting', waitingRun: holder.runId });
+    }
+  }
+
+  // Issue #122: an older walk of this ticket's turn and attempt parked a
+  // draft, and the fence stopped it before it could wait. The draft is
+  // already in the helpdesk, and this walk is the same request (DEC-24), so
+  // the turn goes back to the run that parked it, and this run stops. A read
+  // first, like the check above, so a walk with nothing to hand back writes
+  // no row for it.
+  if (ctx.input.isCustomerVisible) {
+    const resumed = await resumeStranded(ctx);
+    if (resumed !== null) return resumed;
   }
 
   await journalStart(ctx, 'park');
@@ -154,11 +275,28 @@ export async function park(ctx: RunContext): Promise<StepResult> {
     ...(ctx.input.attempt === undefined ? {} : { attempt: ctx.input.attempt }),
     payload: ctx.input.actionPayload,
   });
-  await journalFinish(ctx, 'park', 'parking', {
-    actionClass: ctx.input.actionClass,
-    delivery: ctx.input.delivery,
-    parkKey,
-  });
+  // Fenced, because the draft call after it is not. A walk whose lease went
+  // stale stops here, before it reaches the helpdesk, so no draft exists for
+  // anyone to reconcile. A marker the fence admitted stands until the park
+  // records its outcome, and a newer walk's check above escalates on it.
+  const marked = await transitionOrStop(ctx, 'gated', undefined, (client) =>
+    writeJournalFinish(client, {
+      runId: ctx.runId,
+      stepId: 'park',
+      status: 'parking',
+      result: { actionClass: ctx.input.actionClass, delivery: ctx.input.delivery, parkKey },
+      costMicros: ctx.meter.cost(),
+    }));
+  if (marked !== null) {
+    // The step ends here, and its row says so, as the execute step's does:
+    // a row left at 'started' says the step began and nothing ended it
+    // (issue #94). No park key: no draft was asked for.
+    await journalFinish(ctx, 'park', 'superseded', {
+      actionClass: ctx.input.actionClass,
+      delivery: ctx.input.delivery,
+    });
+    return { kind: 'stop', outcome: marked };
+  }
 
   // The 'parking' row above is the crash marker: it says a draft may exist
   // that nobody can name, and priorParkUnresolved escalates every later run
@@ -219,13 +357,12 @@ export async function park(ctx: RunContext): Promise<StepResult> {
     disclosure: ctx.input.disclosure,
     provenance,
   });
+  return awaitApproval(ctx, parked.draftExternalId);
+}
+
+/** Moves the run to wait for a person, with the draft it parked. */
+async function awaitApproval(ctx: RunContext, draftExternalId: string): Promise<StepResult> {
   const awaiting = await transitionOrStop(ctx, 'awaiting_approval');
   if (awaiting !== null) return { kind: 'stop', outcome: awaiting };
-  return {
-    kind: 'stop',
-    outcome: {
-      runId: ctx.runId,
-      outcome: 'awaiting_approval',
-      draftExternalId: parked.draftExternalId,
-    },
-  };}
+  return { kind: 'stop', outcome: { runId: ctx.runId, outcome: 'awaiting_approval', draftExternalId } };
+}

@@ -4039,8 +4039,10 @@ function turnOutcome(turn: TurnView): { readonly says: string; readonly token: T
 /**
  * Whether the run the turn shows leaves the row to say what happened.
  *
- * A resolved run committed its row. A superseded run lost the insert to a row
- * another run holds (section 4.2, rule 2), so that row is its outcome too.
+ * A resolved run committed its row. A superseded run wrote none: it lost the
+ * insert to a row another run holds (section 4.2, rule 2), or it stopped
+ * because another run of the turn answered it or held its reply (#122). Either
+ * way the turn's row belongs to another run, so that row is its outcome too.
  */
 function settled(runState: string | null): runState is null | 'resolved' | 'superseded' {
   return runState === null || runState === 'resolved' || runState === 'superseded';

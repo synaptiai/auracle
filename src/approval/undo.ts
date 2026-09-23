@@ -14,17 +14,18 @@
  * every effect would remain, in a state nobody could act on.
  *
  * An undo that reports success guarantees that nothing was sent. So the
- * window is checked against the clock read after this transaction holds the
- * run's row lock, never at transaction start: `now()` is fixed when the
- * transaction begins, and an undo that waited on the relay's lock would
- * recheck with the time it began waiting — and delete a row whose hold ended
- * while it waited. The relay takes the same lock across its send, so a send
+ * window is checked against the clock read after this transaction holds
+ * every lock it takes, the run's and then the turn's, never at transaction
+ * start: `now()` is fixed when the transaction begins, and an undo that
+ * waited on a lock would recheck with the time it began waiting — and delete
+ * a row whose hold ended while it waited. The relay takes the same lock across its send, so a send
  * in flight is serialized against this transaction, and the row it left
  * behind is `sent`, which refuses here.
  */
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 import { errorMessage } from '../errors.js';
+import { lockTurnAttempt } from '../ledger/conversation.js';
 import { journalStep } from '../ledger/journal-write.js';
 import { logLine } from '../log/line.js';
 
@@ -36,7 +37,11 @@ import { logLine } from '../log/line.js';
 const APPROVAL_STEP = 'approve';
 
 /**
- * How long the undo waits for a row another writer holds.
+ * How long the undo waits, in all, for the rows other writers hold.
+ *
+ * One budget across the three locks it takes, the outbox row, the run and
+ * the turn, and not one each: `lock_timeout` bounds each wait on its own, so
+ * it is narrowed to what is left before each later lock.
  *
  * The relay holds them across a send, which is bounded by the adapter's
  * timeout — fifteen seconds for FreeScout and the mail adapter's own for
@@ -47,6 +52,17 @@ const APPROVAL_STEP = 'approve';
  * rows in practice.
  */
 const LOCK_WAIT_MS = 5_000;
+
+/**
+ * Narrows this transaction's lock wait to what is left of the undo's budget.
+ *
+ * Never zero, because a `lock_timeout` of zero waits for ever. A budget that
+ * is spent leaves one millisecond, so the next held lock refuses as busy.
+ */
+async function narrowWait(client: PoolClient, deadline: number): Promise<void> {
+  const left = Math.max(1, Math.ceil(deadline - Date.now()));
+  await client.query(`SET LOCAL lock_timeout = '${String(left)}ms'`);
+}
 
 /** What one undo did, or why it did nothing. */
 export type UndoOutcome =
@@ -148,6 +164,7 @@ export async function undoApproval(
     // undo that waited without one would hold a pool connection and a
     // reviewer's page until the send gave up.
     await client.query(`SET LOCAL lock_timeout = '${LOCK_WAIT_MS}ms'`);
+    const deadline = Date.now() + LOCK_WAIT_MS;
 
     // The approval's own record, and the row the relay and this undo both
     // serialize on. Taken before the run's row, because `parkEscalated`
@@ -170,6 +187,7 @@ export async function undoApproval(
       await client.query('ROLLBACK');
       return run.rows.length === 0 ? { outcome: 'unknown_run' } : { outcome: 'nothing_to_undo' };
     }
+    await narrowWait(client, deadline);
     const run = await client.query(
       'SELECT state FROM run WHERE run_id = $1 FOR UPDATE',
       [runId],
@@ -195,9 +213,24 @@ export async function undoApproval(
       return { outcome: 'window_passed' };
     }
 
-    // The clock after the lock. Reading it at transaction start would let an
-    // undo that waited on the relay's lock delete a row whose hold ended
-    // while it waited.
+    const conversation = await client.query(
+      'SELECT conversation_id, turn_number FROM run WHERE run_id = $1',
+      [runId],
+    );
+    const conversationId = conversation.rows[0]?.conversation_id as string | null;
+    const turnNumber = conversation.rows[0]?.turn_number as number | null;
+    // The turn's lock, after the run's (run, then turn), before the record
+    // goes. The consumer's scan reads the turn's reply under the same lock
+    // when it ends a waiting run as answered, so it can never record a reply
+    // this undo is removing (#122).
+    if (conversationId !== null && turnNumber !== null) {
+      await narrowWait(client, deadline);
+      await lockTurnAttempt(client, { conversationId, turnNumber });
+    }
+
+    // The clock after the last lock. Reading it at transaction start, or
+    // before a lock this undo then waited on, would let it delete a row
+    // whose hold ended while it waited.
     const clock = await client.query<{ now: Date }>('SELECT clock_timestamp() AS now');
     if (clock.rows[0]!.now.getTime() >= record.not_before.getTime()) {
       await client.query('ROLLBACK');
@@ -205,12 +238,6 @@ export async function undoApproval(
     }
 
     // Everything the approval wrote, gone, in one commit with the state move.
-    const conversation = await client.query(
-      'SELECT conversation_id, turn_number FROM run WHERE run_id = $1',
-      [runId],
-    );
-    const conversationId = conversation.rows[0]?.conversation_id as string | null;
-    const turnNumber = conversation.rows[0]?.turn_number as number | null;
     // Only where this approval is what wrote it. More than one run can serve
     // one turn: a retry after a crash, or a send-back. A second run's undo
     // that cleared the column unconditionally would erase the record of a

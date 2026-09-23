@@ -1150,3 +1150,104 @@ describe('the close a person made (DEC-48)', () => {
     expect(step?.close).toBeNull();
   });
 });
+
+// #122: why a run stopped superseded. The row is written by the park step
+// and by the consumer's scan, outside the walk's own step list, and the run
+// page reads it through here.
+describe('the reason a run was superseded (#122)', () => {
+  it('returns the reason and the run it names, outside the walk', async () => {
+    const runId = await journal([
+      {
+        stepId: 'supersede',
+        status: 'done',
+        result: { reason: 'turn_answered', answeredBy: '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34' },
+      },
+    ]);
+    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'supersede');
+    expect(step?.supersede).toEqual({
+      reason: 'turn_answered',
+      answeredBy: '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34',
+      waitingRun: null,
+      parkedBy: null,
+    });
+    expect(step?.recognized).toBe(false);
+  });
+
+  it('names the run that had parked the turn\'s draft', async () => {
+    const runId = await journal([
+      {
+        stepId: 'supersede',
+        status: 'done',
+        result: { reason: 'draft_parked', parkedBy: '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34' },
+      },
+    ]);
+    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'supersede');
+    expect(step?.supersede).toEqual({
+      reason: 'draft_parked',
+      answeredBy: null,
+      waitingRun: null,
+      parkedBy: '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34',
+    });
+  });
+
+  it('names the run that already held the turn\'s reply', async () => {
+    const runId = await journal([
+      {
+        stepId: 'supersede',
+        status: 'done',
+        result: { reason: 'reply_waiting', waitingRun: '99999999-8888-4777-8666-555555555555' },
+      },
+    ]);
+    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'supersede');
+    expect(step?.supersede).toEqual({
+      reason: 'reply_waiting',
+      answeredBy: null,
+      waitingRun: '99999999-8888-4777-8666-555555555555',
+      parkedBy: null,
+    });
+  });
+
+  it('reads a sent-back attempt, which names no run', async () => {
+    const runId = await journal([
+      { stepId: 'supersede', status: 'done', result: { reason: 'attempt_rejected' } },
+    ]);
+    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'supersede');
+    expect(step?.supersede).toEqual({
+      reason: 'attempt_rejected',
+      answeredBy: null,
+      waitingRun: null,
+      parkedBy: null,
+    });
+  });
+
+  it('reads a supersede row whose result is not an object as malformed, not as empty', async () => {
+    const runId = await journal([{ stepId: 'supersede', status: 'done', result: ['no'] }]);
+    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'supersede');
+    expect(step?.resultMalformed).toBe(true);
+    expect(step?.supersede).toBeNull();
+  });
+});
+
+// DEC-49: the send-back row had no reader case of its own, so the same pair.
+describe('the send-back a reviewer made (DEC-49)', () => {
+  it('returns the note and the reviewer', async () => {
+    const runId = await journal([
+      {
+        stepId: 'send_back',
+        status: 'done',
+        result: { note: 'Answer the second request.', reviewer: 'anna@example.test', reviewerSource: 'roster' },
+      },
+    ]);
+    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'send_back');
+    expect(step?.sendBack).toEqual({
+      note: 'Answer the second request.', reviewer: 'anna@example.test', reviewerSource: 'roster',
+    });
+  });
+
+  it('reads a send-back row whose result is not an object as malformed, not as empty', async () => {
+    const runId = await journal([{ stepId: 'send_back', status: 'done', result: ['no'] }]);
+    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'send_back');
+    expect(step?.resultMalformed).toBe(true);
+    expect(step?.sendBack).toBeNull();
+  });
+});

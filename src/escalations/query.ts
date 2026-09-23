@@ -11,6 +11,7 @@
  * Every statement is a SELECT. The module never writes, so it is safe to
  * run against a live database without approval.
  */
+import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
 import { RUN_STATES } from '../coordinator/coordinator.js';
 import type { TerminalRunState } from '../coordinator/coordinator.js';
 import type { Pool, PoolClient } from 'pg';
@@ -275,7 +276,10 @@ const RUN_SELECT_BODY = `
          COALESCE(saved.attempt > r.attempt, false) AS attempt_rejected,
          -- DEC-49: whether this run is a reply on a turn that already holds
          -- a reply that went out, may have, or will: the approval refuses it.
-         (park.result ? 'draftExternalId'
+         -- A reply is a park that names a draft, or one of the reply's class
+         -- parked in the ledger alone, the way the approval reads it (#122).
+         ((park.result ? 'draftExternalId'
+           OR park.result ->> 'actionClass' = '${CUSTOMER_REPLY_ACTION_CLASS}')
           AND EXISTS (SELECT 1 FROM outbox co JOIN run cr ON cr.run_id = co.run_id
                        WHERE cr.conversation_id = r.conversation_id
                          AND cr.turn_number = r.turn_number
@@ -366,7 +370,10 @@ const OUTBOX_SELECT = `
          COALESCE(saved.attempt > r.attempt, false) AS attempt_rejected,
          -- DEC-49: whether this run is a reply on a turn that already holds
          -- a reply that went out, may have, or will: the approval refuses it.
-         (park.result ? 'draftExternalId'
+         -- A reply is a park that names a draft, or one of the reply's class
+         -- parked in the ledger alone, the way the approval reads it (#122).
+         ((park.result ? 'draftExternalId'
+           OR park.result ->> 'actionClass' = '${CUSTOMER_REPLY_ACTION_CLASS}')
           AND EXISTS (SELECT 1 FROM outbox co JOIN run cr ON cr.run_id = co.run_id
                        WHERE cr.conversation_id = r.conversation_id
                          AND cr.turn_number = r.turn_number

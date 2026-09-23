@@ -33,7 +33,7 @@ function journal(step: Partial<JournalStep>): { step: JournalStep; journal: RunJ
     resultRecorded: true, resultMalformed: false, awaitingOutcome: false,
     promptVer: 'p1', modelVer: 'm1', runCostMicrosAtStep: 0,
     compose: null, park: null, close: null,
-    sendBack: null, idemKey: null, escalationReason: null, faultShape: null,
+    sendBack: null, supersede: null, idemKey: null, escalationReason: null, faultShape: null,
     ...step,
   } as unknown as JournalStep;
   return {
@@ -133,6 +133,53 @@ describe('what a park step says', () => {
   it('says nothing at all about a park step the reader could not read', () => {
     const { step, journal: j } = journal({ stepId: 'park', park: null });
     expect(stepSays(step, j)).toBeNull();
+  });
+});
+
+// #122: why a run stopped with nothing sent. A redelivered message on a turn
+// that already holds a reply ends superseded, and the run page is where a
+// reviewer who opens it reads which run answered the turn.
+describe('what a supersede step says', () => {
+  function superseded(fields: Record<string, unknown>): { step: JournalStep; journal: RunJournal } {
+    return journal({
+      stepId: 'supersede',
+      supersede: { reason: null, answeredBy: null, waitingRun: null, parkedBy: null, ...fields },
+    } as Partial<JournalStep>);
+  }
+
+  it('names the run that answered the turn', () => {
+    const { step, journal: j } = superseded({
+      reason: 'turn_answered', answeredBy: '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34',
+    });
+    expect(stepSays(step, j)).toBe('superseded · the turn was answered by run 4f1c2b8e');
+  });
+
+  it('names the run that already held the turn\'s reply', () => {
+    const { step, journal: j } = superseded({
+      reason: 'reply_waiting', waitingRun: '99999999-8888-4777-8666-555555555555',
+    });
+    expect(stepSays(step, j)).toBe("superseded · run 99999999 already held the turn's reply");
+  });
+
+  it("names the run that had parked the turn's draft", () => {
+    const { step, journal: j } = superseded({
+      reason: 'draft_parked', parkedBy: '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34',
+    });
+    expect(stepSays(step, j)).toBe("superseded · run 4f1c2b8e had parked the turn's draft");
+  });
+
+  it('says a reviewer sent the attempt back', () => {
+    const { step, journal: j } = superseded({ reason: 'attempt_rejected' });
+    expect(stepSays(step, j)).toBe('superseded · a reviewer sent this attempt back');
+  });
+
+  it('prints a code it cannot word as the ledger wrote it, and invents none', () => {
+    const blank = superseded({}).journal;
+    expect(stepSays(superseded({ reason: 'later_code' }).step, blank)).toBe('superseded · later_code');
+    // A reason that should name a run and names none is not worded as if it did.
+    expect(stepSays(superseded({ reason: 'turn_answered' }).step, blank)).toBe('superseded · turn_answered');
+    expect(stepSays(superseded({ reason: 'draft_parked' }).step, blank)).toBe('superseded · draft_parked');
+    expect(stepSays(superseded({}).step, blank)).toBeNull();
   });
 });
 

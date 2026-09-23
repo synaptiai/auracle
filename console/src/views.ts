@@ -211,6 +211,25 @@ export function stepSays(step: JournalStep, journal: RunJournal): string | null 
       if (sentBack === null || sentBack.note === null) return null;
       return `sent back by ${sentBack.reviewer ?? 'nobody named'} · ${sentBack.note}`;
     }
+    case 'supersede': {
+      // #122: why the run stopped with nothing sent. The reason is the one
+      // the ledger recorded, worded for a reader, and never invented. The
+      // past tense, because it says what held when the run stopped: an undo
+      // inside a held send can open the turn again later.
+      const why = step.supersede;
+      if (why === null || why.reason === null) return null;
+      if (why.reason === 'turn_answered' && why.answeredBy !== null) {
+        return `superseded · the turn was answered by run ${why.answeredBy.slice(0, 8)}`;
+      }
+      if (why.reason === 'reply_waiting' && why.waitingRun !== null) {
+        return `superseded · run ${why.waitingRun.slice(0, 8)} already held the turn's reply`;
+      }
+      if (why.reason === 'draft_parked' && why.parkedBy !== null) {
+        return `superseded · run ${why.parkedBy.slice(0, 8)} had parked the turn's draft`;
+      }
+      if (why.reason === 'attempt_rejected') return 'superseded · a reviewer sent this attempt back';
+      return `superseded · ${why.reason}`;
+    }
     case 'escalate':
       return escalationHead(step.escalationReason);
     default:

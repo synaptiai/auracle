@@ -13,7 +13,7 @@
 //
 // Nothing here decides the order. The sequencer in `coordinator.ts` does,
 // and it is the only module that knows the walk.
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 import type { Classification } from '../../classifier/classifier.js';
 import { CoordinatorFaultError } from '../fault.js';
@@ -250,6 +250,11 @@ export async function transitionOrStop(
   ctx: RunContext,
   state: ActiveRunState | TerminalRunState,
   outbox?: FencedOutboxInput,
+  /**
+   * Writes the transition's own record in its commit, such as the reason a
+   * run stopped. A refused transition writes none of it.
+   */
+  afterWrite?: (client: PoolClient) => Promise<void>,
 ): Promise<CoordinateOutcome | null> {
   const result = await fencedTransition(ctx.pool, {
     runId: ctx.runId,
@@ -257,6 +262,7 @@ export async function transitionOrStop(
     costMicros: ctx.meter.cost(),
     stepsUsed: ctx.progress.stepsUsed,
     ...(outbox === undefined ? {} : { outbox }),
+    ...(afterWrite === undefined ? {} : { afterWrite }),
   });
   if (result.outcome === 'accepted') return null;
   if (result.outcome === 'superseded') return { runId: ctx.runId, outcome: 'superseded' };

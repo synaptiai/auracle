@@ -55,11 +55,12 @@ import type {
   CoordinateInput,
   CoordinatorDeps,
 } from './coordinator.js';
+import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
 import { errorMessage } from '../errors.js';
 import type { ArrivalSignal } from './arrival-signal.js';
 import { ackTicket, pollPartition } from './intake.js';
 import { fencedTransition } from '../ledger/insert.js';
-import { TURN_CLOSING_STATUSES } from '../ledger/conversation.js';
+import { TURN_CLOSING_STATUSES, lockTurnAttempt, turnReplyRun } from '../ledger/conversation.js';
 import { journalStep } from '../ledger/journal-write.js';
 import { unsnoozeExpired } from '../outcomes/snooze.js';
 import { PARKED_RUN_STATES, TERMINAL_RUN_STATE_NAMES } from '../ledger/run-state.js';
@@ -589,8 +590,13 @@ async function endRejectedAttempts(
   pool: Pool,
   partitions: readonly number[],
 ): Promise<string[]> {
-  const stale = await pool.query<{ run_id: string; state: string; cost_micros: number; steps_used: number }>(
-    `SELECT r.run_id, r.state, r.cost_micros, r.steps_used
+  const stale = await pool.query<{
+    run_id: string; state: string; cost_micros: number; steps_used: number;
+    prompt_ver: string; model_ver: string; rejected: boolean;
+    conversation_id: string; turn_number: number;
+  }>(
+    `SELECT r.run_id, r.state, r.cost_micros, r.steps_used, r.prompt_ver, r.model_ver,
+            r.conversation_id, r.turn_number, r.attempt < t.attempt AS rejected
        FROM run r
        JOIN turn t
          ON t.conversation_id = r.conversation_id AND t.turn_number = r.turn_number
@@ -600,28 +606,82 @@ async function endRejectedAttempts(
              -- A waiting reply on a turn that already holds a reply: the
              -- approval refuses it, so it can never go out. Twin runs of one
              -- attempt reach this when the other is approved first.
+             -- A reply is a park that names a draft, or the reply's action
+             -- class parked in the ledger alone: the park step's own test.
              OR (EXISTS (SELECT 1 FROM step_journal park
                           WHERE park.run_id = r.run_id AND park.step_id = 'park'
-                            AND park.result ? 'draftExternalId')
+                            AND (park.result ? 'draftExternalId'
+                                 OR park.result->>'actionClass' = $3))
                  AND EXISTS (SELECT 1 FROM outbox o JOIN run other ON other.run_id = o.run_id
                               WHERE other.conversation_id = r.conversation_id
                                 AND other.turn_number = r.turn_number
                                 AND o.payload ? 'draftExternalId'
                                 AND o.status = ANY ($2::text[]))))`,
-    [partitions, [...TURN_CLOSING_STATUSES]],
+    [partitions, [...TURN_CLOSING_STATUSES], CUSTOMER_REPLY_ACTION_CLASS],
   );
   const ended: string[] = [];
   for (const row of stale.rows) {
-    const moved = await fencedTransition(pool, {
-      runId: row.run_id,
-      state: 'superseded',
-      costMicros: row.cost_micros,
-      stepsUsed: row.steps_used,
-      fromState: row.state,
-    });
+    let moved;
+    try {
+      moved = await fencedTransition(pool, {
+        runId: row.run_id,
+        state: 'superseded',
+        costMicros: row.cost_micros,
+        stepsUsed: row.steps_used,
+        fromState: row.state,
+        // Why, on the run's own record, so a reviewer who opens it reads the
+        // reason rather than a bare state (#122). A turn answered by another
+        // run names that run, read in this commit.
+        afterWrite: async (client) => {
+          // The runs were chosen before this commit. An undo inside a held
+          // send can delete the record that closed the turn in between, and
+          // the turn is open again: the run is not ended, and no reason that
+          // this commit disproves is written. The turn's lock, after this
+          // run's (run, then turn), orders the read against an undo, which
+          // takes the same lock before it deletes a record.
+          const turn = { conversationId: row.conversation_id, turnNumber: row.turn_number };
+          const answeredBy = row.rejected
+            ? null
+            : await lockTurnAttempt(client, turn).then(() => turnReplyRun(client, turn));
+          if (!row.rejected && answeredBy === null) throw new TurnReopened();
+          await journalStep(client, {
+            runId: row.run_id,
+            stepId: 'supersede',
+            status: 'done',
+            result: row.rejected
+              ? { reason: 'attempt_rejected' }
+              : { reason: 'turn_answered', answeredBy },
+            promptVer: row.prompt_ver,
+            modelVer: row.model_ver,
+            costMicros: row.cost_micros,
+          });
+        },
+      });
+    } catch (error) {
+      // One run's fault is that run's alone. The runs before it are already
+      // committed, each in its own transaction, and the runs after it are
+      // owed their pass, so the fault is logged and the scan goes on.
+      console.error(
+        logLine({
+          event: error instanceof TurnReopened ? 'answered_run_kept' : 'waiting_run_end_failed',
+          at: new Date().toISOString(),
+          runId: row.run_id,
+          reason: row.rejected ? 'attempt_rejected' : 'turn_answered',
+          ...(error instanceof TurnReopened ? {} : { error: errorMessage(error) }),
+        }),
+      );
+      continue;
+    }
     if (moved.outcome === 'accepted') ended.push(row.run_id);
   }
   return ended;
+}
+
+/** A turn the scan chose as answered, open again by the time it commits. */
+class TurnReopened extends Error {
+  constructor() {
+    super('the turn is open again');
+  }
 }
 
 /**

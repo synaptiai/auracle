@@ -27,6 +27,7 @@ import { FakeProvider } from '../models/fake.js';
 import type { FakeStep } from '../models/fake.js';
 import type { AdapterCapabilities } from '../policy/policy.js';
 import { indexDocument } from '../retriever/retriever.js';
+import { asIfRacing } from '../test-support/race-twin.js';
 import { truncateLedger } from '../test-support/schema.js';
 
 import { approveRun } from './approve.js';
@@ -161,7 +162,9 @@ async function parkAgain(parked: Parked): Promise<{ runId: string }> {
       status: 'open', customerAddress: null,
     },
   ]);
-  const result = await coordinateTicket(makeDeps(helpdesk), {
+  // A twin as a race leaves it: the park refuses a redelivered reply on a
+  // turn whose reply already waits (#122).
+  const result = await asIfRacing(pool, parked.runId, () => coordinateTicket(makeDeps(helpdesk), {
     ticketId: parked.ticketId,
     ticketText: TICKET_TEXT,
     epoch: 2n,
@@ -172,7 +175,7 @@ async function parkAgain(parked: Parked): Promise<{ runId: string }> {
     delivery: 'at_least_once',
     isCustomerVisible: true,
     disclosure: DISCLOSURE,
-  });
+  }));
   if (result.outcome !== 'awaiting_approval') {
     throw new Error(`expected awaiting_approval, got ${result.outcome}`);
   }

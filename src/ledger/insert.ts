@@ -674,3 +674,124 @@ export async function fencedTransition(
     else client.release(rollbackError as Error);
   }
 }
+
+export interface ResumeStrandedInput {
+  /** The walk that found the stranded park. It stops `superseded`. */
+  runId: string;
+  /** The run whose park holds the draft. It waits for a person again. */
+  strandedRunId: string;
+  /** The stopping run's totals (DEC-25 bookkeeping), as absolute values. */
+  costMicros: number;
+  stepsUsed: number;
+  /** The stopping run's own record, committed with the two state moves. */
+  afterWrite: (client: PoolClient) => Promise<void>;
+}
+
+export type ResumeStrandedResult =
+  | { outcome: 'resumed' }
+  /** The walking run's own lease went stale. Nothing was written. */
+  | { outcome: 'stale_epoch'; highestAcceptedEpoch: bigint }
+  /**
+   * The other run is not stranded: it is on another ticket, it left flight,
+   * or its epoch is not below the walking run's. Nothing was written, and the
+   * walk parks as it would have.
+   */
+  | { outcome: 'not_stranded' }
+  | { outcome: 'unknown_run' }
+  /** The walking run is not in flight, so it is not walking. */
+  | { outcome: 'wrong_state'; currentState: string };
+
+/**
+ * Hands a turn's draft back to the run that parked it, and stops the walk
+ * that found it (#122).
+ *
+ * Two walks of one message on one ticket can overlap, after a rebalance or a
+ * crash retry. The older walk parks a draft in the helpdesk, and then the
+ * fence refuses its state move, so its run stays in flight and never waits.
+ * The newer walk is the same request (DEC-24), and it holds the fence. So it
+ * moves the older run to `awaiting_approval`, where a person approves the
+ * draft that run parked, and stops. Every reader then sees one run whose own
+ * steps made its own draft.
+ *
+ * The older run keeps its epoch. A parked run's next writer is a person, and
+ * every parked write passes the fence by naming the parked state
+ * (`fencedTransition`). Its own walk, if it is still running, stays refused.
+ *
+ * The locks follow `fencedTransition`'s order: runs first, then the fence.
+ * The two runs are locked in id order, so two of these never wait on each
+ * other. Intake takes the other order, the fence and then a conversation's
+ * snoozed runs (`endSnoozedIn`, DEC-48). So both runs are judged before the
+ * fence is taken, and this write waits on the fence only while it holds two
+ * runs in flight, which intake never locks.
+ */
+export async function resumeStrandedRun(
+  pool: Pool,
+  t: ResumeStrandedInput,
+): Promise<ResumeStrandedResult> {
+  const client = await pool.connect();
+  let rollbackError: unknown | null = null;
+  try {
+    await client.query('BEGIN');
+    try {
+      const locked = await client.query<{
+        run_id: string; ticket_id: string; epoch: string; state: string;
+      }>(
+        'SELECT run_id, ticket_id, epoch, state FROM run'
+          + ' WHERE run_id = ANY ($1::uuid[]) ORDER BY run_id FOR UPDATE',
+        [[t.runId, t.strandedRunId]],
+      );
+      const walking = locked.rows.find((row) => row.run_id === t.runId);
+      const stranded = locked.rows.find((row) => row.run_id === t.strandedRunId);
+      if (walking === undefined || stranded === undefined) {
+        await client.query('ROLLBACK');
+        return { outcome: 'unknown_run' };
+      }
+      if (runStateClass(walking.state) !== 'in_flight') {
+        await client.query('ROLLBACK');
+        return { outcome: 'wrong_state', currentState: walking.state };
+      }
+      const walkingEpoch = BigInt(walking.epoch);
+      // Stranded means its own walk can never move it again: another ticket's
+      // fence says nothing about it, and a run at this epoch or above may
+      // still be walking. Its done park row has no writer left: on a live
+      // path, only a run's own park step writes its park row.
+      if (
+        stranded.ticket_id !== walking.ticket_id
+        || runStateClass(stranded.state) !== 'in_flight'
+        || BigInt(stranded.epoch) >= walkingEpoch
+      ) {
+        await client.query('ROLLBACK');
+        return { outcome: 'not_stranded' };
+      }
+      const fence = await client.query(
+        'SELECT epoch FROM ticket_epoch WHERE ticket_id = $1 FOR UPDATE',
+        [walking.ticket_id],
+      );
+      const highest = fence.rows.length > 0 ? BigInt(fence.rows[0]!.epoch as string) : null;
+      if (highest !== null && walkingEpoch < highest) {
+        await client.query('ROLLBACK');
+        return { outcome: 'stale_epoch', highestAcceptedEpoch: highest };
+      }
+      // Its park step finished after its last accepted write, which is the
+      // state move the fence refused, so the row's step count is one short.
+      await client.query(
+        "UPDATE run SET state = 'awaiting_approval', steps_used = steps_used + 1 WHERE run_id = $1",
+        [t.strandedRunId],
+      );
+      await client.query(
+        "UPDATE run SET state = 'superseded', cost_micros = $2, steps_used = $3,"
+          + ' finished_at = now() WHERE run_id = $1',
+        [t.runId, t.costMicros, t.stepsUsed],
+      );
+      await t.afterWrite(client);
+      await client.query('COMMIT');
+      return { outcome: 'resumed' };
+    } catch (error) {
+      rollbackError = await rollbackQuietly(client);
+      throw error;
+    }
+  } finally {
+    if (rollbackError === null) client.release();
+    else client.release(rollbackError as Error);
+  }
+}

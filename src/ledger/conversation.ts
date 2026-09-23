@@ -10,6 +10,8 @@
 import type { PersonProvenance } from '../adapters/types.js';
 import type { Pool, PoolClient } from 'pg';
 
+import { IN_FLIGHT_RUN_STATES } from './run-state.js';
+
 /**
  * A pool or one connection of a transaction. The readers below run on both:
  * the approval reads inside its transaction, and a surface reads through the
@@ -158,6 +160,155 @@ export async function turnIsClosed(
     [turn.conversationId, turn.turnNumber, [...TURN_CLOSING_STATUSES], options.replies],
   );
   return rows.rows.length > 0;
+}
+
+/**
+ * The run whose customer reply closes the turn, or null when none does (#122).
+ *
+ * The same record `turnIsClosed` reads with `replies`: a reply that reached
+ * the customer, may have, or will. It names the run, so a run that stops
+ * because the turn is answered can say which run answered it. The earliest
+ * such run, when more than one exists: the one a reader asks after is the
+ * reply the customer received first.
+ */
+export async function turnReplyRun(
+  client: ConversationDb,
+  turn: { conversationId: string | null; turnNumber: number | null },
+): Promise<string | null> {
+  if (turn.conversationId === null || turn.turnNumber === null) return null;
+  const rows = await client.query<{ run_id: string }>(
+    `SELECT r.run_id
+       FROM outbox o
+       JOIN run r ON r.run_id = o.run_id
+      WHERE r.conversation_id = $1
+        AND r.turn_number = $2
+        AND o.status = ANY ($3::text[])
+        AND o.payload ? 'draftExternalId'
+      ORDER BY r.created_at, r.run_id
+      LIMIT 1`,
+    [turn.conversationId, turn.turnNumber, [...TURN_CLOSING_STATUSES]],
+  );
+  return rows.rows[0]?.run_id ?? null;
+}
+
+/**
+ * What already holds the turn's reply, for a reply park about to park (#122).
+ *
+ * Two answers stop the park. `turn_answered`: the turn holds a reply record
+ * that reached the customer, may have, or will, read as `turnReplyRun` reads
+ * it. `reply_waiting`: another run of the same attempt already waits with a
+ * parked reply. A redelivered message joins the attempt its turn is on
+ * (DEC-38, DEC-49), and it is the same request as the one waiting (DEC-24), so
+ * the waiting run owns it; parking again on a helpdesk that takes no
+ * idempotency key makes a second draft an agent could send by hand. A later
+ * attempt after a send-back is not read, because its attempt differs. A
+ * waiting reply is a park that names a draft, or one of the reply's action
+ * class parked in the ledger alone.
+ *
+ * One statement, so one snapshot reads both. An approval moves the waiting
+ * run and writes its record in one commit, so a read before that commit sees
+ * the run waiting and a read after it sees the record. Two reads could pass
+ * between them and see neither. The answered turn comes first, then the
+ * earliest run.
+ */
+export async function turnReplyHolder(
+  client: ConversationDb,
+  turn: {
+    conversationId: string | null;
+    turnNumber: number | null;
+    attempt: number;
+    runId: string;
+    replyActionClass: string;
+  },
+): Promise<{ reason: 'turn_answered' | 'reply_waiting'; runId: string } | null> {
+  if (turn.conversationId === null || turn.turnNumber === null) return null;
+  const rows = await client.query<{ reason: 'turn_answered' | 'reply_waiting'; run_id: string }>(
+    `SELECT reason, run_id FROM (
+       SELECT 'turn_answered' AS reason, 0 AS rank, r.run_id, r.created_at
+         FROM outbox o
+         JOIN run r ON r.run_id = o.run_id
+        WHERE r.conversation_id = $1
+          AND r.turn_number = $2
+          AND o.status = ANY ($6::text[])
+          AND o.payload ? 'draftExternalId'
+       UNION ALL
+       SELECT 'reply_waiting', 1, r.run_id, r.created_at
+         FROM run r
+         JOIN step_journal park ON park.run_id = r.run_id AND park.step_id = 'park'
+        WHERE r.conversation_id = $1
+          AND r.turn_number = $2
+          AND r.attempt = $3
+          AND r.run_id <> $4
+          AND r.state IN ('awaiting_approval', 'snoozed')
+          AND park.status = 'done'
+          AND (park.result ? 'draftExternalId' OR park.result->>'actionClass' = $5)
+     ) holders
+     ORDER BY rank, created_at, run_id
+     LIMIT 1`,
+    [
+      turn.conversationId, turn.turnNumber, turn.attempt, turn.runId, turn.replyActionClass,
+      [...TURN_CLOSING_STATUSES],
+    ],
+  );
+  const row = rows.rows[0];
+  return row === undefined ? null : { reason: row.reason, runId: row.run_id };
+}
+
+/**
+ * A run of this ticket's turn and attempt that parked a reply draft and was
+ * stopped before it could wait (#122).
+ *
+ * Two walks of one message on one ticket can overlap. A rebalance hands the
+ * partition to a new owner mid-walk, or a retry follows a crash between the
+ * park and its state move. The older walk parked a draft in the helpdesk,
+ * and then the fence refused its state move (DEC-28), so its run stays in
+ * flight. The newer walk is the same request (DEC-24), and the draft is
+ * already in front of the helpdesk's agents. So the newer walk hands the
+ * turn back to that run (`resumeStrandedRun`) rather than make a second
+ * draft.
+ *
+ * The same ticket only. The fence is keyed on the ticket, so it says nothing
+ * about a walk of another ticket in the conversation, and that walk's draft
+ * belongs to another helpdesk ticket. The ledger write checks the epochs
+ * under the fence; this read only finds the candidate.
+ *
+ * Returns the earliest such run.
+ */
+export async function strandedReplyPark(
+  client: ConversationDb,
+  park: {
+    ticketId: string;
+    conversationId: string | null;
+    turnNumber: number | null;
+    attempt: number;
+    runId: string;
+    actionClass: string;
+  },
+): Promise<string | null> {
+  // A walk with no turn has no request to match: two messages of one ticket
+  // would read as one, and the hand-back would answer another message.
+  if (park.conversationId === null || park.turnNumber === null) return null;
+  const rows = await client.query<{ run_id: string }>(
+    `SELECT r.run_id
+       FROM run r
+       JOIN step_journal park ON park.run_id = r.run_id AND park.step_id = 'park'
+      WHERE r.ticket_id = $1
+        AND r.conversation_id = $2
+        AND r.turn_number = $3
+        AND r.attempt = $4
+        AND r.run_id <> $5
+        AND r.state = ANY ($6::text[])
+        AND park.status = 'done'
+        AND jsonb_typeof(park.result->'draftExternalId') = 'string'
+        AND park.result->>'actionClass' = $7
+      ORDER BY r.created_at, r.run_id
+      LIMIT 1`,
+    [
+      park.ticketId, park.conversationId, park.turnNumber, park.attempt, park.runId,
+      [...IN_FLIGHT_RUN_STATES], park.actionClass,
+    ],
+  );
+  return rows.rows[0]?.run_id ?? null;
 }
 
 /**

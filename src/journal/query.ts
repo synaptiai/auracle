@@ -326,6 +326,8 @@ export interface JournalStep {
   readonly close: CloseRecord | null;
   /** Present on a `send_back` row: who asked for a new attempt, and why (DEC-49). */
   readonly sendBack: SendBackRecord | null;
+  /** Present on a `supersede` row: why the run stopped with no send (#122). */
+  readonly supersede: SupersedeRecord | null;
   /** DEC-24: the action-derived key, on an `execute` row. */
   readonly idemKey: string | null;
   /** The coordinator's EscalationReason, on an `escalate` row. */
@@ -891,6 +893,29 @@ export interface SendBackRecord {
 }
 
 /**
+ * Why a run stopped superseded, on its `supersede` row (#122).
+ *
+ * `turn_answered`: the turn already held a customer reply, and `answeredBy`
+ * names the run that held it. `reply_waiting`: another run of the attempt
+ * already waited with the turn's reply, and `waitingRun` names it.
+ * `draft_parked`: an older walk of the ticket parked the turn's draft and was
+ * stopped stale, so the turn went back to it, and `parkedBy` names it.
+ * `attempt_rejected`: a reviewer sent the attempt back. Written by the park step and by the consumer's scan, outside
+ * the walk's own step list, so it sits outside `STEP_ORDER` like the close
+ * row.
+ */
+export interface SupersedeRecord {
+  /** The reason code, or null when the row recorded none. */
+  readonly reason: string | null;
+  /** The run whose reply answered the turn, when the row named one. */
+  readonly answeredBy: string | null;
+  /** The run that already held the turn's reply, when the row named one. */
+  readonly waitingRun: string | null;
+  /** The run that parked the turn's draft and waits with it, when named. */
+  readonly parkedBy: string | null;
+}
+
+/**
  * The send-back record, or null when the row is not one a reader can take at
  * its word.
  *
@@ -1080,6 +1105,16 @@ function toStep(row: Record<string, unknown>): JournalStep {
     close: stepId === 'close' ? toCloseRecord(result, recorded && result === null) : null,
     sendBack: stepId === 'send_back'
       ? toSendBackRecord(result, recorded && result === null)
+      : null,
+    // The same refusal the send-back row makes: a row holding a result
+    // nobody can read says nothing, rather than "no reason recorded".
+    supersede: stepId === 'supersede' && !(recorded && result === null)
+      ? {
+        reason: stringAt(result, 'reason'),
+        answeredBy: stringAt(result, 'answeredBy'),
+        waitingRun: stringAt(result, 'waitingRun'),
+        parkedBy: stringAt(result, 'parkedBy'),
+      }
       : null,
     idemKey: stepId === 'execute' ? stringAt(result, 'idemKey') : null,
     escalationReason:

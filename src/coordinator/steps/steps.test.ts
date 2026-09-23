@@ -229,7 +229,14 @@ describe('a step answers without a ledger behind it', () => {
   // events, not on either one alone.
   it('records the parking marker before it reaches the customer (DEC-11)', async () => {
     const entries: Entry[] = [];
-    const recorder = recordingPool(entries);
+    // The marker is a fenced write (#122), so the run row and the fence it
+    // reads are answered as a current lease.
+    const recorder = recordingPool(entries, (statement) =>
+      statement.startsWith('SELECT ticket_id, epoch, state')
+        ? [{ ticket_id: 'T-1', epoch: '1', state: 'gated', created_at: new Date(), finish_unordered: false }]
+        : statement.startsWith('SELECT epoch FROM ticket_epoch')
+          ? [{ epoch: '1' }]
+          : []);
     const ctx = context(recorder.pool, unreadableProvider('truncated'), {
       deps: { egress: recordingEgress(entries, new PermanentEgressError('no such recipient')) },
       input: { isCustomerVisible: true },
@@ -309,6 +316,24 @@ describe('a step answers without a ledger behind it', () => {
   //
   // The pool answers the SELECT this check reads. A stub that answers nothing
   // never reaches the branch at all, which is why nothing drove it before.
+  // #122: the hand-back names a run the ledger then does not hold. That is a
+  // fault in the ledger, not a refusal to word, so the walk throws it, and no
+  // draft is asked for.
+  it('throws a fault when the run it hands the turn back to is gone', async () => {
+    const entries: Entry[] = [];
+    const recorder = recordingPool(entries, (statement) =>
+      statement.startsWith('SELECT r.run_id') ? [{ run_id: 'run-0' }] : []);
+    const ctx = context(recorder.pool, unreadableProvider('truncated'), {
+      deps: { egress: recordingEgress(entries, null) },
+      input: { isCustomerVisible: true, conversationId: 'conv-1', turnNumber: 1 },
+    });
+    ctx.state.draft = 'Your refund is on its way.';
+
+    await expect(park(ctx)).rejects.toThrow(CoordinatorFaultError);
+    await expect(park(ctx)).rejects.toThrow('could not hand its turn back to run-0: unknown_run');
+    expect(entries.some((entry) => entry.kind === 'egress')).toBe(false);
+  });
+
   it('leaves no half-written row when it refuses to park (DEC-11)', async () => {
     const entries: Entry[] = [];
     const recorder = recordingPool(entries, (statement) =>
