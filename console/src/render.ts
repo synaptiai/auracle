@@ -16,6 +16,8 @@
 // Everything from the ledger is escaped. A ticket subject and an escalation
 // reason are text a customer or a model wrote, and neither is trusted markup.
 
+import { CUSTOMER_REPLY_ACTION_CLASS } from 'auracle/domain';
+
 /** The characters that would otherwise close a tag or an attribute. */
 const ESCAPES: Readonly<Record<string, string>> = {
   '&': '&amp;',
@@ -296,3 +298,17 @@ export function renderMetricValue(metric: MetricValue): string {
 // escalations module, which does not.
 export { escalationHead } from 'auracle/domain';
 
+/**
+ * Whether a park is an internal write (#123, DEC-34): it names no draft, it
+ * recorded an object payload, and its action is not the customer reply's. A
+ * reply parked in the ledger alone records a payload too, under a profile
+ * that shows no customer, and it is still a reply. The conversation reader's
+ * SQL applies the same test, so every surface names the same kind.
+ */
+export function parksAnAction(
+  payloadRecorded: boolean,
+  actionClass: string | null,
+  draftExternalId: string | null,
+): boolean {
+  return draftExternalId === null && payloadRecorded && actionClass !== CUSTOMER_REPLY_ACTION_CLASS;
+}

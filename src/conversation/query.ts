@@ -17,6 +17,7 @@
  */
 import type { Pool } from 'pg';
 
+import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
 import { OUTBOX_STATUSES, TERMINAL_RUN_STATES, type OutboxStatus } from '../ledger/insert.js';
 
 /** A run identity the ledger can be asked about. The columns are `uuid`. */
@@ -41,7 +42,7 @@ export type MessageAbsence = 'not_retained' | 'empty_message';
  * Why a turn shows no agent reply.
  *
  * `turn.approved_reply_text` is written on the approval path alone
- * (DEC-37, db/011). Seven different facts land in that null:
+ * (DEC-37, db/011). Ten different facts land in that null:
  *
  *   - `handled_automatically`: a run resolved the turn with an internal write
  *     and no person saw it. DEC-12 makes every customer reply wait for a
@@ -51,9 +52,18 @@ export type MessageAbsence = 'not_retained' | 'empty_message';
  *     text. It is also what an approval before DEC-38 looks like, because
  *     `recordApprovedReply` needs a turn number the park did not carry — so
  *     this does not promise the customer received nothing.
- *   - `awaiting_approval`: the run is parked and nobody has approved it. A
- *     customer reply parks as a draft; an internal write parks in the ledger
- *     with no draft (DEC-34). Either way nothing has been sent.
+ *   - `reply_awaiting_approval`: the run is parked and nobody has approved
+ *     it, and its park names a draft in the helpdesk: a customer reply is
+ *     drafted and waits (DEC-11, DEC-12). Nothing has been sent.
+ *   - `action_awaiting_approval`: the run is parked and nobody has approved
+ *     it, and its park is an internal write: it records a payload, and its
+ *     action is not the customer reply's. It parks in the ledger alone, with
+ *     no customer text (DEC-34), so no reply is drafted.
+ *   - `awaiting_approval`: the run is parked and nobody has approved it, and
+ *     its park names neither kind: no draft, and no internal write. A reply
+ *     parked in the ledger alone under a profile that shows no customer, a
+ *     crash marker, or no park at all. A page claims neither a draft nor an
+ *     action the ledger does not name.
  *   - `in_flight`: the run has not finished. It may yet send one, and saying
  *     it sent nothing would report a determination the ledger does not hold.
  *   - `no_reply_sent`: the run reached a terminal state that sent nothing —
@@ -67,6 +77,8 @@ export type MessageAbsence = 'not_retained' | 'empty_message';
 export type ReplyAbsence =
   | 'handled_automatically'
   | 'approved_without_reply'
+  | 'reply_awaiting_approval'
+  | 'action_awaiting_approval'
   | 'awaiting_approval'
   | 'put_aside'
   | 'in_flight'
@@ -196,15 +208,33 @@ const SELECT_TURNS = `
          r.run_id,
          r.state AS run_state,
          r.approved_by,
+         r.parked_kind,
          ob.status AS outbox_status,
          COALESCE(a.attempts, 0) AS attempts
     FROM turn t
     LEFT JOIN LATERAL (
-           SELECT run_id, state, approved_by
+           SELECT run.run_id, run.state, run.approved_by,
+                  -- #123: what this run's park is. Only a finished park names
+                  -- either kind: the crash marker records an intent, and a
+                  -- refusal records an error. A draft is a non-empty string
+                  -- handle in the helpdesk (DEC-11), as the approval requires. An internal write records a payload
+                  -- and is not the customer reply's action (DEC-34). Anything
+                  -- else names neither.
+                  (SELECT CASE
+                            WHEN jsonb_typeof(p.result -> 'draftExternalId') = 'string'
+                             AND (p.result ->> 'draftExternalId') <> '' THEN 'draft'
+                            WHEN jsonb_typeof(p.result -> 'payload') = 'object'
+                             AND (p.result ->> 'actionClass') IS DISTINCT FROM $2 THEN 'action'
+                          END
+                     FROM step_journal p
+                    WHERE p.run_id = run.run_id
+                      AND p.step_id = 'park'
+                      AND p.status = 'done')
+                    AS parked_kind
              FROM run
-            WHERE conversation_id = t.conversation_id
-              AND turn_number = t.turn_number
-            ORDER BY created_at DESC, run_id DESC
+            WHERE run.conversation_id = t.conversation_id
+              AND run.turn_number = t.turn_number
+            ORDER BY run.created_at DESC, run.run_id DESC
             LIMIT 1
          ) r ON true
     -- One row per run in practice: the approval writes step approve, the
@@ -262,9 +292,19 @@ function messageAbsenceFor(bodyText: string | null): MessageAbsence | null {
  * Read from the run's state rather than guessed. A turn with no run joined
  * cannot be explained at all, and says so.
  */
-function replyAbsenceFor(runState: string | null, approvedBy: string | null): ReplyAbsence {
+function replyAbsenceFor(
+  runState: string | null,
+  approvedBy: string | null,
+  parkedKind: 'draft' | 'action' | null,
+): ReplyAbsence {
   if (runState === null) return 'not_retained';
-  if (runState === 'awaiting_approval') return 'awaiting_approval';
+  // #123: the park row says what waits. A customer reply parks as a draft
+  // (DEC-11); an internal write parks with its payload (DEC-34). A park that
+  // names neither reads as neither.
+  if (runState === 'awaiting_approval') {
+    if (parkedKind === 'draft') return 'reply_awaiting_approval';
+    return parkedKind === 'action' ? 'action_awaiting_approval' : 'awaiting_approval';
+  }
   // DEC-48: a person put the case aside for a period. Read before the
   // in-flight test below, which would report a case a person deliberately
   // parked as work nobody has got to yet.
@@ -284,6 +324,11 @@ function replyAbsenceFor(runState: string | null, approvedBy: string | null): Re
   // is the difference between an automatic write and an approved one, and
   // DEC-42's column is what says which.
   return approvedBy === null ? 'handled_automatically' : 'approved_without_reply';
+}
+
+/** The park kind the statement read, narrowed; anything else names neither. */
+function parkedKindOf(value: unknown): 'draft' | 'action' | null {
+  return value === 'draft' || value === 'action' ? value : null;
 }
 
 /**
@@ -322,7 +367,7 @@ export async function readConversation(
   const row = head.rows[0] as Record<string, unknown> | undefined;
   if (row === undefined) return null;
 
-  const turns = await pool.query(SELECT_TURNS, [conversationId]);
+  const turns = await pool.query(SELECT_TURNS, [conversationId, CUSTOMER_REPLY_ACTION_CLASS]);
   return {
     conversationId,
     primaryTicketId: String(row['primary_ticket_id']),
@@ -342,7 +387,11 @@ export async function readConversation(
         replyText,
         replyAbsence:
           replyText === null
-            ? replyAbsenceFor(runState, (turn['approved_by'] as string | null) ?? null)
+            ? replyAbsenceFor(
+              runState,
+              (turn['approved_by'] as string | null) ?? null,
+              parkedKindOf(turn['parked_kind']),
+            )
             : null,
         runId: (turn['run_id'] as string | null) ?? null,
         runState,

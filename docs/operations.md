@@ -1607,13 +1607,19 @@ A fenced row or an unknown row says nobody can confirm the delivery. The relay
 can fence a row after a send that timed out (DEC-28). That send may have
 reached the customer.
 
-The surface also names why a turn shows no reply, and seven reasons exist.
+The surface also names why a turn shows no reply, and ten reasons exist.
 
 An internal write answered, and no reply went to the customer. A person approved
-an action and no reply text was recorded. A parked run still waits for a person.
-A run stopped. A run is still running.
+an action and no reply text was recorded. A run stopped. A run is still running.
+
+Three reasons say a parked run waits for a person, and the park's journal row
+says which. A reply is drafted in the helpdesk (DEC-11). An action waits with no
+draft, because an internal write parks in the ledger alone (DEC-34). Or the park
+names neither kind. That is a reply parked in the ledger alone, a crash marker,
+or no park at all. The page then claims neither a draft nor an action.
 
 No run joins the turn at all. A person closed the case with no reply (DEC-48).
+A person put the case aside until its period ends.
 
 A stopped run beside a row the relay did not refuse says what became of the
 action on that row. The row can belong to an earlier run. So a run that sent
@@ -2121,6 +2127,10 @@ explains why Node's own type stripping cannot run this tree.
 The queue's clean group carries a checkbox per case and one confirm button.
 The button posts the picked cases to a confirmation screen, and that screen
 draws every reply in full. Confirming approves each case in turn.
+
+The clean group holds customer replies alone. An internal write parks no reply
+and takes no hold (DEC-34), so it waits in the rest of the queue. A person
+approves it on its own case page. The console refuses a batch that names one.
 
 Each send waits `CONSOLE_SEND_HOLD_MS` before the relay may post it. The
 default is twelve seconds, and the success panel counts it down on an undo

@@ -12,7 +12,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
 import { fencedInsert, type FencedRunInput } from '../ledger/insert.js';
-import { listEscalations, parseSince, listRuns } from './query.js';
+import { listEscalations, parseSince, listRuns, readRun } from './query.js';
 import { readRunJournal } from '../journal/query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
@@ -173,6 +173,55 @@ describe('escalations CLI queries', () => {
     // Read off the row rather than compared to a clock this test does not
     // own. The ledger stamps it, and a surface ordering by time needs it.
     expect(createdAt).toBeInstanceOf(Date);
+  });
+
+  // #123: a handle names a draft only as a non-empty string on a finished
+  // park, as the conversation reader reads it. The approval refuses a park
+  // whose handle has another shape, so the queue never groups one as a
+  // drafted reply. Both selects read it so: the waiting queue, and the stuck
+  // records the relay left on a run that reads resolved.
+  const SHAPES = [
+    ['a number', 'done', 123],
+    ['empty', 'done', ''],
+    ['on a park that never finished', 'parking', 'hd-draft-0001'],
+  ] as const;
+  for (const [label, status, handle] of SHAPES) {
+    it(`reads a handle that is ${label} as no draft`, async () => {
+      const waiting = await seedRun('awaiting_approval');
+      const stuck = await seedRun('resolved');
+      for (const runId of [waiting.runId, stuck.runId]) {
+        await pool.query(
+          `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
+           VALUES ($1, 'park', $2, $3, 'escalations-test-prompt', 'escalations-test-model', 0)`,
+          [runId, status, JSON.stringify({ draftExternalId: handle, actionClass: 'customer_reply', body: 'a body' })],
+        );
+      }
+      await pool.query(
+        `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class, delivery, payload, status)
+         VALUES ($1, 'send', $2, 1, 'customer_reply', 'at_least_once', '{}', 'delivery_unknown')`,
+        [stuck.runId, 'idem-' + randomUUID()],
+      );
+      const items = await listEscalations(pool);
+      const byRun = new Map(items.map((item) => [item.runId, item]));
+      expect(byRun.get(stuck.runId)?.draftExternalId).toBeNull();
+      expect((await readRun(pool, waiting.runId))?.draftExternalId).toBeNull();
+    });
+  }
+
+  it('reads a finished park\'s string handle as its draft, on both selects', async () => {
+    const waiting = await seedRun('awaiting_approval');
+    const stuck = await seedRun('resolved');
+    for (const runId of [waiting.runId, stuck.runId]) {
+      await journalStep(runId, 'park', { draftExternalId: `hd-${runId}`, actionClass: 'customer_reply', body: 'a body' });
+    }
+    await pool.query(
+      `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class, delivery, payload, status)
+       VALUES ($1, 'send', $2, 1, 'customer_reply', 'at_least_once', '{}', 'delivery_unknown')`,
+      [stuck.runId, 'idem-' + randomUUID()],
+    );
+    const items = await listEscalations(pool);
+    expect(items.find((item) => item.runId === stuck.runId)?.draftExternalId).toBe(`hd-${stuck.runId}`);
+    expect((await readRun(pool, waiting.runId))?.draftExternalId).toBe(`hd-${waiting.runId}`);
   });
 
   // The defect this queue was built with. `reason` reads the `escalate` row,

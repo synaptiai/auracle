@@ -7,11 +7,11 @@
 //
 // They map and nothing else. No statement is issued here, and every value
 // comes from a reader in the root package.
-import { CLASSIFIER_K } from 'auracle/domain';
+import { CLASSIFIER_K, CUSTOMER_REPLY_ACTION_CLASS } from 'auracle/domain';
 import { replyDigest } from 'auracle/ledger-read';
 import type { JournalStep, RunJournal } from 'auracle/ledger-read';
 
-import { escalationHead } from './render.js';
+import { escalationHead, parksAnAction } from './render.js';
 import type { PartitionLatency } from 'auracle/ledger-read';
 
 import type {
@@ -138,6 +138,16 @@ function sampleCountOf(agreement: number): number | null {
   return whole >= 0 && whole <= CLASSIFIER_K && whole / CLASSIFIER_K === agreement ? whole : null;
 }
 
+/**
+ * #123: the draft a park step names, or null. A handle names a draft only as a
+ * non-empty string on a park that finished, as the conversation reader and the
+ * queue read it, and as the approval requires.
+ */
+function draftOf(step: JournalStep): string | null {
+  const handle = step.park?.draftExternalId ?? null;
+  return step.status === 'done' && handle !== null && handle !== '' ? handle : null;
+}
+
 export function stepSays(step: JournalStep, journal: RunJournal): string | null {
   if (step.faultShape !== null) return `failed on a ${step.faultShape} answer`;
   switch (step.stepId) {
@@ -169,7 +179,7 @@ export function stepSays(step: JournalStep, journal: RunJournal): string | null 
       const parked = step.park;
       if (parked === null) return null;
       // The parked body and the action payload are recorded as present, never
-      // shown. Both carry the composed reply, and this console authenticates
+      // shown. Both carry composed text, and this console authenticates
       // nobody; the operator edits the draft in the helpdesk, which is where
       // DEC-11 keeps it.
       // Four park rows exist, and reading only the two presence flags folded
@@ -181,15 +191,29 @@ export function stepSays(step: JournalStep, journal: RunJournal): string | null 
       // the helpdesk that nobody can name, and that is what a person has to
       // reconcile. The refusal records the adapter's error, withheld because
       // it can quote a customer address, but its presence is not withheld.
-      const held = parked.draftRecorded
+      //
+      // #123: the handle names a draft, and the body does not. An internal
+      // write parks in the ledger alone and journals its rationale as a body
+      // too (DEC-34), so a body beside a payload is an action, not a draft.
+      const draft = draftOf(step);
+      const held = draft !== null
         ? 'draft held in the helpdesk'
-        : parked.payloadRecorded
+        : parksAnAction(parked.payload !== null, parked.actionClass, draft)
           ? 'action payload recorded'
-          : parked.failureRecorded
-            ? 'the adapter refused before it appended'
-            : parked.parkKey === null
-              ? 'nothing recorded'
-              : 'park key recorded, no draft named';
+          // A reply parked in the ledger alone records a payload too, and
+          // holds no draft: it is a reply, not an action. A payload of a
+          // shape no action takes is named as what it is.
+          : parked.payloadRecorded
+            ? (parked.actionClass === CUSTOMER_REPLY_ACTION_CLASS
+              ? 'reply recorded in the ledger, no draft named'
+              : 'payload recorded in a shape no action takes')
+            : parked.draftRecorded
+            ? 'text recorded, no draft named'
+            : parked.failureRecorded
+              ? 'the adapter refused before it appended'
+              : parked.parkKey === null
+                ? 'nothing recorded'
+                : 'park key recorded, no draft named';
       return `${parked.actionClass ?? 'action unrecorded'} · ${parked.delivery ?? 'delivery unrecorded'} · ${held}`;
     }
     case 'execute':
@@ -333,7 +357,8 @@ export function coverageForPage(journal: RunJournal): {
 }
 
 export function evidenceOf(journal: RunJournal): EvidenceView {
-  const park = journal.steps.find((step) => step.park !== null)?.park ?? null;
+  const parkStep = journal.steps.find((step) => step.park !== null);
+  const park = parkStep?.park ?? null;
   const compose = journal.steps.find((step) => step.compose !== null)?.compose ?? null;
   // DEC-48: the gate judged the draft and no page may draw its verdicts on a
   // reply a person wrote. The sentences and their sources stay — they are the
@@ -400,6 +425,12 @@ export function evidenceOf(journal: RunJournal): EvidenceView {
 
   return {
     draftBody: park?.draftBody ?? null,
+    // #123: only an internal write parks a payload (DEC-34).
+    // The payload read as an object, as the queue and the reader read it.
+    parkedAction: parksAnAction(
+      (park?.payload ?? null) !== null, park?.actionClass ?? null,
+      parkStep === undefined ? null : draftOf(parkStep),
+    ),
     sentences,
     claims,
     documents,

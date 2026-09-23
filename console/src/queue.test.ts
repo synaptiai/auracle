@@ -22,6 +22,7 @@ const CLEAN = {
   agreementThreshold: 0.8,
   gateCoverage: 0.86,
   coverageReviewThreshold: 0.8,
+  draftExternalId: 'hd-draft-0001',
 } as const;
 
 describe('the group a waiting case belongs to', () => {
@@ -60,6 +61,14 @@ describe('the group a waiting case belongs to', () => {
   it('does not call a case clean when its rule is missing or unknown', () => {
     expect(queueGroupOf({ ...CLEAN, gateReason: null })).toBe('rest');
     expect(queueGroupOf({ ...CLEAN, gateReason: 'a_rule_nobody_wrote' })).toBe('rest');
+  });
+
+  // #123: the one-press batch holds each reply for an undo (DEC-51), and an
+  // internal write parks no reply and takes no hold (DEC-34). So a parked
+  // write never joins the group the batch confirms, however clean its gates.
+  it('never calls an internal write clean, however its gates read', () => {
+    expect(queueGroupOf({ ...CLEAN, actionClass: 'route_ticket', draftExternalId: null })).toBe('rest');
+    expect(queueGroupOf({ ...CLEAN, draftExternalId: null })).toBe('rest');
   });
 
   it('calls a case clean when each value clears its own line', () => {
@@ -118,6 +127,7 @@ describe('the queue in groups', () => {
     readonly agreementThreshold: number | null;
     readonly gateCoverage: number | null;
     readonly coverageReviewThreshold: number | null;
+    readonly draftExternalId: string | null;
   }
   const run = (runId: string, over: Partial<QueueRun> = {}): QueueRun => ({
     ...CLEAN, runId, product: null, createdAt: at('2026-09-14T10:00:00Z'), ...over,

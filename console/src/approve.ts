@@ -103,7 +103,15 @@ export type ConsoleApproveOutcome =
    * differently. Its own outcome, because the next step differs: the
    * operator aligns the processes rather than checking a connection.
    */
-  | { readonly outcome: 'read_back_not_a_note'; readonly fault: string };
+  | { readonly outcome: 'read_back_not_a_note'; readonly fault: string }
+  /**
+   * #123: the batch's own check, before its approval: a batch confirms
+   * drafted replies alone (DEC-51). Nothing was approved, which the batch
+   * knows, so this is an answer and not a fault.
+   */
+  | { readonly outcome: 'batch_no_draft' }
+  /** The same check could not read the case, so the batch approved nothing. */
+  | { readonly outcome: 'batch_unread' };
 
 /**
  * The console approves; it does not compose.

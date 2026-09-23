@@ -135,7 +135,7 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
       coverageBlock: null, coverageReview: null, intentId: null,
       decision: null, policyReason: null,
       evidence: {
-        draftBody: null, sentences: null, claims: null,
+        draftBody: null, parkedAction: false, sentences: null, claims: null,
         documents: null, documentsMalformed: false,
         // A run with no journal holds no rewrite row, so its reply is
         // whatever the ledger's item said, and that is not this field's
@@ -371,8 +371,8 @@ async function main(): Promise<void> {
     // Unbounded on purpose, and it is the one surface that should be.
     //
     // The runs list is a browsing surface, so `RUNS_PAGE` caps it. This is a
-    // work queue: every row is a customer reply waiting for a person
-    // (DEC-12). Capping it would drop the oldest waiting replies off the end
+    // work queue: every row waits for a person, a customer reply (DEC-12) or
+    // an internal write (DEC-34). Capping it would drop the oldest off the end
     // and show an operator a queue they had finished, which is a worse fault
     // than a slow page. The read is therefore not bounded either — it runs
     // the same two statements `pnpm run escalations` runs.

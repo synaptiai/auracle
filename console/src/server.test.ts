@@ -84,7 +84,7 @@ const EVIDENCE = {
       docId: 'SYN-DOC-99', supported: null,
     },
   ],
-  documentsMalformed: false,
+  parkedAction: false, documentsMalformed: false,
   documents: [
     {
       position: 1, docId: 'SYN-DOC-01', title: 'Refund policy', kind: 'document',
@@ -231,7 +231,7 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
           turnNumber: 2, ticketId: 'SYN-1',
           createdAt: new Date('2026-09-07T14:32:00.000Z'),
           bodyText: null, messageAbsence: 'not_retained',
-          replyText: null, replyAbsence: 'awaiting_approval',
+          replyText: null, replyAbsence: 'reply_awaiting_approval',
           runId: RUN, runState: 'awaiting_approval', runAttempts: 1, outboxStatus: null,
         },
       ],
@@ -1311,6 +1311,62 @@ describe('the reply an approver reads before they send it', () => {
     expect(html).toContain('Close, no reply');
   });
 
+  // #123: a reply parked in the ledger alone, under a profile that shows no
+  // customer, holds no helpdesk draft and no reply the relay can send: the
+  // relay refuses its record. So there is nothing here to approve.
+  it('offers no approve button for a reply parked in the ledger alone', async () => {
+    const base = await startGuarded(deps({
+      readRun: caseOf({ reason: null, draftExternalId: null, payloadRecorded: true, actionClass: 'customer_reply' }),
+    }));
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).toContain('This run parked a reply in the ledger alone, with no helpdesk draft');
+    expect(html).not.toContain('action="/approve"');
+    expect(html).not.toContain('performs customer_reply');
+    expect(buttonInForm(html, '/close')).toBe(true);
+    // It is a reply, not an internal write: its close says so.
+    expect(html).toContain('Close, no reply');
+    expect(html).not.toContain('Close, not performed');
+  });
+
+  // #123: the page offers no approval for a reply parked in the ledger alone,
+  // and a request built by hand gets none either.
+  it('refuses a hand-built approval of a reply parked in the ledger alone', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(deps({
+      readRun: caseOf({ reason: null, draftExternalId: null, payloadRecorded: true, actionClass: 'customer_reply' }),
+      approve,
+    }));
+    const shown = createHash('sha256').update(EVIDENCE.draftBody).digest('hex');
+    const res = await fetch(base + '/approve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
+      body: `runId=${RUN}&shown=${shown}`,
+      redirect: 'manual' as const,
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('This run parked a reply in the ledger alone');
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  // The ledger-only check reads the run first. A read that fails refuses
+  // nothing: the approval reads the run itself and answers for it.
+  it('approves as before when the ledger-only check cannot read the run', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(deps({
+      readRun: (async () => { throw new Error('the ledger did not answer'); }) as ConsoleDeps['readRun'],
+      approve,
+    }));
+    const shown = createHash('sha256').update(EVIDENCE.draftBody).digest('hex');
+    const res = await fetch(base + '/approve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
+      body: `runId=${RUN}&shown=${shown}`,
+      redirect: 'manual' as const,
+    });
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(303);
+  });
+
   // `compensate` is the class the policy engine judges irreversible, and a
   // seeded queue holds it. An earlier case used a class this system has no
   // name for, so the branch that matters was never exercised.
@@ -1366,6 +1422,58 @@ describe('the reply an approver reads before they send it', () => {
     expect(html).toContain('amountMicros');
     expect(html).toContain('duplicate charge');
   });
+
+  // #123: an internal write's composed text is the rationale a person reads
+  // before approving, never a reply (DEC-34). The card names it so.
+  it('names an internal write\'s composed text as its rationale, not a reply', async () => {
+    const action = { reason: null, gateReason: 'irreversible', policyReason: 'irreversible', draftExternalId: null, payloadRecorded: true, actionClass: 'compensate', delivery: 'at_most_once' };
+    const base = await startGuarded(deps({
+      readRun: caseOf({ ...action, evidence: { ...EVIDENCE, parkedAction: true } }),
+    }));
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).toContain('The rationale the system composed for this action');
+    expect(html).not.toContain('The reply, as the system drafted it');
+
+    const whole = await startGuarded(deps({
+      readRun: caseOf({ ...action, evidence: { ...EVIDENCE, parkedAction: true, sentences: null, claims: null } }),
+    }));
+    const unpartitioned = await (await fetch(whole + CASE)).text();
+    expect(unpartitioned).toContain('The rationale is shown as it was composed.');
+    expect(unpartitioned).not.toContain('The reply is shown');
+
+    // Its absent text and its summaries name the rationale too.
+    const none = await startGuarded(deps({
+      readRun: caseOf({ ...action, evidence: { ...EVIDENCE, parkedAction: true, draftBody: null, sentences: null, claims: null } }),
+    }));
+    expect(await (await fetch(none + CASE)).text()).toContain('This run composed no rationale.');
+    const courtesy = { text: 'We will follow up.', docId: null, claimIndex: null, supported: null };
+    const uncited = await startGuarded(deps({
+      readRun: caseOf({ ...action, evidence: { ...EVIDENCE, parkedAction: true, sentences: [courtesy, courtesy], claims: [] } }),
+    }));
+    expect(await (await fetch(uncited + CASE)).text())
+      .toContain('This rationale is 2 sentences, and no document stands behind any of them.');
+    const mixed = await startGuarded(deps({
+      readRun: caseOf({ ...action, evidence: { ...EVIDENCE, parkedAction: true, sentences: [...EVIDENCE.sentences, courtesy] } }),
+    }));
+    const mixedPage = await (await fetch(mixed + CASE)).text();
+    expect(mixedPage).toContain('1 further sentence opens or closes the rationale and cites nothing');
+    expect(mixedPage).not.toContain('closes the reply');
+  });
+
+  // #123: an internal write with mediocre coverage waits too (DEC-07). The
+  // coverage rules read what the system composed, which for an internal
+  // write is its rationale, so neither calls it a reply.
+  for (const rule of ['groundedness_block', 'groundedness_review'] as const) {
+    it(`words the ${rule} rule without calling an internal write a reply`, async () => {
+      const base = await startGuarded(deps({
+        readRun: caseOf({ reason: null, gateReason: rule, policyReason: rule, draftExternalId: null, payloadRecorded: true, actionClass: 'route_ticket', delivery: 'at_least_once', evidence: { ...EVIDENCE, parkedAction: true } }),
+      }));
+      const html = await (await fetch(base + CASE)).text();
+      const why = new RegExp(`<p><span class="m">${rule}</span>\\. ([^<]*)</p>`).exec(html)?.[1];
+      expect(why).toContain('what the system composed');
+      expect(why).not.toContain('reply');
+    });
+  }
 
   // A park with a payload the reader refused, or none at all. Drawing an
   // empty block would vouch for an action with nothing behind it.
@@ -1527,7 +1635,7 @@ describe('the evidence states that are not a list of claims', () => {
   // labelled gone — a positive claim about an index nothing was compared to.
   it('does not invent a retrieved count from a retrieval it does not have', async () => {
     const html = await caseWith({
-      draftBody: 'a reply', documentsMalformed: false, documents: null,
+      draftBody: 'a reply', parkedAction: false, documentsMalformed: false, documents: null,
       sentences: [{
         text: 'a claim', docId: 'SYN-DOC-01', claimIndex: 0, supported: true,
       }],
@@ -1553,7 +1661,7 @@ describe('the evidence states that are not a list of claims', () => {
   // other: a reply citing a document the retriever never returned.
   it('separates a document that left the index from one never retrieved', async () => {
     const html = await caseWith({
-      draftBody: 'a reply', documentsMalformed: false,
+      draftBody: 'a reply', parkedAction: false, documentsMalformed: false,
       documents: [{
         position: 1, docId: 'SYN-DOC-01', title: null, kind: null, owner: null,
         bodyUnchanged: null, titleAtRun: null,
@@ -1573,7 +1681,7 @@ describe('the evidence states that are not a list of claims', () => {
   // saying every claim was accepted would vouch for a reply making no claims.
   it('names a claim list holding no claims, rather than vouching for it', async () => {
     const html = await caseWith({
-      draftBody: 'a reply', documentsMalformed: false, documents: [],
+      draftBody: 'a reply', parkedAction: false, documentsMalformed: false, documents: [],
       sentences: [], claims: [],
     });
     expect(html).toContain('claim list with no claims in it');
@@ -1586,7 +1694,7 @@ describe('the evidence states that are not a list of claims', () => {
   // text nobody showed them.
   const COURTEOUS = {
     draftBody: 'Thanks for writing in. We refunded the duplicate charge. Reply here if it helps.',
-    documentsMalformed: false,
+    parkedAction: false, documentsMalformed: false,
     documents: [{
       position: 1, docId: 'SYN-DOC-01', title: 'Refund policy', kind: 'document',
       owner: 'support', bodyUnchanged: true, titleAtRun: 'Refund policy',
@@ -1662,7 +1770,7 @@ describe('the evidence states that are not a list of claims', () => {
   it('shows a reply whose partition could not be read, and says so', async () => {
     const html = await caseWith({
       draftBody: 'We refunded the duplicate charge.',
-      documentsMalformed: false, documents: [], sentences: null, claims: null,
+      parkedAction: false, documentsMalformed: false, documents: [], sentences: null, claims: null,
     });
     expect(html).toContain('We refunded the duplicate charge.');
     expect(html).toContain('no claim list');
@@ -1676,7 +1784,7 @@ describe('the evidence states that are not a list of claims', () => {
   // vouch for one.
   it('names a run that recorded neither a draft nor a partition', async () => {
     const html = await caseWith({
-      draftBody: null, documentsMalformed: false, documents: [],
+      draftBody: null, parkedAction: false, documentsMalformed: false, documents: [],
       sentences: null, claims: null,
     });
     expect(html).toContain('This run composed no reply.');
@@ -1689,7 +1797,7 @@ describe('the evidence states that are not a list of claims', () => {
   it('says a reply no document stands behind, rather than drawing it quietly', async () => {
     const html = await caseWith({
       draftBody: 'We have already refunded your payment. It cleared on Tuesday.',
-      documentsMalformed: false, documents: [],
+      parkedAction: false, documentsMalformed: false, documents: [],
       sentences: [
         {
           text: 'We have already refunded your payment.',
@@ -1708,7 +1816,7 @@ describe('the evidence states that are not a list of claims', () => {
   it('says the same of a one-sentence reply that cites nothing', async () => {
     const html = await caseWith({
       draftBody: 'We have already refunded your payment.',
-      documentsMalformed: false, documents: [],
+      parkedAction: false, documentsMalformed: false, documents: [],
       sentences: [{
         text: 'We have already refunded your payment.',
         docId: null, claimIndex: null, supported: null,
@@ -1723,7 +1831,7 @@ describe('the evidence states that are not a list of claims', () => {
   // close the reply", which is a false statement about that reply.
   it('counts one courtesy sentence in the singular, and says nothing when there are none', async () => {
     const one = await caseWith({
-      draftBody: 'a reply', documentsMalformed: false, documents: [],
+      draftBody: 'a reply', parkedAction: false, documentsMalformed: false, documents: [],
       sentences: [
         { text: 'A charge is refundable.', docId: 'SYN-DOC-01', claimIndex: 0, supported: true },
         { text: 'Reply here if that helps.', docId: null, claimIndex: null, supported: null },
@@ -1733,7 +1841,7 @@ describe('the evidence states that are not a list of claims', () => {
     expect(one).toContain('1 further sentence opens or closes the reply and cites nothing');
 
     const none = await caseWith({
-      draftBody: 'a reply', documentsMalformed: false, documents: [],
+      draftBody: 'a reply', parkedAction: false, documentsMalformed: false, documents: [],
       claims: [{ index: 0, text: 'A charge is refundable.', docId: 'SYN-DOC-01', supported: true }],
     });
     expect(none).toContain('every claim of 1 carries a document the judge accepted');
@@ -1745,7 +1853,7 @@ describe('the evidence states that are not a list of claims', () => {
   // about the claim nobody judged.
   it('reports a refused claim and an unjudged one in the same sentence', async () => {
     const html = await caseWith({
-      draftBody: 'a reply', documentsMalformed: false, documents: [],
+      draftBody: 'a reply', parkedAction: false, documentsMalformed: false, documents: [],
       claims: [
         { index: 0, text: 'accepted', docId: 'SYN-DOC-01', supported: true },
         { index: 1, text: 'refused', docId: 'SYN-DOC-01', supported: false },
@@ -1773,7 +1881,7 @@ describe('the conversation a responder reads', () => {
     const base = await startGuarded(deps());
     const html = await (await fetch(`${base}/conversation/${CONVERSATION}`)).text();
     expect(html).toContain('the text of this message was not kept');
-    expect(html).toContain('this turn waits for a person to approve it');
+    expect(html).toContain('a reply is drafted and waits for a person to approve it');
   });
 
   it('says a participant is named without naming them', async () => {
@@ -1828,7 +1936,10 @@ describe('the conversation a responder reads', () => {
       turnOf(4, { replyAbsence: 'in_flight', runState: 'composed', outboxStatus: null }),
       turnOf(5, { replyAbsence: 'no_reply_sent', runState: 'escalated', outboxStatus: 'delivery_unknown' }),
       turnOf(6, { replyAbsence: 'not_retained', runId: null, runState: null, runAttempts: 0, outboxStatus: null }),
-      turnOf(7, { replyAbsence: 'awaiting_approval', runState: 'awaiting_approval', outboxStatus: null }),
+      // #123: an internal write waits with no draft (DEC-34), and a customer
+      // reply waits as a draft (DEC-11). The reader says which.
+      turnOf(7, { replyAbsence: 'action_awaiting_approval', runState: 'awaiting_approval', outboxStatus: null }),
+      turnOf(8, { replyAbsence: 'reply_awaiting_approval', runState: 'awaiting_approval', outboxStatus: null }),
     ],
   };
 
@@ -1839,7 +1950,7 @@ describe('the conversation a responder reads', () => {
   it('gives each turn an outcome chip read from what the ledger holds', async () => {
     const base = await startGuarded(deps({ readConversation: async () => THREAD as never }));
     const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
-    expect([...blocks.keys()]).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect([...blocks.keys()]).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     const says = (n: number): string => /<span class="chip[^"]*"[^>]*>([^<]*)<\/span>/.exec(blocks.get(n)!)![1]!;
     expect(says(1)).toBe('auto-answered');
     expect(says(2)).toBe('approved');
@@ -1896,6 +2007,10 @@ describe('the conversation a responder reads', () => {
       /<p class="absent">a person put this case aside until its period ends<\/p>/,
     );
     expect(block).not.toContain('in flight');
+    // #123: a case put aside may be an internal write, which parks no reply
+    // (DEC-34), so its heading names what happened and not a reply.
+    expect(block).toContain('<div class="who">put aside</div>');
+    expect(block).not.toContain('<div class="who">the reply</div>');
   });
 
   // A stopped run names its state. Only an escalation, or a row that confirms
@@ -2022,7 +2137,7 @@ describe('the conversation a responder reads', () => {
     expect(html).toContain('<div class="casehd">');
     expect(html).toContain(
       '<div class="m casemeta">conversation ' + CONVERSATION
-        + ' · 7 turns · opened 2026-08-30 06:00Z · no participant named</div>',
+        + ' · 8 turns · opened 2026-08-30 06:00Z · no participant named</div>',
     );
     expect(html).toContain('<div class="wrap turns"><div class="turn">');
     for (const block of turnBlocks(html).values()) {
@@ -2196,12 +2311,29 @@ describe('the conversation a responder reads', () => {
   it('labels a waiting turn as waiting for a person', async () => {
     const base = await startGuarded(deps({ readConversation: async () => THREAD as never }));
     const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
-    const waiting = blocks.get(7)!;
-    expect(waiting).toContain('<div class="who">waiting for a person</div>');
-    expect(waiting).not.toContain('the system replied');
-    expect(waiting).toMatch(/<p class="absent waiting">this turn waits for a person to approve it<\/p>/);
+    for (const n of [7, 8]) {
+      const waiting = blocks.get(n)!;
+      expect(waiting).toContain('<div class="who">waiting for a person</div>');
+      expect(waiting).not.toContain('the system replied');
+    }
     expect(blocks.get(2)).toContain('the system replied');
     expect(blocks.get(2)).not.toContain('waiting for a person</div>');
+  });
+
+  // #123: a parked internal write holds no draft and no customer text
+  // (DEC-34), so it never reads as a drafted reply. A parked customer reply
+  // still says its reply is drafted (DEC-11).
+  it('tells a drafted reply from an internal write that waits', async () => {
+    const base = await startGuarded(deps({ readConversation: async () => THREAD as never }));
+    const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
+    const action = blocks.get(7)!;
+    expect(action).toMatch(
+      /<p class="absent waiting">an action waits for a person to approve it; no reply is drafted<\/p>/,
+    );
+    expect(action).not.toContain('a reply is drafted');
+    expect(blocks.get(8)!).toMatch(
+      /<p class="absent waiting">a reply is drafted and waits for a person to approve it<\/p>/,
+    );
   });
 
   it('draws every absent half as a named sentence, and no empty block', async () => {
@@ -6565,6 +6697,162 @@ describe('DEC-51: the batch confirm and its undo', () => {
     expect(html).toContain('12 seconds');
   });
 
+  // #123: a batch confirms replies alone, the only kind a hold and an undo
+  // cover (DEC-51). An internal write parks no reply (DEC-34).
+  it('keeps an internal write out of the batch, on the page and on the apply', async () => {
+    const ACTION = '55555555-5555-4555-8555-555555555555';
+    const RATIONALE = 'Route the ticket to the billing queue.';
+    const action = {
+      ...cleanRun(ACTION, 'SYN-C', RATIONALE), draftExternalId: null, payloadRecorded: true,
+      actionClass: 'route_ticket', evidence: { ...EVIDENCE, draftBody: RATIONALE, parkedAction: true },
+      request: { ...REQUEST, savedReplyText: null },
+    };
+    const approve = vi.fn().mockResolvedValue('approved');
+    const runs: Record<string, unknown> = {
+      [CLEAN_A]: cleanRun(CLEAN_A, 'SYN-A', FIRST_REPLY),
+      [ACTION]: action,
+    };
+    const base = await startGuarded(deps({
+      readRun: (async (runId: string) => runs[runId] ?? null) as ConsoleDeps['readRun'],
+      approve,
+    }), undefined, undefined, true);
+
+    const page = await (await post(base, '/confirm', { runId: [CLEAN_A, ACTION] })).text();
+    expect(page).toContain(FIRST_REPLY);
+    expect(page).not.toContain(RATIONALE);
+    expect(page).toContain('this case holds no helpdesk draft, so it is not in the batch. Open its case page');
+    expect(page).toContain('Confirm 1 · send each reply');
+
+    const applied = await post(base, '/confirm/apply', {
+      runId: [CLEAN_A, ACTION],
+      shown: [digestOf(FIRST_REPLY), digestOf(RATIONALE)],
+    });
+    expect(applied.status).toBe(400);
+    const refusal = await applied.text();
+    expect(refusal).toContain('A batch confirms drafted replies alone, so nothing was sent.');
+    expect(refusal).toContain('to see what it holds');
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  // #123: the apply's own check reads each case before it approves it. A
+  // case the first read could not reach is read again there, so a hand-built
+  // post never approves an internal write through the batch.
+  it('never approves through the batch a case its first read could not reach', async () => {
+    const ACTION = '55555555-5555-4555-8555-555555555555';
+    const action = {
+      ...cleanRun(ACTION, 'SYN-C', 'Route the ticket to billing.'), draftExternalId: null, payloadRecorded: true,
+      actionClass: 'route_ticket',
+    };
+    let reads = 0;
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(deps({
+      readRun: (async (runId: string) => {
+        if (runId !== ACTION) return null;
+        reads += 1;
+        if (reads === 1) throw new Error('the ledger did not answer');
+        return action;
+      }) as ConsoleDeps['readRun'],
+      approve,
+    }), undefined, undefined, true);
+
+    const applied = await post(base, '/confirm/apply', {
+      runId: [ACTION],
+      shown: [digestOf('Route the ticket to billing.')],
+    });
+    expect(applied.status).toBe(200);
+    expect(reads).toBeGreaterThanOrEqual(2);
+    expect(approve).not.toHaveBeenCalled();
+    // The page says what the batch knows: nothing was approved.
+    const page = await applied.text();
+    expect(page).toContain('This case holds no helpdesk draft, so the batch did not approve it.');
+    expect(page).not.toContain('cannot say whether it was');
+  });
+
+  // The batch's refusals belong to its result page. A case-page link that
+  // names one describes nothing the page read, so it draws the fallback.
+  it('draws no batch refusal on a case page a link names', async () => {
+    // A reply that was sent, and an internal write that was performed: the
+    // second holds no draft, which a rule reading the draft alone would fit.
+    const runs = [
+      { state: 'resolved', approved: true },
+      { state: 'resolved', approved: true, draftExternalId: null, payloadRecorded: true, actionClass: 'route_ticket' },
+    ];
+    for (const over of runs) {
+      const base = await startGuarded(deps({ readRun: caseOf(over) }));
+      for (const outcome of ['batch_no_draft', 'batch_unread']) {
+        const html = await (await fetch(`${base}${CASE}?outcome=${outcome}`, {
+          headers: { 'sec-fetch-site': 'same-origin' },
+        })).text();
+        expect(html, outcome).not.toContain('Nothing was sent or performed');
+        expect(html, outcome).toContain('an outcome this console does not know');
+      }
+    }
+  });
+
+  // One answer per case: a batch that names a case twice is refused whole.
+  it('refuses a batch that names a case twice', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(deps(batchDeps({ approve })), undefined, undefined, true);
+    const res = await post(base, '/confirm/apply', {
+      runId: [CLEAN_A, CLEAN_A],
+      shown: [digestOf(FIRST_REPLY), digestOf(FIRST_REPLY)],
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('That batch names a case more than once, so nothing was sent.');
+    expect(approve).not.toHaveBeenCalled();
+
+    // The same case in either letter case is the same case: a uuid reads the
+    // same both ways, so the repeat check compares what the ledger compares.
+    const LETTERED = 'abcdef12-3456-4789-8abc-def012345678';
+    const lettered = await startGuarded(deps({
+      readRun: (async (runId: string) => (runId === LETTERED ? cleanRun(LETTERED, 'SYN-L', FIRST_REPLY) : null)) as ConsoleDeps['readRun'],
+      approve,
+    }), undefined, undefined, true);
+    const twice = await post(lettered, '/confirm/apply', {
+      runId: [LETTERED, LETTERED.toUpperCase()],
+      shown: [digestOf(FIRST_REPLY), digestOf(FIRST_REPLY)],
+    });
+    expect(twice.status).toBe(400);
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  // A case the batch cannot read before its approval is not approved, and the
+  // page says so rather than calling its outcome unknown.
+  it('names a case the batch could not read as one it did not approve', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(deps({
+      readRun: (async () => { throw new Error('the ledger did not answer'); }) as ConsoleDeps['readRun'],
+      approve,
+    }), undefined, undefined, true);
+    const applied = await post(base, '/confirm/apply', {
+      runId: [CLEAN_A],
+      shown: [digestOf(FIRST_REPLY)],
+    });
+    expect(applied.status).toBe(200);
+    expect(approve).not.toHaveBeenCalled();
+    const page = await applied.text();
+    expect(page).toContain('This case could not be read before its approval, so the batch did not approve it.');
+    expect(page).not.toContain('cannot say what became of it');
+    expect(page).not.toContain('cannot say whether it was');
+  });
+
+  // A fault inside the approval leaves the outcome unknown, and the page
+  // names the undo only where it draws one.
+  it('names no undo for a faulted case when the page draws none', async () => {
+    const approve = vi.fn().mockRejectedValue(new Error('the ledger dropped the connection'));
+    const base = await startGuarded(deps(batchDeps({
+      approve,
+      readApprovalHold: async () => null,
+    })));
+    const page = await (await post(base, '/confirm/apply', {
+      runId: [CLEAN_A],
+      shown: [digestOf(FIRST_REPLY)],
+    })).text();
+    expect(page).toContain('cannot say whether it was.');
+    expect(page).not.toContain('action="/undo');
+    expect(page).not.toContain('The undo above is offered for it.');
+  });
+
   // DEC-51 and DEC-40: a reply on the draft path is never held, so that
   // console must not promise a window or an undo it cannot offer.
   it('promises no window on a console whose parked copy is what sends', async () => {
@@ -6815,8 +7103,13 @@ describe('DEC-51: the batch confirm and its undo', () => {
     const base = await startGuarded(
       deps(batchDeps({
         approve,
+        // The ledger stops answering for the second case once both are
+        // approved: the batch's own checks read it, and the result page
+        // cannot.
         readRun: (async (runId: string) => {
-          if (runId === CLEAN_B) throw new Error('the ledger stopped answering');
+          if (runId === CLEAN_B && approve.mock.calls.length >= 2) {
+            throw new Error('the ledger stopped answering');
+          }
           return runs[runId] ?? null;
         }) as ConsoleDeps['readRun'],
       })),
@@ -7192,6 +7485,46 @@ describe('DEC-48: the console closes a case with no reply', () => {
     expect(await badRun.text()).toContain('nothing was closed');
 
     expect(close).not.toHaveBeenCalled();
+  });
+
+  // #123: an internal write parks no reply (DEC-34). Its close says the
+  // action it parked is not performed, before and after the close.
+  it('words the close of an internal write as an action left unperformed', async () => {
+    const action = { draftExternalId: null, payloadRecorded: true, actionClass: 'compensate', delivery: 'at_most_once' };
+    const base = await startGuarded(deps({ readRun: caseOf(action) }));
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).toContain('Closing finishes this case without performing the action it parked.');
+    expect(html).toContain('placeholder="why this action is not needed"');
+    expect(buttonInForm(html, '/close')).toBe(true);
+    expect(html).toContain('Close, not performed');
+    expect(html).not.toContain('Close, no reply');
+    const closed = await startGuarded(deps({ readRun: caseOf({ ...action, state: 'closed' }) }));
+    const after = await (await fetch(`${closed}${CASE}?closed=closed`, {
+      headers: { 'sec-fetch-site': 'same-origin' },
+    })).text();
+    expect(after).toContain('The case is closed, and the action it parked is not performed.');
+    expect(after).not.toContain('The case is closed with no reply.');
+  });
+
+  // #123: DEC-46's refusal on an internal write names what the page showed,
+  // its rationale, and not a reply (DEC-34). On each outcome that can reach
+  // one: the approval, the close, the snooze and the send-back.
+  it('words a changed page on an internal write without calling it a reply', async () => {
+    const action = { draftExternalId: null, payloadRecorded: true, actionClass: 'route_ticket', evidence: { ...EVIDENCE, parkedAction: true } };
+    const base = await startGuarded(deps({ readRun: caseOf(action) }));
+    const cases = [
+      ['outcome', 'performed'],
+      ['closed', 'closed'],
+      ['snoozed', 'put aside'],
+      ['sentback', 'sent back'],
+    ] as const;
+    for (const [param, nothing] of cases) {
+      const html = await (await fetch(`${base}${CASE}?${param}=shown_changed`, {
+        headers: { 'sec-fetch-site': 'same-origin' },
+      })).text();
+      expect(html, param).toContain(`What this page showed changed since it was drawn, so nothing was ${nothing}.`);
+      expect(html, param).not.toContain('The reply changed since this page was drawn');
+    }
   });
 
   it('draws each answer the ledger gives about a close, in its own words', async () => {
@@ -7728,6 +8061,21 @@ describe('DEC-49: the console sends a case back for a new attempt', () => {
     expect(forgedHtml).not.toContain('data-sentback=');
   });
 
+  // #123: a sent-back internal write is not a reply (DEC-34), so neither the
+  // send-back note nor the refusal of its approval calls it one.
+  it('words the send-back and its refusal without calling an internal write a reply', async () => {
+    const action = { draftExternalId: null, payloadRecorded: true, actionClass: 'route_ticket', evidence: { ...EVIDENCE, parkedAction: true } };
+    const base = await startGuarded(deps({ readRun: caseOf(action) }));
+    const panel = await (await fetch(`${base}${CASE}?sendback=1`, SAME_ORIGIN)).text();
+    const note = /<div class="sendbackbar"><p class="discl">([^<]*)<\/p>/.exec(panel)?.[1];
+    expect(note).toContain('nothing is sent or performed until a person approves what it produces');
+    expect(note).not.toContain('reply');
+    const refused = await startGuarded(deps({ readRun: caseOf({ ...action, attemptRejected: true }) }));
+    const approval = await (await fetch(`${refused}${CASE}?outcome=sent_back`, SAME_ORIGIN)).text();
+    expect(approval).toContain('An attempt a reviewer has already sent back cannot be approved');
+    expect(approval).not.toContain('A reply on an attempt');
+  });
+
   // DEC-49: the approval, the save and the rewrite of an attempt a reviewer
   // sent back are refused, and each says so in words that are true of any
   // case a link names: the run waits until the consumer ends it, or has ended.
@@ -7737,7 +8085,7 @@ describe('DEC-49: the console sends a case back for a new attempt', () => {
         deps({ readRun: caseOf({ state, attemptRejected: true }) }), undefined, undefined, true,
       );
       const approval = await (await fetch(`${base}${CASE}?outcome=sent_back`, SAME_ORIGIN)).text();
-      expect(approval, state).toContain('cannot be sent, so nothing was sent.');
+      expect(approval, state).toContain('cannot be approved, so nothing was sent or performed.');
       const save = await (await fetch(`${base}${CASE}?edit=sent_back`, SAME_ORIGIN)).text();
       expect(save, state).toContain('cannot be saved, so nothing was saved.');
       const rewrite = await (await fetch(`${base}${CASE}?rewritten=sent_back`, SAME_ORIGIN)).text();
@@ -8078,6 +8426,31 @@ describe('DEC-48: the console rewrites the reply from scratch', () => {
     const queue = await (await fetch(`${base}/`, SAME_ORIGIN)).text();
     expect(queue).toContain(' · a person wrote this reply');
     expect(queue).not.toContain(' · coverage 0.94');
+  });
+
+  // #123: the flag is the turn's, so a reply a person wrote for another run
+  // on the turn sets it for an internal write too. That write parks no reply
+  // (DEC-34), so neither the row nor the gates card says a person wrote it.
+  it('says no person wrote the reply of an internal write whose turn holds one', async () => {
+    const action = {
+      runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+      reason: 'customer_visible', stepsUsed: 4, agreement: 0.89, coverage: 0.94,
+      draftExternalId: null, payloadRecorded: true, actionClass: 'route_ticket', replyRewritten: true,
+    };
+    const base = await startGuarded(deps({
+      listApprovals: async () => [action] as never,
+      // No coverage, so each gates card draws its absent line: the line the
+      // flag would have replaced.
+      readRun: caseOf({ draftExternalId: null, payloadRecorded: true, actionClass: 'route_ticket', replyRewritten: true, coverage: null, evidence: { ...EVIDENCE, parkedAction: true } }),
+    }));
+    const queue = await (await fetch(`${base}/`, SAME_ORIGIN)).text();
+    expect(queue).not.toContain('a person wrote this reply');
+    expect(queue).toContain(' · coverage 0.94');
+    const page = await (await fetch(`${base}${CASE}`, SAME_ORIGIN)).text();
+    expect(page).not.toContain('a person wrote this reply');
+    const detail = await (await fetch(`${base}/run/${RUN}`, SAME_ORIGIN)).text();
+    expect(detail).toContain('<div class="card">');
+    expect(detail).not.toContain('a person wrote this reply');
   });
 
   // The other arm, and the reason the heading is not a fixed sentence: a save

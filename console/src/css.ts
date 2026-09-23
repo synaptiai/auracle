@@ -423,7 +423,7 @@ td a, dd a { display: inline-block; }
   font-size: 15px; line-height: 1.62; max-width: 68ch;
   color: var(--mut); font-style: italic;
 }
-/* A reply that is drafted and waits for a person. */
+/* A turn that waits for a person: a drafted reply, or an internal write. */
 .said .absent.waiting { color: var(--warn); }
 
 /* The rail's groups. The label is what separates them; a rule would read as

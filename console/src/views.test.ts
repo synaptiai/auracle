@@ -48,12 +48,17 @@ function journal(step: Partial<JournalStep>): { step: JournalStep; journal: RunJ
 }
 
 function park(fields: Record<string, unknown>): { step: JournalStep; journal: RunJournal } {
+  // The step's status is the step's, not the record's: the park step writes
+  // `parking`, `failed` or `done` on the journal row.
+  const { status, ...record } = fields;
   return journal({
     stepId: 'park',
+    ...(status === undefined ? {} : { status: status as string }),
     park: {
       actionClass: 'send_reply', delivery: 'at_most_once', parkKey: null,
+      draftExternalId: null, payload: null,
       draftRecorded: false, payloadRecorded: false, failureRecorded: false,
-      turnNumber: null, ...fields,
+      turnNumber: null, ...record,
     },
   } as Partial<JournalStep>);
 }
@@ -96,14 +101,55 @@ describe('what an agreement says about its samples', () => {
 });
 
 describe('what a park step says', () => {
+  // The two shapes the park step writes. A customer reply names its draft in
+  // the helpdesk (DEC-11). An internal write parks in the ledger alone, and it
+  // journals its rationale as a body too, so a body names no draft (DEC-34).
   it('names a draft the helpdesk holds', () => {
-    const { step, journal: j } = park({ draftRecorded: true });
+    const { step, journal: j } = park({ draftExternalId: 'hd-draft-0001', draftRecorded: true });
     expect(stepSays(step, j)).toContain('draft held in the helpdesk');
   });
 
-  it('names a recorded action payload', () => {
-    const { step, journal: j } = park({ payloadRecorded: true });
-    expect(stepSays(step, j)).toContain('action payload recorded');
+  it('names a recorded action payload, and no draft, for an internal write', () => {
+    const { step, journal: j } = park({ draftRecorded: true, payloadRecorded: true, payload: { queue: 'billing' } });
+    const said = stepSays(step, j);
+    expect(said).toContain('action payload recorded');
+    expect(said).not.toContain('draft');
+  });
+
+  // A reply parked in the ledger alone, under a profile that shows no
+  // customer, records a payload too. It is a reply with no draft.
+  it('names a reply recorded in the ledger alone, which is not an action', () => {
+    const { step, journal: j } = park({ draftRecorded: true, payloadRecorded: true, payload: { summary: 'x' }, actionClass: 'customer_reply' });
+    const said = stepSays(step, j);
+    expect(said).toContain('reply recorded in the ledger, no draft named');
+    expect(said).not.toContain('action payload recorded');
+  });
+
+  // #123: a handle names a draft only as a non-empty string on a park that
+  // finished, as the reader and the queue read it.
+  it('names no draft for an empty handle, or one on a park that did not finish', () => {
+    const empty = park({ draftExternalId: '', draftRecorded: true, payloadRecorded: true, payload: { queue: 'billing' }, actionClass: 'compensate' });
+    expect(stepSays(empty.step, empty.journal)).toContain('action payload recorded');
+    const refused = park({ draftExternalId: 'hd-1', failureRecorded: true, status: 'failed' });
+    const said = stepSays(refused.step, refused.journal);
+    expect(said).not.toContain('draft held in the helpdesk');
+    expect(said).toContain('the adapter refused before it appended');
+  });
+
+  // A payload that is not an object is no action a person can approve: the
+  // reader and the queue read such a park as neither kind, and so does this.
+  it('names a payload of no readable shape, and calls it no action', () => {
+    const { step, journal: j } = park({ draftRecorded: true, payloadRecorded: true, payload: null, actionClass: 'compensate' });
+    const said = stepSays(step, j);
+    expect(said).toContain('payload recorded in a shape no action takes');
+    expect(said).not.toContain('action payload recorded');
+  });
+
+  // A body with neither a handle nor a payload names no draft either: the
+  // page says text was recorded and claims nothing more.
+  it('names recorded text with no draft behind it', () => {
+    const { step, journal: j } = park({ draftRecorded: true });
+    expect(stepSays(step, j)).toContain('text recorded, no draft named');
   });
 
   // The crash marker. It records a park key and no body, which means a draft
@@ -486,6 +532,32 @@ describe('numbering the claims of a reply that opens with a courtesy sentence', 
       rewrite: null,
     } as unknown as RunJournal;
   }
+
+  // #123: an internal write parks in the ledger alone with its payload
+  // (DEC-34), and journals its rationale as a body too. The payload says
+  // which, and a handle alone says a customer reply.
+  it('reads an internal write from its payload, and a reply from its handle', () => {
+    const withPark = (park: Record<string, unknown>): RunJournal => {
+      const journal = composed();
+      return { ...journal, steps: [...journal.steps, { stepId: 'park', status: 'done', park } as never] };
+    };
+    expect(evidenceOf(withPark({ draftExternalId: null, draftRecorded: true, payloadRecorded: true, payload: { queue: 'billing' } }))
+      .parkedAction).toBe(true);
+    expect(evidenceOf(withPark({ draftExternalId: 'hd-draft-0001', draftRecorded: true, payloadRecorded: false, payload: null }))
+      .parkedAction).toBe(false);
+    expect(evidenceOf(composed()).parkedAction).toBe(false);
+    // A payload of no readable shape is no action, and a handle is a draft.
+    expect(evidenceOf(withPark({ draftExternalId: null, payloadRecorded: true, payload: null, actionClass: 'compensate' }))
+      .parkedAction).toBe(false);
+    expect(evidenceOf(withPark({ draftExternalId: 'hd-1', payloadRecorded: true, payload: { queue: 'billing' } }))
+      .parkedAction).toBe(false);
+    // An empty handle names no draft, so the payload decides.
+    expect(evidenceOf(withPark({ draftExternalId: '', payloadRecorded: true, payload: { queue: 'billing' }, actionClass: 'compensate' }))
+      .parkedAction).toBe(true);
+    // A reply parked in the ledger alone records a payload, and is a reply.
+    expect(evidenceOf(withPark({ draftExternalId: null, draftRecorded: true, payloadRecorded: true, payload: { summary: 'x' }, actionClass: 'customer_reply' }))
+      .parkedAction).toBe(false);
+  });
 
   it('counts the position among the cited sentences, not in the reply', () => {
     const evidence = evidenceOf(composed());

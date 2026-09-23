@@ -100,6 +100,27 @@ async function outbox(
   );
 }
 
+/**
+ * The park row a run journals, as the park step leaves one (DEC-11, DEC-34):
+ * a customer reply names its helpdesk draft, and an internal write parks in
+ * the ledger alone with its payload. `status` other than `done` is the crash
+ * marker or a refusal.
+ */
+async function park(
+  runId: string,
+  result: Record<string, unknown> | null,
+  status = 'done',
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
+     VALUES ($1, 'park', $2, $3::jsonb, 'p', 'm', 0)`,
+    [runId, status, result === null ? null : JSON.stringify(result)],
+  );
+}
+
+const DRAFTED = { draftExternalId: 'hd-draft-0001', actionClass: 'customer_reply', body: 'Open the settings page.' };
+const LEDGER_ONLY = { actionClass: 'compensate', payload: { amount: 500 }, body: 'A refund of five euros.' };
+
 // DEC-44: the two reply columns the case screen reads. `turnAnsweredBy` is
 // the console's only read of them, so a rule about what an empty stored reply
 // means lives here and nowhere else.
@@ -407,10 +428,98 @@ describe('the reasons a turn shows no reply', () => {
     expect(thread?.turns[0]?.replyAbsence).toBe('handled_automatically');
   });
 
-  it('names a run still waiting for a person', async () => {
+  // #123: a customer reply parks as a draft in the helpdesk (DEC-11), and an
+  // internal write parks in the ledger alone (DEC-34). Both wait for a
+  // person, and only the first holds a drafted reply. The park row says which.
+  it('names a drafted reply waiting for a person', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'how do I reset my password' });
+    await park(await run(id, 1, 'awaiting_approval'), DRAFTED);
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.replyAbsence).toBe('reply_awaiting_approval');
+  });
+
+  it('names an internal write waiting for a person, which holds no draft', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'where is my refund' });
+    await park(await run(id, 1, 'awaiting_approval'), LEDGER_ONLY);
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.replyAbsence).toBe('action_awaiting_approval');
+  });
+
+  // The ledger names neither kind, so the page claims neither.
+  it('names neither kind for a waiting run with no park recorded', async () => {
     const id = await conversation();
     await turn(id, 1, { body: 'where is my refund' });
     await run(id, 1, 'awaiting_approval');
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.replyAbsence).toBe('awaiting_approval');
+  });
+
+  // A reply parked in the ledger alone, under a profile that shows no
+  // customer, records a payload and is the reply's own action. It is not an
+  // internal write, and it holds no draft either.
+  it('names neither kind for a reply parked in the ledger alone', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'how do I reset my password' });
+    await park(await run(id, 1, 'awaiting_approval'), { ...LEDGER_ONLY, actionClass: 'customer_reply' });
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.replyAbsence).toBe('awaiting_approval');
+  });
+
+  // An internal write records its payload as an object. A payload of another
+  // shape names no action.
+  it('names neither kind for a park whose payload is not an object', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'where is my refund' });
+    await park(await run(id, 1, 'awaiting_approval'), { ...LEDGER_ONLY, payload: 'refund' });
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.replyAbsence).toBe('awaiting_approval');
+  });
+
+  // The newest run decides, as it does for the state. An earlier run's draft
+  // belongs to a run that no longer waits.
+  it('reads the draft of the run that waits, not of an earlier run', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'where is my refund' });
+    const earlier = await run(id, 1, 'superseded');
+    await park(earlier, DRAFTED);
+    await pool.query("UPDATE run SET created_at = now() - interval '1 minute' WHERE run_id = $1", [earlier]);
+    await park(await run(id, 1, 'awaiting_approval'), LEDGER_ONLY);
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.replyAbsence).toBe('action_awaiting_approval');
+  });
+
+  // Only a park that finished names a draft. The crash marker records the
+  // intent, and the draft it may have made has no handle anyone can name.
+  it('names no draft for a park that never recorded one', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'how do I reset my password' });
+    await park(await run(id, 1, 'awaiting_approval'), { parkKey: 'k', draftExternalId: 'hd-1' }, 'parking');
+    const thread = await readConversation(pool, id);
+    expect(thread?.turns[0]?.replyAbsence).toBe('awaiting_approval');
+  });
+
+  // A handle names a draft only as a non-empty string, as the approval
+  // requires. A number is present and of the wrong kind, which a test for a
+  // present value alone would read as a draft; null and the empty string name
+  // nothing.
+  for (const [label, handle] of [['a number', 123], ['null', null], ['empty', '']] as const) {
+    it(`names no draft for a handle that is ${label}`, async () => {
+      const id = await conversation();
+      await turn(id, 1, { body: 'how do I reset my password' });
+      await park(await run(id, 1, 'awaiting_approval'), { ...DRAFTED, draftExternalId: handle });
+      const thread = await readConversation(pool, id);
+      expect(thread?.turns[0]?.replyAbsence).toBe('awaiting_approval');
+    });
+  }
+
+  // A refusal records the adapter's error, and the handle it may carry names
+  // no draft the ledger holds.
+  it('names no draft for a park the adapter refused', async () => {
+    const id = await conversation();
+    await turn(id, 1, { body: 'how do I reset my password' });
+    await park(await run(id, 1, 'awaiting_approval'), { ...DRAFTED, error: 'refused' }, 'failed');
     const thread = await readConversation(pool, id);
     expect(thread?.turns[0]?.replyAbsence).toBe('awaiting_approval');
   });
@@ -441,7 +550,8 @@ describe('the reasons a turn shows no reply', () => {
   it('names a case a person put aside', async () => {
     const id = await conversation();
     await turn(id, 1, { body: 'the parcel is late' });
-    await run(id, 1, 'snoozed');
+    // A drafted reply put aside is still put aside: the draft does not decide.
+    await park(await run(id, 1, 'snoozed'), DRAFTED);
     const thread = await readConversation(pool, id);
     expect(thread?.turns[0]?.replyText).toBeNull();
     expect(thread?.turns[0]?.replyAbsence).toBe('put_aside');
@@ -455,7 +565,7 @@ describe('the reasons a turn shows no reply', () => {
     await turn(id, 1, { body: 'a' });
     await run(id, 1, 'resolved');
     await turn(id, 2, { body: 'b' });
-    await run(id, 2, 'awaiting_approval');
+    await park(await run(id, 2, 'awaiting_approval'), LEDGER_ONLY);
     await turn(id, 3, { body: 'c' });
     await run(id, 3, 'escalated');
     await turn(id, 4, { body: 'd' });
@@ -467,11 +577,16 @@ describe('the reasons a turn shows no reply', () => {
     await run(id, 7, 'closed');
     await turn(id, 8, { body: 'h' });
     await run(id, 8, 'snoozed');
+    await turn(id, 9, { body: 'i' });
+    await park(await run(id, 9, 'awaiting_approval'), DRAFTED);
+    await turn(id, 10, { body: 'j' });
+    await run(id, 10, 'awaiting_approval');
     const thread = await readConversation(pool, id);
     const codes = thread?.turns.map((t) => t.replyAbsence) ?? [];
     expect(codes).toEqual([
-      'handled_automatically', 'awaiting_approval', 'no_reply_sent', 'not_retained',
+      'handled_automatically', 'action_awaiting_approval', 'no_reply_sent', 'not_retained',
       'approved_without_reply', 'in_flight', 'closed_without_reply', 'put_aside',
+      'reply_awaiting_approval', 'awaiting_approval',
     ]);
     expect(new Set(codes).size).toBe(codes.length);
   });

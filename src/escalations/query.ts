@@ -296,7 +296,13 @@ const RUN_SELECT_BODY = `
          (jsonb_typeof(park.result -> 'payload') = 'object') AS payload_recorded,
          CASE WHEN jsonb_typeof(park.result -> 'payload') = 'object'
               THEN park.result -> 'payload' END AS payload,
-         park.result ->> 'draftExternalId' AS draft_external_id,
+         -- #123: a handle is a non-empty string on a finished park, as the
+         -- conversation reader reads it. The approval refuses a park whose
+         -- handle has another shape, so no surface offers it as a draft.
+         CASE WHEN park.status = 'done'
+               AND jsonb_typeof(park.result -> 'draftExternalId') = 'string'
+               AND (park.result ->> 'draftExternalId') <> ''
+              THEN park.result ->> 'draftExternalId' END AS draft_external_id,
          park.result ->> 'actionClass'     AS action_class,
          park.result ->> 'delivery'        AS delivery,
          (r.approved_by IS NOT NULL)       AS approved,
@@ -390,7 +396,13 @@ const OUTBOX_SELECT = `
          (jsonb_typeof(park.result -> 'payload') = 'object') AS payload_recorded,
          CASE WHEN jsonb_typeof(park.result -> 'payload') = 'object'
               THEN park.result -> 'payload' END AS payload,
-         park.result ->> 'draftExternalId' AS draft_external_id,
+         -- #123: a handle is a non-empty string on a finished park, as the
+         -- conversation reader reads it. The approval refuses a park whose
+         -- handle has another shape, so no surface offers it as a draft.
+         CASE WHEN park.status = 'done'
+               AND jsonb_typeof(park.result -> 'draftExternalId') = 'string'
+               AND (park.result ->> 'draftExternalId') <> ''
+              THEN park.result ->> 'draftExternalId' END AS draft_external_id,
          park.result ->> 'actionClass'     AS action_class,
          park.result ->> 'delivery'        AS delivery,
          (r.approved_by IS NOT NULL)       AS approved,

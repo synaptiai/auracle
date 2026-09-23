@@ -32,6 +32,11 @@ export interface Groupable {
   readonly agreementThreshold: number | null;
   readonly gateCoverage: number | null;
   readonly coverageReviewThreshold: number | null;
+  /**
+   * #123: the park's helpdesk draft, or null. Only a reply the batch holds for
+   * an undo can be confirmed with one press (DEC-51).
+   */
+  readonly draftExternalId: string | null;
 }
 
 /** Rules that put a case in front of every other. */
@@ -67,6 +72,11 @@ export function queueGroupOf(run: Groupable): QueueGroup {
   if (run.gateReason === null || !(POLICY_REASONS as readonly string[]).includes(run.gateReason)) {
     return 'rest';
   }
+  // #123: the clean group is the one a single press confirms, and that batch
+  // holds each reply so a mistake can be undone (DEC-51). An internal write
+  // parks no reply and takes no hold (DEC-34), so it waits here and is
+  // approved on its own case page, where the page names the action.
+  if (run.draftExternalId === null) return 'rest';
   const agreementClears = isFraction(run.agreement) && run.agreementThreshold !== null
     && run.agreement >= run.agreementThreshold;
   const coverageClears = isFraction(run.gateCoverage) && run.coverageReviewThreshold !== null

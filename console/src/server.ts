@@ -19,9 +19,11 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 
+import { CUSTOMER_REPLY_ACTION_CLASS } from 'auracle/domain';
+
 import { isRunId } from './approve.js';
 import { closestDocumentSentence, withSentenceReplaced, withoutSentence } from './reply-edit.js';
-import { escapeHtml, isolated } from './render.js';
+import { escapeHtml, isolated, parksAnAction } from './render.js';
 import { CONSOLE_SCRIPT } from './script.js';
 import {
   caseHref,
@@ -618,6 +620,21 @@ async function confirmCases(
         dropped.push({ runId, says: 'the ledger does not hold this case, so it is not in the batch.' });
         continue;
       }
+      // #123: the batch holds each reply so a mistake can be undone (DEC-51).
+      // An internal write parks no reply and takes no hold (DEC-34), so it is
+      // approved on its own case page, where the page names the action.
+      if (run.draftExternalId === null) {
+        dropped.push({
+          runId,
+          // What the check tests, and no more: a case with no draft may be an
+          // internal write, a reply the gate stopped, or a park naming neither.
+          // A case with no draft may offer no approval at all, so the words
+          // send the reviewer to read it, not to approve it.
+          says: 'this case holds no helpdesk draft, so it is not in the batch. Open its case page'
+            + ' to see what it holds.',
+        });
+        continue;
+      }
       const text = replyTextOf(run, options.ledgerReply);
       if (text === null) {
         dropped.push({
@@ -730,6 +747,7 @@ async function outcomeRuns(
         // future banner cannot draw a claim nothing checked.
         sentBack: run.sentBackAt !== null,
         parkedDraft: run.draftExternalId !== null,
+        parkedAction: parksAnAction(run.payloadRecorded === true, run.actionClass ?? null, run.draftExternalId ?? null),
         hasTurn: run.request !== null,
         attemptRejected: run.attemptRejected,
         turnClosed: run.turnClosed,
@@ -1668,6 +1686,36 @@ async function route(
     // reaching the customer.
     // DEC-45: who approved, as the identity the gate resolved. It is on the
     // roster and active, or this request never reached the route.
+    //
+    // #123: a reply parked in the ledger alone has no helpdesk draft, and the
+    // relay refuses a reply record with none (DEC-44). The case page offers no
+    // approval for it, and a request built by hand gets none either. A read
+    // that fails here refuses nothing: the approval reads the run itself.
+    let ledgerOnlyReply = false;
+    try {
+      const run = await deps.readRun(runId);
+      ledgerOnlyReply = run !== null && run.draftExternalId === null
+        && run.actionClass === CUSTOMER_REPLY_ACTION_CLASS;
+    } catch (error) {
+      console.error(logLine({
+        event: 'console_approve_unread', tag: randomUUID().slice(0, 8), runId,
+        host: req.headers.host ?? null, from,
+        error: describeFault(error),
+      }));
+    }
+    if (ledgerOnlyReply) {
+      console.error(logLine({
+        event: 'console_refused', reason: 'ledger_only_reply', runId,
+        host: req.headers.host ?? null, from,
+      }));
+      send(res, 400, bare(
+        'Refused',
+        'This run parked a reply in the ledger alone, with no helpdesk draft, so no reply can be'
+          + ' sent from it and nothing was approved. An operator reconciles it by hand.',
+        theme,
+      ));
+      return;
+    }
     let outcome;
     try {
       outcome = ack === ''
@@ -1753,7 +1801,8 @@ async function route(
     const from = req.socket.remoteAddress ?? null;
     const form = await formOrRefusal(req, res, theme, 'confirmation', backToQueue(url));
     if (form === null) return;
-    const picked = form.getAll('runId').map((value) => value.trim());
+    // One spelling per case: a uuid reads the same in either letter case.
+    const picked = form.getAll('runId').map((value) => value.trim().toLowerCase());
     const chosen = await confirmCases(deps, picked, options, url);
     if (chosen.refusal !== null) {
       console.error(logLine({
@@ -1785,7 +1834,9 @@ async function route(
     const from = req.socket.remoteAddress ?? null;
     const form = await formOrRefusal(req, res, theme, 'confirmation', backToQueue(url));
     if (form === null) return;
-    const runIds = form.getAll('runId').map((value) => value.trim());
+    // One spelling per case: a uuid reads the same in either letter case, so
+    // the repeat check below compares what the ledger compares.
+    const runIds = form.getAll('runId').map((value) => value.trim().toLowerCase());
     const digests = form.getAll('shown').map((value) => value.trim());
     if (runIds.length === 0 || runIds.length !== digests.length
         || !runIds.every(isRunId) || !digests.every((value) => SHOWN_DIGEST.test(value))) {
@@ -1803,6 +1854,22 @@ async function route(
       ));
       return;
     }
+    // #123: one answer per case. A run named twice would be checked and
+    // approved twice, and the page could not say which answer was its own.
+    if (new Set(runIds).size !== runIds.length) {
+      console.error(logLine({
+        event: 'console_refused', reason: 'batch_repeats_a_case', runId: null,
+        runs: runIds.length, host: req.headers.host ?? null, from,
+      }));
+      send(res, 400, bare(
+        'Refused',
+        'That batch names a case more than once, so nothing was sent. Go back to the queue and'
+          + ' pick the cases again.',
+        theme,
+        backToQueue(url),
+      ));
+      return;
+    }
     if (runIds.length > MAX_BATCH) {
       send(res, 400, bare(
         'Refused',
@@ -1813,12 +1880,70 @@ async function route(
       ));
       return;
     }
+    // #123: a batch confirms replies alone (DEC-51). The page drops an
+    // internal write, and a post that names one anyway is refused whole,
+    // before anything is approved.
+    //
+    // A case this read cannot reach is not refused here: a fault says nothing
+    // about which kind it parked. The batch's own approval checks the kind
+    // again, below, and a case it cannot read there is that case's fault, so
+    // nothing unread is ever approved.
+    let parkedAction: string | null = null;
+    for (const runId of runIds) {
+      let run;
+      try {
+        run = await deps.readRun(runId);
+      } catch (error) {
+        console.error(logLine({
+          event: 'console_confirm_unread', tag: randomUUID().slice(0, 8), runId,
+          host: logged(url.host), error: describeFault(error),
+        }));
+        continue;
+      }
+      if (run !== null && run.draftExternalId === null) {
+        parkedAction = runId;
+        break;
+      }
+    }
+    if (parkedAction !== null) {
+      console.error(logLine({
+        event: 'console_refused', reason: 'batch_names_an_action', runId: parkedAction,
+        host: req.headers.host ?? null, from,
+      }));
+      send(res, 400, bare(
+        'Refused',
+        'That batch names a case that holds no helpdesk draft. A batch confirms drafted replies'
+          + ' alone, so nothing was sent. Open that case\'s page to see what it holds.',
+        theme,
+        backToQueue(url),
+      ));
+      return;
+    }
     const cases = runIds.map((runId, index) => ({ runId, shown: digests[index]! }));
     let outcomes;
     try {
       outcomes = await confirmBatch(
         {
-          approve: (runId, approvedBy, shown) => deps.approve(runId, approvedBy, shown),
+          // #123: the kind is read as each case is approved, so a case the
+          // check above could not read is never approved unchecked. A park
+          // row never changes kind, so nothing can move it after this read.
+          //
+          // Both refusals are answers, not faults: the batch knows nothing
+          // was approved, and the page says so.
+          approve: async (runId, approvedBy, shown) => {
+            let run;
+            try {
+              run = await deps.readRun(runId);
+            } catch (error) {
+              console.error(logLine({
+                event: 'console_confirm_unread', tag: randomUUID().slice(0, 8), runId,
+                host: logged(url.host), error: describeFault(error),
+              }));
+              return 'batch_unread';
+            }
+            if (run !== null && run.draftExternalId === null) return 'batch_no_draft';
+            return deps.approve(runId, approvedBy, shown);
+          },
           undo: deps.undo,
         },
         cases,
@@ -1881,7 +2006,9 @@ async function route(
     const from = req.socket.remoteAddress ?? null;
     const form = await formOrRefusal(req, res, theme, 'undo', backToQueue(url));
     if (form === null) return;
-    const runIds = form.getAll('runId').map((value) => value.trim());
+    // One spelling per case: a uuid reads the same in either letter case, so
+    // the ids it echoes back and links match what the ledger returns.
+    const runIds = form.getAll('runId').map((value) => value.trim().toLowerCase());
     if (runIds.length === 0 || runIds.length > MAX_BATCH || !runIds.every(isRunId)) {
       console.error(logLine({
         event: 'console_refused', reason: 'not_an_undoable_batch', runId: null,
