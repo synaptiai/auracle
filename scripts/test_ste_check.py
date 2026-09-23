@@ -87,6 +87,253 @@ CASES = [
     ("code fence is ignored", PASS, f"```\n{LONG}\n```\n"),
     ("inline code counts as one word", PASS,
      "The file `src/coordinator/coordinator.ts` holds it.\n"),
+    # Issue #117. Code drops out exactly where a markdown reader sees code.
+    # Each case below was a shape where pairing markers across the whole file
+    # hid prose a reader sees, or read code a reader sees as prose.
+    ("a tilde fence is ignored", PASS, f"~~~\n{LONG}\n~~~\n"),
+    ("backticks inside a sentence open no fence", FAIL,
+     "Type ``` to open one.\n\n" + LONG.strip() + ".\n\n```\ncode\n```\n"),
+    ("stray backticks in two paragraphs hide nothing", FAIL,
+     "A stray ` here.\n\n" + LONG.strip() + ".\n\n" + SEVEN + "\n\nAnother ` here.\n"),
+    # A fence that never closes hides nothing. A reader of the rendered page
+    # sees code to the end, but a fence left open is a slip, and the prose
+    # after it is what the writer meant a reader to see.
+    ("an unclosed fence line pairs with no later backtick", FAIL,
+     "```\n" + LONG.strip() + " with `x` here.\n"),
+    ("a line that is not a closing fence pairs with no fence", FAIL,
+     "```\n" + LONG.strip() + ".\n``` trailing\n"),
+    ("an unclosed fence hides nothing", FAIL, "```\n" + LONG.strip() + ".\n"),
+    ("an escaped backtick opens no span", FAIL,
+     "An escaped \\` mark.\n" + LONG.strip() + " and `code`.\n"),
+    # A table is one GitHub draws: a header, then a delimiter row. Its rows
+    # and cells are units, so a span never crosses either.
+    ("a code span never crosses two table rows", FAIL,
+     "| h | i |\n|---|---|\n| `a | " + LONG.strip() + ". |\n| b` | c |\n"),
+    ("a code span never crosses two cells of one row", FAIL,
+     "| h | i | j |\n|---|---|---|\n| `a | " + LONG.strip() + ". | b` |\n"),
+    # Pipe lines with no delimiter row are paragraph text to a reader, so a
+    # span runs across them.
+    ("pipe lines with no delimiter row are paragraph text", PASS,
+     "Intro `x\n| not a table " + LONG.strip() + "\nwords y` z.\n"),
+    ("a delimiter row with no header is paragraph text", FAIL,
+     "|---|\n| a |\n    " + LONG.strip() + ".\n"),
+    ("a delimiter row that does not match its header is paragraph text", FAIL,
+     "| a | b |\n|---|\n    " + LONG.strip() + ".\n"),
+    ("an empty row is no delimiter", FAIL, "Intro\n| |\n    " + LONG.strip() + ".\n"),
+    # A table may interrupt a paragraph: its last line is the header.
+    ("a table under a paragraph takes only its last line", FAIL,
+     SEVEN + "\n| a | b |\n|---|---|\n| c | d |\n"),
+    ("a table without outer pipes is a table", PASS,
+     "a | b\n--|--\n" + ("word " * 12).strip() + " | " + ("word " * 12).strip() + "\n"),
+    # Every line under a table is a row until a blank line or another block.
+    ("a line under a table is a row", PASS,
+     "| a | b |\n|---|---|\n" + ("word " * 12).strip() + " | " + ("word " * 12).strip() + "\n"),
+    ("a line of one pipe ends a table", FAIL,
+     "| a |\n|---|\n| b |\n|\n" + SEVEN + "\n"),
+    ("a row's cells past its header are not drawn", PASS,
+     "| a |\n|---|\n| b | " + LONG.strip() + ". |\n"),
+    ("a delimiter row needs no pipe", FAIL,
+     "alpha `x\n:-:\n" + LONG.strip() + " y`\n"),
+    ("a lone tag ends a table", FAIL, "| a |\n|---|\n| b |\n<span>\n" + SEVEN + "\n"),
+    ("a footnote is a unit of its own", PASS,
+     " ".join(f"Line {n} is short." for n in range(4)) + "\n[^1]: Note one. Note two. Note three.\n\nRef[^1].\n"),
+    ("a footnote ends a table", FAIL, "| a |\n|---|\n| b |\n[^1]: " + SEVEN + "\n\nRef[^1].\n"),
+    ("a header of one pipe opens no table", FAIL, "|\n|---|\n" + SEVEN + "\n"),
+    ("a delimiter that fails in a paragraph rules out a later table", FAIL,
+     "a | b\n|---|\n" + ("word " * 12).strip() + "\n| - |\n" + ("word " * 12).strip() + ".\n"),
+    ("a table in a list item is a table", PASS,
+     "- | a | b |\n  |---|---|\n  | " + ("word " * 12).strip() + " | " + ("word " * 12).strip() + " |\n"),
+    ("a code span never crosses two list items", FAIL,
+     "- `a " + LONG.strip() + ".\n- b` c\n"),
+    ("a span that starts in a heading never wraps", FAIL,
+     "# Heading `x\n" + LONG.strip() + " y`.\n"),
+    ("a code span that wraps onto the next line is one term", PASS,
+     "Run `pnpm\nrun fit-groundedness` first.\n"),
+    ("a fence between a list item and a paragraph keeps them apart", FAIL,
+     "- A point.\n```\ncode\n```\n" + SEVEN + "\n"),
+    ("a fence between a table and a wrapped sentence keeps them apart", FAIL,
+     "| A | B |\n|---|---|\n| a | b |\n```\ncode\n```\n"
+     + ("word " * 13).strip() + "\n" + ("word " * 13).strip() + ".\n"),
+    ("a fence between two paragraphs is no sentence of its own", PASS,
+     ("word " * 12).strip() + "\n```\ncode\n```\n" + ("word " * 12).strip() + "\n"),
+    ("three inline backticks pair with no single backtick", FAIL,
+     "Inline ```a``` here, then " + LONG.strip() + " and a stray ` mark.\n"),
+    ("a double-backtick span holding a backtick is one term", PASS,
+     "Write ``a ` b`` to show one.\n"),
+    # From the CommonMark rules for a code span. A run closes only on a run of
+    # the same length, and a backslash inside a span is a literal character.
+    ("runs of different lengths pair with nothing", FAIL,
+     "A `stray run, then " + LONG.strip() + " and ``x``.\n"),
+    ("a backslash inside a span does not escape its closer", FAIL,
+     "Run `a\\` then " + LONG.strip() + " with a stray ` mark.\n"),
+    # From the CommonMark rules for a fence. It closes on a run of its own
+    # character at least as long as the one that opened it, and on nothing
+    # else.
+    ("a longer closing run closes a fence", PASS,
+     "````\n" + LONG.strip() + ".\n``````\nShort.\n"),
+    ("a shorter run inside a fence is code", PASS,
+     "````\n```\n" + LONG.strip() + ".\n````\n"),
+    # A backtick line inside a tilde fence is code. Read as a closer, it would
+    # end the fence there, and the text under it would be measured as prose.
+    ("a tilde fence does not close on backticks", PASS,
+     "~~~\n```\n" + LONG.strip() + ".\n~~~\n"),
+    ("a backtick fence whose info holds a backtick is no fence", FAIL,
+     "``` a`b\n" + LONG.strip() + ".\n```\n"),
+    ("a fence inside a list item is code", PASS,
+     "- Run it:\n\n  ```sh\n  " + LONG.strip() + ".\n  ```\n"),
+    # A fence and indented code end where their container ends: a block
+    # quote, or a list item. Read by file, a fence opened in a quote ran past
+    # it and hid the prose after it.
+    ("a fence in a quote ends with the quote", FAIL,
+     "> ```sh\n> code\n\n" + LONG.strip() + ".\n\n```\nx\n```\n"),
+    ("a fence in a list item ends with the item", FAIL,
+     "- item\n  ```sh\n  code\n\n" + LONG.strip() + ".\n\n```\nx\n```\n"),
+    ("a fence that ends with its item is code", PASS,
+     "- item\n  ```\n  " + LONG.strip() + ".\n- next\n"),
+    ("a quoted fence line inside a fence is code", FAIL,
+     "```md\n> ```\n> quoted\n```\n\n" + LONG.strip() + ".\n\n```\nx\n```\n"),
+    ("a fence opened on a list marker is code", PASS,
+     "- ```sh\n  " + LONG.strip() + ".\n  ```\n"),
+    ("a fence opened on a list marker closes inside the item", FAIL,
+     "1. ```sh\n   echo\n   ```\n\n" + LONG.strip() + ".\n\n```\nx\n```\n"),
+    # Four columns of indent make indented code or paragraph text, never a
+    # fence line.
+    ("an indented fence line opens no fence", FAIL,
+     "Para.\n\n    ```\n    code\n\n" + LONG.strip() + ".\n\n```\nx\n```\n"),
+    ("an indented fence line inside a paragraph opens no fence", FAIL,
+     "Some text\n    ```\n" + LONG.strip() + ".\n```\n"),
+    ("an indented fence line inside a fence is code", FAIL,
+     "```md\n    ```\n```\n\n" + LONG.strip() + ".\n\n```\nx\n```\n"),
+    ("indented code is code", PASS, "Para.\n\n    " + LONG.strip() + ".\n"),
+    ("indented text that continues a paragraph is prose", FAIL,
+     ("word " * 12).strip() + "\n    " + ("word " * 12).strip() + ".\n"),
+    # A setext heading is a heading, and a span never leaves one.
+    ("a span that starts in a setext heading never wraps", FAIL,
+     "Title `a\n=====\n" + LONG.strip() + " b` end.\n"),
+    # Raw HTML and an autolink bind as tightly as a code span, so a backtick
+    # inside one opens nothing.
+    ("a backtick inside an HTML tag opens no span", FAIL,
+     "Open <a title=\"`\">x</a> then " + LONG.strip() + " and `code` here.\n"),
+    ("a backtick inside an autolink opens no span", FAIL,
+     "See <https://example.com/a`b> then " + LONG.strip() + " and `code` here.\n"),
+    ("a backtick inside a processing instruction opens no span", FAIL,
+     "A <?x ` ?> then " + LONG.strip() + " and `code` here.\n"),
+    # What may start a block, taken from CommonMark. An ordered item interrupts
+    # a paragraph only when it counts from 1, so a year that opens a wrapped
+    # line is the paragraph's next line, and its sentences still count.
+    ("an ordered item that is not 1 does not interrupt a paragraph", FAIL,
+     "We counted the items in\n2. ```\n   " + LONG.strip() + ".\nand so is this\n"),
+    ("a year that opens a wrapped line is not a list", FAIL,
+     "Sentence 0 here. Sentence 1 here. Sentence 2 here. It ends in\n"
+     "2026. Sentence 4 here. Sentence 5 here. Sentence 6 here.\n"),
+    ("a heading is never a lazy line", PASS,
+     "> Quote para.\n# Heading\n    " + LONG.strip() + "\n"),
+    ("a rule is never a lazy line", PASS,
+     "- item\n***\n  ```\n  a\n\n" + LONG.strip() + "\n  ```\n"),
+    ("indented code may follow a rule", PASS, "Para.\n\n***\n    " + LONG.strip() + "\n"),
+    ("indented code may follow a setext heading", PASS,
+     "Title\n-----\n    " + LONG.strip() + "\n"),
+    ("a spaced rule is not three list items", PASS, "Para.\n\n- - -\n    " + LONG.strip() + "\n"),
+    ("a setext heading in a quote is its own unit", FAIL,
+     "> Title `a\n> ---\n> " + LONG.strip() + " b` end.\n"),
+    ("a setext heading in a list item is its own unit", FAIL,
+     "- Title `a\n  ---\n  " + LONG.strip() + " b` end.\n"),
+    ("an underline on a lazy line is paragraph text", PASS,
+     "- item `a\n" + LONG.strip() + "\n===\nmore b` end\n"),
+    ("an indented heading is its own unit", FAIL,
+     "Text ` open\n  # Head\n" + LONG.strip() + " ` close.\n"),
+    # A quote that opens or closes ends a unit, and so does a lone `>`.
+    ("a span never pairs into a quote", FAIL,
+     "Text ` open.\n> " + LONG.strip() + " ` close.\n"),
+    ("a lone quote marker is a paragraph break", FAIL,
+     "> A ` open.\n>\n> " + LONG.strip() + " ` close.\n"),
+    ("a span never pairs from one item into the next", FAIL,
+     "1. a ` b\n1) " + LONG.strip() + " ` c\n"),
+    # An item that opens empty ends at a blank line under it.
+    ("an empty item ends at a blank line", PASS, "1)\n\n    " + LONG.strip() + ".\n"),
+    # One parser decides the units. A second reader downstream, matching the
+    # lines again, split a paragraph at a marker the block pass had read as
+    # paragraph text, and read a whole block as a table.
+    ("a quoted marker in an indented continuation line splits nothing", FAIL,
+     "Sentence 0 here. Sentence 1 here. Sentence 2 here. And\n"
+     "    > 1. Sentence 3 here. Sentence 4 here. Sentence 5 here. Sentence 6 here.\n"),
+    ("the prose beside a table is still prose", FAIL,
+     SEVEN + "\n| A | B |\n|---|---|\n| a | b |\n"),
+    ("a long sentence wrapped above a table still breaks rule 1", FAIL,
+     ("word " * 12).strip() + "\n" + ("word " * 12).strip() + ".\n| A |\n|---|\n| a |\n"),
+    # An HTML block is not parsed: a fence line inside one opens no fence.
+    ("a fence line inside an HTML block opens no fence", FAIL,
+     "<div>\n```\n</div>\n\n" + LONG.strip() + ".\n\n```\nx\n```\n"),
+    ("a fence line inside a comment block opens no fence", FAIL,
+     "<!--\n```\n-->\n\n" + LONG.strip() + ".\n\n```\nx\n```\n"),
+    ("a backtick inside an inline comment pairs with nothing outside it", FAIL,
+     "A <!-- ` --> then " + LONG.strip() + " and a stray ` mark.\n"),
+    ("a backtick in a link destination opens no span", FAIL,
+     "A [b](u`v) then " + LONG.strip() + " and a stray ` mark.\n"),
+    # With no `[` before it, `](` is text, and the span it holds is a span.
+    ("a bracket with no link text is no link", PASS,
+     "A ](u`v) then " + LONG.strip() + " and a stray ` mark.\n"),
+    ("a span never pairs across a table row", FAIL,
+     "A `x\n| a |\n|---|\n" + LONG.strip() + " y` z.\n"),
+    ("an HTML block is never a lazy line", FAIL,
+     "> A `x\n<div>\n" + LONG.strip() + " y` z.\n"),
+    # An empty item's marker never labels the unit after its list.
+    ("prose after a lone empty item is still a paragraph", FAIL, "-\n" + SEVEN + "\n"),
+    ("a quote after a lone empty item is still a paragraph", FAIL, "-\n> " + SEVEN + "\n"),
+    # A row is not paragraph text.
+    # A pipe line with no delimiter row is not yet a table to a reader, so
+    # the line under it continues the paragraph.
+    ("a pipe line with no delimiter continues a paragraph", FAIL,
+     "Intro text\n| not a table\n    " + LONG.strip() + ".\n"),
+    ("an ordered line under a pipe line continues the paragraph", FAIL,
+     "Intro text\n| not a table\n2. " + SEVEN + "\n"),
+    # A quote opened in a waiting item is the item's first block.
+    ("a quote that opens an item is the item's own", PASS, "-\n  > " + SEVEN + "\n"),
+    ("a lone quote marker keeps the item waiting", PASS, "-\n  >\n  > " + SEVEN + "\n"),
+    ("a quote on the marker line keeps the item waiting", PASS, "- >\n  >\n  > " + SEVEN + "\n"),
+    ("a blank line after an empty item ends it", FAIL, "-\n\n" + SEVEN + "\n"),
+    ("text past a quote in a waiting item is a paragraph", FAIL, "-\n  >\n  " + SEVEN + "\n"),
+    ("a block tag ends at a blank line", PASS, "<div>\n\n~~~\n" + LONG.strip() + "\n~~~\n"),
+    ("a lazy line never joins a table row", FAIL,
+     "> | A |\n> |---|\nlazy `x\n> " + LONG.strip() + " y` z.\n"),
+    ("indented code may follow a table row", PASS, "| A |\n|---|\n    " + LONG.strip() + "\n"),
+    # An HTML block: how it starts, what ends it, and what it holds.
+    ("a lone tag does not interrupt a paragraph", PASS,
+     "para `x\n<span>\n" + LONG.strip() + " y`\n"),
+    ("an HTML block ends with its container", FAIL,
+     "> <div> `x\n" + LONG.strip() + " y` z.\n"),
+    ("a comment on one line ends on that line", PASS,
+     "<!-- a -->\n\n~~~\n" + LONG.strip() + ".\n~~~\n"),
+    ("a blank line inside a comment ends a unit", PASS,
+     "<!--\nOne. Two. Three.\n\nFour. Five. Six. Seven.\n-->\n"),
+    ("a long comment still answers to rule 2", FAIL, "<!-- " + SEVEN + " -->\n"),
+    # Past a blank line, too: a textarea ends on its closing tag alone.
+    ("a fence line inside a textarea opens no fence", FAIL,
+     "<textarea>\n\n```\n</textarea>\n\n" + LONG.strip() + ".\n\n```\nx\n```\n"),
+    ("a fence line inside a processing instruction opens no fence", FAIL,
+     "<?x\n```\n?>\n\n" + LONG.strip() + ".\n\n```\nx\n```\n"),
+    ("a fence line inside a declaration opens no fence", FAIL,
+     "<!X\n```\n>\n\n" + LONG.strip() + ".\n\n```\nx\n```\n"),
+    ("a fence line inside a CDATA section opens no fence", FAIL,
+     "<![CDATA[\n```\n]]>\n\n" + LONG.strip() + ".\n\n```\nx\n```\n"),
+
+    # One case for each rule a review found unguarded.
+    # A lazy line holds no marker: the span opened above it closes in it.
+    ("a lazy marker line stays in its paragraph", PASS,
+     "> A `x " + LONG.strip() + "\n    - B` y.\n"),
+    ("an item that counts from 1 interrupts a paragraph", FAIL,
+     "alpha `x\n1. " + LONG.strip() + " beta` y\n"),
+    ("an item counting from 01 interrupts a paragraph", FAIL,
+     "alpha `x\n01. " + LONG.strip() + " beta` gamma\n"),
+    # A lone `-` under a paragraph is no empty item: it underlines a
+    # heading, so the span opened above it pairs with nothing below.
+    ("a lone dash under a paragraph is an underline, not an item", FAIL,
+     "alpha `x\n-\n" + LONG.strip() + " beta` y\n"),
+    ("a quote opened in an item is not the quote after it", FAIL,
+     "1) > a `x\n> " + LONG.strip() + " b` c\n"),
+    # A `1)` item is an item: its entries are not a paragraph's sentences.
+    ("seven items marked 1) pass", PASS,
+     "1) " + " ".join(f"Point {n} holds." for n in range(7)) + "\n"),
     # Two paragraphs of six sentences are not one paragraph of twelve.
     ("blank line separates paragraphs", PASS,
      " ".join(f"Line {n} is short." for n in range(6)) + "\n\n"

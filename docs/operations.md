@@ -561,19 +561,19 @@ that you pass.
 | `pnpm run calibrate` | Fits the global agreement threshold on the fit half of the gold set. Writes `calibration/vN.json`, the next version. |
 | `pnpm run fit-groundedness` | Fits the two coverage thresholds on the fit half. Writes `groundedness/vN.json`. Needs `OPENROUTER_API_KEY` and `GROUNDEDNESS_MODEL_VER`. |
 | `pnpm run report-groundedness` | Measures the fitted coverage pair on the report half. Prints precision and negative predictive value with their intervals. Selects nothing and writes no artifact. Needs the same two variables. |
+| `pnpm run replay` | Runs the action-match replay over the fixture corpus. Uses the offline stub model. Needs no network and no database. Prints the report as JSON. |
+| `pnpm run gold-report` | Scores the report half of the gold set. Writes `gold-report/vN.json`, the next version. |
+| `pnpm run triage` | Selects cases for human review with the offline judge. Writes `triage/vN.json`, the next version. |
+| `pnpm run load-docs -- <dir>` | Embeds each markdown file into the `document` table for retrieval. Needs `OPENROUTER_API_KEY`. |
+| `pnpm run induce [-- output.json]` | Clusters the history and names each cluster. Writes a candidate list for a person. |
 
 Each fitting artifact states how much of its half it could not read.
 `groundedness/vN.json` carries `faulted_drafts`, the drafts it dropped.
 `calibration/vN.json` carries `unreadable_samples` and
 `tickets_with_unreadable`, the samples that yielded no answer and the cases
 they fell in. The gold report carries `unreadable_samples` for the same
-reason. A number fitted or published through unreadable answers is not the
-same number as one measured on answers, so each job says which it is.
-| `pnpm run replay` | Runs the action-match replay over the fixture corpus. Uses the offline stub model. Needs no network and no database. Prints the report as JSON. |
-| `pnpm run gold-report` | Scores the report half of the gold set. Writes `gold-report/vN.json`, the next version. |
-| `pnpm run triage` | Selects cases for human review with the offline judge. Writes `triage/vN.json`, the next version. |
-| `pnpm run load-docs -- <dir>` | Embeds each markdown file into the `document` table for retrieval. Needs `OPENROUTER_API_KEY`. |
-| `pnpm run induce [-- output.json]` | Clusters the history and names each cluster. Writes a candidate list for a person. |
+reason. A number fitted through unreadable answers differs from one measured
+on answers. So each job says which kind it is.
 
 The loader onboards the knowledge base for the deployment. It embeds each
 markdown file in the directory you pass. It needs `OPENROUTER_API_KEY`.
