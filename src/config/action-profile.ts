@@ -12,7 +12,10 @@
 // customer is gated as an internal write, so one that is not high risk can
 // skip approval (DEC-12). Either way it parks no draft, and the relay refuses
 // its record.
-import { COMPENSATION_ACTION_CLASS, CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
+import {
+  CONSUMER_ACTION_PAYLOAD, DEFAULT_EGRESS_ADAPTER, EGRESS_PERFORMS, classesRun, ownEntry,
+} from '../adapters/performs.js';
+import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
 
 /** DEC-14 fallback disclosure for non-customer-visible profiles. */
 export const DEFAULT_DISCLOSURE =
@@ -49,7 +52,7 @@ function isVisiblyEmpty(value: string): boolean {
  * written as its code point, `<U+200B>`, so an invisible one shows in the
  * refusal. The CLI escapes a backslash again, so the form uses none.
  */
-function shown(value: string): string {
+export function shown(value: string): string {
   return value.replace(
     /[^\x20-\x7e]/gu,
     (char) => `<U+${char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}>`,
@@ -137,17 +140,24 @@ export function actionProfileFromEnv(env: NodeJS.ProcessEnv = process.env): Acti
   }
   const repliesToCustomer = actionClass === CUSTOMER_REPLY_ACTION_CLASS;
   if (isCustomerVisible && !repliesToCustomer) {
-    // A compensation cannot be undone, so it gates hidden or shown (DEC-34).
-    const hidden = actionClass === COMPENSATION_ACTION_CLASS
-      ? ' the write still waits for approval, because it cannot be undone (DEC-34).'
-      : ' the write then runs without approval wherever the gates pass (DEC-12).';
+    // The hidden way out is named only where the consumer's own adapter runs
+    // the class with its payload, so an operator who takes it is not refused
+    // at the next check (issue #144). None runs a compensation with that
+    // payload.
+    const egressName = env['EGRESS_ADAPTER'] ?? DEFAULT_EGRESS_ADAPTER;
+    const runsHere = classesRun(ownEntry(EGRESS_PERFORMS, egressName) ?? new Map(), CONSUMER_ACTION_PAYLOAD)
+      .includes(actionClass);
+    const hide = runsHere
+      ? ` Or, on EGRESS_ADAPTER=${egressName}${byDefault('EGRESS_ADAPTER')}, set`
+        + ' ACTION_IS_CUSTOMER_VISIBLE=false: the write then runs without approval wherever the'
+        + ' gates pass (DEC-12).'
+      : '';
     throw new Error(
       `ACTION_IS_CUSTOMER_VISIBLE=true needs ACTION_CLASS=${CUSTOMER_REPLY_ACTION_CLASS},`
         + ` got ACTION_CLASS='${shown(actionClass)}'${byDefault('ACTION_CLASS')}. The relay sends`
         + ` a draft only for ${CUSTOMER_REPLY_ACTION_CLASS}, so an approved reply under`
         + ' another class never reaches the customer (DEC-11, DEC-12).'
-        + ` ${toReply(true)} to draft customer replies. Or, if the adapter performs`
-        + ` '${shown(actionClass)}', set ACTION_IS_CUSTOMER_VISIBLE=false:${hidden}`,
+        + ` ${toReply(true)} to draft customer replies.${hide}`,
     );
   }
   if (repliesToCustomer && !isCustomerVisible) {

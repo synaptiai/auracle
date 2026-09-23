@@ -36,6 +36,9 @@ class ScriptedEgress implements EgressAdapter {
 
   readonly capabilities: AdapterCapabilities;
 
+  /** Nothing in this suite reads the declaration; the script decides. */
+  readonly performs: ReadonlyMap<string, readonly string[]> = new Map();
+
   readonly sendCalls: Array<{ draftExternalId: string; idemKey: string }> = [];
 
   readonly actionCalls: Array<{
@@ -366,6 +369,7 @@ describe('relay daemon scan-level resilience', () => {
     // A minimal egress fake: this scenario never reaches the adapter.
     const adapter: EgressAdapter = {
       name: 'unused',
+      performs: new Map(),
       capabilities: Object.freeze({
         supportsIdempotencyKey: true,
         supportsReadBack: false,

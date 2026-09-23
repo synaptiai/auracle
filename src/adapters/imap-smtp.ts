@@ -28,6 +28,7 @@
  *   headers carry a real thread chain.
  */
 
+import { PERFORMS_NOTHING, type Performs } from './performs.js';
 import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { ImapFlow } from 'imapflow';
@@ -541,6 +542,9 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
   readonly name = 'imap-smtp';
 
   readonly capabilities: AdapterCapabilities = IMAP_SMTP_CAPABILITIES;
+
+  /** SMTP takes no idempotency key, so this adapter performs no internal write. */
+  readonly performs: Performs = PERFORMS_NOTHING;
 
   constructor(private readonly config: ImapSmtpEgressConfig) {}
 

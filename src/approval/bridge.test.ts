@@ -31,6 +31,7 @@ function recordingAdapter(): EgressAdapter & { calls: number } {
     calls: 0,
     name: delegate.name,
     capabilities: delegate.capabilities,
+    performs: delegate.performs,
     async createDraft(r: DraftReply) {
       this.calls += 1;
       return delegate.createDraft(r);

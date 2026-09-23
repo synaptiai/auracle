@@ -166,6 +166,9 @@ async function approvedReplyText(conversationId: string, turnNumber: number): Pr
 class LedgerEgress implements EgressAdapter {
   readonly name = 'ledger-egress';
 
+  /** Nothing in this suite reads the declaration; the script decides. */
+  readonly performs: ReadonlyMap<string, readonly string[]> = new Map();
+
   readonly capabilities = Object.freeze({
     supportsIdempotencyKey: true,
     supportsReadBack: false,

@@ -429,3 +429,58 @@ describe('helpdesk fixtures', () => {
     }
   });
 });
+
+// Issue #144: the consumer checks its class against this declaration at
+// startup, so the declaration must say exactly what performAction does.
+describe('HelpdeskAdapter.performs', () => {
+  it('declares its three internal classes and the payload fields each needs', () => {
+    // From the helpdesk API: a close needs the ticket alone, a route needs the
+    // queue it moves to, and a compensation needs its reason.
+    expect(Object.fromEntries(newAdapter().performs)).toEqual({
+      close_ticket: [],
+      route_ticket: ['queue'],
+      compensate: ['reason'],
+    });
+  });
+
+  it('performs each declared class with its declared fields, and no fewer', async () => {
+    const adapter = newAdapter();
+    let key = 0;
+    for (const [actionClass, fields] of adapter.performs) {
+      const full = Object.fromEntries(fields.map((field) => [field, 'from the declaration']));
+      await expect(adapter.performAction(
+        actionClass, { ticketExternalId: 'HD-1001', ...full }, `${actionClass}:${key++}`,
+      )).resolves.toHaveProperty('externalId');
+      for (const field of fields) {
+        for (const missing of [undefined, '', 3]) {
+          const before = adapter.listDeliveries().length;
+          await expect(adapter.performAction(
+            actionClass,
+            { ticketExternalId: 'HD-1001', ...full, [field]: missing },
+            `${actionClass}:${key++}`,
+          )).rejects.toThrow(`helpdesk action payload field '${field}' must be a non-empty string`);
+          // A refused write records no delivery.
+          expect(adapter.listDeliveries()).toHaveLength(before);
+        }
+      }
+    }
+  });
+
+  it('still performs a field of only spaces, as it did for records already queued', async () => {
+    // The consumer refuses a blank field at startup, so no new run sends one.
+    // A record already in an outbox keeps the rule it was written under.
+    const adapter = newAdapter();
+    await expect(adapter.performAction(
+      'route_ticket', { ticketExternalId: 'HD-1001', queue: '   ' }, 'route_ticket:spaces',
+    )).resolves.toHaveProperty('externalId');
+    expect(adapter.getTicket('HD-1001')?.queue).toBe('   ');
+  });
+
+  it('refuses a class it does not declare, naming the ones it does', async () => {
+    await expect(newAdapter().performAction('refund', { ticketExternalId: 'HD-1001' }, 'k'))
+      .rejects.toThrow(new AdapterCapabilityError(
+        "helpdesk adapter cannot perform action class 'refund'; "
+          + 'it implements only close_ticket, route_ticket and compensate',
+      ));
+  });
+});

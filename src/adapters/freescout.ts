@@ -79,6 +79,7 @@
  *
  * Check both against a real instance before trusting either.
  */
+import { PERFORMS_NOTHING, type Performs } from './performs.js';
 import { AdapterCapabilityError, PermanentEgressError, requireNonEmpty } from './types.js';
 import type {
   AdapterCapabilities,
@@ -298,6 +299,9 @@ export class FreeScoutEgressAdapter implements EgressAdapter, DraftReadBack {
   readonly name = 'freescout';
 
   readonly capabilities: AdapterCapabilities;
+
+  /** FreeScout takes no idempotency key, so this adapter performs no internal write. */
+  readonly performs: Performs = PERFORMS_NOTHING;
 
   constructor(private readonly config: FreeScoutConfig) {
     this.capabilities = freeScoutCapabilities(config.internalNote);

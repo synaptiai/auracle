@@ -251,6 +251,9 @@ async function ticketEpoch(ticketId: string): Promise<string | undefined> {
 class UnknownDeliveryEgress implements EgressAdapter {
   readonly name = 'unknown-delivery';
 
+  /** Nothing in this suite reads the declaration; the script decides. */
+  readonly performs: ReadonlyMap<string, readonly string[]> = new Map();
+
   readonly capabilities: AdapterCapabilities = Object.freeze({
     supportsIdempotencyKey: false,
     supportsReadBack: false,

@@ -37,9 +37,10 @@ class it read, and shows each invisible character as its code point.
 
 The remedy of a pairing or near-miss refusal names every setting that the next
 start checks, the disclosure too. So a profile that follows it starts. The
-remedy that hides the action says what then decides approval. A `compensate`
-write still waits for approval, and any other write runs wherever the gates
-pass.
+remedy that hides the action appears only where the egress adapter runs it
+with the consumer's payload. It says that the write then runs
+wherever the gates pass. No adapter runs `compensate` with that payload, so its
+refusal offers no such remedy.
 
 Once spaces and invisible characters are gone, a class or a disclosure with no
 letter or digit is blank. The invisible characters are the default-ignorable,

@@ -32,6 +32,7 @@ import type {
 import { AdapterCapabilityError, requireNonEmpty } from './types.js';
 import { COMPENSATION_ACTION_CLASS } from './types.js';
 import { HELPDESK_FIXTURE_TICKETS } from './fixtures/helpdesk.js';
+import { HELPDESK_PERFORMS, allOf, type Performs } from './performs.js';
 
 /** One parked reply as the helpdesk holds it. */
 export interface HelpdeskDraftRecord {
@@ -66,6 +67,9 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
     supportsThreading: true,
     supportsLedgerReply: false,
   });
+
+  /** `performAction` reads this, so the declaration and the write cannot disagree. */
+  readonly performs: Performs = HELPDESK_PERFORMS;
 
   private seq = 0;
 
@@ -205,40 +209,40 @@ export class HelpdeskAdapter implements EgressAdapter, DraftReadBack {
       throw new Error(`helpdesk has no ticket '${ticketExternalId}'`);
     }
 
+    const fields = this.performs.get(actionClass);
+    if (fields === undefined) {
+      throw new AdapterCapabilityError(
+        `helpdesk adapter cannot perform action class '${actionClass}'; `
+          + `it implements only ${allOf([...this.performs.keys()])}`,
+      );
+    }
+    // Empty, not blank: a record already queued with a field of only spaces
+    // keeps the rule it was written under. The consumer refuses a blank field
+    // at startup, so no new run sends one.
+    for (const field of fields) {
+      const value = payload[field];
+      if (typeof value !== 'string' || value.length === 0) {
+        throw new TypeError(`helpdesk action payload field '${field}' must be a non-empty string`);
+      }
+    }
+
     let updated: Ticket;
     switch (actionClass) {
       case 'close_ticket':
         updated = { ...ticket, status: 'closed' };
         break;
-      case 'route_ticket': {
-        const queue = payload['queue'];
-        if (typeof queue !== 'string' || queue.length === 0) {
-          throw new TypeError(
-            "helpdesk action payload field 'queue' must be a non-empty string",
-          );
-        }
-        updated = { ...ticket, queue };
+      case 'route_ticket':
+        updated = { ...ticket, queue: payload['queue'] as string };
         break;
-      }
-      case COMPENSATION_ACTION_CLASS: {
+      case COMPENSATION_ACTION_CLASS:
         // V2: compensation of an irreversible action. The helpdesk API
         // records the compensating credit against the ticket; no ticket
         // field changes. The idempotency key above already dedupes, so a
         // replayed compensation never pays twice.
-        const reason = payload['reason'];
-        if (typeof reason !== 'string' || reason.length === 0) {
-          throw new TypeError(
-            "helpdesk action payload field 'reason' must be a non-empty string",
-          );
-        }
         updated = { ...ticket };
         break;
-      }
       default:
-        throw new AdapterCapabilityError(
-          `helpdesk adapter cannot perform action class '${actionClass}'; `
-            + 'it implements only close_ticket, route_ticket and compensate',
-        );
+        throw new Error(`helpdesk declares action class '${actionClass}' and implements no write for it`);
     }
     this.tickets.set(ticketExternalId, updated);
 

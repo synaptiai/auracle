@@ -263,6 +263,13 @@ export type DeliveryState =
   | { readonly state: 'not_found' };
 
 /**
+ * An internal action class to the payload fields it needs. The helpdesk's
+ * write needs each one non-empty, and a consumer refuses at startup a field
+ * that is blank. The declarations of every adapter live in `./performs.ts`.
+ */
+export type Performs = ReadonlyMap<string, readonly string[]>;
+
+/**
  * The egress port. Implementations declare their capabilities once, as a
  * frozen value (DEC-06), and refuse replies whose `disclosure` is empty
  * (DEC-14).
@@ -270,7 +277,14 @@ export type DeliveryState =
 export interface EgressAdapter {
   readonly name: string;
   readonly capabilities: AdapterCapabilities;
-  /** Park one gated reply as a draft inside the target system (DEC-11). */
+  /**
+   * The internal action classes this adapter performs, each with the payload
+   * fields it needs (DEC-06). `performAction` refuses a class it does not
+   * declare, or a declared field that is missing, and a consumer refuses the
+   * same at startup, so a write that could never land never starts. An
+   * adapter that performs no internal write declares an empty map.
+   */
+  readonly performs: Performs;
   /**
    * Park one gated reply as a draft (DEC-11). A repeat call carrying the
    * same `reply.idemKey` returns the first draft and must not create a

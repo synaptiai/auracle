@@ -19,6 +19,7 @@ import { Pool } from 'pg';
 import { FreeScoutEgressAdapter, freeScoutConfigFromEnv } from '../adapters/freescout.js';
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.js';
+import { knownEntry } from '../adapters/performs.js';
 import type { EgressAdapter } from '../adapters/types.js';
 import { loadDotEnv, positiveIntEnv } from '../config/env.js';
 import { requireDbUrl } from '../db/config.js';
@@ -31,19 +32,11 @@ const EGRESS_ADAPTERS: Readonly<Record<string, () => EgressAdapter>> = {
   freescout: () => new FreeScoutEgressAdapter(freeScoutConfigFromEnv()),
 };
 
-function selectAdapter(name: string): EgressAdapter {
-  const create = EGRESS_ADAPTERS[name];
-  if (create === undefined) {
-    throw new Error(
-      `unknown RELAY_ADAPTER '${name}' (known: ${Object.keys(EGRESS_ADAPTERS).join(', ')})`,
-    );
-  }
-  return create();
-}
-
 async function main(): Promise<void> {
   loadDotEnv();
-  const adapter = selectAdapter(process.env['RELAY_ADAPTER'] ?? 'helpdesk');
+  // An own entry only: `RELAY_ADAPTER=constructor` is an unknown name, not a
+  // function every object inherits.
+  const adapter = knownEntry(EGRESS_ADAPTERS, process.env['RELAY_ADAPTER'] ?? 'helpdesk', 'RELAY_ADAPTER')();
   const intervalMs = positiveIntEnv('RELAY_INTERVAL_MS', 5000);
   const pool = new Pool({ connectionString: requireDbUrl('the relay'), max: 1 });
 

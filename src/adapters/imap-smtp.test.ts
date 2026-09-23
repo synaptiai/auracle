@@ -66,6 +66,10 @@ describe('SmtpEgressAdapter declares what it cannot do (DEC-06)', () => {
     expect(egress.capabilities).toBe(IMAP_SMTP_CAPABILITIES);
   });
 
+  it('declares no internal class, so a consumer refuses one at startup', () => {
+    expect(egress.performs.size).toBe(0);
+  });
+
   it('refuses automatic internal writes instead of faking one', async () => {
     await expect(
       egress.performAction('route_ticket', { queue: 'billing' }, 'route_ticket:T-1:k'),

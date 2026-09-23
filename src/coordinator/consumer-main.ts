@@ -61,9 +61,14 @@ import { Pool } from 'pg';
 import { FreeScoutEgressAdapter, freeScoutConfigFromEnv } from '../adapters/freescout.js';
 import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { SmtpEgressAdapter, imapSmtpConfigFromEnv } from '../adapters/imap-smtp.js';
+import {
+  CONSUMER_ACTION_PAYLOAD, DEFAULT_EGRESS_ADAPTER, EGRESS_PERFORMS, allOf, carriesFields,
+  classesRun, eitherOf, knownEntry, ownEntry, whatPayloadLacks, type Performs,
+} from '../adapters/performs.js';
+import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
 import type { EgressAdapter } from '../adapters/types.js';
 import { pinFaults, resolveThresholds } from '../calibration/resolve.js';
-import { actionProfileFromEnv } from '../config/action-profile.js';
+import { actionProfileFromEnv, shown } from '../config/action-profile.js';
 import {
   loadDotEnv,
   positiveIntEnv,
@@ -86,14 +91,74 @@ const EGRESS_ADAPTERS: Readonly<Record<string, () => EgressAdapter>> = {
   freescout: () => new FreeScoutEgressAdapter(freeScoutConfigFromEnv()),
 };
 
-function selectEgressAdapter(name: string): EgressAdapter {
-  const create = EGRESS_ADAPTERS[name];
-  if (create === undefined) {
+/** The names `EGRESS_ADAPTER` may select, for a test that holds them to the declarations. */
+export const EGRESS_ADAPTER_NAMES: readonly string[] = Object.keys(EGRESS_ADAPTERS);
+
+/**
+ * Refuses a hidden profile whose internal action the egress adapter cannot
+ * perform with the payload this consumer sends (issue #144, DEC-06).
+ *
+ * The relay performs every internal class through `performAction`, and an
+ * adapter refuses a class it does not declare, or a declared field that is
+ * missing. On an adapter that takes an idempotency key, the relay then leaves
+ * the record pending on every scan, and on the automatic path the run already
+ * reads resolved. So the check runs here, before the adapter is built or any
+ * connection opens. It reads the adapter's declaration from the registry by
+ * name, so an adapter's credentials are never needed to refuse its class.
+ *
+ * A visible profile is not checked: its action is the customer reply, which
+ * the relay sends as a draft (DEC-11), and the profile already requires that
+ * pairing.
+ *
+ * Each remedy names only what then starts: a class this adapter runs with the
+ * payload, or the whole customer-reply profile. It never names another
+ * adapter. The helpdesk is the in-memory reference adapter, and the relay
+ * would still run the adapter it names itself.
+ */
+export function refuseUnperformedAction(
+  profile: { readonly actionClass: string; readonly isCustomerVisible: boolean },
+  adapterName: string,
+  env: NodeJS.ProcessEnv,
+  payload: Readonly<Record<string, unknown>> = CONSUMER_ACTION_PAYLOAD,
+  registry: Readonly<Record<string, Performs>> = EGRESS_PERFORMS,
+): void {
+  if (profile.isCustomerVisible) return;
+  const performs = ownEntry(registry, adapterName);
+  // An unknown name is refused by the adapter selection, which lists the names.
+  if (performs === undefined) return;
+  const { actionClass } = profile;
+  const byDefault = (name: string): string => (env[name] === undefined ? ' (the default)' : '');
+  const quoted = `'${shown(actionClass)}'${byDefault('ACTION_CLASS')}`;
+  const adapter = `EGRESS_ADAPTER=${adapterName}${byDefault('EGRESS_ADAPTER')}`;
+  const runs = classesRun(performs, payload);
+  const remedy = runs.length > 0
+    ? `Set ACTION_CLASS to ${eitherOf(runs)}, which it runs with the consumer's payload.`
+    : `Set ACTION_CLASS=${CUSTOMER_REPLY_ACTION_CLASS}, ACTION_IS_CUSTOMER_VISIBLE=true and a`
+      + ' non-empty DISCLOSURE_TEXT (DEC-14) to draft customer replies.';
+
+  const fields = performs.get(actionClass);
+  if (fields === undefined) {
+    if (performs.size === 0) {
+      throw new Error(
+        `${adapter} performs no internal action, so it cannot run ACTION_CLASS=${quoted}.`
+          + ` ${remedy}`,
+      );
+    }
+    // A class the adapter performs and this payload cannot run is named with
+    // what it lacks, so an operator does not try it next.
     throw new Error(
-      `unknown EGRESS_ADAPTER '${name}' (known: ${Object.keys(EGRESS_ADAPTERS).join(', ')})`,
+      `ACTION_CLASS=${quoted} is not an action ${adapter} performs. It performs`
+        + ` ${allOf([...performs.keys()].sort())}.${whatPayloadLacks(performs, payload)} ${remedy}`,
     );
   }
-  return create();
+  if (!carriesFields(payload, fields)) {
+    const missing = fields.filter((field) => !carriesFields(payload, [field]));
+    throw new Error(
+      `${adapter} needs a non-blank ${allOf(missing.map((field) => `'${field}'`))} to perform`
+        + ` ACTION_CLASS=${quoted}, and the consumer's payload does not carry`
+        + ` ${missing.length === 1 ? 'it' : 'them'}. ${remedy}`,
+    );
+  }
 }
 
 /** Exported for its cases, like `requirePromptVer` below. */
@@ -190,8 +255,14 @@ async function main(): Promise<void> {
   refuseUnreachablePartitions(partitions, partitionCount);
   const intervalMs = positiveIntEnv('CONSUMER_INTERVAL_MS', 5000);
   const ticketDeadlineMs = positiveIntEnv('TICKET_DEADLINE_MS', 60_000);
+  // The adapter name first: the profile's refusals assume the adapter it
+  // names exists, so a misspelled one would be misread as one that runs
+  // nothing. Selecting it builds nothing, so no credentials are read yet.
+  const egressName = process.env['EGRESS_ADAPTER'] ?? DEFAULT_EGRESS_ADAPTER;
+  const createEgress = knownEntry(EGRESS_ADAPTERS, egressName, 'EGRESS_ADAPTER');
   const profile = actionProfileFromEnv();
-  const egress = selectEgressAdapter(process.env['EGRESS_ADAPTER'] ?? 'helpdesk');
+  refuseUnperformedAction(profile, egressName, process.env);
+  const egress = createEgress();
 
   const modelVer = process.env['MODEL_VER'] ?? DEFAULT_CHAT_MODEL_VER;
 
@@ -281,7 +352,7 @@ async function main(): Promise<void> {
     signal: pgArrivalSignal(requireDbUrl('the consumer')),
     action: {
       actionClass: profile.actionClass,
-      actionPayload: { queue: 'triaged' },
+      actionPayload: { ...CONSUMER_ACTION_PAYLOAD },
       delivery: profile.delivery,
       isCustomerVisible: profile.isCustomerVisible,
       disclosure: profile.disclosure,

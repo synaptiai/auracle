@@ -192,21 +192,32 @@ describe('the pairing of ACTION_CLASS and ACTION_IS_CUSTOMER_VISIBLE', () => {
       expect(run).toThrow(
         `ACTION_IS_CUSTOMER_VISIBLE=true needs ACTION_CLASS=customer_reply, got ACTION_CLASS=${read}.`,
       );
-      // Both ways out, because the second keeps what a routing deployment
-      // does. The second is conditional: the profile does not check that an
-      // adapter performs the class.
-      const running = set === undefined
-        ? 'route_ticket'
-        : set.replace(INVISIBLE[0]!, '<U+200B>');
-      // A compensation cannot be undone, so hiding it still leaves every write
-      // waiting for a person (DEC-34). Any other class then runs unattended.
-      const hidden = running === 'compensate'
-        ? ' the write still waits for approval, because it cannot be undone (DEC-34).'
-        : ' the write then runs without approval wherever the gates pass (DEC-12).';
-      expect(run).toThrow(
-        'Set ACTION_CLASS=customer_reply to draft customer replies. Or, if the adapter'
-          + ` performs '${running}', set ACTION_IS_CUSTOMER_VISIBLE=false:${hidden}`,
-      );
+      // The second way out keeps what a routing deployment does, and it is
+      // named only where EGRESS_ADAPTER, here the default helpdesk, runs the
+      // class with the consumer's payload: a route and a close. No adapter
+      // runs a compensation with it, or a class spelled with an invisible
+      // character.
+      const reply = 'Set ACTION_CLASS=customer_reply to draft customer replies.';
+      const hide = ' Or, on EGRESS_ADAPTER=helpdesk (the default), set'
+        + ' ACTION_IS_CUSTOMER_VISIBLE=false: the write then runs without approval wherever the'
+        + ' gates pass (DEC-12).';
+      const runnable = set === undefined || set === 'close_ticket';
+      let message = '';
+      try {
+        run();
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message.endsWith(runnable ? `${reply}${hide}` : reply), message).toBe(true);
+    }
+  });
+
+  it('offers no hide remedy on an adapter name that is a property every object has', () => {
+    for (const name of ['constructor', 'toString', '__proto__']) {
+      expect(() => actionProfileFromEnv(envWith({
+        ACTION_CLASS: 'route_ticket', ACTION_IS_CUSTOMER_VISIBLE: 'true',
+        DISCLOSURE_TEXT: DISCLOSED, EGRESS_ADAPTER: name,
+      }))).toThrow(/Set ACTION_CLASS=customer_reply to draft customer replies\.$/);
     }
   });
 

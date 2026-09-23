@@ -237,7 +237,7 @@ The consumer reads this configuration:
 | `ACTION_DELIVERY` | Delivery rule: `at_most_once` or `at_least_once`. | `at_most_once` |
 | `ACTION_IS_CUSTOMER_VISIBLE` | `true` gates every action as a customer reply (DEC-12). It must be `true` for `customer_reply` and `false` for every other class. Startup refuses any other pairing. | `false` |
 | `DISCLOSURE_TEXT` | Disclosure on gated replies (DEC-14). Required when `ACTION_IS_CUSTOMER_VISIBLE=true`. Startup fails fast without it. A blank value counts as unset: a visible profile refuses it, and a hidden one takes the default. | `This reply was drafted by an automated assistant and reviewed by a person.` |
-| `EGRESS_ADAPTER` | Egress adapter that parks gated replies: `helpdesk` or `imap-smtp`. The policy engine reads the selected adapter's capabilities. | `helpdesk` |
+| `EGRESS_ADAPTER` | Egress adapter that parks gated replies: `helpdesk`, `imap-smtp` or `freescout`. The policy engine reads the selected adapter's capabilities. A hidden `ACTION_CLASS` must be one this adapter performs, or startup refuses. | `helpdesk` |
 
 A reply-generating profile for dogfood looks like this:
 
@@ -258,10 +258,21 @@ can skip approval (DEC-12), and it parks no draft that the relay can send.
 
 The refusal names both settings and the value it read. The consumer also
 refuses a near-miss of `customer_reply`, such as `Customer_Reply` or
-`customer-reply`. Each remedy names every setting the next start checks. Hiding
-the action makes its writes automatic wherever the gates pass (DEC-12). A
-`compensate` write still waits for approval, because it cannot be undone
-(DEC-34).
+`customer-reply`. Hiding the action makes its writes automatic wherever the
+gates pass (DEC-12).
+
+A hidden action must also be one the egress adapter performs. The helpdesk
+performs `close_ticket`, `route_ticket` and `compensate`. The `imap-smtp` and
+`freescout` adapters perform no internal action. The consumer refuses to start
+with a class its adapter does not perform. It also refuses a class whose
+payload field it does not send. So it refuses `compensate`, because its payload
+carries no reason.
+
+Each refusal names only a remedy that starts. That is a class the adapter runs
+with the payload, or else the whole customer-reply profile. No refusal names
+another adapter, because the relay keeps the adapter it names itself. A refusal
+of a visible class offers to hide it only where `EGRESS_ADAPTER` runs that
+class.
 
 ### Relay daemon
 
@@ -523,9 +534,10 @@ It exits non-zero when the run was not approved.
 
 The approval flow runs over a real mailbox when both daemons use the
 `imap-smtp` adapter. Set `EGRESS_ADAPTER=imap-smtp` before you start the
-consumer. Set `RELAY_ADAPTER=imap-smtp` before you start the relay. The
-mailbox then keeps the draft state, so it survives across processes. The
-flow has these steps:
+consumer, with the reply profile above. That adapter performs no internal
+action, so the consumer refuses any other profile. Set `RELAY_ADAPTER=imap-smtp`
+before you start the relay. The mailbox then keeps the draft state, so it
+survives across processes. The flow has these steps:
 
 1. A customer mail arrives. The IMAP poller turns it into a ticket.
 2. The consumer runs the ticket. Its egress adapter parks the reply as a

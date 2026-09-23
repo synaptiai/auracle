@@ -37,6 +37,9 @@ class ScriptedEgress implements EgressAdapter {
 
   readonly capabilities: AdapterCapabilities;
 
+  /** Nothing in this suite reads the declaration; the script decides. */
+  readonly performs: ReadonlyMap<string, readonly string[]> = new Map();
+
   readonly sendCalls: Array<{ draftExternalId: string; idemKey: string }> = [];
 
   readonly performCalls: Array<{

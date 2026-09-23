@@ -288,6 +288,10 @@ describe('sendDraft publishes the approved text', () => {
 });
 
 describe('what the adapter refuses to fake (DEC-06, DEC-30)', () => {
+  it('declares no internal class, so a consumer refuses one at startup', () => {
+    expect(adapter.performs.size).toBe(0);
+  });
+
   it('throws rather than apply an automatic internal write', async () => {
     await expect(adapter.performAction('refund', {}, 'k')).rejects.toThrow(AdapterCapabilityError);
   });
