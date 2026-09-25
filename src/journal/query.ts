@@ -606,7 +606,7 @@ const SELECT_DOCUMENTS = `
 /** A run id the ledger can be asked about. The column is `uuid`. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function isObject(value: unknown): value is Record<string, unknown> {
+export function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
@@ -624,9 +624,8 @@ function stringAt(result: Record<string, unknown> | null, key: string): string |
   return typeof value === 'string' ? value : null;
 }
 
-/** Whether the journal recorded the key at all, whatever it holds. */
 /** What a run recorded about one retrieved document (DEC-23). */
-interface DocumentSnapshot {
+export interface DocumentSnapshot {
   readonly title: string | null;
   readonly owner: string | null;
   readonly reviewBy: string | null;
@@ -641,7 +640,7 @@ interface DocumentSnapshot {
  * unreadable entry costs that document its comparison and says nothing false
  * about the others.
  */
-function snapshotOf(
+export function snapshotOf(
   result: Record<string, unknown> | null,
 ): Record<string, DocumentSnapshot> | null {
   const raw = result === null ? undefined : result['documents'];
@@ -668,7 +667,7 @@ function snapshotOf(
  * Whole or not at all. These index into the compose row's claim list, so a
  * dropped member shifts every later verdict onto the wrong claim.
  */
-function verdictsOf(result: Record<string, unknown> | null): ClaimVerdict[] | null {
+export function verdictsOf(result: Record<string, unknown> | null): ClaimVerdict[] | null {
   const raw = result === null ? undefined : result['claimVerdicts'];
   if (!Array.isArray(raw)) return null;
   const verdicts: ClaimVerdict[] = [];
@@ -681,6 +680,36 @@ function verdictsOf(result: Record<string, unknown> | null): ClaimVerdict[] | nu
     verdicts.push({ claimIndex, supported });
   }
   return verdicts;
+}
+
+/**
+ * The judge's verdict for the claim at `index`, or null when the journal does
+ * not say.
+ *
+ * Two entries naming one claim is not a verdict. `verdictsOf` permits such a
+ * list, and picking either would be a reader deciding which one the judge
+ * meant. The case page and the gap count both read a claim through this, so
+ * they cannot draw one claim two ways.
+ */
+export function verdictAt(
+  verdicts: readonly ClaimVerdict[] | null,
+  index: number,
+): boolean | null {
+  if (verdicts === null) return null;
+  const found = verdicts.filter((verdict) => verdict.claimIndex === index);
+  return found.length === 1 ? found[0]!.supported : null;
+}
+
+/**
+ * The verdicts of a gate row, as the run page reads them.
+ *
+ * A row that recorded no groundedness or no decision is no coverage reading,
+ * so its verdicts are not read either. `readRunJournal` reads a gate row the
+ * same way, so a case page and the knowledge screen cannot disagree about one.
+ */
+export function gateVerdictsOf(gated: Record<string, unknown> | null): ClaimVerdict[] | null {
+  if (numberAt(gated, 'groundedness') === null || stringAt(gated, 'decision') === null) return null;
+  return verdictsOf(gated);
 }
 
 /**
@@ -767,6 +796,7 @@ function citedBodiesOf(
   return bodies;
 }
 
+/** Whether the journal recorded the key at all, whatever it holds. */
 function has(result: Record<string, unknown> | null, key: string): boolean {
   return result !== null && Object.hasOwn(result, key);
 }
@@ -1040,7 +1070,7 @@ function toParkRecord(result: Record<string, unknown> | null): ParkRecord {
  */
 const COMPOSE_STATUSES: readonly string[] = ['done', 'abstained'];
 
-function toComposeRecord(
+export function toComposeRecord(
   status: string,
   result: Record<string, unknown> | null,
 ): ComposeRecord | null {
@@ -1218,7 +1248,7 @@ export async function readRunJournal(
           reason: stringAt(gated, 'reason'),
           blockThreshold: thresholds?.groundednessBlock ?? null,
           reviewThreshold: thresholds?.groundednessReview ?? null,
-          claimVerdicts: verdictsOf(gated),
+          claimVerdicts: gateVerdictsOf(gated),
         };
 
   // DEC-48: the reply a person wrote in place of the draft. What decides is

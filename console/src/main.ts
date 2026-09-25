@@ -46,7 +46,7 @@ import { probeLedger, requireDbUrl } from 'auracle/ledger-read';
 import { LEDGER_STATES, listEscalations, listRuns, readQueueToday, readRun } from 'auracle/ledger-read';
 import { readRunJournal } from 'auracle/ledger-read';
 import { conversationOfRun, readConversation, turnAnsweredBy } from 'auracle/ledger-read';
-import { readDocument } from 'auracle/ledger-read';
+import { readCaseGap, readDocument, readKnowledge } from 'auracle/ledger-read';
 import {
   closeRun, readApprovalHold, rewriteReply, saveReply, sendBackRun, snoozeRun, undoApproval,
 } from 'auracle/ledger-read';
@@ -54,6 +54,7 @@ import { readLatency } from 'auracle/ledger-read';
 import { humanMs } from 'auracle/format';
 // Every log line this process writes, so a value from a request cannot break
 // one line into two.
+import { describeFault } from 'auracle/cli';
 import { logLine } from 'auracle/format';
 
 import {
@@ -63,6 +64,7 @@ import { developmentReviewer } from './dev-reviewer.js';
 import { readBackFor } from './read-back.js';
 import { SHUTDOWN_GRACE_MS } from './shutdown.js';
 import { CONSOLE_CSS } from './css.js';
+import { knowledgeReads } from './shared-read.js';
 import { allowedHosts, identityHeader } from './hosts.js';
 import { ledgerName } from './ledger-name.js';
 import {
@@ -192,13 +194,27 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
 const QUEUE_TODAY_HOLD_MS = 30_000;
 
 /**
- * The outer limit on the page's wait for one count read. The core bounds each
- * query itself and closes a connection that outlasts that bound, and the pool
- * bounds the wait for one. This limit ends the page's wait on whatever those
- * leave, so no page waits on the count past it. The read itself runs on until
- * its own bounds end it.
+ * The outer limit on the page's wait for one count read. The core bounds the
+ * read's statements together, and its commit or rollback once more, and closes
+ * a connection that outlasts either. The pool bounds the wait for one. This
+ * limit ends the page's wait on whatever those leave, so no page waits on the
+ * count past it. The read itself runs on until its own bounds end it.
  */
 const QUEUE_TODAY_GIVE_UP_MS = 6_000;
+
+/**
+ * The outer limit on a page's wait for a knowledge read (DEC-50), as on the
+ * queue's count. The read's statements share one deadline and its commit or
+ * rollback gets one more, and the pool bounds the wait for a connection. This
+ * limit ends only the page's wait, so a read can run on past it until its own
+ * bounds end it.
+ */
+const KNOWLEDGE_GIVE_UP_MS = 6_000;
+
+/** Logs a knowledge read that failed after its page gave up on it. */
+function lateFault(read: string, error: unknown): void {
+  console.error(logLine({ event: 'console_read_late_fault', read, error: describeFault(error) }));
+}
 
 /**
  * The hold period, in milliseconds (DEC-46).
@@ -537,6 +553,16 @@ async function main(): Promise<void> {
     },
 
     readDocument: async (docId) => readDocument(pool, docId),
+    // DEC-50: the knowledge screen, and the case's gap by the same definition.
+    // Each page gives up on its read at a limit, as the queue's count does, so
+    // a slow ledger costs the page a "not read" line and no longer wait. The
+    // screen's read is shared while it runs, so reviewers loading it together
+    // hold one connection between them, not one each.
+    ...knowledgeReads(
+      { readKnowledge: async () => readKnowledge(pool), readCaseGap: async (runId) => readCaseGap(pool, runId) },
+      KNOWLEDGE_GIVE_UP_MS,
+      lateFault,
+    ),
     // DEC-44: the callout's first button takes the cited document's own
     // sentence, so the document is read where the edit is applied and not
     // where the page is drawn.

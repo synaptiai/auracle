@@ -40,6 +40,14 @@ import { isFault } from './confirm.js';
 import type { BatchOutcome } from './confirm.js';
 import type { ApprovalHold, UndoOutcome } from 'auracle/ledger-read';
 import type { HandoverOutcome, ReleaseOutcome, TakeOutcome } from 'auracle/ledger-read';
+import { GAP_WINDOW_DAYS } from 'auracle/ledger-read';
+import type {
+  CaseGap,
+  ChangeFlag,
+  DocumentNeed,
+  GapGroup,
+  KnowledgeReport,
+} from 'auracle/ledger-read';
 import { CONSOLE_SCRIPT } from './script.js';
 import { groupQueue } from './queue.js';
 import type { QueueGroup } from './queue.js';
@@ -164,7 +172,7 @@ export interface Shell {
  * the page the console opens on, at `/`.
  *
  * A group with no surface behind it is left out rather than drawn as a
- * heading over nothing, so the knowledge group appears with its first screen.
+ * heading over nothing.
  *
  * `Conversations` has no listing of its own. A conversation is reached from
  * the run that answered it, because the ledger has no ordering over
@@ -179,9 +187,9 @@ const GROUPS: readonly {
     title: 'Work',
     surfaces: [{ href: '/', title: 'Needs a person' }],
   },
-  // Declared with no surface, so its place between the work and the admin
-  // surfaces is fixed before its first screen exists. It draws nothing yet.
-  { title: 'Knowledge', surfaces: [] },
+  // DEC-50: the gaps that sent cases to a person, and the documents that
+  // need one. Between the work and the admin surfaces.
+  { title: 'Knowledge', surfaces: [{ href: '/knowledge', title: 'Knowledge base' }] },
   {
     title: 'Admin',
     surfaces: [
@@ -2274,7 +2282,61 @@ export interface CaseView extends RunView {
   readonly customer: CustomerRead;
 }
 
+/** The case's gap, or the tag of the fault that stopped the console reading it. */
+export type CaseGapRead =
+  | { readonly gap: CaseGap | null }
+  | { readonly unreadTag: string };
+
+/**
+ * Whether a gap blocks this case, as the knowledge screen counts it (DEC-50).
+ *
+ * The case, not the run: the answer comes from the case's latest attempt to
+ * reach a person with a draft or an abstention, and the line names that
+ * attempt when it is another run.
+ */
+function gapLine(read: CaseGapRead, runId: string, rewritten: boolean): string {
+  if ('unreadTag' in read) {
+    return '<div class="casemeta">Whether a gap blocks this case was not read.'
+      + ` The console log names the fault ${escapeHtml(read.unreadTag)}.</div>`;
+  }
+  const record = read.gap;
+  if (record === null) return '';
+  // The attempt the answer comes from, when it is another run of the case.
+  const other = record.runId === runId
+    ? ''
+    : ` Counted from <a href="/case/${encodeURIComponent(record.runId)}">attempt ${escapeHtml(String(record.attempt))}</a>,`
+      + ' the latest to reach a person with a draft or an abstention.';
+  // Named, since a case the journal does not answer for would otherwise look
+  // like one no gap blocks. The screen names such cases apart from its count,
+  // within its window.
+  if (record.gap === null) {
+    if (!record.unread) return '';
+    const counted = record.counted
+      ? ' The knowledge screen leaves it out of its count and names it as unread.'
+      : ` It is older than the knowledge screen's ${GAP_WINDOW_DAYS}-day window.`;
+    return `<div class="casemeta">Whether a gap blocks this case is not readable from its journal.${other}${counted}</div>`;
+  }
+  const gap = record.gap;
+  // DEC-48: a person rewrote the reply, so the page draws no verdict. The
+  // gap still counts, since a person had to write the answer, and the line
+  // says the refusal was the draft's.
+  const why = gap.kind === 'abstained'
+    ? 'no document could support an answer.'
+    : 'the gate refused a claim on '
+      + gap.docIds.map((docId) =>
+        `<a href="/document/${encodeURIComponent(docId)}">${isolated(docId)}</a>`).join(', ')
+      + (rewritten ? ' in the drafted reply, which a person has rewritten.' : '.');
+  // The screen counts a case over its window alone, so an older case says so
+  // rather than pointing at a count that does not hold it.
+  const where = record.counted
+    ? ' <a href="/knowledge">Counted on the knowledge screen →</a>'
+    : ` It is older than the knowledge screen's ${GAP_WINDOW_DAYS}-day window.`;
+  return `<div class="casemeta" style="color:var(--hot)">Blocked by a gap: ${why}${other}${where}</div>`;
+}
+
 export interface CaseOptions {
+  /** DEC-50: whether a gap blocks the case, as the knowledge screen counts it. */
+  readonly gap: CaseGapRead;
   /** The outcome of the approval just posted, drawn above the case. */
   readonly outcome: string;
   /**
@@ -2707,6 +2769,7 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
     ].join(' · ')),
     ` · run <a href="/run/${encodeURIComponent(view.runId)}">${escapeHtml(view.runId)}</a>`,
     '</div>',
+    gapLine(options.gap, view.runId, view.replyRewritten),
     '</div>',
     options.outcome === '' ? '' : renderOutcome(options.outcome, {
       state: view.state,
@@ -4291,6 +4354,191 @@ export function renderDocument(doc: DocumentPage): string {
     '</header><div class="body">',
     `<div class="prose">${isolated(doc.body)}</div>`,
     '</div></div>',
+    '</div>',
+  ].join('');
+}
+
+/** The knowledge figures, or the tag of the fault that stopped the console reading them. */
+export type KnowledgeRead =
+  | { readonly report: KnowledgeReport }
+  | { readonly unreadTag: string };
+
+/** How many cases, in words. */
+function casesSays(n: number): string {
+  return n === 1 ? '1 case' : `${n} cases`;
+}
+
+/** One stat card: a label, the ledger's figure, and what it counts. */
+function statCard(label: string, figure: number | null, says: string): string {
+  return [
+    '<div class="card stack"><header>',
+    `<span class="lbl">${escapeHtml(label)}</span>`,
+    '</header><div class="body">',
+    // Null is a figure the console did not read. It is drawn as words, never
+    // as a zero: a zero is a count, and an unread count is not one.
+    figure === null
+      ? '<span class="big" style="color:var(--dim)">not read</span>'
+      : `<span class="big">${escapeHtml(String(figure))}</span>`,
+    `<div style="font-size:11.5px; color:var(--mut)">${escapeHtml(says)}</div>`,
+    '</div></div>',
+  ].join('');
+}
+
+/** What a document's change flag says, and the colour it says it in. */
+const FLAG_SAYS: Readonly<Record<ChangeFlag, readonly [string, Token]>> = {
+  not_cited: ['not cited', 'dim'],
+  unchanged: ['unchanged', 'ok'],
+  changed: ['changed since a case read it', 'warn'],
+  not_compared: ['not compared', 'dim'],
+};
+
+function documentHref(docId: string): string {
+  return `/document/${encodeURIComponent(docId)}`;
+}
+
+function gapRow(group: GapGroup, widest: number, labels: ReadonlyMap<string, string>): string {
+  const share = widest === 0 ? 0 : group.cases / widest;
+  const why = [
+    group.abstained === 0
+      ? ''
+      : `<div class="imeta">no document could support an answer · ${escapeHtml(casesSays(group.abstained))}</div>`,
+    ...group.refused.map((doc) => [
+      '<div class="imeta">',
+      doc.title === null
+        ? `${isolated(doc.docId)} — no such document today`
+        : `<a href="${escapeHtml(documentHref(doc.docId))}">${isolated(doc.title)}</a>`,
+      ` does not support a claim · ${escapeHtml(casesSays(doc.cases))}`,
+      '</div>',
+    ].join('')),
+  ];
+  const latest = group.runIds[0];
+  return [
+    '<div class="item">',
+    '<div class="itop">',
+    `<span class="isubj">${isolated(group.intentId ?? 'no intent recorded')}`
+      + ` · ${isolated(productSays(group.product, labels))}</span>`,
+    `<span class="age">${escapeHtml(casesSays(group.cases))}</span>`,
+    '</div>',
+    '<div class="pl" style="grid-template-columns:1fr">',
+    `<span class="track"><i style="width:${(share * 100).toFixed(1)}%; background:var(--hot)"></i></span>`,
+    '</div>',
+    ...why,
+    latest === undefined
+      ? ''
+      : `<div class="imeta"><a href="/case/${encodeURIComponent(latest)}">Open the latest case →</a></div>`,
+    '</div>',
+  ].join('');
+}
+
+function documentRow(doc: DocumentNeed, labels: ReadonlyMap<string, string>): string {
+  const [flagSays, flagToken] = FLAG_SAYS[doc.flag];
+  const products = doc.products.length === 0
+    ? 'every product'
+    : doc.products.map((product) => productLabel(labels, product)).join(', ');
+  return [
+    '<div class="item">',
+    '<div class="itop">',
+    `<span class="isubj"><a href="${escapeHtml(documentHref(doc.docId))}">${isolated(doc.title)}</a></span>`,
+    `<span class="age">${isolated(doc.owner)}</span>`,
+    '</div>',
+    `<div class="imeta">${isolated(doc.docId)} · ${isolated(products)}</div>`,
+    '<div class="hol" style="justify-content:flex-start; margin-top:6px">',
+    chip(`cited by ${casesSays(doc.citations)}`),
+    chip(flagSays, flagToken),
+    doc.refusedCases === 0 ? '' : chip(`refused a claim in ${casesSays(doc.refusedCases)}`, 'hot'),
+    doc.embeddingFailed === null ? '' : chip('embedding failed', 'crit'),
+    // DEC-23: past its review date, retrieval no longer reads it.
+    doc.pastReview ? chip(`review date passed ${doc.reviewBy}`, 'warn') : '',
+    '</div>',
+    doc.embeddingFailed === null || doc.embeddingFailed === ''
+      ? ''
+      : `<div class="imeta">${isolated(doc.embeddingFailed)}</div>`,
+    '</div>',
+  ].join('');
+}
+
+/**
+ * The knowledge screen (DEC-50): the gaps that sent cases to a person, and
+ * the documents that need one.
+ *
+ * A case is blocked by a gap when its latest attempt to reach a person with a
+ * draft or an abstention had no document to answer from, or a claim its
+ * document does not support. The case page reads the same definition, so the
+ * two count a case one way.
+ */
+export function renderKnowledge(read: KnowledgeRead, labels: ReadonlyMap<string, string>): string {
+  const says = 'The gaps that sent cases to a person over the last '
+    + `${GAP_WINDOW_DAYS} days, and the documents that need a person.`;
+  if ('unreadTag' in read) {
+    return [
+      head('Knowledge base', says),
+      '<div class="wrap">',
+      '<div class="grid">',
+      statCard('Cases blocked by a gap', null, 'Not read.'),
+      statCard('Documents past review', null, 'Not read.'),
+      statCard('Documents written by the team', null, 'Not read.'),
+      statCard('Cases those documents now answer', null, 'Not read.'),
+      '</div>',
+      `<p class="mut">The knowledge figures were not read. The console log names the fault ${escapeHtml(read.unreadTag)}.</p>`,
+      '</div>',
+    ].join('');
+  }
+  const { report } = read;
+  const window = `${report.from.slice(0, 10)} to ${report.to.slice(0, 10)} UTC`;
+  const widest = Math.max(0, ...report.gaps.map((group) => group.cases));
+  return [
+    head('Knowledge base', says, [chip(window)]),
+    '<div class="wrap">',
+    '<div class="grid">',
+    statCard(
+      'Cases blocked by a gap',
+      report.blockedCases,
+      'Cases whose latest attempt to reach a person with a draft or an abstention had no document'
+        + ' to answer from, or a claim its document does not support.'
+        // Named, since the figure is then a floor: a case the journal does
+        // not answer for is not counted either way.
+        + (report.unreadCases === 0
+          ? ''
+          : ` The journal of ${casesSays(report.unreadCases)} could not be read,`
+            + ` so the figure leaves ${report.unreadCases === 1 ? 'it' : 'them'} out.`),
+    ),
+    statCard(
+      'Documents past review',
+      report.pastReview,
+      'Counted today. Retrieval no longer reads a document past its review date.',
+    ),
+    statCard(
+      'Documents written by the team',
+      report.teamDocuments,
+      'Documents a reviewer published from a case in the window.',
+    ),
+    statCard(
+      'Cases those documents now answer',
+      report.answeredByTeam,
+      report.teamDocuments === 0
+        ? 'No team document was published in the window, so none answers a case yet.'
+        : 'Cases a supported claim on one of them answers, whose journal is read, and that no gap blocks.',
+    ),
+    '</div>',
+    '<div class="list card">',
+    '<div class="lhd"><span class="lbl">Gaps, by how much work they make</span></div>',
+    report.gaps.length === 0
+      ? `<div class="item"><span class="mut">${report.unreadCases === 0
+        ? 'No case was blocked by a gap in the window.'
+        : `No case the journal answers for was blocked by a gap in the window.`
+          + ` ${escapeHtml(casesSays(report.unreadCases))} could not be read.`}</span></div>`
+      : report.gaps.map((group) => gapRow(group, widest, labels)).join(''),
+    '</div>',
+    '<div class="list card">',
+    '<div class="lhd"><span class="lbl">Documents that need a person</span></div>',
+    report.documents.length === 0
+      ? '<div class="item"><span class="mut">No document needs a person.</span></div>'
+      : report.documents.map((doc) => documentRow(doc, labels)).join(''),
+    report.documentsNeedingAPerson > report.documents.length
+      ? `<div class="item"><span class="mut">Showing ${report.documents.length} of`
+        + ` ${report.documentsNeedingAPerson}.</span></div>`
+      : '',
+    '</div>',
     '</div>',
   ].join('');
 }

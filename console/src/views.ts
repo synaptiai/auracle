@@ -8,7 +8,7 @@
 // They map and nothing else. No statement is issued here, and every value
 // comes from a reader in the root package.
 import { CLASSIFIER_K, CUSTOMER_REPLY_ACTION_CLASS } from 'auracle/domain';
-import { replyDigest } from 'auracle/ledger-read';
+import { replyDigest, verdictAt } from 'auracle/ledger-read';
 import type { JournalStep, RunJournal } from 'auracle/ledger-read';
 
 import { escalationHead, parksAnAction } from './render.js';
@@ -391,7 +391,7 @@ export function evidenceOf(journal: RunJournal): EvidenceView {
           // list holding one index twice, and taking the first would render a
           // refused claim as accepted on the strength of the entry that
           // happened to come first.
-          supported: verdictFor(verdicts, claimIndex),
+          supported: verdictAt(verdicts, claimIndex),
         };
       });
 
@@ -448,20 +448,4 @@ export function evidenceOf(journal: RunJournal): EvidenceView {
       && park?.draftBody != null
       && journal.rewrite.cleared === replyDigest(park.draftBody),
   };
-}
-
-/**
- * The judge's verdict for one claim, or null when the journal does not say.
- *
- * Two entries naming one claim is not a verdict. The reader permits such a
- * list, and picking either would be this console deciding which one the judge
- * meant — on the question an approver came to the page to read.
- */
-function verdictFor(
-  verdicts: readonly { readonly claimIndex: number; readonly supported: boolean }[] | null,
-  index: number,
-): boolean | null {
-  if (verdicts === null) return null;
-  const found = verdicts.filter((verdict) => verdict.claimIndex === index);
-  return found.length === 1 ? found[0]!.supported : null;
 }

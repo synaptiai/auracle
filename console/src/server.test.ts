@@ -27,6 +27,7 @@ import { UNDO_SAYS } from './surfaces.js';
 import type { ReviewerRefusal, ReviewerVerdict } from './reviewer.js';
 import { cachedDaily } from './daily-cache.js';
 import type { ConsoleDeps } from './server.js';
+import type { KnowledgeReport } from 'auracle/ledger-read';
 
 const RUN = '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34';
 
@@ -200,6 +201,13 @@ function buttonOwnsItsForm(html: string): boolean {
   return open >= 0 && close > open && button > open && button < close;
 }
 
+/** The knowledge figures of a ledger that holds nothing in the window. */
+const EMPTY_KNOWLEDGE: KnowledgeReport = {
+  from: '2026-09-06T12:00:00.000Z', to: '2026-09-20T12:00:00.000Z',
+  blockedCases: 0, unreadCases: 0, pastReview: 0, teamDocuments: 0, answeredByTeam: 0,
+  gaps: [], documents: [], documentsNeedingAPerson: 0,
+};
+
 function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
   return {
     listRuns: async () => [
@@ -246,6 +254,9 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
       body: 'A charge is refundable inside fourteen days.',
       owner: 'support', reviewBy: '2030-01-01', fresh: true,
     }),
+    // DEC-50: a ledger with nothing in the gap window, and a case no gap blocks.
+    readKnowledge: async () => EMPTY_KNOWLEDGE,
+    readCaseGap: async () => null,
     readBands: async () => [
       {
         day: '2026-09-04', metric: 'abstain_rate',
@@ -2807,6 +2818,269 @@ describe('the design notes', () => {
   });
 });
 
+describe('the knowledge screen (DEC-50)', () => {
+  const RUN_2 = '00000000-0000-4000-8000-0000000000b2';
+  const REPORT: KnowledgeReport = {
+    from: '2026-09-06T12:00:00.000Z', to: '2026-09-20T12:00:00.000Z',
+    blockedCases: 5, unreadCases: 0, pastReview: 3, teamDocuments: 2, answeredByTeam: 4,
+    gaps: [
+      {
+        intentId: 'refund-request', product: 'aurora', cases: 4, abstained: 1,
+        refused: [
+          { docId: 'SYN-DOC-01', title: 'Refund policy', cases: 2 },
+          { docId: 'SYN-DOC-GONE', title: null, cases: 1 },
+        ],
+        runIds: [RUN, RUN_2],
+      },
+      { intentId: null, product: null, cases: 2, abstained: 2, refused: [], runIds: [RUN_2] },
+    ],
+    documents: [
+      {
+        docId: 'SYN-DOC-01', title: 'Refund policy', owner: 'kb-team', products: ['aurora', 'ledger'],
+        reviewBy: '2030-01-01', pastReview: false, embeddingFailed: null,
+        refusedCases: 2, citations: 3, flag: 'changed',
+      },
+      {
+        docId: 'SYN-DOC-02', title: 'Shipping times', owner: 'ops', products: [],
+        reviewBy: '2026-01-01', pastReview: true, embeddingFailed: 'the provider refused the text',
+        refusedCases: 0, citations: 0, flag: 'not_cited',
+      },
+    ],
+    documentsNeedingAPerson: 60,
+  };
+  const knowledgePage = async (over: Partial<ConsoleDeps> = {}): Promise<string> => {
+    const base = await startGuarded(deps(over));
+    return (await fetch(base + '/knowledge')).text();
+  };
+
+  it('draws the four cards with the figures the ledger gave', async () => {
+    const html = await knowledgePage({ readKnowledge: async () => REPORT });
+    const cards = [...html.matchAll(/<span class="lbl">([^<]*)<\/span><\/header><div class="body"><span class="big">([^<]*)<\/span>/g)]
+      .map((m) => [m[1], m[2]]);
+    expect(cards).toEqual([
+      ['Cases blocked by a gap', '5'],
+      ['Documents past review', '3'],
+      ['Documents written by the team', '2'],
+      ['Cases those documents now answer', '4'],
+    ]);
+    expect(html).toContain('2026-09-06 to 2026-09-20 UTC');
+  });
+
+  it('names the cases whose journal it could not read, since the count leaves them out', async () => {
+    const one = await knowledgePage({ readKnowledge: async () => ({ ...REPORT, unreadCases: 1 }) });
+    expect(one).toContain('The journal of 1 case could not be read, so the figure leaves it out.');
+    const two = await knowledgePage({ readKnowledge: async () => ({ ...REPORT, unreadCases: 2 }) });
+    expect(two).toContain('The journal of 2 cases could not be read, so the figure leaves them out.');
+    expect(await knowledgePage({ readKnowledge: async () => REPORT })).not.toContain('could not be read');
+  });
+
+  it('does not say no case was blocked when some cases could not be read', async () => {
+    const html = await knowledgePage({ readKnowledge: async () => ({ ...EMPTY_KNOWLEDGE, unreadCases: 2 }) });
+    expect(html).toContain('No case the journal answers for was blocked by a gap in the window.'
+      + ' 2 cases could not be read.');
+  });
+
+  it('names why no case is answered when the team wrote nothing in the window', async () => {
+    const html = await knowledgePage();
+    expect(html).toContain('No team document was published in the window, so none answers a case yet.');
+    expect(html).toContain('No case was blocked by a gap in the window.');
+    expect(html).toContain('No document needs a person.');
+  });
+
+  it('names each card as not read when the ledger did not answer, and logs the fault', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({
+        readKnowledge: async () => { throw new Error('canceling statement due to statement timeout'); },
+      }));
+      const res = await fetch(base + '/knowledge');
+      const html = await res.text();
+      expect(res.status).toBe(200);
+      expect(html.match(/<span class="big" style="color:var\(--dim\)">not read<\/span>/g)).toHaveLength(4);
+      const tag = /The knowledge figures were not read\. The console log names the fault ([0-9a-f]{8})\./.exec(html)?.[1];
+      expect(tag).toBeDefined();
+      const line = JSON.parse(logged.find((l) => l.includes('console_knowledge_unread'))!);
+      expect(line).toMatchObject({ event: 'console_knowledge_unread', tag });
+      expect(html).not.toContain('statement timeout');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('ranks the gaps as the ledger ordered them, with a bar against the widest', async () => {
+    const html = await knowledgePage({ readKnowledge: async () => REPORT });
+    const rows = [...html.matchAll(/<span class="isubj">([^<]*)<\/span><span class="age">([^<]*)<\/span><\/div><div class="pl" style="grid-template-columns:1fr"><span class="track"><i style="width:([0-9.]+)%/g)]
+      .map((m) => [m[1], m[2], m[3]]);
+    expect(rows).toEqual([
+      ['refund-request · Aurora', '4 cases', '100.0'],
+      ['no intent recorded · no product', '2 cases', '50.0'],
+    ]);
+  });
+
+  it('says why each gap blocks, and opens its latest case', async () => {
+    const html = await knowledgePage({ readKnowledge: async () => REPORT });
+    expect(html).toContain('no document could support an answer · 1 case');
+    expect(html).toContain('<a href="/document/SYN-DOC-01">Refund policy</a> does not support a claim · 2 cases');
+    expect(html).toContain('SYN-DOC-GONE — no such document today does not support a claim · 1 case');
+    expect(html).toContain(`<a href="/case/${RUN}">Open the latest case →</a>`);
+    expect(html).toContain(`<a href="/case/${RUN_2}">Open the latest case →</a>`);
+  });
+
+  it('lists each document with its citations, change flag, owner and why it needs a person', async () => {
+    const html = await knowledgePage({ readKnowledge: async () => REPORT });
+    const first = html.slice(html.indexOf('>Refund policy</a></span>'), html.indexOf('>Shipping times</a>'));
+    expect(first).toContain('<span class="age">kb-team</span>');
+    expect(first).toContain('SYN-DOC-01 · Aurora, Ledger');
+    expect(first).toContain('>cited by 3 cases<');
+    expect(first).toContain('<span class="chip" style="color:var(--warn)">changed since a case read it</span>');
+    expect(first).toContain('>refused a claim in 2 cases<');
+    expect(first).not.toContain('review date passed');
+    const second = html.slice(html.indexOf('>Shipping times</a>'));
+    expect(second).toContain('SYN-DOC-02 · every product');
+    expect(second).toContain('>cited by 0 cases<');
+    expect(second).toContain('<span class="chip" style="color:var(--dim)">not cited</span>');
+    expect(second).toContain('<span class="chip" style="color:var(--crit)">embedding failed</span>');
+    expect(second).toContain('the provider refused the text');
+    expect(second).toContain('review date passed 2026-01-01');
+    expect(html).toContain('Showing 2 of 60.');
+  });
+
+  it('escapes what a document or an intent carries', async () => {
+    const html = await knowledgePage({
+      readKnowledge: async () => ({
+        ...REPORT,
+        gaps: [{
+          ...REPORT.gaps[0]!, intentId: '<b>intent</b>', product: '<p>',
+          refused: [{ docId: '<d>"', title: null, cases: 1 }, { docId: '<e>', title: '<t>', cases: 1 }],
+        }],
+        documents: [{
+          ...REPORT.documents[0]!, docId: '<k>', title: '<script>x</script>', owner: '<i>o</i>',
+          products: ['<q>'], embeddingFailed: '<err>',
+        }],
+      }),
+    });
+    for (const raw of ['<d>', '<e>', '<t>', '<k>', '<p>', '<q>', '<err>']) expect(html).not.toContain(raw);
+    expect(html).toContain('&lt;d&gt;&quot; — no such document today');
+    expect(html).toContain('<a href="/document/%3Ce%3E">&lt;t&gt;</a>');
+    expect(html).toContain('&lt;err&gt;');
+    expect(html).not.toContain('<script>x</script>');
+    expect(html).toContain('&lt;script&gt;x&lt;/script&gt;');
+    expect(html).toContain('&lt;b&gt;intent&lt;/b&gt;');
+    expect(html).toContain('&lt;i&gt;o&lt;/i&gt;');
+  });
+
+  it('marks Knowledge base in the rail on its own page', async () => {
+    const html = await knowledgePage();
+    expect(html).toContain('<a href="/knowledge" class="on"><span class="navlabel">Knowledge base</span>');
+  });
+});
+
+describe('the gap a case shows (DEC-50)', () => {
+  const OTHER = '00000000-0000-4000-8000-0000000000c3';
+  const casePage = async (over: Partial<ConsoleDeps>): Promise<string> => {
+    const base = await startGuarded(deps(over));
+    return (await fetch(base + CASE)).text();
+  };
+
+  it('draws nothing when no gap blocks the case', async () => {
+    const html = await casePage({ readCaseGap: async () => ({ runId: RUN, attempt: 1, gap: null, counted: true, unread: false }) });
+    expect(html).not.toContain('Blocked by a gap');
+    expect(html).not.toContain('not readable from its journal');
+    expect(await casePage({ readCaseGap: async () => null })).not.toContain('Blocked by a gap');
+  });
+
+  it('says no document could support an answer when the composer abstained', async () => {
+    const html = await casePage({ readCaseGap: async () => ({ runId: RUN, attempt: 1, gap: { kind: 'abstained' }, counted: true, unread: false }) });
+    expect(html).toContain('Blocked by a gap: no document could support an answer.'
+      + ' <a href="/knowledge">Counted on the knowledge screen →</a>');
+    // The attempt counted is this page's own run, so no other is named.
+    expect(html).not.toContain('Counted from');
+    expect(html).not.toContain('was not read');
+  });
+
+  it('says so when the journal does not answer whether a gap blocks the case', async () => {
+    const html = await casePage({ readCaseGap: async () => ({ runId: RUN, attempt: 1, gap: null, counted: true, unread: true }) });
+    expect(html).toContain('Whether a gap blocks this case is not readable from its journal.'
+      + ' The knowledge screen leaves it out of its count and names it as unread.</div>');
+    expect(html).not.toContain('Blocked by a gap');
+    expect(html).not.toContain('Counted from');
+  });
+
+  it('names the attempt and the window when an unread case is another run, or older', async () => {
+    const html = await casePage({
+      readCaseGap: async () => ({ runId: OTHER, attempt: 2, gap: null, counted: false, unread: true }),
+    });
+    expect(html).toContain('Whether a gap blocks this case is not readable from its journal.'
+      + ` Counted from <a href="/case/${OTHER}">attempt 2</a>, the latest to reach a person with a draft or an abstention.`
+      + " It is older than the knowledge screen's 14-day window.</div>");
+  });
+
+  it('names the documents of the refused claims', async () => {
+    const html = await casePage({
+      readCaseGap: async () => ({ runId: RUN, attempt: 1, gap: { kind: 'unsupported', docIds: ['SYN-DOC-01', 'SYN-DOC-02'] }, counted: true, unread: false }),
+    });
+    expect(html).toContain('Blocked by a gap: the gate refused a claim on '
+      + '<a href="/document/SYN-DOC-01">SYN-DOC-01</a>, <a href="/document/SYN-DOC-02">SYN-DOC-02</a>.');
+  });
+
+  it('says the refusal was the draft when a person rewrote the reply', async () => {
+    const html = await casePage({
+      readRun: caseOf({ replyRewritten: true }),
+      readCaseGap: async () => ({ runId: RUN, attempt: 1, gap: { kind: 'unsupported', docIds: ['SYN-DOC-01'] }, counted: true, unread: false }),
+    });
+    expect(html).toContain('the gate refused a claim on <a href="/document/SYN-DOC-01">SYN-DOC-01</a>'
+      + ' in the drafted reply, which a person has rewritten.');
+  });
+
+  it('says a case older than the window is not on the knowledge screen', async () => {
+    const html = await casePage({
+      readCaseGap: async () => ({ runId: RUN, attempt: 1, gap: { kind: 'abstained' }, counted: false, unread: false }),
+    });
+    expect(html).toContain("Blocked by a gap: no document could support an answer."
+      + " It is older than the knowledge screen's 14-day window.</div>");
+    expect(html).not.toContain('Counted on the knowledge screen');
+  });
+
+  it('escapes the document ids it names', async () => {
+    const html = await casePage({
+      readCaseGap: async () => ({ runId: RUN, attempt: 1, gap: { kind: 'unsupported', docIds: ['<x>"'] }, counted: true, unread: false }),
+    });
+    expect(html).toContain('<a href="/document/%3Cx%3E%22">&lt;x&gt;&quot;</a>');
+  });
+
+  it('names the attempt it counted from when that is another run of the case', async () => {
+    const html = await casePage({ readCaseGap: async () => ({ runId: OTHER, attempt: 2, gap: { kind: 'abstained' }, counted: true, unread: false }) });
+    expect(html).toContain(`Counted from <a href="/case/${OTHER}">attempt 2</a>, the latest to reach a person with a draft or an abstention.`);
+  });
+
+  it('asks about this case, and draws it with a tag when the read fails', async () => {
+    const asked: string[] = [];
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    try {
+      const base = await startGuarded(deps({
+        readCaseGap: async (runId: string) => { asked.push(runId); throw new Error('connection terminated'); },
+      }));
+      const res = await fetch(base + CASE);
+      const html = await res.text();
+      expect(res.status).toBe(200);
+      expect(asked).toEqual([RUN]);
+      const tag = /Whether a gap blocks this case was not read\. The console log names the fault ([0-9a-f]{8})\./.exec(html)?.[1];
+      expect(tag).toBeDefined();
+      expect(JSON.parse(logged.find((l) => l.includes('console_gap_unread'))!))
+        .toMatchObject({ event: 'console_gap_unread', tag, runId: RUN });
+      expect(html).not.toContain('connection terminated');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe('the document behind a citation', () => {
   it('shows what the document says today', async () => {
     const base = await startGuarded(deps());
@@ -3018,8 +3292,14 @@ describe('the gate every request passes (DEC-45)', () => {
     const base = await startGuarded(deps({
       reviewerFor: async () => refuses('no_value'),
       listRuns: async () => { asked.push('listRuns'); return []; },
+      // DEC-50: the knowledge screen and the case's gap read the ledger, and
+      // a refused request reaches neither.
+      readKnowledge: async () => { asked.push('readKnowledge'); return EMPTY_KNOWLEDGE; },
+      readCaseGap: async () => { asked.push('readCaseGap'); return null; },
     }));
-    for (const path of ['/', '/runs', '/bands', '/latency', '/notes', `/run/${RUN}`, '/console.css']) {
+    for (const path of [
+      '/', '/runs', '/knowledge', '/bands', '/latency', '/notes', `/run/${RUN}`, `/case/${RUN}`, '/console.css',
+    ]) {
       const res = await fetch(base + path);
       expect(res.status, path).toBe(403);
       const html = await res.text();
@@ -5810,11 +6090,12 @@ describe('the rail', () => {
     return groups;
   }
 
-  it('groups the surfaces as work and administration', async () => {
+  it('groups the surfaces as work, knowledge and administration', async () => {
     const base = await startGuarded(deps());
     const rail = railOf(await (await fetch(base + '/bands')).text());
     expect(groupsOf(rail)).toEqual([
       ['Work', ['Needs a person']],
+      ['Knowledge', ['Knowledge base']],
       ['Admin', ['Runs', 'Control bands', 'Partition latency', 'Design notes']],
     ]);
   });

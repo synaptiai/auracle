@@ -1394,14 +1394,53 @@ strip any copy a client sent.
 A client that reaches the port directly is served when it sends the header
 itself. The console cannot tell that request from a proxied one.
 
-Eight surfaces read live data. The queue, one case, the runs and one run in
-detail. One conversation and one document. The control bands and the partition
-latency.
+Nine surfaces read live data. The queue, one case, the runs and one run in
+detail. One conversation and one document. The knowledge screen, the control
+bands and the partition latency.
 
-The rail holds four of them and the design notes, in two groups. Work holds the
-queue, named Needs a person, which a reviewer comes to clear. Admin holds the
-runs, the bands and the latency, which an engineer audits. Admin also holds the
-design notes. The rail draws no group that has no surface.
+The rail holds five of them and the design notes, in three groups. Work holds
+the queue, named Needs a person, which a reviewer comes to clear. Knowledge
+holds the knowledge screen, named Knowledge base. Admin holds the runs, the
+bands and the latency, which an engineer audits. Admin also holds the design
+notes. The rail draws no group that has no surface.
+
+The knowledge screen is at `/knowledge`. It counts the cases a gap blocks over
+the last 14 days (DEC-50). A case is a turn, or a run with no turn. A run of it
+reaches a person when it parks for approval or escalates.
+
+The latest run that reaches a person, and that drafts a reply or abstains,
+decides the case. That run is the attempt of record. A run that does neither,
+such as the end of a send-back, cannot hide an earlier gap. The gap blocks the
+case when the composer abstains, or when the gate refuses a claim. A refusal
+counts only where the case page draws one on the draft. A person may rewrite
+the reply, and the gap still counts.
+
+The page shows four cards. Cases blocked by a gap. Documents past their review
+date, counted today. Documents a reviewer published in the window. Cases a
+supported claim on one of those answers, when no gap blocks them. The first
+card names any case whose journal it cannot read, since its figure leaves such
+a case out.
+
+The page ranks the gaps by blocked cases, grouped by intent and product. Each
+gap names the documents the gate refuses claims on. The ranking and the cards
+read each case's attempt of record.
+
+The documents that need a person follow: a refused one, a failed embedding, or
+one past review. This list reads every attempt a person saw in the window.
+Each row gives its citations, its owner and a change flag. The flag reads not
+cited, unchanged, changed since a case read it, or not compared.
+
+A case page shows the same answer for its case, and names its attempt of
+record. A case older than the window says that the screen does not count it.
+So does a case whose journal it cannot read. A fault reading the cards logs
+`console_knowledge_unread`. A fault reading one case's gap logs
+`console_gap_unread`. Each page names the fault's tag and still draws.
+
+The screen shares one read among the reviewers who load it together. The
+read's statements have a deadline of three seconds in all, and its commit or
+rollback has three more. So it holds a connection six seconds at most. A page
+gives up on a read after six seconds. A read that fails after that logs
+`console_read_late_fault`, with its reason.
 
 The design notes are at `/notes`, and the page reads no ledger. Each card states
 one rule the console keeps, and the reason for it. A card joins the page only
@@ -1541,11 +1580,11 @@ The header states no share of one count in the other. The published
 containment comes from the gold report, and a live share would read as that
 figure.
 
-The count statement has a two-second timeout, and each of its queries has a
-three-second bound on the client. The console closes a connection that outlasts
-the client bound, and never returns it to the pool. A request waits at most
-three seconds for a pool connection. The console gives up on a count read after
-six seconds.
+The count statement has a two-second timeout. Its statements share a
+three-second deadline on the client, and its commit or rollback has three more.
+The console closes a connection that outlasts either, and never returns it to
+the pool. A request waits at most three seconds for a pool connection. The
+console gives up on a count read after six seconds.
 
 The console holds a successful count for 30 seconds, and never past the end of
 the UTC day. When the console cannot read the counts, the header says so and
@@ -1809,7 +1848,16 @@ named in. Each lives for the life of its row, and nothing removes any of it.
 | `run.send_back_note` | the note that steers a new attempt | the console's send-back |
 | `step_journal.result` on `send_back` | the same note | the console's send-back |
 | `conversation.customer_address` | the participant the messages come from | the first sender that names itself |
-| `document.embedding_error` | the provider's message when an embedding call fails, which may quote the document | every consumer |
+| `document.embedding_error` | the provider's message when an embedding call fails, which may quote any document of the same call | every consumer. The knowledge screen shows it to reviewers |
+
+A failed call records one message on every document it carries, so a waiting
+document's row can quote another. Removing a document does not clear such a
+quote from the others. Return them to pending, as above, to clear it.
+
+The knowledge screen shows the message of a failed document only. A document
+fails on its third refused call, and after its first failure it goes to the
+model alone. So the message the screen shows quotes that document and no
+other.
 
 The consumer logs the same embedding message in five events:
 `documents_embedding_retrying`, `documents_embedding_deferred`,

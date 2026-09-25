@@ -59,7 +59,7 @@ export type { EscalationItem, EscalationFilters } from '../escalations/query.js'
 export { readQueueToday } from '../escalations/today.js';
 export type { QueueToday } from '../escalations/today.js';
 
-export { readRunJournal } from '../journal/query.js';
+export { readRunJournal, verdictAt } from '../journal/query.js';
 export type { JournalStep, RunJournal } from '../journal/query.js';
 
 export {
@@ -73,6 +73,19 @@ export {
 export type { MessageAbsence, ReplyAbsence } from '../conversation/query.js';
 
 export { readDocument } from '../documents/query.js';
+
+// DEC-50: the cases a gap blocked. The case screen and the knowledge screen
+// both read through this module, so they count a case one way.
+export { GAP_WINDOW_DAYS, readCaseGap, readKnowledge } from '../knowledge/gaps.js';
+export type {
+  CaseGap,
+  ChangeFlag,
+  DocumentNeed,
+  Gap,
+  GapGroup,
+  KnowledgeReport,
+  RefusedDocument,
+} from '../knowledge/gaps.js';
 
 // The relay's statuses on an outbox row, so a surface can say what each means
 // about the customer without repeating the db/006 CHECK.

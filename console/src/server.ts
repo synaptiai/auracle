@@ -39,6 +39,7 @@ import {
   renderLatency,
   renderConversation,
   renderDocument,
+  renderKnowledge,
   renderRunDetail,
   renderConfirm,
   renderConfirmResult,
@@ -56,7 +57,8 @@ import { confirmBatch, isFault, undoBatch, MAX_BATCH } from './confirm.js';
 import type { BatchOutcome } from './confirm.js';
 import type { ConfirmCase, OutcomeRun } from './surfaces.js';
 import type {
-  BandRow, CaseHoldRead, CaseSendHoldRead, CopyRead, CustomerRead, DocumentPage, LatencyRow,
+  BandRow, CaseGapRead, CaseHoldRead, CaseSendHoldRead, CopyRead, CustomerRead, DocumentPage,
+  KnowledgeRead, LatencyRow,
   QueueHold, QueueHoldsRead, QueueTodayRead, QueueTodayView,
   RunDetail, RunRow, RunView, Shell,
   ThreadView, Theme,
@@ -68,7 +70,8 @@ import { logLine } from 'auracle/format';
 import type { ReviewerFor } from './reviewer.js';
 import { copyHoldsText, replyDigest } from 'auracle/ledger-read';
 import type {
-  ApprovalHold, CloseOutcome, HandoverOutcome, Hold, ReleaseOutcome, RewriteOutcome,
+  ApprovalHold, CaseGap, CloseOutcome, HandoverOutcome, Hold, KnowledgeReport, ReleaseOutcome,
+  RewriteOutcome,
   SendBackOutcome, SnoozeOutcome, TakeOutcome,
   UndoOutcome,
 } from 'auracle/ledger-read';
@@ -103,6 +106,18 @@ export interface ConsoleDeps {
   readonly readLatency: () => Promise<LatencyRow[]>;
   readonly readConversation: (conversationId: string) => Promise<ThreadView | null>;
   readonly readDocument: (docId: string) => Promise<DocumentPage | null>;
+  /**
+   * DEC-50: the knowledge screen's figures, over the gap window before now.
+   *
+   * One read, so the cards and the lists describe one snapshot of the ledger.
+   */
+  readonly readKnowledge: () => Promise<KnowledgeReport>;
+  /**
+   * DEC-50: whether a gap blocks the case this run belongs to, read by the
+   * definition the knowledge screen counts with. Null when no run of the case
+   * reached a person with a draft or an abstention.
+   */
+  readonly readCaseGap: (runId: string) => Promise<CaseGap | null>;
   /**
    * The approval, with the reviewer this request resolved to (DEC-45), the
    * digest of the reply the page drew (DEC-46), and the reviewer's decision
@@ -1048,7 +1063,7 @@ async function route(
   // drops the body of a HEAD answer, so every read route serves both. The
   // theme route stays GET alone, because it writes a cookie.
   const reads = req.method === 'GET' || req.method === 'HEAD';
-  const surfaces = ['/', '/runs', '/bands', '/latency', '/notes'];
+  const surfaces = ['/', '/runs', '/knowledge', '/bands', '/latency', '/notes'];
   const shell = (at: string, approvals: number | null = null): Shell =>
     shellFor(options, theme, at, approvals, reviewer);
 
@@ -1355,9 +1370,20 @@ async function route(
         copy = { kind: 'unread', tag };
       }
     }
+    // DEC-50: whether a gap blocks the case, as the knowledge screen counts
+    // it. A fault here does not take the case away: the approval lands here.
+    let gap: CaseGapRead;
+    try {
+      gap = { gap: await deps.readCaseGap(runId) };
+    } catch (error) {
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({ event: 'console_gap_unread', tag, runId, error: describeFault(error) }));
+      gap = { unreadTag: tag };
+    }
     send(res, 200, page(
       `Case ${run.ticketId}`,
       renderCase({ ...run, customer }, {
+        gap,
         outcome, edit, why, closed, snoozed, rule, product, readBack: options.readBack, hold,
         taken, handoverTo, ledgerReply: options.ledgerReply, writing, copy, sendHold,
         rewritten, rewriting, sentBack, sendingBack,
@@ -1421,6 +1447,25 @@ async function route(
       'Partition latency',
       renderLatency(await deps.readLatency()),
       shell('/latency'),
+    ));
+    return;
+  }
+
+  if (reads && path === '/knowledge') {
+    // A fault reading the figures draws the page with each one named as not
+    // read, and the tag of the log line that says why.
+    let knowledge: KnowledgeRead;
+    try {
+      knowledge = { report: await deps.readKnowledge() };
+    } catch (error) {
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({ event: 'console_knowledge_unread', tag, error: describeFault(error) }));
+      knowledge = { unreadTag: tag };
+    }
+    send(res, 200, page(
+      'Knowledge base',
+      renderKnowledge(knowledge, deps.productLabels),
+      shell('/knowledge'),
     ));
     return;
   }

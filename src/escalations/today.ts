@@ -3,19 +3,15 @@
 // The queue header states both counts. Two counts and no ratio: the published
 // containment figure comes from the gold report, and a live share beside it
 // would read as the same number.
-import type { Pool, QueryConfig } from 'pg';
+import type { Pool } from 'pg';
+
+import { boundedRead } from '../db/bounded-read.js';
 
 /**
  * How long the count may run. It is a header over the work, and a reviewer's
  * page should not wait on it.
  */
 export const QUEUE_TODAY_TIMEOUT_MS = 2_000;
-
-/** The longest delay a Node timer keeps; a longer one fires after 1 ms. */
-const MAX_TIMER_MS = 2_147_483_647;
-
-/** The message node-pg gives a query that outlasted its `query_timeout`. */
-const CLIENT_TIMEOUT = 'Query read timeout';
 
 /** One UTC day's arrivals and the cases among them that reached a person. */
 export interface QueueToday {
@@ -55,13 +51,10 @@ export interface QueueToday {
  * that cannot finish raises rather than holding its connection, and the
  * timeout ends with the transaction, so the connection returns clean.
  *
- * A connection that died answers no statement timeout, because the server
- * cannot reach the client. So each query also runs under a client-side bound,
- * `clientTimeoutMs`, a second past the server's. A query that outlasts it
- * fails, and its connection is destroyed rather than returned, so a dead
- * socket cannot keep a pool slot. Nothing here bounds the wait for a
- * connection from the pool. That bound is the pool's own, and the console
- * sets one.
+ * The statements also run under a client-side deadline, `clientTimeoutMs`, a
+ * second past the server's bound, so a dead connection cannot keep a pool
+ * slot. The wait for a connection from the pool is the pool's own bound, and
+ * the console sets one. `boundedRead` enforces both bounds.
  */
 export async function readQueueToday(
   pool: Pool,
@@ -69,83 +62,35 @@ export async function readQueueToday(
   timeoutMs: number = QUEUE_TODAY_TIMEOUT_MS,
   clientTimeoutMs: number = timeoutMs + 1_000,
 ): Promise<QueueToday> {
-  // A bound outside what both ends honour bounds nothing, or everything.
-  // Postgres reads a `statement_timeout` of 0 as no limit and refuses NaN.
-  // node-pg drops a `query_timeout` of NaN or 0. Node's timers turn anything
-  // above 2147483647 ms, Infinity included, into one millisecond. Refused
-  // before a connection is taken.
-  for (const [name, value] of [['timeoutMs', timeoutMs], ['clientTimeoutMs', clientTimeoutMs]] as const) {
-    if (!Number.isFinite(value) || value < 1 || value > MAX_TIMER_MS) {
-      throw new Error(`readQueueToday: ${name} must be between 1 and ${MAX_TIMER_MS} milliseconds, got ${value}`);
-    }
-  }
-  const client = await pool.connect();
-  const bound = Math.trunc(clientTimeoutMs);
-  // `query_timeout` is an option node-pg reads on each query, and its type
-  // declarations leave it off `QueryConfig`, so it is added here.
-  const bounded = (text: string, values?: unknown[]): QueryConfig => {
-    const config: QueryConfig & { readonly query_timeout: number } = {
-      text, query_timeout: bound, ...(values === undefined ? {} : { values }),
-    };
-    return config;
-  };
-  let rows: { day: string; arrived: string; reached: string }[];
-  try {
-    await client.query(bounded('BEGIN READ ONLY'));
-    // Local to this transaction, so it cannot outlive the read.
-    await client.query(bounded(
-      `SELECT set_config('statement_timeout', $1, true)`,
-      [String(Math.trunc(timeoutMs))],
-    ));
-    rows = (await client.query<{ day: string; arrived: string; reached: string }>(bounded(
+  const rows = await boundedRead(pool, 'readQueueToday', timeoutMs, clientTimeoutMs, (query) =>
+    query<{ day: string; arrived: string; reached: string }>(
       `WITH day AS (
-         SELECT d,
-                d::timestamp AT TIME ZONE 'UTC' AS lo,
-                (d + 1)::timestamp AT TIME ZONE 'UTC' AS hi
-           FROM (SELECT ($1::timestamptz AT TIME ZONE 'UTC')::date AS d) picked
-       )
-       SELECT to_char(day.d, 'YYYY-MM-DD') AS day,
-              (SELECT count(*) FROM turn t
-                WHERE t.created_at >= day.lo AND t.created_at < day.hi) AS arrived,
-              (SELECT count(*) FROM turn t
-                WHERE t.created_at >= day.lo AND t.created_at < day.hi
-                  AND EXISTS (
-                    SELECT 1 FROM run r
-                      JOIN step_journal park
-                        ON park.run_id = r.run_id AND park.step_id = 'park' AND park.status = 'done'
-                     WHERE r.conversation_id = t.conversation_id
-                       AND r.turn_number = t.turn_number))
-              + (SELECT count(*) FROM run r
-                  WHERE (r.conversation_id IS NULL OR r.turn_number IS NULL)
-                    AND r.created_at >= day.lo AND r.created_at < day.hi
+           SELECT d,
+                  d::timestamp AT TIME ZONE 'UTC' AS lo,
+                  (d + 1)::timestamp AT TIME ZONE 'UTC' AS hi
+             FROM (SELECT ($1::timestamptz AT TIME ZONE 'UTC')::date AS d) picked
+         )
+         SELECT to_char(day.d, 'YYYY-MM-DD') AS day,
+                (SELECT count(*) FROM turn t
+                  WHERE t.created_at >= day.lo AND t.created_at < day.hi) AS arrived,
+                (SELECT count(*) FROM turn t
+                  WHERE t.created_at >= day.lo AND t.created_at < day.hi
                     AND EXISTS (
-                      SELECT 1 FROM step_journal park
-                       WHERE park.run_id = r.run_id AND park.step_id = 'park'
-                         AND park.status = 'done')) AS reached
-         FROM day`,
+                      SELECT 1 FROM run r
+                        JOIN step_journal park
+                          ON park.run_id = r.run_id AND park.step_id = 'park' AND park.status = 'done'
+                       WHERE r.conversation_id = t.conversation_id
+                         AND r.turn_number = t.turn_number))
+                + (SELECT count(*) FROM run r
+                    WHERE (r.conversation_id IS NULL OR r.turn_number IS NULL)
+                      AND r.created_at >= day.lo AND r.created_at < day.hi
+                      AND EXISTS (
+                        SELECT 1 FROM step_journal park
+                         WHERE park.run_id = r.run_id AND park.step_id = 'park'
+                           AND park.status = 'done')) AS reached
+           FROM day`,
       [now.toISOString()],
-    ))).rows;
-    await client.query(bounded('COMMIT'));
-  } catch (error) {
-    // The client gave up waiting. The connection may be dead or still busy,
-    // and either way it is not one to hand back.
-    if (error instanceof Error && error.message === CLIENT_TIMEOUT) {
-      client.release(true);
-      throw error;
-    }
-    // The statement failed, so the transaction is aborted. A rollback that
-    // fails as well leaves a connection in an unknown state, and it is
-    // destroyed rather than returned.
-    try {
-      await client.query(bounded('ROLLBACK'));
-    } catch {
-      client.release(true);
-      throw error;
-    }
-    client.release();
-    throw error;
-  }
-  client.release();
+    ));
   const row = rows[0]!;
   return { day: row.day, arrived: Number(row.arrived), reachedQueue: Number(row.reached) };
 }

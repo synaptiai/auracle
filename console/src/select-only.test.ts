@@ -170,6 +170,8 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   // DEC-44: whether a copy read back from the helpdesk holds text. A rule
   // read by the approval and by the page, and no statement either way.
   copyHoldsText: 'read',
+  // DEC-50: the gap window the screen names. A number, and no statement.
+  GAP_WINDOW_DAYS: 'read',
   handoverHold: 'write',
   LEDGER_STATES: 'read',
   listEscalations: 'read',
@@ -192,11 +194,15 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   // DEC-47: the product catalogue, read once at startup for the labels the
   // queue draws. A file read, and no statement.
   productCatalogueFromEnv: 'read',
+  // DEC-50: the case's gap, read in one READ ONLY transaction.
+  readCaseGap: 'read',
   readConversation: 'read',
   readDays: 'read',
   readDocument: 'read',
   readHold: 'write',
   readHolds: 'read',
+  // DEC-50: the knowledge screen, read in one READ ONLY transaction.
+  readKnowledge: 'read',
   readLatency: 'read',
   readQueueToday: 'read',
   readRun: 'read',
@@ -217,6 +223,9 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   // approver, the distance, the approved text and the finish time.
   undoApproval: 'write',
   turnAnsweredBy: 'read',
+  // DEC-50: the verdict for one claim, the rule the gap count shares. A
+  // function over a list, and no statement.
+  verdictAt: 'read',
 };
 
 /** One shipped module, as the parser sees it. */
