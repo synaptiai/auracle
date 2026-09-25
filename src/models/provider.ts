@@ -43,6 +43,12 @@ export interface PinnedVersions {
 
 export interface EmbeddingRequest {
   input: string[];
+  /**
+   * A shorter deadline for this call than the provider's own. A caller that
+   * holds other work while it waits sets it, so a stalled call delays that
+   * work by this much at most.
+   */
+  timeoutMs?: number;
 }
 
 export interface TokenUsage {
@@ -138,5 +144,22 @@ export class UnreadableAnswerError extends Error {
   ) {
     super(message);
     this.name = 'UnreadableAnswerError';
+  }
+}
+
+/**
+ * The provider answered a call with an HTTP error status.
+ *
+ * Still untyped for the queue, which retries it like any transport failure
+ * (DEC-30). The status is here for a caller that must tell a refusal of its
+ * input from a fault of the service: 400 is this call's own, 503 is not.
+ */
+export class ProviderHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'ProviderHttpError';
   }
 }

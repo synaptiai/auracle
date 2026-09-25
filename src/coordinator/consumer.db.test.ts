@@ -497,6 +497,34 @@ describe('section 4.3 partition consumer', () => {
     ]);
   });
 
+  // DEC-50: a document written in the console is embedded by the scan, after
+  // the queue. The script is strict about order: embedded first, the waiting
+  // document would take the classifier's first answer and the run would fail.
+  it('embeds a waiting document after the queue, in the same scan (DEC-50)', async () => {
+    const ticket = `T-${randomUUID().slice(0, 8)}`;
+    const partition = await seedTicket(ticket);
+    await pool.query(
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
+       VALUES ('team-pause', 'document', 'Plan pause', 'A plan may be paused once a year.',
+               'synthetic-owner', '2999-01-01', 'console', 'pending')`,
+    );
+    const deps: CoordinatorDeps = {
+      ...makeDeps([...happyScript(), { vectors: [unitVector(7)] }], 'with-documents'),
+      embedModelVer: 'coord-test-embed',
+    };
+
+    const results = await processQueuedTickets(deps, optionsFor([partition]));
+
+    expect(results.map((r) => r.outcome)).toEqual(['resolved']);
+    const stored = await pool.query<{ embedding_status: string; embedded_with: string }>(
+      "SELECT embedding_status, embedded_with FROM document WHERE doc_id = 'team-pause'",
+    );
+    expect(stored.rows).toEqual([{ embedding_status: 'embedded', embedded_with: 'coord-test-embed' }]);
+    const calls = (deps.provider as FakeProvider).calls;
+    expect(calls.at(-1)).toMatchObject({ kind: 'embed', promptVer: 'embed-pending-v1' });
+    expect(calls.filter((call) => call.promptVer === 'embed-pending-v1')).toHaveLength(1);
+  });
+
   // A message on a channel the map does not name records no product, on the
   // run as on the queue row. Null is the answer; a product named '' would be
   // a product no document declares, and the retrieval filter would look for

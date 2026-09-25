@@ -63,6 +63,7 @@ import { fencedTransition } from '../ledger/insert.js';
 import { TURN_CLOSING_STATUSES, lockTurnAttempt, turnReplyRun } from '../ledger/conversation.js';
 import { journalStep } from '../ledger/journal-write.js';
 import { unsnoozeExpired } from '../outcomes/snooze.js';
+import { embedPendingDocuments } from '../kb/embed-pending.js';
 import { PARKED_RUN_STATES, TERMINAL_RUN_STATE_NAMES } from '../ledger/run-state.js';
 import { logLine } from '../log/line.js';
 
@@ -1098,6 +1099,59 @@ export async function processQueuedTickets(
         event: 'send_back_attempts_started',
         at: new Date().toISOString(),
         count: started.length,
+      }),
+    );
+  }
+
+  // DEC-50: and the documents a reviewer wrote, which wait for a vector. Last,
+  // for the reason the attempts come after the poll: the queue is the work
+  // this consumer exists for. With the model the retrieval step embeds a
+  // query with, so both vectors come from one model. Its own guard: a
+  // document that is not embedded now is claimed again by a later scan.
+  try {
+    const embedded = await embedPendingDocuments(
+      deps.pool,
+      deps.provider,
+      deps.embedModelVer ?? deps.pins.modelVer,
+    );
+    if (embedded.embedded.length > 0) {
+      console.error(
+        logLine({ event: 'documents_embedded', at: new Date().toISOString(), docIds: embedded.embedded }),
+      );
+    }
+    // A failure carries its reason, so an operator reads why from the log.
+    for (const [event, failures] of [
+      ['documents_embedding_retrying', embedded.retrying],
+      ['documents_embedding_deferred', embedded.deferred],
+      ['documents_embedding_failed', embedded.failed],
+      ['documents_embedding_lost', embedded.lost],
+      ['documents_embedding_unrecorded', embedded.unrecorded],
+    ] as const) {
+      if (failures.length > 0) {
+        console.error(logLine({ event, at: new Date().toISOString(), failures }));
+      }
+    }
+    // DEC-25: what the scan's calls cost, which no run carries. Its own
+    // event, because a refused, deferred or probing call embeds nothing and
+    // is still paid for.
+    // A call answered with no cost it could read says so, rather than
+    // reading as free.
+    if (embedded.costMicros > 0 || embedded.costUnknown) {
+      console.error(
+        logLine({
+          event: 'document_embedding_cost',
+          at: new Date().toISOString(),
+          costMicros: embedded.costMicros,
+          costUnknown: embedded.costUnknown,
+        }),
+      );
+    }
+  } catch (error) {
+    console.error(
+      logLine({
+        event: 'document_embedding_scan_failed',
+        at: new Date().toISOString(),
+        error: errorMessage(error),
       }),
     );
   }

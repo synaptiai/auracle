@@ -20,7 +20,7 @@ import { Pool } from 'pg';
 import { loadDotEnv } from '../config/env.js';
 import { productCatalogueFromEnv } from '../config/products.js';
 import { requireDbUrl } from '../db/config.js';
-import { openRouterFromEnv } from '../models/from-env.js';
+import { embeddingPriceFromEnv, openRouterFromEnv } from '../models/from-env.js';
 import { DEFAULT_EMBED_MODEL, loadKbDirectory } from './loader.js';
 import { runEntry } from '../cli/entry.js';
 
@@ -40,13 +40,10 @@ async function main(): Promise<void> {
   }
 
   const embedModelVer = process.env['EMBED_MODEL_VER'] ?? DEFAULT_EMBED_MODEL;
-  const priceOverride = process.env['EMBEDDINGS_USD_PER_MTOK'];
-  const usdPerMTok = priceOverride !== undefined ? Number(priceOverride) : USD_PER_MTOK[embedModelVer];
-  if (
-    usdPerMTok === undefined ||
-    Number.isNaN(usdPerMTok) ||
-    !(usdPerMTok >= 0)
-  ) {
+  // One reading of the variable, the provider's: blank is unset, and a value
+  // that is not a finite number of zero or more is refused.
+  const usdPerMTok = embeddingPriceFromEnv().embeddingsUsdPerMTok ?? USD_PER_MTOK[embedModelVer];
+  if (usdPerMTok === undefined) {
     console.error(
       `no embedding price for ${embedModelVer}: set EMBEDDINGS_USD_PER_MTOK so DEC-25 accounting stays truthful.`,
     );

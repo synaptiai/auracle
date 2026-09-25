@@ -4,13 +4,18 @@
 // adopter actually observes: which host the call goes to, what the
 // Authorization header carries, and whether DEC-17's zero-retention flag is
 // on the request body.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { openRouterFromEnv } from './from-env.js';
+import { embeddingPriceFromEnv, openRouterFromEnv } from './from-env.js';
 
-const TOUCHED = ['OPENROUTER_API_KEY', 'OPENROUTER_BASE_URL', 'AURACLE_ZDR_ONLY'] as const;
+const TOUCHED = ['OPENROUTER_API_KEY', 'OPENROUTER_BASE_URL', 'AURACLE_ZDR_ONLY', 'EMBEDDINGS_USD_PER_MTOK'] as const;
 const saved = new Map<string, string | undefined>();
 for (const name of TOUCHED) saved.set(name, process.env[name]);
+
+// The shell's own price would change what an embedding answer costs here.
+beforeEach(() => {
+  delete process.env['EMBEDDINGS_USD_PER_MTOK'];
+});
 
 afterEach(() => {
   for (const name of TOUCHED) {
@@ -70,6 +75,68 @@ describe('openRouterFromEnv', () => {
     await callOnce(openRouterFromEnv({ fetchImpl: fetcher.impl }));
     const headers = fetcher.calls[0]?.init.headers as Record<string, string>;
     expect(headers['Authorization']).toBe('Bearer a-test-key');
+  });
+
+  // fetch trims the header it sends, so a gateway echoes the trimmed key,
+  // and the error scrub must look for the key in that form.
+  it('sends the key without the whitespace a secret file leaves', async () => {
+    process.env['OPENROUTER_API_KEY'] = 'a-test-key\n';
+    delete process.env['OPENROUTER_BASE_URL'];
+    const fetcher = recordingFetch();
+    await callOnce(openRouterFromEnv({ fetchImpl: fetcher.impl }));
+    const headers = fetcher.calls[0]?.init.headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer a-test-key');
+  });
+
+  // fetch cannot send a key with a control character inside it, and its
+  // refusal quotes the header whole. Refused at startup, without the key.
+  it('refuses a key with a control character inside it', () => {
+    for (const key of ['sk-synthetic-0000\nexport OTHER=1', 'sk-synthetic\r\n0000', 'sk-synthetic\t0000']) {
+      process.env['OPENROUTER_API_KEY'] = key;
+      let message = '';
+      try {
+        openRouterFromEnv();
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message, JSON.stringify(key)).toBe(
+        'OPENROUTER_API_KEY holds a control character, such as a line break inside it. Set it to the key alone.',
+      );
+    }
+  });
+
+  // fetch refuses such a URL with an error that quotes it whole, password
+  // included, and that error would reach the ledger and the log.
+  it('refuses a base URL that carries credentials', () => {
+    process.env['OPENROUTER_API_KEY'] = 'a-test-key';
+    for (const url of ['https://user:secret@gateway.example.test/v1', 'https://user@gateway.example.test/v1']) {
+      process.env['OPENROUTER_BASE_URL'] = url;
+      expect(() => openRouterFromEnv(), url).toThrow(
+        'OPENROUTER_BASE_URL carries credentials. Remove them from the URL: the provider sends OPENROUTER_API_KEY in a header.',
+      );
+    }
+    process.env['OPENROUTER_BASE_URL'] = 'not a url';
+    expect(() => openRouterFromEnv()).toThrow('OPENROUTER_BASE_URL is not a URL.');
+  });
+
+  // Every process that embeds reads the price here, after the key check.
+  it('applies EMBEDDINGS_USD_PER_MTOK, and checks the key first', async () => {
+    process.env['OPENROUTER_API_KEY'] = 'a-test-key';
+    delete process.env['OPENROUTER_BASE_URL'];
+    process.env['EMBEDDINGS_USD_PER_MTOK'] = '0.02';
+    const noCost = (async () =>
+      new Response(
+        JSON.stringify({ data: [{ embedding: [0.1] }], usage: { prompt_tokens: 1_000_000, total_tokens: 1_000_000 } }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as unknown as typeof fetch;
+    const result = await openRouterFromEnv({ fetchImpl: noCost })
+      .embed({ input: ['a document'], modelVer: 'a/embed', promptVer: 'a-prompt' });
+    // One million tokens at 0.02 USD per million is 20,000 micro-dollars.
+    expect(result.costMicros).toBe(20_000);
+
+    delete process.env['OPENROUTER_API_KEY'];
+    process.env['EMBEDDINGS_USD_PER_MTOK'] = 'cheap';
+    expect(() => openRouterFromEnv()).toThrow('OPENROUTER_API_KEY is not set.');
   });
 
   it('goes to openrouter.ai when no base URL is set', async () => {
@@ -168,5 +235,27 @@ describe('openRouterFromEnv', () => {
       }),
     );
     expect(fetcher.calls[0]?.url).toBe('https://explicit.example.test/v1/chat/completions');
+  });
+});
+
+// The provider refuses an embedding answer with no cost and names this
+// variable. `openRouterFromEnv` and `load-docs` read it through this one
+// function, so the variable has one reading.
+describe('embeddingPriceFromEnv', () => {
+  it('sets no price when the variable is unset or blank', () => {
+    expect(embeddingPriceFromEnv({})).toEqual({});
+    expect(embeddingPriceFromEnv({ EMBEDDINGS_USD_PER_MTOK: '  ' })).toEqual({});
+  });
+
+  it('reads a price of zero or more', () => {
+    expect(embeddingPriceFromEnv({ EMBEDDINGS_USD_PER_MTOK: '0.02' })).toEqual({ embeddingsUsdPerMTok: 0.02 });
+    expect(embeddingPriceFromEnv({ EMBEDDINGS_USD_PER_MTOK: '0' })).toEqual({ embeddingsUsdPerMTok: 0 });
+  });
+
+  it('refuses a price that is not a number of zero or more', () => {
+    for (const raw of ['cheap', '-1', 'Infinity', 'NaN']) {
+      expect(() => embeddingPriceFromEnv({ EMBEDDINGS_USD_PER_MTOK: raw }), raw)
+        .toThrow(`EMBEDDINGS_USD_PER_MTOK must be a number of zero or more, got "${raw}"`);
+    }
   });
 });

@@ -113,7 +113,9 @@ async function main(): Promise<void> {
         + ` ending ${args.endDay}, seed ${args.seed}, provider ${args.provider}`,
     );
     const report = await writeHistory(pool, plan);
-    console.log(`seed-history: ${report.accepted} accepted, ${report.refused} refused`);
+    console.log(
+      `seed-history: ${report.documents.written} documents, ${report.accepted} accepted, ${report.refused} refused`,
+    );
     if (report.refused > 0) {
       // A refusal means the ledger rejected a row this planner produced, so
       // the history is not the history the seed describes. Loud, not a note.

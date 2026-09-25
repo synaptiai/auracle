@@ -16,6 +16,8 @@
 // - MODEL_VER             chat model pin (default: z-ai/glm-5.3-flash)
 // - EMBED_MODEL_VER       embedding model pin for retrieval (the chat model
 //                         does not embed; default: openai/text-embedding-3-small)
+// - EMBEDDINGS_USD_PER_MTOK  embedding price, for a gateway whose answer
+//                         carries no cost (DEC-25; optional)
 // - PROMPT_VER            prompt version pin (default: consumer-prompt-v1)
 // - ACTION_CLASS          action class each run executes (default: route_ticket)
 // - ACTION_DELIVERY       delivery rule: at_most_once | at_least_once

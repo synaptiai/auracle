@@ -1,4 +1,4 @@
-import { UnreadableAnswerError } from './provider.js';
+import { ProviderHttpError, UnreadableAnswerError } from './provider.js';
 import type {
   ChatRequest,
   ChatResult,
@@ -22,10 +22,11 @@ export interface OpenRouterConfig {
   promptLogging?: boolean;
   onPromptLog?: (entry: { kind: 'chat' | 'embed'; payload: unknown }) => void;
   /**
-   * OpenRouter's /embeddings response carries token counts but no inline
-   * cost. Set the adopter's price in USD per million tokens so DEC-25
-   * accounting stays truthful; without it, embedding cost is unknown and
-   * embed() throws instead of reporting zero.
+   * The price of an embedding, in USD per million tokens, for an answer that
+   * carries no cost. OpenRouter's /embeddings answer reports its cost in
+   * `usage.cost`; a gateway may report token counts only. Without the cost
+   * and without this price the cost is unknown, and embed() refuses the
+   * answer instead of reporting zero (DEC-25).
    */
   embeddingsUsdPerMTok?: number;
   /**
@@ -108,14 +109,69 @@ function parseUsage(raw: unknown): UsageShape {
   };
 }
 
+/** What a JSON error body that names no message is reported as. */
+const NO_PROVIDER_MESSAGE = 'the provider sent an error with no message';
+
+/**
+ * The provider's own account of a failed call, and nothing else from its
+ * body. The body can carry more, such as a `metadata.raw` from the upstream
+ * model, and an upstream may quote the input it refused. The message goes to
+ * the ledger and the log, and an input can be a document that quotes a
+ * customer (DEC-19).
+ *
+ * A JSON body gives its `error.message`, or its `error` when that is a
+ * string, and otherwise a fixed sentence: never the body itself. A body that
+ * is not JSON stays as it came, because it is then all the diagnosis there
+ * is. Either way the API key never appears: a gateway that echoes the
+ * request's header would otherwise put it in the ledger.
+ */
+function providerErrorMessage(text: string, apiKey: string): string {
+  let message: string;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    const error = typeof parsed === 'object' && parsed !== null ? (parsed as { error?: unknown }).error : undefined;
+    const nested = typeof error === 'object' && error !== null ? (error as { message?: unknown }).message : error;
+    message = typeof nested === 'string' && nested.trim().length > 0 ? nested : NO_PROVIDER_MESSAGE;
+  } catch {
+    // Not JSON: the text is the whole answer.
+    message = text.trim().length > 0 ? text : NO_PROVIDER_MESSAGE;
+  }
+  return scrubKey(message, apiKey);
+}
+
+/**
+ * The text with the API key replaced, in the form it was configured and in
+ * the form fetch sends, trimmed. A key shorter than any real one would match
+ * ordinary words instead, so it is left alone.
+ */
+function scrubKey(text: string, apiKey: string): string {
+  let scrubbed = text;
+  for (const key of new Set([apiKey, apiKey.trim()])) {
+    if (key.length >= MIN_SCRUBBED_KEY_LENGTH) scrubbed = scrubbed.split(key).join('[the API key]');
+  }
+  return scrubbed;
+}
+
+/** The message of whatever a failed fetch threw. */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** The shortest key the scrub looks for. Every real provider key is longer. */
+const MIN_SCRUBBED_KEY_LENGTH = 8;
+
 async function postJson(
   config: OpenRouterConfig,
   path: string,
   body: unknown,
+  callTimeoutMs?: number,
 ): Promise<Record<string, unknown>> {
   const doFetch = config.fetchImpl ?? globalThis.fetch;
-  const timeoutMs = config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const configured = config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  // A call may shorten the deadline, never lengthen it.
+  const timeoutMs = callTimeoutMs === undefined ? configured : Math.min(callTimeoutMs, configured);
   let response: Response;
+  let text: string;
   try {
     response = await doFetch(`${config.baseUrl ?? DEFAULT_BASE_URL}${path}`, {
       method: 'POST',
@@ -128,17 +184,28 @@ async function postJson(
       // only checked between steps, so nothing else would ever stop it.
       signal: AbortSignal.timeout(timeoutMs),
     });
+    // Inside the guard: the deadline covers the body too, and a stall while
+    // reading it is the same timeout as a stall before the headers.
+    text = await response.text();
   } catch (error) {
     if (error instanceof Error && error.name === 'TimeoutError') {
       throw new Error(
         `OpenRouter request to ${path} exceeded ${timeoutMs}ms and was aborted`,
       );
     }
-    throw error;
+    // A transport error can quote the request: fetch refuses a header value
+    // it cannot send by quoting it whole, key and all. So the error is
+    // rebuilt from its scrubbed message, with no `cause`, which the CLI's
+    // fault printer would walk back to the original.
+    const scrubbed = new Error(scrubKey(errorText(error), config.apiKey));
+    if (error instanceof Error) scrubbed.name = error.name;
+    throw scrubbed;
   }
-  const text = await response.text();
   if (!response.ok) {
-    throw new Error(`OpenRouter request failed (${response.status}): ${text}`);
+    throw new ProviderHttpError(
+      `OpenRouter request failed (${response.status}): ${providerErrorMessage(text, config.apiKey)}`,
+      response.status,
+    );
   }
   return asRecord(JSON.parse(text));
 }
@@ -270,6 +337,7 @@ export class OpenRouterProvider implements ModelProvider {
   async embed(
     call: PinnedVersions & {
       input: string[];
+      timeoutMs?: number;
       dataGuarantee?: DataGuarantee;
     },
   ): Promise<EmbeddingResult> {
@@ -284,54 +352,73 @@ export class OpenRouterProvider implements ModelProvider {
     };
     this.maybeLog('embed', body);
 
-    const response = await postJson(this.config, '/embeddings', body);
+    const response = await postJson(this.config, '/embeddings', body, call.timeoutMs);
+
+    // The cost first (DEC-25): every refusal below is of a call already paid
+    // for, so each carries what it cost, or says that the cost is unknown.
+    const parsed = parseUsage(response.usage);
+    let costMicros = 0;
+    let costUnknown = true;
+    if (parsed.usage !== null) {
+      const price = this.config.embeddingsUsdPerMTok;
+      const usd = parsed.usdCost ?? (price === undefined ? null : (parsed.usage.totalTokens / 1_000_000) * price);
+      if (usd !== null) {
+        costMicros = usdToMicros(usd);
+        costUnknown = false;
+      }
+    }
+    const unreadable = (message: string, shape: string): UnreadableAnswerError =>
+      new UnreadableAnswerError(message, shape, costMicros, costUnknown);
+
     const data = response.data;
     if (!Array.isArray(data)) {
-      throw new UnreadableAnswerError(
-        'OpenRouter embeddings response has no data array',
-        'no-data',
-      );
+      throw unreadable('OpenRouter embeddings response has no data array', 'no-data');
     }
-    const vectors = data.map((item) => {
-      const record = shapedRecord(item, 'no-item', 'embedding item is not an object');
+    // Placed by each item's own `index`, not by the order it arrived in: a
+    // caller writes vector i to input i, so a reordered answer would give
+    // every document another's vector, and nothing downstream could tell.
+    const placed: Record<string, unknown>[] = new Array<Record<string, unknown>>(data.length);
+    for (const [position, item] of data.entries()) {
+      if (typeof item !== 'object' || item === null) {
+        throw unreadable('OpenRouter embedding item is not an object', 'no-item');
+      }
+      const record = item as Record<string, unknown>;
+      const index = record.index === undefined ? position : record.index;
+      if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= data.length
+        || placed[index] !== undefined) {
+        throw unreadable('OpenRouter embedding items carry no usable index', 'bad-index');
+      }
+      placed[index] = record;
+    }
+    const vectors = placed.map((record) => {
       const embedding = record.embedding;
       if (!Array.isArray(embedding)) {
-        throw new UnreadableAnswerError('OpenRouter embedding item has no vector', 'no-vector');
+        throw unreadable('OpenRouter embedding item has no vector', 'no-vector');
       }
       return embedding.map((component) => {
         if (typeof component !== 'number') {
-          throw new UnreadableAnswerError(
-            'OpenRouter embedding vector has a non-number component',
-            'bad-vector',
-          );
+          throw unreadable('OpenRouter embedding vector has a non-number component', 'bad-vector');
         }
         return component;
       });
     });
 
-    const parsed = parseUsage(response.usage);
     if (parsed.usage === null) {
-      throw new UnreadableAnswerError(
-        'OpenRouter embeddings response carries no usage (DEC-25)',
-        'no-usage',
-        0,
-        true,
-      );
+      throw unreadable('OpenRouter embeddings response carries no usage (DEC-25)', 'no-usage');
     }
-    let usdCost = parsed.usdCost;
-    if (usdCost === null) {
-      const price = this.config.embeddingsUsdPerMTok;
-      if (price === undefined) {
-        throw new Error(
-          'embedding cost unavailable: set embeddingsUsdPerMTok to keep DEC-25 accounting truthful',
-        );
-      }
-      usdCost = (parsed.usage.totalTokens / 1_000_000) * price;
+    if (costUnknown) {
+      // Typed, as the chat path's unknown cost is: the fault is the
+      // configuration and repeats on every call, so a run escalates once
+      // rather than paying for each retry.
+      throw unreadable(
+        'embedding cost unavailable: set EMBEDDINGS_USD_PER_MTOK to keep DEC-25 accounting truthful',
+        'no-cost',
+      );
     }
 
     return {
       vectors,
-      costMicros: usdToMicros(usdCost),
+      costMicros,
       usage: parsed.usage,
       servedModelVer:
         typeof response.model === 'string' ? response.model : call.modelVer,

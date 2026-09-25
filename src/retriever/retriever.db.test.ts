@@ -295,7 +295,63 @@ describe('section 4.6 retriever', () => {
         doc('canon-1', 'approved resolution', 'verified fix', { kind: 'canonical_resolution' }),
         unitVector(mulberry32(99)),
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe('indexed');
+  });
+
+  // DEC-50: a document written in the console waits for its embedding, and
+  // both channels ignore it until then. The lexical channel could rank it at
+  // once, from its words alone, and a document only one channel can rank
+  // would skew the fusion (DEC-21).
+  it('ranks a document that waits for its embedding in neither channel', async () => {
+    const rand = mulberry32(50);
+    const base = unitVector(rand);
+    await indexDocument(pool, doc('embedded', 'refund window policy', 'refund window of thirty days'), base);
+    await pool.query(
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
+       VALUES ('waiting', 'document', 'refund window refund window', 'refund window refund window refund',
+               'synthetic-owner', $1, 'console', 'pending')`,
+      [FRESH_REVIEW_BY],
+    );
+    // Its words match better than the embedded document's, so a filter on
+    // the dense channel alone would still let the lexical one rank it first.
+    for (const options of [{ limit: 5 }, { limit: 5, includeStale: true }]) {
+      const results = await hybridSearch(pool, 'refund window', near(base, rand, 0.01), options);
+      expect(results.map((d) => d.docId)).toEqual(['embedded']);
+    }
+    // A document whose embedding failed is ignored the same way.
+    await pool.query(
+      `UPDATE document SET embedding_status = 'failed', embedding_error = 'the model refused it'
+        WHERE doc_id = 'waiting'`,
+    );
+    const failed = await hybridSearch(pool, 'refund window', near(base, rand, 0.01), { limit: 5 });
+    expect(failed.map((d) => d.docId)).toEqual(['embedded']);
+  });
+
+  // The loader upserts a whole row. A document written in the console shares
+  // the table, so a reload must leave it alone and say so, never rewrite it.
+  it('never rewrites a document the console wrote, and says so', async () => {
+    await pool.query(
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
+       VALUES ('team-1', 'document', 'written in the console', 'the console body',
+               'synthetic-owner', $1, 'console', 'pending')`,
+      [FRESH_REVIEW_BY],
+    );
+    await expect(
+      indexDocument(pool, doc('team-1', 'a loader file', 'the loader body'), unitVector(mulberry32(3))),
+    ).resolves.toBe('held_by_console');
+    const row = await pool.query(
+      "SELECT title, body, source, embedding_status, embedding IS NULL AS unembedded FROM document WHERE doc_id = 'team-1'",
+    );
+    expect(row.rows[0]).toEqual({
+      title: 'written in the console', body: 'the console body', source: 'console',
+      embedding_status: 'pending', unembedded: true,
+    });
+  });
+
+  it('records which model embedded a loaded document', async () => {
+    await indexDocument(pool, doc('pinned', 'a title', 'a body'), unitVector(mulberry32(4)), 'synthetic-embed-v1');
+    const row = await pool.query("SELECT embedded_with, source, embedding_status FROM document WHERE doc_id = 'pinned'");
+    expect(row.rows[0]).toEqual({ embedded_with: 'synthetic-embed-v1', source: 'loader', embedding_status: 'embedded' });
   });
 
   it('upserts an indexed document by doc_id', async () => {

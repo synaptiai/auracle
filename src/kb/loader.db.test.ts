@@ -17,6 +17,7 @@ import type {
   EmbeddingResult,
   ModelProvider,
 } from '../models/provider.js';
+import { UnreadableAnswerError } from '../models/provider.js';
 import { hybridSearch } from '../retriever/retriever.js';
 import { DEFAULT_EMBED_MODEL, loadKbDirectory } from './loader.js';
 
@@ -281,11 +282,101 @@ describe('kb loader against postgres', () => {
     expect(stored.rows[0]?.n).toBe('0');
   });
 
+  // DEC-50: a document written in the console shares the table. A reload
+  // leaves it as it is and reports the collision by file, while the rest of
+  // the corpus still loads, and every loaded row records its model.
+  it('leaves a document the console wrote as it is, and reports the file', async () => {
+    await pool.query(
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
+       VALUES ('kb-refund-policy', 'document', 'written in the console', 'the console body',
+               'support-docs', $1, 'console', 'pending')`,
+      [FRESH_REVIEW_BY],
+    );
+    const stub = new VectorStub([unitVector(11), unitVector(22), unitVector(33)]);
+
+    const report = await loadKbDirectory(pool, stub, corpusDir, DEFAULT_EMBED_MODEL, CATALOGUE);
+
+    expect(report.indexed).toBe(2);
+    expect(report.failed).toBe(1);
+    expect(report.failures).toEqual([
+      expect.stringMatching(/^refund-policy\.md: a document written in the console holds doc_id "kb-refund-policy"; the loader leaves it as it is$/),
+    ]);
+    const kept = await pool.query(
+      "SELECT title, source, embedding_status FROM document WHERE doc_id = 'kb-refund-policy'",
+    );
+    expect(kept.rows[0]).toEqual({ title: 'written in the console', source: 'console', embedding_status: 'pending' });
+    // Found before the embedding call: the reload pays for no file it will
+    // not write.
+    const embedded = stub.calls.flatMap((call) => call.input);
+    expect(embedded).toHaveLength(2);
+    expect(embedded.some((text) => text.startsWith('Refund policy'))).toBe(false);
+    const loaded = await pool.query<{ embedded_with: string | null }>(
+      "SELECT DISTINCT embedded_with FROM document WHERE source = 'loader'",
+    );
+    expect(loaded.rows).toEqual([{ embedded_with: DEFAULT_EMBED_MODEL }]);
+  });
+
+  // A console write that lands between the check before the call and the
+  // write after it is still refused, by the index step, and still reported.
+  it('refuses a console document written while the batch is embedded', async () => {
+    class WritesMeanwhile extends VectorStub {
+      override async embed(call: EmbeddingRequest & { modelVer: string }): Promise<EmbeddingResult> {
+        await pool.query(
+          `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
+           VALUES ('kb-refund-policy', 'document', 'written meanwhile', 'the console body',
+                   'support-docs', $1, 'console', 'pending')`,
+          [FRESH_REVIEW_BY],
+        );
+        return super.embed(call);
+      }
+    }
+    const report = await loadKbDirectory(
+      pool, new WritesMeanwhile([unitVector(11), unitVector(22), unitVector(33)]), corpusDir, DEFAULT_EMBED_MODEL, CATALOGUE,
+    );
+    expect(report.indexed).toBe(2);
+    expect(report.failures).toEqual([
+      expect.stringMatching(/^refund-policy\.md: a document written in the console holds doc_id "kb-refund-policy"; the loader leaves it as it is$/),
+    ]);
+    const kept = await pool.query("SELECT title, source FROM document WHERE doc_id = 'kb-refund-policy'");
+    expect(kept.rows).toEqual([{ title: 'written meanwhile', source: 'console' }]);
+  });
+
+  // DEC-25: an answer the provider could not read was still paid for, and
+  // the error that stops the run says what the run paid.
+  it('counts the cost of an answer it could not read in the report it stops with', async () => {
+    const unreadable: ModelProvider = {
+      kind: 'stub',
+      complete: async () => {
+        throw new Error('complete() is not used by the loader');
+      },
+      embed: async () => {
+        throw new UnreadableAnswerError('the answer has no usable index', 'bad-index', 5, false);
+      },
+    };
+    await expect(loadKbDirectory(pool, unreadable, corpusDir, DEFAULT_EMBED_MODEL, CATALOGUE))
+      .rejects.toThrow('the answer has no usable index (before this, 0 documents were indexed at a cost of 5 micro-dollars)');
+  });
+
+  it('names the migration when the ledger predates db/034', async () => {
+    await pool.query('ALTER TABLE document RENAME COLUMN source TO source_moved');
+    try {
+      await expect(loadKbDirectory(pool, new VectorStub([unitVector(11)]), corpusDir, DEFAULT_EMBED_MODEL, CATALOGUE))
+        .rejects.toThrow(/^the document table predates db\/034; run pnpm run db:migrate first \(/);
+    } finally {
+      await pool.query('ALTER TABLE document RENAME COLUMN source_moved TO source');
+    }
+  });
+
   it('aborts when provider output does not match the column dimension', async () => {
     const stub = new VectorStub([[1, 0, 0, 0, 0, 0, 0, 0]]);
     await expect(
       loadKbDirectory(pool, stub, corpusDir, DEFAULT_EMBED_MODEL, CATALOGUE),
     ).rejects.toThrowError(/dimension mismatch.*vector\(1536\).*8 dimensions/s);
+    // It says what the run did before it stopped (DEC-25): nothing indexed,
+    // one batch paid for at the stub's price of 3 micro-dollars.
+    await expect(
+      loadKbDirectory(pool, stub, corpusDir, DEFAULT_EMBED_MODEL, CATALOGUE),
+    ).rejects.toThrowError(/ \(before this, 0 documents were indexed at a cost of 3 micro-dollars\)$/);
     const count = await pool.query<{ n: string }>('SELECT count(*) AS n FROM document');
     expect(count.rows[0]?.n).toBe('0');
   });

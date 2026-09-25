@@ -49,15 +49,29 @@ interface DocumentRow {
   review_by: string;
 }
 
-/** Indexes one document or person-approved canonical resolution (DEC-22). */
+/**
+ * What an index write did. A document written in the console holds its id,
+ * so a loader file with that id is left out and reported, never merged in.
+ */
+export type IndexOutcome = 'indexed' | 'held_by_console';
+
+/**
+ * Indexes one document or person-approved canonical resolution (DEC-22).
+ *
+ * The row is the loader's, and it is embedded. `embeddedWith` names the
+ * model that made the vector. The upsert never updates a row the console
+ * wrote (DEC-50): a reload would otherwise rewrite a reviewer's document.
+ */
 export async function indexDocument(
   pool: Pool,
   doc: IndexedDoc,
   embedding: number[],
-): Promise<void> {
-  await pool.query(
-    `INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding, products)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8::text[])
+  embeddedWith?: string,
+): Promise<IndexOutcome> {
+  const written = await pool.query(
+    `INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding, products,
+                           source, embedding_status, embedded_with)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8::text[], 'loader', 'embedded', $9)
      ON CONFLICT (doc_id) DO UPDATE SET
        kind = EXCLUDED.kind,
        title = EXCLUDED.title,
@@ -65,7 +79,9 @@ export async function indexDocument(
        owner = EXCLUDED.owner,
        review_by = EXCLUDED.review_by,
        embedding = EXCLUDED.embedding,
-       products = EXCLUDED.products`,
+       products = EXCLUDED.products,
+       embedded_with = EXCLUDED.embedded_with
+     WHERE document.source = 'loader'`,
     [
       doc.docId,
       doc.kind,
@@ -78,8 +94,10 @@ export async function indexDocument(
       // row, so the column is written like every other one — a document
       // that stops declaring a product stops being retrieved for it.
       [...(doc.products ?? [])],
+      embeddedWith ?? null,
     ],
   );
+  return written.rowCount === 1 ? 'indexed' : 'held_by_console';
 }
 
 /**
@@ -108,6 +126,11 @@ export async function hybridSearch(
   // the other product's documents through from the channel that kept them.
   const productFilter =
     "AND (d.products = '{}'::text[] OR d.products @> ARRAY[$3]::text[])";
+  // DEC-50: a document waiting for its embedding, or one whose embedding
+  // failed, is invisible to both channels. The lexical channel could rank it
+  // from its words alone, and a document only one channel can rank would
+  // skew the fusion (DEC-21). So the same predicate sits in each query.
+  const embeddedFilter = "AND d.embedding_status = 'embedded'";
   const product = options.product ?? null;
 
   // Lexical channel: ts_rank_cd supplies the ordering only. Its score never
@@ -116,7 +139,7 @@ export async function hybridSearch(
     `SELECT d.doc_id, d.kind, d.title, d.body, d.owner,
             to_char(d.review_by, 'YYYY-MM-DD') AS review_by
      FROM document d, plainto_tsquery('english', $1) q
-     WHERE d.tsv @@ q ${staleFilter} ${productFilter}
+     WHERE d.tsv @@ q ${staleFilter} ${productFilter} ${embeddedFilter}
      ORDER BY ts_rank_cd(d.tsv, q) DESC
      LIMIT $2`,
     [query, depth, product],
@@ -126,7 +149,7 @@ export async function hybridSearch(
     `SELECT d.doc_id, d.kind, d.title, d.body, d.owner,
             to_char(d.review_by, 'YYYY-MM-DD') AS review_by
      FROM document d
-     WHERE true ${staleFilter} ${productFilter}
+     WHERE true ${staleFilter} ${productFilter} ${embeddedFilter}
      ORDER BY d.embedding <=> $1::vector
      LIMIT $2`,
     [vectorLiteral, depth, product],

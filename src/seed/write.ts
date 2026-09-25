@@ -80,7 +80,7 @@ function seededEmbedding(docId: string): number[] {
  * makes the statement enforceable at the one table where the consequence
  * reaches a customer rather than a report.
  */
-export async function writeDocuments(pool: Pool): Promise<number> {
+export async function writeDocuments(pool: Pool): Promise<SeededDocuments> {
   const foreign = await pool.query<{ doc_id: string }>(
     "SELECT doc_id FROM document WHERE doc_id NOT LIKE 'SYN-%' LIMIT 1",
   );
@@ -95,15 +95,29 @@ export async function writeDocuments(pool: Pool): Promise<number> {
   // Counted, not assumed. Returning the input length reports the plan rather
   // than the outcome, and the caller prints this number as what landed.
   let written = 0;
+  const heldByConsole: string[] = [];
   for (const doc of SEED_DOCUMENTS) {
-    await indexDocument(pool, doc, seededEmbedding(doc.docId));
-    written += 1;
+    // The vectors are the seeder's own, so it names itself as their model.
+    // A row the console wrote is left as it is (DEC-50), not counted, and
+    // named, as the loader names its collisions.
+    if (await indexDocument(pool, doc, seededEmbedding(doc.docId), 'seed-history') === 'indexed') {
+      written += 1;
+    } else {
+      heldByConsole.push(doc.docId);
+    }
   }
-  return written;
+  return { written, heldByConsole };
 }
 
-/** How many runs landed, and how many the ledger refused. */
+/** The seeded documents that landed, and those a console document holds. */
+export interface SeededDocuments {
+  written: number;
+  heldByConsole: string[];
+}
+
+/** How many documents and runs landed, and how many runs the ledger refused. */
 export interface WriteReport {
+  documents: SeededDocuments;
   accepted: number;
   refused: number;
 }
@@ -564,7 +578,16 @@ export async function writeHistory(pool: Pool, plan: readonly PlannedRun[]): Pro
   // no runs. That is the harmless order of the two: the upsert is idempotent
   // and the ids are `SYN-` scoped, whereas indexing after the first accepted
   // run would leave that run naming documents nothing holds.
-  await writeDocuments(pool);
+  const documents = await writeDocuments(pool);
+  // Before any run: seeded runs cite these ids, and the text behind a held
+  // one is the console's, not the seed's. Refused as the foreign check above
+  // refuses, so no history is written over it (DEC-50).
+  if (documents.heldByConsole.length > 0) {
+    throw new Error(
+      `seed-history: a document written in the console holds ${documents.heldByConsole.join(', ')}.`
+        + ' No run was written. Remove that document or point at a scratch ledger, then run again.',
+    );
+  }
   for (const run of plan) {
     const input: FencedRunInput = {
       runId: run.runId,
@@ -660,5 +683,5 @@ export async function writeHistory(pool: Pool, plan: readonly PlannedRun[]): Pro
       client.release(failure);
     }
   }
-  return { accepted, refused };
+  return { documents, accepted, refused };
 }

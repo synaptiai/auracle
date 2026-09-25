@@ -91,13 +91,33 @@ describe('the document corpus the seeder writes', () => {
 
   it('writes the corpus into a ledger holding only its own documents', async () => {
     const written = await writeDocuments(pool);
-    expect(written).toBe(SEED_DOCUMENTS.length);
+    expect(written).toEqual({ written: SEED_DOCUMENTS.length, heldByConsole: [] });
     // Counted from the ledger, so the number reports what landed rather than
     // what the plan held.
     const rows = await pool.query("SELECT count(*)::int AS n FROM document WHERE doc_id LIKE 'SYN-%'");
     expect(rows.rows[0]?.n).toBe(SEED_DOCUMENTS.length);
     // Re-applying is the retriever's own upsert, so it stays at the same count.
-    expect(await writeDocuments(pool)).toBe(SEED_DOCUMENTS.length);
+    expect((await writeDocuments(pool)).written).toBe(SEED_DOCUMENTS.length);
+  });
+
+  // DEC-50: a row the console wrote is left as it is, and the count says so.
+  it('leaves a document written in the console, and does not count it', async () => {
+    const held = SEED_DOCUMENTS[0]!.docId;
+    await pool.query(
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
+       VALUES ($1, 'document', 'Console title', 'Console body', 'synthetic-owner', '2999-01-01', 'console', 'pending')`,
+      [held],
+    );
+    expect(await writeDocuments(pool)).toEqual({ written: SEED_DOCUMENTS.length - 1, heldByConsole: [held] });
+    const kept = await pool.query('SELECT source, title FROM document WHERE doc_id = $1', [held]);
+    expect(kept.rows).toEqual([{ source: 'console', title: 'Console title' }]);
+
+    // The history refuses before its first run, so no run cites the held id.
+    await expect(writeHistory(pool, planHistory(OPTIONS))).rejects.toThrow(
+      `seed-history: a document written in the console holds ${held}. No run was written.`,
+    );
+    const runs = await pool.query('SELECT count(*)::int AS n FROM run');
+    expect(runs.rows[0]?.n).toBe(0);
   });
 });
 
@@ -136,6 +156,7 @@ describe('the seeded history', () => {
     const report = await writeHistory(pool, plan);
     expect(report.refused).toBe(0);
     expect(report.accepted).toBe(plan.length);
+    expect(report.documents).toEqual({ written: SEED_DOCUMENTS.length, heldByConsole: [] });
   });
 
   // Through fencedInsert with a clock, so the epoch, the transaction and the

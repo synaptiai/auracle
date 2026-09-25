@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { FakeProvider } from './fake.js';
-import { UnreadableAnswerError } from './provider.js';
+import { ProviderHttpError, UnreadableAnswerError } from './provider.js';
 import { OpenRouterProvider } from './openrouter.js';
 import { assertSamplingTemperature } from './provider.js';
 import type { DataGuarantee } from './provider.js';
@@ -540,7 +540,7 @@ describe('OpenRouterProvider (injected fetch, no live calls)', () => {
         promptVer: 'embed@1',
         modelVer: 'openai/text-embedding-3-small',
       }),
-    ).rejects.toThrow(/embeddingsUsdPerMTok/);
+    ).rejects.toThrow(/EMBEDDINGS_USD_PER_MTOK/);
   });
 
   it('surfaces non-2xx responses as errors carrying the status', async () => {
@@ -555,6 +555,181 @@ describe('OpenRouterProvider (injected fetch, no live calls)', () => {
         modelVer: 'm@1',
       }),
     ).rejects.toThrow(/\(429\)/);
+  });
+
+  // A caller tells a refusal of its input from a fault of the service by the
+  // status, so the error carries it as a number, and on an embedding call too.
+  // DEC-19: the message reaches the ledger and the log, so it keeps the
+  // provider's own message and none of the rest of the body.
+  it("keeps only the provider's message from an error body", async () => {
+    const body = {
+      error: {
+        message: 'Invalid input: maximum input length is 8192 tokens.',
+        code: 400,
+        metadata: { raw: 'the refused input, quoted: Synthetic Customer wrote in about order 41' },
+      },
+    };
+    const { fetchImpl } = makeFetch(body, 400);
+    const provider = new OpenRouterProvider({ apiKey: 'k', fetchImpl });
+    const refused: unknown = await provider
+      .embed({ input: ['a'], promptVer: 'p@1', modelVer: 'm@1' })
+      .catch((error: unknown) => error);
+    expect((refused as Error).message).toBe('OpenRouter request failed (400): Invalid input: maximum input length is 8192 tokens.');
+
+    // A string `error` is the message. A JSON body that names none is a
+    // fixed sentence, never the body, whatever else it carries.
+    for (const [shape, expected] of [
+      [{ error: 'input too long', input: 'Synthetic Customer wrote in about order 41' }, 'input too long'],
+      [{ error: { code: 400, metadata: { raw: 'Synthetic Customer wrote in' } } }, 'the provider sent an error with no message'],
+      [{ error: { message: '' } }, 'the provider sent an error with no message'],
+      [{ detail: 'Synthetic Customer wrote in' }, 'the provider sent an error with no message'],
+    ] as const) {
+      const shaped = new OpenRouterProvider({ apiKey: 'k', fetchImpl: makeFetch(shape, 400).fetchImpl });
+      await expect(shaped.embed({ input: ['a'], promptVer: 'p@1', modelVer: 'm@1' }), JSON.stringify(shape))
+        .rejects.toThrow(new RegExp(`^OpenRouter request failed \\(400\\): ${expected}$`));
+    }
+
+    // A body that is not the JSON error shape is the only diagnosis, and stays.
+    const bare = new OpenRouterProvider({
+      apiKey: 'k',
+      fetchImpl: (async () => new Response('Bad Gateway', { status: 502 })) as typeof fetch,
+    });
+    await expect(bare.embed({ input: ['a'], promptVer: 'p@1', modelVer: 'm@1' }))
+      .rejects.toThrow('OpenRouter request failed (502): Bad Gateway');
+
+    // A gateway that echoes the request's header never puts the key in the
+    // ledger or the log.
+    const echoing = new OpenRouterProvider({
+      apiKey: 'sk-synthetic-0000',
+      fetchImpl: (async () => new Response('rejected Bearer sk-synthetic-0000', { status: 401 })) as typeof fetch,
+    });
+    await expect(echoing.embed({ input: ['a'], promptVer: 'p@1', modelVer: 'm@1' }))
+      .rejects.toThrow('OpenRouter request failed (401): rejected Bearer [the API key]');
+
+    // The same for a JSON message, and for a key configured with the
+    // whitespace a secret file leaves, which fetch trims before sending.
+    const jsonEcho = new OpenRouterProvider({
+      apiKey: 'sk-synthetic-0000\n',
+      fetchImpl: makeFetch({ error: { message: 'no such key sk-synthetic-0000' } }, 401).fetchImpl,
+    });
+    await expect(jsonEcho.embed({ input: ['a'], promptVer: 'p@1', modelVer: 'm@1' }))
+      .rejects.toThrow('OpenRouter request failed (401): no such key [the API key]');
+  });
+
+  // fetch refuses a header value it cannot send by quoting it whole, and that
+  // error reaches the ledger and the log. A key with a line break inside it
+  // is such a value. Driven through the real fetch: it refuses before it
+  // opens any connection.
+  it('keeps the key out of an error that fetch raises itself', async () => {
+    const key = 'sk-synthetic-0000\nexport OTHER=1';
+    const provider = new OpenRouterProvider({ apiKey: key, baseUrl: 'http://127.0.0.1:9/v1' });
+    const raised: unknown = await provider
+      .embed({ input: ['a'], promptVer: 'p@1', modelVer: 'm@1' })
+      .catch((error: unknown) => error);
+    expect(raised).toBeInstanceOf(Error);
+    const error = raised as Error;
+    expect(error.message).not.toContain('sk-synthetic-0000');
+    expect(error.message).toContain('[the API key]');
+    expect(error.cause).toBeUndefined();
+
+    // The same for any error an injected fetch raises that quotes the key.
+    const quoting = new OpenRouterProvider({
+      apiKey: 'sk-synthetic-1111',
+      fetchImpl: (async () => {
+        throw new TypeError('cannot send Bearer sk-synthetic-1111');
+      }) as typeof fetch,
+    });
+    await expect(quoting.embed({ input: ['a'], promptVer: 'p@1', modelVer: 'm@1' }))
+      .rejects.toMatchObject({ name: 'TypeError', message: 'cannot send Bearer [the API key]' });
+  });
+
+  // DEC-25: an answer the module cannot read was still paid for, so the
+  // refusal carries its cost, or says that the cost is unknown.
+  it('carries the cost on an embedding answer it cannot read', async () => {
+    const call = { input: ['a', 'b'], promptVer: 'p@1', modelVer: 'm@1' };
+    const badIndex = new OpenRouterProvider({
+      apiKey: 'k',
+      fetchImpl: makeFetch({
+        data: [{ index: 0, embedding: [0.1] }, { index: 0, embedding: [0.2] }],
+        usage: { prompt_tokens: 2, total_tokens: 2, cost: 0.01 },
+      }).fetchImpl,
+    });
+    const refused: unknown = await badIndex.embed(call).catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(UnreadableAnswerError);
+    // 0.01 USD is 10,000 micro-dollars.
+    expect(refused).toMatchObject({ shape: 'bad-index', costMicros: 10_000, costUnknown: false });
+
+    const noUsage = new OpenRouterProvider({
+      apiKey: 'k',
+      fetchImpl: makeFetch({ data: [{ embedding: [0.1] }, { embedding: [0.2] }] }).fetchImpl,
+    });
+    await expect(noUsage.embed(call)).rejects.toMatchObject({ shape: 'no-usage', costMicros: 0, costUnknown: true });
+
+    // No cost and no price: typed, so a run escalates once, cost unknown.
+    const noPrice = new OpenRouterProvider({
+      apiKey: 'k',
+      fetchImpl: makeFetch({ data: [{ embedding: [0.1] }, { embedding: [0.2] }], usage: { prompt_tokens: 2, total_tokens: 2 } }).fetchImpl,
+    });
+    await expect(noPrice.embed(call)).rejects.toMatchObject({ shape: 'no-cost', costUnknown: true });
+  });
+
+  // A caller writes vector i to input i, so the answer is placed by each
+  // item's own index, whatever order it arrives in.
+  it('places each embedding by its index, not its arrival', async () => {
+    const usage = { prompt_tokens: 2, total_tokens: 2, cost: 0.000001 };
+    const reversed = new OpenRouterProvider({
+      apiKey: 'k',
+      fetchImpl: makeFetch({ data: [{ index: 1, embedding: [0.2] }, { index: 0, embedding: [0.1] }], usage }).fetchImpl,
+    });
+    const result = await reversed.embed({ input: ['first', 'second'], promptVer: 'p@1', modelVer: 'm@1' });
+    expect(result.vectors).toEqual([[0.1], [0.2]]);
+
+    // No index at all keeps the order the items arrived in.
+    const plain = new OpenRouterProvider({
+      apiKey: 'k',
+      fetchImpl: makeFetch({ data: [{ embedding: [0.1] }, { embedding: [0.2] }], usage }).fetchImpl,
+    });
+    await expect(plain.embed({ input: ['first', 'second'], promptVer: 'p@1', modelVer: 'm@1' }))
+      .resolves.toMatchObject({ vectors: [[0.1], [0.2]] });
+
+    for (const data of [
+      [{ index: 0, embedding: [0.1] }, { index: 0, embedding: [0.2] }],
+      [{ index: 0, embedding: [0.1] }, { index: 2, embedding: [0.2] }],
+      [{ index: '0', embedding: [0.1] }],
+    ]) {
+      const bad = new OpenRouterProvider({ apiKey: 'k', fetchImpl: makeFetch({ data, usage }).fetchImpl });
+      await expect(bad.embed({ input: data.map(() => 'x'), promptVer: 'p@1', modelVer: 'm@1' }), JSON.stringify(data))
+        .rejects.toThrow(UnreadableAnswerError);
+    }
+  });
+
+  it('types a non-2xx embedding response with its status', async () => {
+    const { fetchImpl } = makeFetch({ error: 'input too long' }, 400);
+    const provider = new OpenRouterProvider({ apiKey: 'k', fetchImpl });
+    const refused = await provider
+      .embed({ input: ['a'], promptVer: 'p@1', modelVer: 'm@1' })
+      .catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(ProviderHttpError);
+    expect((refused as ProviderHttpError).status).toBe(400);
+    // Not the typed fault the queue escalates: it still retries (DEC-30).
+    expect(refused).not.toBeInstanceOf(UnreadableAnswerError);
+  });
+
+  // The headers arrive and the body stalls. The deadline covers the body,
+  // and the error names the path and the deadline as a stalled send does.
+  it('names the deadline when the body stalls after the headers', async () => {
+    const fetchImpl = (async (_url: string, init?: RequestInit) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason));
+          },
+        }),
+        { status: 200 },
+      )) as typeof fetch;
+    const provider = new OpenRouterProvider({ apiKey: 'k', fetchImpl, requestTimeoutMs: 20 });
+    await expect(provider.embed({ input: ['a'], promptVer: 'p@1', modelVer: 'm@1' }))
+      .rejects.toThrow('OpenRouter request to /embeddings exceeded 20ms and was aborted');
   });
 
   it('aborts a request that never returns, so a run cannot hang forever', async () => {
@@ -589,5 +764,26 @@ describe('OpenRouterProvider (injected fetch, no live calls)', () => {
 
     expect(seen).toHaveLength(1);
     expect(seen[0]).toBeInstanceOf(AbortSignal);
+  });
+
+  // A caller holding other work while it waits asks for a shorter deadline,
+  // and a longer one than the provider's is never granted.
+  it('lets an embedding call shorten its deadline, never lengthen it', async () => {
+    const hanging = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(init.signal?.reason ?? new Error('aborted'));
+        });
+      })) as typeof fetch;
+    const call = { input: ['a'], promptVer: 'p@1', modelVer: 'm@1' };
+
+    const provider = new OpenRouterProvider({ apiKey: 'k', fetchImpl: hanging, requestTimeoutMs: 5_000 });
+    const started = Date.now();
+    await expect(provider.embed({ ...call, timeoutMs: 20 })).rejects.toThrow(/exceeded 20ms/);
+    // The call stops at its own deadline, not at the provider's five seconds.
+    expect(Date.now() - started).toBeLessThan(2_000);
+
+    const short = new OpenRouterProvider({ apiKey: 'k', fetchImpl: hanging, requestTimeoutMs: 20 });
+    await expect(short.embed({ ...call, timeoutMs: 5_000 })).rejects.toThrow(/exceeded 20ms/);
   });
 });

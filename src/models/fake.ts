@@ -39,6 +39,8 @@ export interface RecordedCall {
   kind: 'chat' | 'embed';
   messages?: ChatRequest['messages'];
   input?: EmbeddingRequest['input'];
+  /** The shorter deadline an embedding call asked for, when it asked. */
+  timeoutMs?: number;
   temperature?: number;
   maxOutputTokens?: number;
   promptVer: string;
@@ -132,6 +134,7 @@ export class FakeProvider implements ModelProvider {
     this.calls.push({
       kind: 'embed',
       input: call.input,
+      ...(call.timeoutMs !== undefined ? { timeoutMs: call.timeoutMs } : {}),
       promptVer: call.promptVer,
       modelVer: call.modelVer,
       dataGuaranteeZdrOnly:

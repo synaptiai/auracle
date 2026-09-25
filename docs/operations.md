@@ -232,6 +232,7 @@ The consumer reads this configuration:
 | `PARTITION_COUNT` | Partition count for hashing (DEC-27). | 8 |
 | `MODEL_VER` | Chat model pin. Overridable at any time. | `z-ai/glm-5.3-flash` |
 | `EMBED_MODEL_VER` | Embedding model pin for retrieval. The chat model does not embed, so this pin is separate. | `openai/text-embedding-3-small` |
+| `EMBEDDINGS_USD_PER_MTOK` | Embedding price in US dollars per million tokens, for a gateway whose answer carries no cost (DEC-25). OpenRouter reports the cost itself. | none |
 | `PROMPT_VER` | Prompt version pin (DEC-26). | `consumer-prompt-v1` |
 | `ACTION_CLASS` | Action class each run executes. | `route_ticket` |
 | `ACTION_DELIVERY` | Delivery rule: `at_most_once` or `at_least_once`. | `at_most_once` |
@@ -624,6 +625,91 @@ every file that does not end in `.md`.
 
 Exit code 1 means at least one file failed validation. Fix the file and run
 the loader again.
+
+A document written in the console shares the `document` table. The loader
+never rewrites one. A file with the same `doc_id` fails, and the report names
+the file and the id. Give the file another `doc_id`, or leave the console
+document as it is.
+
+A document written in the console waits for its embedding, because the console
+calls no model. Every consumer embeds waiting documents on each scan, with
+`EMBED_MODEL_VER`. Both retrieval channels ignore a document until a consumer
+embeds it. A consumer claims a few documents at a time and holds each claim for
+three minutes. So two consumers never embed one document, and a consumer that
+stops leaves its claim for the next one.
+
+The ledger keeps each failed attempt and its reason. Only a refusal of the
+input uses one of the document's three attempts: an HTTP 400, 413 or 422. The
+provider also answers 400 for a model pin that names no model. So after a
+refusal the consumer embeds a short fixed text with the same model. The
+refusal counts only when the model takes that text.
+
+A later scan tries a refused document again after one minute, and after five
+more minutes for the third attempt. After three refusals the document is
+`failed`, and it stays out of retrieval.
+
+Any other fault uses no attempt: an outage, a rate limit, a key, a timeout or
+a model pin. The document waits five minutes, and the log carries the reason.
+So an outage fails no document, and it needs no step from you afterwards.
+
+After its first refusal or deferral, a document goes to the model on its own.
+So a document the model refuses costs another document one attempt at most. A
+fault that one document causes, such as a short answer, stops failing its
+batch after one call. Of the documents that go alone, the one whose delay ends
+first goes first. So a document that keeps failing never blocks the others.
+
+A scan makes two embedding calls. One call is for a document that goes alone,
+and one is for up to four new documents. A refusal adds the
+probe call after it, so a scan makes four calls at most. The scan waits for its
+calls, and the queue waits for the scan. Each call has a deadline of 15
+seconds, so a stalled model delays customer messages by one minute at most.
+
+A consumer that stops also waits for its calls. If the process ends first,
+its claim holds for three minutes, and then another consumer takes the
+document.
+
+A consumer writes no vector, and records no failure, when its claim runs out
+during the call. It writes no vector when the text changes during the call. It
+never waits for a row another writer holds. A later scan claims that document
+once its three-minute claim runs out.
+
+The consumer logs these events:
+
+| Event | Fields |
+|---|---|
+| `documents_embedded` | `docIds` |
+| `documents_embedding_retrying` | `failures`, each with `docId` and `reason`: the model refuses the input |
+| `documents_embedding_deferred` | `failures`, each with `docId` and `reason`: a fault that uses no attempt |
+| `documents_embedding_failed` | `failures`, each with `docId` and `reason`: the third refusal |
+| `documents_embedding_lost` | `failures`, each with `docId` and `reason`: nothing written. The claim runs out or passes on, another writer holds the row, or the text changes |
+| `documents_embedding_unrecorded` | `failures`, each with `docId` and `reason`: the ledger does not record the outcome, and the claim runs out |
+| `document_embedding_cost` | `costMicros` for the scan's calls, and `costUnknown` when an answer carries no cost it can read |
+| `document_embedding_scan_failed` | `error`, a fault of the ledger that costs no document an attempt |
+
+Read the reasons of all documents that are not embedded:
+
+```sh
+psql "$DATABASE_URL" -c \
+  "SELECT doc_id, embedding_status, embedding_failures, embedding_error FROM document WHERE embedding_status <> 'embedded';"
+```
+
+A `documents_embedding_deferred` event that repeats names a fault to fix,
+often the key or the model pin. A `failed` document is one the model refuses.
+A body longer than the model accepts fails each time, so shorten the document.
+Then return the document to the queue, and the next scan embeds it:
+
+```sh
+psql "$DATABASE_URL" -c \
+  "UPDATE document SET embedding_status = 'pending', embedding_failures = 0, embedding_error = NULL WHERE doc_id = '<doc-id>' AND embedding_status = 'failed';"
+```
+
+A change of embedding model can accept inputs the old one refused. After such
+a change, return every failed document at once:
+
+```sh
+psql "$DATABASE_URL" -c \
+  "UPDATE document SET embedding_status = 'pending', embedding_failures = 0, embedding_error = NULL WHERE embedding_status = 'failed';"
+```
 
 The split discipline holds (DEC-31). Calibration reads only the fit half. The
 gold report reads only the report half. A threshold picked on the report cases
@@ -1154,7 +1240,7 @@ coordinator can record appears below. A queued message that failed
 | `egress_refused` | The egress refused, and a retry can never clear it. | Fix the target system or the action. |
 | `classifier_unreadable` | Every classifier sample came back unreadable, so agreement measured nothing. | An answer budget too small for the model. Check `MODEL_VER` and the budget it needs. |
 | `classifier_no_label` | Samples were readable and named no intent this taxonomy holds. | A taxonomy or prompt fault, not a budget one. Compare the answers against `fixtures/taxonomy.json`. |
-| `retriever_unreadable` | The embedder answered with something the retriever could not read. | Check the embedding model pin and the provider response. |
+| `retriever_unreadable` | The embedder answered with something the retriever could not read, or with no cost and no `EMBEDDINGS_USD_PER_MTOK` to price it. | Check the embedding model pin, the provider response and the price. |
 | `composer_unreadable` | The composer answered nothing at all. | The same cause, on the compose step. |
 | `gate_unreadable` | The coverage judge answered with no verdict. | The same cause, on the gate step. |
 | `internal_fault` | An invariant inside the coordinator did not hold. | A defect in this system. Read `fault` on the escalate row, then file an issue with that message. |
@@ -1706,8 +1792,8 @@ message.
 The console shows this, so an operator reading it reads what the ledger holds.
 State the position before you carry real traffic (DEC-17, DEC-19).
 
-Ten places hold text a customer wrote, would read, or is named in. Each lives
-for the life of its row, and nothing removes any of it.
+The table names each place that holds text a customer wrote, would read, or is
+named in. Each lives for the life of its row, and nothing removes any of it.
 
 | Where | What | Written by |
 |---|---|---|
@@ -1723,6 +1809,15 @@ for the life of its row, and nothing removes any of it.
 | `run.send_back_note` | the note that steers a new attempt | the console's send-back |
 | `step_journal.result` on `send_back` | the same note | the console's send-back |
 | `conversation.customer_address` | the participant the messages come from | the first sender that names itself |
+| `document.embedding_error` | the provider's message when an embedding call fails, which may quote the document | every consumer |
+
+The consumer logs the same embedding message in five events:
+`documents_embedding_retrying`, `documents_embedding_deferred`,
+`documents_embedding_failed`, `documents_embedding_lost` and
+`documents_embedding_unrecorded`. It keeps 500 characters at most, and never
+the API key. From a JSON error body it keeps the provider's own message and
+nothing else. A JSON body with no message becomes a fixed sentence. A body that
+is not JSON stays whole, because it is then all the diagnosis there is.
 
 The park fault and the escalation reason hold an address rather than a message.
 An adapter builds a fault naming the expected recipient, and an SMTP rejection

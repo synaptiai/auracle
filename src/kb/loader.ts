@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import type { Pool } from 'pg';
 
 import { assertKnownProducts, type ProductCatalogue } from '../config/products.js';
+import { UnreadableAnswerError } from '../models/provider.js';
 import type { ModelProvider } from '../models/provider.js';
 import { indexDocument } from '../retriever/retriever.js';
 import type { DocKind, IndexedDoc } from '../retriever/types.js';
@@ -253,7 +254,8 @@ export function assertDdlDimensionCompat(ddlSql: string, modelVer: string): void
   }
 }
 
-function dimensionMismatch(columnDim: number, actualDim: number, modelVer: string): Error {
+/** The refusal a vector of the wrong size gets, from the loader and the consumer alike. */
+export function dimensionMismatch(columnDim: number, actualDim: number, modelVer: string): Error {
   return new Error(
     `dimension mismatch: the document.embedding column holds vector(${columnDim}) ` +
       `but ${modelVer} emits ${actualDim} dimensions. Change the DDL (new column ` +
@@ -289,6 +291,13 @@ export async function documentEmbeddingColumnDim(pool: Pool): Promise<number> {
  * dimension drift between provider output and the column — throw instead,
  * because continuing would poison the index silently.
  */
+/** A file that passed validation, with the text the model embeds. */
+interface PendingFile {
+  file: string;
+  text: string;
+  doc: IndexedDoc;
+}
+
 export async function loadKbDirectory(
   pool: Pool,
   provider: ModelProvider,
@@ -323,7 +332,7 @@ export async function loadKbDirectory(
   };
 
   const seenIds = new Map<string, string>();
-  const docs: { file: string; text: string; doc: IndexedDoc }[] = [];
+  const docs: PendingFile[] = [];
   for (const name of mdFiles) {
     try {
       const raw = await readFile(path.join(dir, name), 'utf8');
@@ -361,13 +370,66 @@ export async function loadKbDirectory(
     }
   }
 
-  for (let start = 0; start < docs.length; start += EMBED_BATCH) {
-    const batch = docs.slice(start, start + EMBED_BATCH);
-    const result = await provider.embed({
-      input: batch.map((d) => d.text),
-      promptVer: PROMPT_VER,
-      modelVer: embedModelVer,
-    });
+  // DEC-50: a document a reviewer wrote in the console keeps its id. Found
+  // before the embedding call, so a reload pays for no file it will not
+  // write. The index step below still refuses one written in the meantime.
+  let held: { rows: { doc_id: string }[] };
+  try {
+    held = await pool.query<{ doc_id: string }>(
+      "SELECT doc_id FROM document WHERE source = 'console' AND doc_id = ANY($1::text[])",
+      [docs.map((d) => d.doc.docId)],
+    );
+  } catch (err) {
+    // A ledger without db/034 has no `source` column. Named, so the operator
+    // runs the migration rather than reading a bare Postgres error.
+    const code = (err as { code?: unknown }).code;
+    if (code === '42703' || code === '42P01') {
+      throw new Error(`the document table predates db/034; run pnpm run db:migrate first (${errorMessage(err)})`);
+    }
+    throw err;
+  }
+  const heldIds = new Set(held.rows.map((row) => row.doc_id));
+  for (const item of docs.filter((d) => heldIds.has(d.doc.docId))) reportHeld(report, item);
+  const toEmbed = docs.filter((d) => !heldIds.has(d.doc.docId));
+
+  try {
+    await embedAndIndex(pool, provider, toEmbed, embedModelVer, columnDim, report);
+  } catch (err) {
+    // A batch that fails after others were paid for and written says so, so
+    // the operator reads what the run did before it stopped (DEC-25).
+    throw new Error(
+      `${errorMessage(err)} (before this, ${report.indexed} documents were indexed at a cost of`
+        + ` ${report.costMicros} micro-dollars)`,
+    );
+  }
+
+  return report;
+}
+
+/** Embeds the documents in batches and indexes each one. */
+async function embedAndIndex(
+  pool: Pool,
+  provider: ModelProvider,
+  toEmbed: readonly PendingFile[],
+  embedModelVer: string,
+  columnDim: number,
+  report: LoadReport,
+): Promise<void> {
+  for (let start = 0; start < toEmbed.length; start += EMBED_BATCH) {
+    const batch = toEmbed.slice(start, start + EMBED_BATCH);
+    let result: Awaited<ReturnType<ModelProvider['embed']>>;
+    try {
+      result = await provider.embed({
+        input: batch.map((d) => d.text),
+        promptVer: PROMPT_VER,
+        modelVer: embedModelVer,
+      });
+    } catch (err) {
+      // An answer the provider could not read was still paid for (DEC-25),
+      // so the report the error carries counts it.
+      if (err instanceof UnreadableAnswerError) report.costMicros += err.costMicros;
+      throw err;
+    }
     report.costMicros += result.costMicros;
     if (result.vectors.length !== batch.length) {
       throw new Error(
@@ -383,10 +445,25 @@ export async function loadKbDirectory(
       if (vector.length !== columnDim) {
         throw dimensionMismatch(columnDim, vector.length, embedModelVer);
       }
-      await indexDocument(pool, item.doc, vector);
+      const outcome = await indexDocument(pool, item.doc, vector, embedModelVer);
+      if (outcome === 'held_by_console') {
+        reportHeld(report, item);
+        continue;
+      }
       report.indexed += 1;
     }
   }
+}
 
-  return report;
+/**
+ * DEC-50: a reviewer wrote a document with this id in the console. The
+ * loader leaves it as it is and says so, per file, as it reports every other
+ * fault it does not stop for.
+ */
+function reportHeld(report: LoadReport, item: { file: string; doc: { docId: string } }): void {
+  report.failed += 1;
+  report.failures.push(
+    `${item.file}: a document written in the console holds doc_id "${item.doc.docId}";`
+      + ' the loader leaves it as it is',
+  );
 }

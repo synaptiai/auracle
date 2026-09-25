@@ -392,6 +392,72 @@ describe('migrate', () => {
     await expect(migrate(client)).resolves.toBeDefined();
   });
 
+  // DEC-50: a document written in the console waits for its embedding, and
+  // retrieval reads only embedded ones. The status and the vector agree by a
+  // constraint, so no writer can store one without the other.
+  it('lets a document wait for its embedding (db/034, DEC-50)', async () => {
+    await migrate(client);
+    const vector = `[${Array.from({ length: 1536 }, () => 0.01).join(',')}]`;
+    // A row written as the loader writes one takes the defaults: a loader
+    // document, embedded.
+    await client.query(
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding)
+       VALUES ('SYN-034-LOADED', 'document', 't', 'b', 'o', '2999-01-01', $1::vector)`,
+      [vector],
+    );
+    const loaded = await client.query<{
+      source: string; embedding_status: string; embedding_failures: number; embedding_deferrals: number;
+      retry_after: Date | null;
+    }>(
+      `SELECT source, embedding_status, embedding_failures, embedding_deferrals,
+              embedding_retry_after AS retry_after
+         FROM document WHERE doc_id = 'SYN-034-LOADED'`,
+    );
+    expect(loaded.rows[0]).toEqual({
+      source: 'loader', embedding_status: 'embedded', embedding_failures: 0, embedding_deferrals: 0,
+      retry_after: null,
+    });
+
+    // A console document may wait with no vector.
+    await client.query(
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
+       VALUES ('SYN-034-PENDING', 'document', 't', 'b', 'o', '2999-01-01', 'console', 'pending')`,
+    );
+
+    const refused: Array<[string, string]> = [
+      ['a pending row with a vector',
+        `INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding, embedding_status)
+         VALUES ('SYN-034-X1', 'document', 't', 'b', 'o', '2999-01-01', '${vector}'::vector, 'pending')`],
+      ['an embedded row with no vector',
+        `INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding_status)
+         VALUES ('SYN-034-X2', 'document', 't', 'b', 'o', '2999-01-01', 'embedded')`],
+      ['a failed row with a vector',
+        `INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding, embedding_status)
+         VALUES ('SYN-034-X3', 'document', 't', 'b', 'o', '2999-01-01', '${vector}'::vector, 'failed')`],
+      ['an unknown source',
+        `INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding, source)
+         VALUES ('SYN-034-X4', 'document', 't', 'b', 'o', '2999-01-01', '${vector}'::vector, 'wiki')`],
+      ['an unknown status',
+        `INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding_status)
+         VALUES ('SYN-034-X5', 'document', 't', 'b', 'o', '2999-01-01', 'queued')`],
+      ['a negative failure count',
+        `UPDATE document SET embedding_failures = -1 WHERE doc_id = 'SYN-034-PENDING'`],
+      ['a negative deferral count',
+        `UPDATE document SET embedding_deferrals = -1 WHERE doc_id = 'SYN-034-PENDING'`],
+    ];
+    for (const [what, sql] of refused) {
+      await expect(client.query(sql), what).rejects.toThrow(/violates check constraint/);
+    }
+
+    const comment = await client.query<{ description: string }>(
+      `SELECT col_description('document'::regclass, attnum) AS description
+         FROM pg_attribute WHERE attrelid = 'document'::regclass AND attname = 'embedding_status'`,
+    );
+    expect(comment.rows[0]?.description).toContain('DEC-50');
+    await client.query('DELETE FROM schema_version WHERE version >= 34');
+    await expect(migrate(client)).resolves.toBeDefined();
+  });
+
   // DEC-47: the product of the channel a message arrived on, recorded at
   // arrival and copied onto the run. Nullable on both tables, because a
   // channel the map does not name is a real answer and not a gap.
