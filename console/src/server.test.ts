@@ -26,7 +26,7 @@ import { UNDO_SAYS } from './surfaces.js';
 import type { ReviewerRefusal, ReviewerVerdict } from './reviewer.js';
 import { cachedDaily } from './daily-cache.js';
 import type { ConsoleDeps } from './server.js';
-import type { CaseRerun, KnowledgeReport, PublishOutcome } from 'auracle/ledger-read';
+import type { CaseRerun, KnowledgeReport, PublishOutcome, RoutingReport, TeamReport } from 'auracle/ledger-read';
 
 const RUN = '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34';
 
@@ -207,6 +207,17 @@ const EMPTY_KNOWLEDGE: KnowledgeReport = {
   gaps: [], documents: [], documentsNeedingAPerson: 0,
 };
 
+/** The team figures of a ledger that holds nothing. */
+const EMPTY_TEAM: TeamReport = {
+  today: {
+    from: '2026-09-20T00:00:00.000Z', to: '2026-09-20T12:00:00.000Z',
+    auto: 0, person: 0, escalated: 0, inProgress: 0, noAnswer: 0,
+  },
+  week: { from: '2026-09-13T12:00:00.000Z', to: '2026-09-20T12:00:00.000Z' },
+  supportMs: null, previousSupportMs: null, supportPeople: 0, medianCaseMs: null, sentCases: 0,
+  oldestWaiting: null, people: [], products: [],
+};
+
 function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
   return {
     listRuns: async () => [
@@ -256,6 +267,10 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
     // DEC-50: a ledger with nothing in the gap window, and a case no gap blocks.
     readKnowledge: async () => EMPTY_KNOWLEDGE,
     readCaseGap: async () => null,
+    // Issue #112: a ledger with no case, no hold and no gate row.
+    readTeam: async () => EMPTY_TEAM,
+    readRouting: async () => ({ products: [] }),
+    holdLapseMs: 1_200_000,
     // DEC-50: a case with no document published from it, and a publish the
     // ledger accepts. The rules are the core suites' subject.
     readCaseReruns: async () => [],
@@ -651,6 +666,40 @@ describe('the console against a page it did not serve', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  // A page read from another site would draw a reviewer's queue into it. Every
+  // read route is refused, before its read runs, whether the browser names
+  // the site or only an Origin says it.
+  it('refuses a read from another site on every surface, and reads nothing', async () => {
+    // Every dependency that reads the ledger or the helpdesk records its
+    // call, so a route that ran before the refusal would show here.
+    const asked: string[] = [];
+    const d = deps();
+    const watched = Object.fromEntries(Object.entries(d).map(([name, value]) => [
+      name,
+      typeof value === 'function' && /^(read|list)/.test(name)
+        ? (...args: unknown[]) => { asked.push(name); return (value as (...a: unknown[]) => unknown)(...args); }
+        : value,
+    ])) as unknown as ConsoleDeps;
+    expect(Object.keys(d).filter((name) => /^(read|list)/.test(name)).length).toBeGreaterThan(15);
+    const base = await startGuarded(watched);
+    const foreign: Record<string, string>[] = [
+      { 'sec-fetch-site': 'cross-site' },
+      { 'sec-fetch-site': 'same-site' },
+      { origin: 'https://evil.example' },
+    ];
+    for (const path of [
+      '/', '/?state=escalated', '/approvals', '/runs', `/run/${RUN}`, CASE, `/conversation/${CONVERSATION}`,
+      '/document/SYN-DOC-01', '/knowledge', '/team', '/routing', '/bands', '/latency', '/notes', '/console.css',
+      '/theme?to=light',
+    ]) {
+      for (const headers of foreign) {
+        const res = await fetch(base + path, { headers, redirect: 'manual' });
+        expect(res.status, `${path} ${JSON.stringify(headers)}`).toBe(403);
+      }
+    }
+    expect(asked).toEqual([]);
   });
 
   it('refuses a form post whose Origin is another site', async () => {
@@ -2837,6 +2886,16 @@ describe('the knowledge screen (DEC-50)', () => {
     expect(html).toContain(`<a href="/case/${RUN_2}">Open the latest case →</a>`);
   });
 
+  it('isolates each product a document serves on its own', async () => {
+    // Two right-to-left product names in one isolate would read in reverse.
+    const alef = String.fromCharCode(0x5d0);
+    const bet = String.fromCharCode(0x5d1);
+    const html = await knowledgePage({ readKnowledge: async () => ({
+      ...REPORT, documents: [{ ...REPORT.documents[0]!, products: [alef, bet] }],
+    }) });
+    expect(html).toContain(`SYN-DOC-01 · <bdi>${alef}</bdi>, <bdi>${bet}</bdi></div>`);
+  });
+
   it('lists each document with its citations, change flag, owner and why it needs a person', async () => {
     const html = await knowledgePage({ readKnowledge: async () => REPORT });
     const first = html.slice(html.indexOf('>Refund policy</a></span>'), html.indexOf('>Shipping times</a>'));
@@ -3130,9 +3189,12 @@ describe('the gate every request passes (DEC-45)', () => {
       readKnowledge: async () => { asked.push('readKnowledge'); return EMPTY_KNOWLEDGE; },
       readCaseGap: async () => { asked.push('readCaseGap'); return null; },
       readCaseReruns: async () => { asked.push('readCaseReruns'); return []; },
+      readTeam: async () => { asked.push('readTeam'); return EMPTY_TEAM; },
+      readRouting: async () => { asked.push('readRouting'); return { products: [] }; },
     }));
     for (const path of [
-      '/', '/runs', '/knowledge', '/bands', '/latency', '/notes', `/run/${RUN}`, `/case/${RUN}`, '/console.css',
+      '/', '/runs', '/knowledge', '/team', '/routing', '/bands', '/latency', '/notes', `/run/${RUN}`, `/case/${RUN}`,
+      '/console.css',
     ]) {
       const res = await fetch(base + path);
       expect(res.status, path).toBe(403);
@@ -3976,7 +4038,7 @@ describe('the theme', () => {
     const base = await startGuarded(deps());
     for (const path of [
       '/', '/runs', `/run/${RUN}`, CASE, `/conversation/${CONVERSATION}`, '/document/SYN-DOC-01',
-      '/bands', '/latency', '/notes', '/console.css',
+      '/team', '/routing', '/bands', '/latency', '/notes', '/console.css',
     ]) {
       const get = await fetch(base + path);
       const head = await fetch(base + path, { method: 'HEAD' });
@@ -5803,8 +5865,8 @@ describe('the rail', () => {
     const rail = railOf(await (await fetch(base + '/bands')).text());
     expect(groupsOf(rail)).toEqual([
       ['Work', ['Needs a person']],
-      ['Knowledge', ['Knowledge base']],
-      ['Admin', ['Runs', 'Control bands', 'Partition latency', 'Design notes']],
+      ['Knowledge', ['Knowledge base', 'Team']],
+      ['Admin', ['Routing', 'Runs', 'Control bands', 'Partition latency', 'Design notes']],
     ]);
   });
 
@@ -8548,6 +8610,38 @@ describe('a value that could reorder the page around it', () => {
       draws: ['Your bank posts it in five minutes.'],
     },
     {
+      name: 'the team screen', path: '/team',
+      over: {
+        readTeam: async () => ({
+          today: { from: '2026-09-20T00:00:00.000Z', to: '2026-09-20T12:00:00.000Z',
+            auto: 1, person: 0, escalated: 0, inProgress: 0, noAnswer: 0 },
+          week: { from: '2026-09-13T12:00:00.000Z', to: '2026-09-20T12:00:00.000Z' },
+          supportMs: 60_000, previousSupportMs: null, supportPeople: 1, medianCaseMs: null, sentCases: 0,
+          oldestWaiting: { runId: RUN, createdAt: '2026-09-20T11:00:00.000Z', product: hostile('kestrel'), heldBy: hostile(HOLDER) },
+          people: [{
+            identity: hostile('reviewer-z'), products: [hostile('kestrel'), hostile('heron')], cases: 1,
+            supportMs: 60_000, documents: 0, holding: [hostile(RUN)],
+          }],
+          products: [{ product: hostile('kestrel'), auto: 1, person: 0, escalated: 0, inProgress: 0, noAnswer: 0 }],
+        }),
+      },
+      draws: ['kestrel', 'heron', HOLDER, 'reviewer-z'],
+    },
+    {
+      name: 'the routing screen', path: '/routing',
+      over: {
+        readRouting: async () => ({
+          products: [{
+            product: hostile('kestrel'),
+            intents: [{ id: hostile('refund_request'), risk: 'low', unreadable: 0, unreadableAtMost: false, gate: null }],
+            unlisted: 1,
+            channels: { lastArrival: null, waiting: 0, oldestWaiting: null, retried: 0 },
+          }],
+        }),
+      },
+      draws: ['kestrel', 'refund_request'],
+    },
+    {
       name: 'the payload', path: CASE,
       over: {
         readRun: caseOf({
@@ -8920,5 +9014,274 @@ describe('DEC-50: a reviewer writes the missing document from the case', () => {
     const res = await postPublish(base, FIELDS);
     expect(res.status).toBe(500);
     expect(await res.text()).toMatch(/Something failed while publishing, and it may or may not have committed\. The console log names it [0-9a-f]{8}\./);
+  });
+});
+
+describe('the team screen (issue #112)', () => {
+  const HOLDER_RUN = '00000000-0000-4000-8000-0000000000c1';
+  const TEAM: TeamReport = {
+    today: {
+      from: '2026-09-20T00:00:00.000Z', to: '2026-09-20T12:00:00.000Z',
+      auto: 1, person: 1, escalated: 1, inProgress: 1, noAnswer: 0,
+    },
+    week: { from: '2026-09-13T12:00:00.000Z', to: '2026-09-20T12:00:00.000Z' },
+    // 3h 40m, and 3h 58m the week before.
+    supportMs: 13_200_000, previousSupportMs: 14_280_000, supportPeople: 4,
+    medianCaseMs: 250_000, sentCases: 9,
+    oldestWaiting: { runId: RUN, createdAt: '2026-09-20T09:54:00.000Z', product: 'aurora', heldBy: null },
+    people: [
+      { identity: 'reviewer-a', products: ['aurora', 'ledger'], cases: 6, supportMs: 7_200_000, documents: 2, holding: [HOLDER_RUN] },
+      { identity: 'reviewer-b', products: [], cases: 0, supportMs: 0, documents: 0, holding: [] },
+    ],
+    products: [
+      { product: 'aurora', auto: 2, person: 1, escalated: 1, inProgress: 0, noAnswer: 0 },
+      { product: null, auto: 0, person: 0, escalated: 0, inProgress: 1, noAnswer: 1 },
+    ],
+  };
+  const teamPage = async (over: Partial<ConsoleDeps> = {}): Promise<string> => {
+    const base = await startGuarded(deps(over));
+    return (await fetch(base + '/team')).text();
+  };
+  const cards = (html: string): string[][] =>
+    [...html.matchAll(/<span class="lbl">([^<]*)<\/span><\/header><div class="body"><span class="(big|nofig)">([^<]*)<\/span>/g)]
+      .map((m) => [m[1]!, m[2]!, m[3]!]);
+
+  it('draws the four cards with the ledger\'s figures, and the share with its counts', async () => {
+    const html = await teamPage({ readTeam: async () => TEAM });
+    expect(cards(html)).toEqual([
+      // Two of the three that ended reached a person; the one in progress is apart.
+      ['reached a person', 'big', '66.7%'],
+      ['team time on support', 'big', '3h 40m'],
+      ['median case', 'big', '4m 10s'],
+      ['oldest waiting', 'big', '2h 06m'],
+    ]);
+    // A case parked for a person has not ended, and it counts as one that
+    // needed a person: the sentence names both.
+    expect(html).toContain('2 of 3 cases today that ended or wait for a person, from the ledger.'
+      + ' This is not the published containment figure. 1 case still in progress.');
+    expect(html).toContain('This week, across 4 people · down 18m on the week before.');
+    expect(html).toContain('From taking it to sending, over 9 cases sent this week.');
+    expect(html).toContain('Aurora · nobody holds it.');
+    const held = await teamPage({ readTeam: async () => ({
+      ...TEAM,
+      oldestWaiting: { ...TEAM.oldestWaiting!, createdAt: '2026-09-15T08:00:00.000Z', heldBy: 'reviewer-b' },
+    }) });
+    // Five days and four hours: past two days a wait reads in days.
+    expect(cards(held)[3]).toEqual(['oldest waiting', 'big', '5d 04h']);
+    expect(held).toContain('Aurora · held by reviewer-b.');
+    const close = await teamPage({ readTeam: async () => ({ ...TEAM, previousSupportMs: TEAM.supportMs! + 29_000 }) });
+    expect(close).toContain('within a minute of the week before');
+    const first = await teamPage({ readTeam: async () => ({ ...TEAM, previousSupportMs: null }) });
+    expect(first).toContain('no case was held the week before');
+  });
+
+  it('names each absence as a sentence, never a zero', async () => {
+    const html = await teamPage();
+    expect(cards(html)).toEqual([
+      ['reached a person', 'nofig', 'No case today ended or waits for a person.'],
+      ['team time on support', 'nofig', 'No case was taken this week.'],
+      ['median case', 'nofig', 'No case was sent from the console this week.'],
+      ['oldest waiting', 'nofig', 'Nothing waits for a person.'],
+    ]);
+    expect(html).toContain('The roster holds no active reviewer.');
+    // Each configured product has no case, so it draws a sentence and no bar.
+    expect(html.match(/No case this week\./g)).toHaveLength(2);
+    expect(html).not.toContain('class="stack3"');
+    expect(html).not.toMatch(/>0%|>0s<|>0\.0%/);
+  });
+
+  it('draws a row for each person, with a sentence where they did nothing', async () => {
+    const html = await teamPage({ readTeam: async () => TEAM });
+    expect(html).toContain('<div class="isubj">reviewer-a</div><div class="imeta">Aurora, Ledger</div>');
+    expect(html).toContain('6 cases');
+    expect(html).toContain('2h 00m');
+    expect(html).toContain('2 documents');
+    expect(html).toContain(`<a href="/case/${HOLDER_RUN}"`);
+    // The roster's products order the queue and grant nothing, so the row
+    // never says a product was granted.
+    expect(html).toContain('<div class="isubj">reviewer-b</div><div class="imeta">covers no product</div>');
+    expect(html).not.toContain('granted');
+    for (const words of ['took no case this week', 'no time held', 'no document this week', 'holds nothing']) {
+      expect(html, words).toContain(words);
+    }
+  });
+
+  it('isolates each product label on its own, so two right-to-left labels keep their order', async () => {
+    // Two right-to-left product names in one isolate would read in reverse.
+    const alef = String.fromCharCode(0x5d0);
+    const bet = String.fromCharCode(0x5d1);
+    const html = await teamPage({ readTeam: async () => ({
+      ...TEAM, people: [{ ...TEAM.people[0]!, products: [alef, bet] }],
+    }) });
+    expect(html).toContain(`<div class="imeta"><bdi>${alef}</bdi>, <bdi>${bet}</bdi></div>`);
+  });
+
+  it('splits each product into three parts, with a legend in words', async () => {
+    const html = await teamPage({ readTeam: async () => TEAM });
+    // Aurora: 2 automatic, 1 with a person, 1 escalated, of 4 over 7 days.
+    expect(html).toContain('0.6 / day');
+    expect(html).toContain('<i title="answered automatically" style="width:50.0%; background:var(--ok)"></i>'
+      + '<i title="needed a person" style="width:25.0%; background:var(--warn)"></i>'
+      + '<i title="escalated" style="width:25.0%; background:var(--crit)"></i>');
+    expect(html).toContain('50.0% auto');
+    // The bar's colours are not the only record of the split: its counts are words.
+    expect(html).toContain('<div class="imeta">2 answered automatically · 1 needed a person · 1 escalated</div>');
+    // No product: nothing ended, so no bar, and its open cases in words.
+    expect(html).toContain('No case ended this week.');
+    expect(html).toContain('1 case in progress · 1 case with no answer');
+    // Ledger is configured and had no case.
+    expect(html).toContain('<span class="isubj">Ledger</span><span class="mut">No case this week.</span>');
+    for (const words of ['answered automatically', 'needed a person', 'escalated']) {
+      expect(html).toContain(`</i>${words}</span>`);
+    }
+  });
+
+  it('names every figure unread when the read fails, and logs why', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => { logged.push(String(line)); });
+    try {
+      const html = await teamPage({ readTeam: async () => { throw new Error('the ledger went away'); } });
+      expect(cards(html).map((card) => card[2])).toEqual(['not read', 'not read', 'not read', 'not read']);
+      const entry = logged.map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find((line) => line['event'] === 'console_team_unread');
+      expect(entry?.['error']).toContain('the ledger went away');
+      expect(html).toContain(`The console log names the fault ${String(entry?.['tag'])}.`);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('puts Team in the rail beside the knowledge base, and Routing in Admin', async () => {
+    const html = await teamPage();
+    expect(html).toMatch(/Knowledge[\s\S]*href="\/knowledge"[\s\S]*href="\/team"[\s\S]*Admin[\s\S]*href="\/routing"[\s\S]*href="\/runs"/);
+  });
+});
+
+describe('the routing screen (issue #112)', () => {
+  const REPORT: RoutingReport = {
+    products: [
+      {
+        product: 'aurora',
+        intents: [
+          { id: 'billing_refund', risk: 'high', unreadable: 0, unreadableAtMost: false,
+            gate: { at: '2026-09-20T11:00:00.000Z', reason: 'high_risk', mayAct: false, threshold: 0.8, fitted: true } },
+          { id: 'shipping_status', risk: 'low', unreadable: 2, unreadableAtMost: false,
+            gate: { at: '2026-09-20T10:00:00.000Z', reason: 'agreement', mayAct: true, threshold: 0.6, fitted: false } },
+          { id: 'account_access', risk: 'medium', unreadable: 0, unreadableAtMost: false, gate: null },
+        ],
+        unlisted: 2,
+        channels: { lastArrival: '2026-09-20T11:30:00.000Z', waiting: 3, oldestWaiting: '2026-09-20T11:00:00.000Z', retried: 1 },
+      },
+      {
+        product: 'ledger',
+        intents: [{ id: 'billing_refund', risk: 'high', unreadable: 0, unreadableAtMost: false,
+          gate: { at: '2026-09-20T09:00:00.000Z', reason: 'customer_visible', mayAct: false, threshold: 0.6, fitted: false } }],
+        unlisted: 1,
+        channels: { lastArrival: null, waiting: 0, oldestWaiting: null, retried: 0 },
+      },
+      {
+        product: null,
+        intents: [{ id: 'billing_refund', risk: 'high', unreadable: 0, unreadableAtMost: false, gate: null }],
+        unlisted: 0,
+        channels: { lastArrival: null, waiting: 0, oldestWaiting: null, retried: 0 },
+      },
+    ],
+  };
+  const routingPage = async (query = '', over: Partial<ConsoleDeps> = {}): Promise<string> => {
+    const base = await startGuarded(deps({ readRouting: async () => REPORT, ...over }));
+    return (await fetch(base + '/routing' + query)).text();
+  };
+
+  it('opens with a fixed customer-reply row nobody can operate, and says why', async () => {
+    const html = await routingPage();
+    const first = html.indexOf('<tr class="fixed">');
+    expect(first).toBeGreaterThan(html.indexOf('<tbody>'));
+    expect(first).toBeLessThan(html.indexOf('billing_refund'));
+    expect(html).toContain('<td class="mono">any reply to a customer</td>');
+    // A switch takes its name from its label; a description is not a name.
+    expect(html).toContain('role="switch" aria-checked="false" aria-disabled="true"'
+      + ' aria-label="Send a customer reply without a person"');
+    expect(html).toContain('never — DEC-12');
+    expect(html).toContain('A customer reply always waits for a person. No setting changes this.');
+    // The screen writes nothing: no form of its own, and no control that submits.
+    expect(html).not.toContain('action="/routing');
+    expect(html).not.toMatch(/<input[^>]*name="(threshold|toggle|product)"/);
+  });
+
+  it('says what each intent may do, from its latest gate row', async () => {
+    const html = await routingPage();
+    expect(html).toContain('<span style="color:var(--hot)">no</span> · a high-risk intent (DEC-13)');
+    expect(html).toContain('<span style="color:var(--ok)">yes</span> · when both gates pass');
+    expect(html).toContain('not recorded: no run of this product reached the gate');
+    // A rule stopped the high-risk run before any gate was compared.
+    expect(html).toContain('0.80</span></span><div class="imeta">fitted for this intent · not compared: a rule decided first</div>');
+    expect(html).toContain('0.60</span></span><div class="imeta">the global threshold</div>');
+    expect(html).toContain('2 newer gate rows could not be read.');
+    expect(html).toContain('3 intents · 1 high risk');
+  });
+
+  it('does not say no run reached the gate when every gate row is unreadable', async () => {
+    const unread = (unreadable: number): RoutingReport => ({
+      products: [{ ...REPORT.products[0]!, intents: [{ id: 'account_access', risk: 'medium', unreadable, unreadableAtMost: false, gate: null }] }],
+    });
+    const three = await routingPage('', { readRouting: async () => unread(3) });
+    expect(three).toContain('not read: 3 gate rows were recorded, and none could be read');
+    expect(three).not.toContain('no run of this product reached the gate');
+    expect(three).not.toContain('newer gate row');
+    const one = await routingPage('', { readRouting: async () => unread(1) });
+    expect(one).toContain('not read: 1 gate row was recorded, and it could not be read');
+  });
+
+  it('counts the intents the gate recorded that the taxonomy no longer lists', async () => {
+    expect(await routingPage()).toContain('2 intents the gate recorded for Aurora are not in the taxonomy, so no row shows them.');
+    expect(await routingPage('?product=ledger')).toContain('1 intent the gate recorded for Ledger is not in the taxonomy, so no row shows it.');
+    expect(await routingPage('?product=')).not.toContain('not in the taxonomy');
+  });
+
+  it('says a merged count of unread rows is a bound, not a count', async () => {
+    const bound: RoutingReport = {
+      products: [{ ...REPORT.products[0]!, intents: [{
+        id: 'billing_refund', risk: 'high', unreadable: 2, unreadableAtMost: true,
+        gate: { at: '2026-09-20T11:00:00.000Z', reason: 'agreement', mayAct: true, threshold: 0.6, fitted: false },
+      }] }],
+    };
+    const html = await routingPage('', { readRouting: async () => bound });
+    expect(html).toContain('Up to 2 newer gate rows could not be read.');
+    expect(html).not.toContain('>2 newer gate rows');
+  });
+
+  it('opens the tab the address names, and the first one otherwise', async () => {
+    expect(await routingPage('?product=ledger')).toContain('a reply to a customer (DEC-12)');
+    expect(await routingPage('?product=ledger')).toContain('aria-current="page" href="/routing?product=ledger"');
+    expect(await routingPage('?product=')).toContain('aria-current="page" href="/routing?product="');
+    expect(await routingPage('?product=unmapped')).toContain('aria-current="page" href="/routing?product=aurora"');
+  });
+
+  it('shows only the channel signals the ledger records, and names the rest absent', async () => {
+    const aurora = await routingPage();
+    expect(aurora).toContain('The ledger records no intake channel, so no channel\'s health is shown.');
+    expect(aurora).toContain('3 messages, the oldest since');
+    expect(aurora).toContain('1 waiting message failed at least once');
+    const ledger = await routingPage('?product=ledger');
+    expect(ledger).toContain('Nothing for Ledger has arrived.');
+    expect(ledger).toContain('No message waits.');
+    expect(ledger).toContain('No waiting message has failed.');
+    expect(ledger).toContain('Taking a case holds it for 20 minutes');
+    const odd = await routingPage('', { holdLapseMs: 90_000 });
+    expect(odd).toContain('Taking a case holds it for 1m 30s');
+  });
+
+  it('names the figures unread when the read fails, and logs why', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => { logged.push(String(line)); });
+    try {
+      const html = await routingPage('', { readRouting: async () => { throw new Error('no ledger'); } });
+      const entry = logged.map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find((line) => line['event'] === 'console_routing_unread');
+      expect(html).toContain(`The routing figures were not read. The console log names the fault ${String(entry?.['tag'])}.`);
+      expect(html).not.toContain('any reply to a customer');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

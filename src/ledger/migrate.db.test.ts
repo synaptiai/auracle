@@ -529,6 +529,131 @@ describe('migrate', () => {
     expect(comment.rows[0]?.description).toContain('DEC-50');
   });
 
+  // Issue #112: the screens read the hold history by run and by time, and
+  // each product's newest arrival, through indexes rather than full scans.
+  it('indexes what the team and routing screens read (db/036, db/038)', async () => {
+    await migrate(client);
+    const indexes = await client.query<{ indexname: string; indexdef: string }>(
+      `SELECT indexname, indexdef FROM pg_indexes
+        WHERE schemaname = 'migrate_test'
+          AND indexname IN ('case_hold_event_run_idx', 'case_hold_event_at_idx', 'run_product_arrival_idx',
+                            'run_no_product_arrival_idx')
+        ORDER BY indexname`,
+    );
+    expect(indexes.rows.map((row) => row.indexname)).toEqual(
+      ['case_hold_event_at_idx', 'case_hold_event_run_idx', 'run_no_product_arrival_idx', 'run_product_arrival_idx']);
+    expect(indexes.rows[0]!.indexdef).toContain('(at)');
+    expect(indexes.rows[1]!.indexdef).toContain('(run_id, event_id)');
+    expect(indexes.rows[2]!.indexdef).toContain('WHERE (product IS NULL)');
+    expect(indexes.rows[3]!.indexdef).toContain('(product, COALESCE(enqueued_at, created_at))');
+  });
+
+  // Issue #112, DEC-41, DEC-47: the gate's latest record for each product and
+  // intent. The backfill reads the journal once and keeps, for each pair, the
+  // newest gate row the gate's own shape describes, counting the newer ones it
+  // could not read. It keys an intent as the classifier wrote it, which is the
+  // key the gate writes, and reads only runs whose move to gated committed.
+  it('fills the latest gate of each product and intent from the journal (db/037)', async () => {
+    await migrate(client);
+    await client.query('DROP TABLE gate_latest');
+    await client.query('DELETE FROM schema_version WHERE version >= 37');
+    const at = (minute: number): string => new Date(Date.UTC(2026, 8, 14, 12, minute)).toISOString();
+    const seed = { agreement: 0.6, groundednessBlock: 0.7, groundednessReview: 0.8 };
+    const gated = async (
+      product: string | null, intentId: string, minute: number, gate: unknown, state = 'resolved',
+    ): Promise<string> => {
+      const runId = await seedRun();
+      await client.query('UPDATE run SET product = $2, created_at = $3, state = $4 WHERE run_id = $1',
+        [runId, product, at(minute), state]);
+      await client.query(
+        `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
+         VALUES ($1, 'classify', 'done', $2, 'p', 'm', 0), ($1, 'gate', 'done', $3, 'p', 'm', 0)`,
+        [runId, JSON.stringify({ intentId }), JSON.stringify(gate)],
+      );
+      return runId;
+    };
+    // aurora billing_refund: a readable row, then a newer one the shape
+    // refuses. A row under another spelling is its own key: the reader merges
+    // spellings as the policy engine keys them.
+    await gated('aurora', 'billing_refund', 1, { reason: 'high_risk', thresholds: seed });
+    const spelled = await gated('aurora', ' Billing_Refund ', 2, { reason: 'auto', thresholds: { agreement: 'high' } });
+    const newest = await gated('aurora', 'billing_refund', 3, { reason: 'a_reason_the_gate_never_writes', thresholds: seed });
+    // A newer run whose move to gated never committed, such as one the fence
+    // refused: its gate row is no record.
+    await gated('aurora', 'billing_refund', 8, { reason: 'auto', thresholds: seed }, 'composed');
+    // aurora account_access: nothing readable at all.
+    const unread = await gated('aurora', 'account_access', 4, { reason: 'auto', thresholds: null });
+    // No product, shipping_status: the newest of two readable rows. A value
+    // too small for a double is no threshold, so the older row is kept.
+    const plain = await gated(null, 'shipping_status', 5, { reason: 'auto', thresholds: seed });
+    await gated(null, 'shipping_status', 6, { reason: 'auto', thresholds: { ...seed, agreement: 0.5 } });
+    const tiny = await gated(null, 'shipping_status', 7, { reason: 'auto', thresholds: seed });
+    await client.query(
+      `UPDATE step_journal SET result = jsonb_set(result, '{thresholds,agreement}', '1e-400'::jsonb)
+        WHERE run_id = $1 AND step_id = 'gate'`,
+      [tiny],
+    );
+    // A gate that did not finish is no record.
+    const failed = await seedRun();
+    await client.query('UPDATE run SET product = $2, created_at = $3 WHERE run_id = $1', [failed, 'aurora', at(9)]);
+    await client.query(
+      `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
+       VALUES ($1, 'classify', 'done', '{"intentId":"billing_refund"}', 'p', 'm', 0),
+              ($1, 'gate', 'failed', '{"error":"judge unreadable"}', 'p', 'm', 0)`,
+      [failed],
+    );
+
+    await migrate(client);
+    const { rows } = await client.query(
+      `SELECT product, intent_id, run_id, run_created_at, gate_at, reason, thresholds ->> 'agreement' AS agreement,
+              unreadable
+         FROM gate_latest ORDER BY product NULLS LAST, intent_id COLLATE "C"`,
+    );
+    expect(rows).toEqual([
+      { product: 'aurora', intent_id: ' Billing_Refund ', run_id: spelled, run_created_at: new Date(at(2)),
+        gate_at: null, reason: null, agreement: null, unreadable: 1 },
+      { product: 'aurora', intent_id: 'account_access', run_id: unread, run_created_at: new Date(at(4)),
+        gate_at: null, reason: null, agreement: null, unreadable: 1 },
+      { product: 'aurora', intent_id: 'billing_refund', run_id: newest, run_created_at: new Date(at(3)),
+        gate_at: new Date(at(1)), reason: 'high_risk', agreement: '0.6', unreadable: 1 },
+      { product: null, intent_id: 'shipping_status', run_id: tiny, run_created_at: new Date(at(7)),
+        gate_at: new Date(at(6)), reason: 'auto', agreement: '0.5', unreadable: 1 },
+    ]);
+
+    // Run again over a table that already holds rows, as a hand run that
+    // stopped halfway leaves it, or as gates write it once it exists: a newer
+    // record stays, and an older one is replaced.
+    await client.query(
+      `UPDATE gate_latest SET run_created_at = $1, run_id = gen_random_uuid(), reason = '"agreement"'
+        WHERE product IS NULL AND intent_id = 'shipping_status'`,
+      [at(30)],
+    );
+    await client.query(
+      `UPDATE gate_latest SET run_created_at = $1, reason = '"agreement"' WHERE intent_id = 'billing_refund'`,
+      [at(0)],
+    );
+    await client.query('DELETE FROM schema_version WHERE version >= 37');
+    await migrate(client);
+    const again = await client.query(
+      `SELECT intent_id, reason FROM gate_latest WHERE intent_id IN ('shipping_status', 'billing_refund') ORDER BY intent_id`,
+    );
+    expect(again.rows).toEqual([
+      { intent_id: 'billing_refund', reason: 'high_risk' },
+      { intent_id: 'shipping_status', reason: 'agreement' },
+    ]);
+
+    // One record per product and intent, no product included.
+    await expect(client.query(
+      `INSERT INTO gate_latest (product, intent_id, run_id, run_created_at) VALUES (NULL, 'shipping_status', $1, now())`,
+      [plain],
+    )).rejects.toThrow(/gate_latest_pair/);
+    // A record with no readable gate holds no reason or thresholds.
+    await expect(client.query(
+      `INSERT INTO gate_latest (product, intent_id, run_id, run_created_at, reason) VALUES ('kestrel', 'x', $1, now(), '"auto"')`,
+      [plain],
+    )).rejects.toThrow(/gate_latest_record/);
+  });
+
   // DEC-47: the product of the channel a message arrived on, recorded at
   // arrival and copied onto the run. Nullable on both tables, because a
   // channel the map does not name is a real answer and not a gap.
@@ -1003,6 +1128,52 @@ describe('migrate', () => {
     expect(names).toContain('run_conversation_idx');
   });
 
+  // A version the ledger recorded under another file came from another
+  // history of the directory. Skipping it would leave that file's schema
+  // missing with no error, and every writer that needs it would then fail.
+  it('refuses a recorded version whose file has another name, and applies nothing', async () => {
+    const dir = await tempMigrations([
+      ['010_first.sql', 'CREATE TABLE first_shape (id integer)'],
+    ]);
+    await migrate(client, dir);
+    await rm(path.join(dir, '010_first.sql'));
+    await writeFile(path.join(dir, '010_second.sql'), 'CREATE TABLE second_shape (id integer)');
+    await writeFile(path.join(dir, '011_later.sql'), 'CREATE TABLE later_shape (id integer)');
+    await expect(migrate(client, dir)).rejects.toThrow(
+      'version 10 is recorded as 010_first.sql, but the directory holds 010_second.sql',
+    );
+    // The refusal names the repair, and following it lets the next file apply.
+    await expect(migrate(client, dir)).rejects.toThrow(
+      "UPDATE schema_version SET filename = '010_second.sql' WHERE version = 10",
+    );
+    await client.query("UPDATE schema_version SET filename = '010_second.sql' WHERE version = 10");
+    expect((await migrate(client, dir)).applied.map((f) => f.filename)).toEqual(['011_later.sql']);
+    await client.query("DELETE FROM schema_version WHERE version >= 10");
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  // A failed ROLLBACK on a broken connection would otherwise replace the
+  // file's own failure, which names the lock or the timeout an operator needs.
+  it('reports the file\'s own failure when its rollback fails too', async () => {
+    const dir = await tempMigrations([['010_fails.sql', 'SELECT 1']]);
+    let inFile = false;
+    const breaking = {
+      query: async (sql: string, values?: unknown[]) => {
+        if (sql === 'SELECT 1' && inFile) throw new Error('canceling statement due to lock timeout');
+        if (sql === 'BEGIN') inFile = true;
+        if (sql === 'ROLLBACK') throw new Error('Connection terminated unexpectedly');
+        return client.query(sql, values);
+      },
+    } as unknown as PoolClient;
+    const failed = await migrate(breaking, dir).then(() => null, (error: unknown) => error as Error);
+    expect(failed?.message).toContain('canceling statement due to lock timeout');
+    // Named once: a cause printed beside the message would repeat it.
+    expect(failed?.message.split('canceling statement due to lock timeout')).toHaveLength(2);
+    expect(failed?.cause).toBeUndefined();
+    await client.query('ROLLBACK').catch(() => undefined);
+    await rm(dir, { recursive: true, force: true });
+  });
+
   it('refuses to apply a file older than the highest recorded version', async () => {
     const dir = await tempMigrations([
       ['010_late.sql', 'CREATE TABLE late (id integer)'],
@@ -1050,6 +1221,14 @@ describe('discoverMigrations', () => {
     const badName = await tempMigrations([['nope.sql', 'SELECT 1']]);
     await expect(discoverMigrations(badName)).rejects.toThrow(/NNN_name\.sql/);
     await rm(badName, { recursive: true, force: true });
+
+    // A name the runner quotes into the repair it suggests takes lower-case
+    // letters, digits and underscores only, so a quote cannot end the string.
+    for (const name of ["001_x'; DROP TABLE run; --.sql", '001_Upper.sql', '001_a-b.sql']) {
+      const odd = await tempMigrations([[name, 'SELECT 1']]);
+      await expect(discoverMigrations(odd), name).rejects.toThrow(/NNN_name\.sql/);
+      await rm(odd, { recursive: true, force: true });
+    }
 
     const dupe = await tempMigrations([
       ['001_a.sql', 'SELECT 1'],

@@ -239,6 +239,30 @@ tbody tr:hover { background:var(--panel); }
 .pv { font-family:var(--mono); font-size:11px; text-align:right; }
 .hol { display:flex; align-items:center; gap:7px; justify-content:flex-end; flex-wrap:wrap; }
 
+/* The team screen (issue #112): four narrow cards, a row for each person, and
+ * a three-part bar for each product. An absence sits where the figure goes. */
+/* 148px, so the four sit in one row at 907px wide, beside the rail. */
+.grid.team { grid-template-columns:repeat(auto-fit, minmax(148px, 1fr)); }
+.nofig { font-size:13px; color:var(--dim); line-height:1.35; }
+.item.person, .item.prod { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; }
+.person .pwho, .prod .isubj { flex:1 1 240px; min-width:0; }
+.person .figs { display:flex; flex-wrap:wrap; align-items:center; gap:6px 18px; flex:none; font-size:12px; }
+.prod .isubj { flex:0 1 154px; }
+.stack3 { display:flex; flex:1 1 240px; min-width:120px; height:8px; border-radius:4px; overflow:hidden;
+  background:var(--rule2); }
+.stack3 i { display:block; height:100%; }
+.sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-top:2px; flex:none; }
+
+/* The routing screen (issue #112): product tabs, then each intent's rules. */
+.tabs { display:flex; flex-wrap:wrap; gap:6px; }
+.tab { padding:6px 12px; border:1px solid var(--rule2); border-radius:4px; font-size:12px; color:var(--mut); }
+.tab.on { color:var(--ink); border-color:var(--accent); }
+table.routing td { vertical-align:top; }
+tr.fixed td { background:var(--panel2); }
+.toggle { display:inline-block; width:26px; height:14px; border-radius:7px; background:var(--rule2);
+  position:relative; vertical-align:middle; opacity:.6; cursor:not-allowed; }
+.toggle i { position:absolute; top:2px; left:2px; width:10px; height:10px; border-radius:50%; background:var(--dim); }
+
 /* --- the reading register ------------------------------------------------
  *
  * A third face, and one rule decides which is which. Monospace is what the

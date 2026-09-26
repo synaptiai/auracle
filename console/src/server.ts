@@ -40,6 +40,8 @@ import {
   renderConversation,
   renderDocument,
   renderKnowledge,
+  renderRouting,
+  renderTeam,
   renderRunDetail,
   renderConfirm,
   renderConfirmResult,
@@ -60,7 +62,7 @@ import type { ConfirmCase, OutcomeRun } from './surfaces.js';
 import type {
   BandRow, CaseGapRead, CaseHoldRead, CaseRerunsRead, CaseSendHoldRead, ComposerFields, CopyRead,
   CustomerRead, DocumentPage,
-  KnowledgeRead, LatencyRow,
+  KnowledgeRead, LatencyRow, RoutingRead, TeamRead,
   QueueHold, QueueHoldsRead, QueueTodayRead, QueueTodayView,
   RunDetail, RunRow, RunView, Shell,
   ThreadView, Theme,
@@ -73,7 +75,7 @@ import type { ReviewerFor } from './reviewer.js';
 import { copyHoldsText, replyDigest } from 'auracle/ledger-read';
 import type {
   ApprovalHold, CaseGap, CaseRerun, CloseOutcome, HandoverOutcome, Hold, KnowledgeReport, PublishOutcome,
-  ReleaseOutcome,
+  ReleaseOutcome, RoutingReport, TeamReport,
   RewriteOutcome,
   SendBackOutcome, SnoozeOutcome, TakeOutcome,
   UndoOutcome,
@@ -121,6 +123,19 @@ export interface ConsoleDeps {
    * reached a person with a draft or an abstention.
    */
   readonly readCaseGap: (runId: string) => Promise<CaseGap | null>;
+  /**
+   * Issue #112: the team screen's figures, from one snapshot of the ledger.
+   * Time on support is the hold history DEC-46 records.
+   */
+  readonly readTeam: () => Promise<TeamReport>;
+  /**
+   * Issue #112: what each product may do without a person, from the gate
+   * record the gate step keeps for each product and intent, for the
+   * taxonomy's intents.
+   */
+  readonly readRouting: () => Promise<RoutingReport>;
+  /** DEC-46: how long a take holds a case, so the routing screen can say it. */
+  readonly holdLapseMs: number;
   /**
    * DEC-50: the documents published from this run, each with what became of
    * the new attempt it asked for, read by the verdict the consumer acts on.
@@ -1083,7 +1098,7 @@ async function route(
   // drops the body of a HEAD answer, so every read route serves both. The
   // theme route stays GET alone, because it writes a cookie.
   const reads = req.method === 'GET' || req.method === 'HEAD';
-  const surfaces = ['/', '/runs', '/knowledge', '/bands', '/latency', '/notes'];
+  const surfaces = ['/', '/runs', '/knowledge', '/team', '/routing', '/bands', '/latency', '/notes'];
   const shell = (at: string, approvals: number | null = null): Shell =>
     shellFor(options, theme, at, approvals, reviewer);
 
@@ -1502,6 +1517,41 @@ async function route(
       'Knowledge base',
       renderKnowledge(knowledge, deps.productLabels),
       shell('/knowledge'),
+    ));
+    return;
+  }
+
+  if (reads && path === '/team') {
+    // As on the knowledge screen: a fault draws every figure named as not
+    // read, with the tag of the log line that says why.
+    let team: TeamRead;
+    try {
+      team = { report: await deps.readTeam() };
+    } catch (error) {
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({ event: 'console_team_unread', tag, error: describeFault(error) }));
+      team = { unreadTag: tag };
+    }
+    send(res, 200, page('Team', renderTeam(team, deps.productLabels), shell('/team')));
+    return;
+  }
+
+  if (reads && path === '/routing') {
+    let routing: RoutingRead;
+    try {
+      routing = { report: await deps.readRouting() };
+    } catch (error) {
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({ event: 'console_routing_unread', tag, error: describeFault(error) }));
+      routing = { unreadTag: tag };
+    }
+    // The tab: a product id, the empty value for the channels of no product,
+    // or none for the first tab.
+    const product = url.searchParams.get('product');
+    send(res, 200, page(
+      'Routing',
+      renderRouting(routing, deps.productLabels, product === '' ? null : product ?? undefined, deps.holdLapseMs),
+      shell('/routing'),
     ));
     return;
   }

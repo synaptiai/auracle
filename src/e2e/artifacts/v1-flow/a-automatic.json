@@ -124,6 +124,20 @@
       }
     },
     "ledger": {
+      "gateRecord": {
+        "gate_at": "<time>",
+        "intent_id": "password_reset",
+        "product": null,
+        "reason": "auto",
+        "run_created_at": "<time>",
+        "run_id": "<uuid:1>",
+        "thresholds": {
+          "agreement": 0.6,
+          "groundednessBlock": 0.7,
+          "groundednessReview": 0.8
+        },
+        "unreadable": 0
+      },
       "journal": [
         {
           "cost_micros": 90000,

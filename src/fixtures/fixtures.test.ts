@@ -19,7 +19,7 @@ import { assertHalvesDisjoint, claimDigest, halfDigest, identityOf } from './dig
 import {
   conversationHistories, fixturesDir, loadDocuments, loadGoldHalf, loadGoldSet, loadTaxonomy, readHalfIdentity,
 } from './load.js';
-import { assertIntentsKnown, validateGoldHalf, validateTicketFields } from './validate.js';
+import { assertIntentsKnown, validateGoldHalf, validateTaxonomy, validateTicketFields } from './validate.js';
 import type { GoldFile, GoldTicket } from '../domain/gold-types.js';
 
 const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}/;
@@ -40,6 +40,20 @@ describe('taxonomy', () => {
 
   it('uses all three risk tiers', () => {
     expect(new Set(taxonomy.intents.map((i) => i.risk_tier)).size).toBe(3);
+  });
+
+  // The classifier returns a label trimmed and lower-cased, and the gate looks
+  // the intent up by it. An id in another form passes nowhere: every run of it
+  // would fault at the gate.
+  it('refuses an id that is not in the form the classifier returns', () => {
+    const shaped = (id: string) => ({
+      version: 1, intent_cap: INTENT_CAP,
+      intents: [{ id, label: 'An intent', risk_tier: 'low' }, { id: 'other', label: 'Everything else', risk_tier: 'low' }],
+    });
+    for (const id of ['Refund-Request', ' refund-request', 'refund-request\t']) {
+      expect(() => validateTaxonomy(shaped(id)), JSON.stringify(id)).toThrow(/trimmed and lower-cased/);
+    }
+    expect(() => validateTaxonomy(shaped('refund-request'))).not.toThrow();
   });
 });
 

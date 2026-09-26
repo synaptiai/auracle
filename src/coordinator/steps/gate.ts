@@ -10,6 +10,7 @@ import { UnreadableAnswerError } from '../../models/provider.js';
 import { COMPENSATION_ACTION_CLASS } from '../../adapters/types.js';
 import { CoordinatorFaultError } from '../fault.js';
 import { SEED_THRESHOLDS, evaluatePolicyDetailed } from '../../policy/policy.js';
+import { recordGateLatestOrSkip } from '../../routing/latest.js';
 import {
   CONTINUE,
   journalFinish,
@@ -150,7 +151,16 @@ export async function gate(ctx: RunContext): Promise<StepResult> {
     thresholds: gateThresholds,
   });
   ctx.state.decision = decision;
-  const gated = await transitionOrStop(ctx, 'gated');
+  // Issue #112: the latest gate of this product and intent, for the routing
+  // screen. In the transition's own commit, so a consumer the fence refused
+  // records nothing (DEC-28). A write that cannot finish is skipped and
+  // logged, and never stops the run.
+  const gated = await transitionOrStop(ctx, 'gated', undefined, (client) => recordGateLatestOrSkip(client, {
+    runId: ctx.runId,
+    intentId: classification.intentId,
+    reason: outcome.reason,
+    thresholds: gateThresholds,
+  }));
   if (gated !== null) return { kind: 'stop', outcome: gated };
 
   // DEC-07 and DEC-12: the verdict decides the branch, and the sequencer

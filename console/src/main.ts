@@ -38,7 +38,7 @@ import { requireHoldLapse } from './hold-lapse.js';
 import { requireSendHold } from './send-hold.js';
 import { reviewerResolver } from './reviewer.js';
 import { readDays } from 'auracle/ledger-read';
-import { evaluateMetric } from 'auracle/domain';
+import { evaluateMetric, loadTaxonomy } from 'auracle/domain';
 import { lastCompleteDay } from 'auracle/format';
 import { LOOKBACK_DAYS, METRICS } from 'auracle/domain';
 import { humanValue } from 'auracle/format';
@@ -47,6 +47,7 @@ import { LEDGER_STATES, listEscalations, listRuns, readQueueToday, readRun } fro
 import { readRunJournal } from 'auracle/ledger-read';
 import { conversationOfRun, readConversation, turnAnsweredBy } from 'auracle/ledger-read';
 import { readCaseGap, readDocument, readKnowledge } from 'auracle/ledger-read';
+import { readRouting, readTeam } from 'auracle/ledger-read';
 import { guardLedgerPool, logLedgerPoolError } from 'auracle/ledger-read';
 import {
   closeRun, publishDocument, readApprovalHold, readCaseReruns, rewriteReply, saveReply, sendBackRun, snoozeRun,
@@ -66,7 +67,7 @@ import { developmentReviewer } from './dev-reviewer.js';
 import { readBackFor } from './read-back.js';
 import { SHUTDOWN_GRACE_MS } from './shutdown.js';
 import { CONSOLE_CSS } from './css.js';
-import { givingUp, knowledgeReads } from './shared-read.js';
+import { givingUp, knowledgeReads, sharedRead } from './shared-read.js';
 import { publishFor } from './publish.js';
 import { allowedHosts, identityHeader } from './hosts.js';
 import { ledgerName } from './ledger-name.js';
@@ -214,9 +215,12 @@ const QUEUE_TODAY_GIVE_UP_MS = 6_000;
  */
 const KNOWLEDGE_GIVE_UP_MS = 6_000;
 
-/** Logs a knowledge read that failed after its page gave up on it. */
-function lateFault(read: string, error: unknown): void {
-  console.error(logLine({ event: 'console_read_late_fault', read, error: describeFault(error) }));
+/**
+ * Logs a read that failed after its page gave up on it. `wait` is the one the
+ * page's own unread line names, so the tag on the page leads here.
+ */
+function lateFault(read: string, error: unknown, wait: string): void {
+  console.error(logLine({ event: 'console_read_late_fault', read, wait, error: describeFault(error) }));
 }
 
 /**
@@ -316,6 +320,10 @@ async function main(): Promise<void> {
   const catalogue = productCatalogueFromEnv();
   // DEC-46: the period a case counts as held after its last take.
   const lapseMs = requireHoldLapse(process.env['CONSOLE_HOLD_LAPSE_MS']);
+  // Issue #112: the intents a person curated, with their risk tiers, for the
+  // routing screen. Read and checked here, as the consumer checks them, so a
+  // taxonomy the check refuses stops the console before it opens the pool.
+  const taxonomy = loadTaxonomy();
   // DEC-51: the period a batch's sends wait before the relay may post them.
   // Read here, so a value the console refuses stops it before it opens the
   // pool rather than on the first confirm.
@@ -566,8 +574,27 @@ async function main(): Promise<void> {
       async (runId: string) => readCaseReruns(pool, runId, readBack?.supportsLedgerReply ?? false),
       KNOWLEDGE_GIVE_UP_MS,
       'readCaseReruns',
-      (error) => lateFault('readCaseReruns', error),
+      (error, wait) => lateFault('readCaseReruns', error, wait),
     ),
+    // Issue #112: the team and routing screens. Each page gives up on its read
+    // at the knowledge screen's limit, and reviewers loading a screen together
+    // share one read.
+    readTeam: givingUp(
+      sharedRead(async () => readTeam(pool, { lapseMs })),
+      KNOWLEDGE_GIVE_UP_MS,
+      'readTeam',
+      (error, wait) => lateFault('readTeam', error, wait),
+    ),
+    readRouting: givingUp(
+      sharedRead(async () => readRouting(pool, {
+        intents: taxonomy.intents,
+        products: catalogue.products.map((product) => product.id),
+      })),
+      KNOWLEDGE_GIVE_UP_MS,
+      'readRouting',
+      (error, wait) => lateFault('readRouting', error, wait),
+    ),
+    holdLapseMs: lapseMs,
     // DEC-50: a document a reviewer writes from a case, for the catalogue's
     // products, on the same declaration the send-back reads.
     publish: publishFor({

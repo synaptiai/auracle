@@ -83,7 +83,10 @@ const CAPABILITIES = {
 } satisfies AdapterCapabilities;
 
 const DIM = 1536;
-const VEC = Array.from({ length: DIM }, (_, i) => Math.sin(i + 1) / DIM);
+// Integer arithmetic and one division, which IEEE 754 rounds the same way on
+// every platform. Math.sin need not: its last bits differ between CI's Linux
+// runners and a Mac, so the artifact's digest of this vector differed too.
+const VEC = Array.from({ length: DIM }, (_, i) => ((((i + 1) * 7919) % 2003) - 1001) / (1001 * DIM));
 
 const TAXONOMY = {
   intents: [

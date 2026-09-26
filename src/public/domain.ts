@@ -11,3 +11,7 @@ export { COMPENSATION_ACTION_CLASS, CUSTOMER_REPLY_ACTION_CLASS } from '../adapt
 // The name an approval records, so a surface names the same person the
 // ledger would (DEC-42).
 export { approverFrom, UNATTRIBUTED } from '../approval/approver.js';
+// The intents a person curated, with the risk tier a person set (DEC-13), so
+// a surface lists the intents the consumer judges.
+export { loadTaxonomy } from '../fixtures/load.js';
+export type { Taxonomy } from '../domain/gold-types.js';

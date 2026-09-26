@@ -158,6 +158,15 @@ Earlier versions kept that text only until the queue row was acked.
 
 It also holds the body of each document a claim cited. It holds the title, owner and review date of every document the run retrieved. A run that parks holds the draft a second time, under the park step. A closed case holds the reason its reviewer gave. The name beside it is an operator's and not a customer's. An erasure path that clears the `turn` columns alone leaves all of this behind.
 
+**The console shows each reviewer's figures to every reviewer (DEC-45, DEC-46).**
+The team screen has a row for each active reviewer. The row gives the cases
+they held and their time on support over seven days. It also gives the
+documents they wrote and the cases they hold now.
+
+The console has no roles, so every reviewer on the roster sees every row.
+These are figures about named members of your staff. You are the data
+controller, so you decide whether your staff see them.
+
 This repository ships no retention job and no purge job.
 You are the data controller, so you own the retention period and the erasure
 path. Plan both before you carry real traffic.

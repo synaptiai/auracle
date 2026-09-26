@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS schema_version (
   applied_at timestamptz NOT NULL DEFAULT now()
 )`;
 
-const FILE_PATTERN = /^(\d+)_.+\.sql$/;
+// Lower-case letters, digits and underscores only. The runner quotes a name
+// into the repair it suggests, and a quote in the name would end the string.
+const FILE_PATTERN = /^(\d+)_[a-z0-9_]+\.sql$/;
 
 export interface MigrationFile {
   version: number;
@@ -53,7 +55,8 @@ export async function discoverMigrations(
     const match = FILE_PATTERN.exec(filename);
     if (!match || !match[1]) {
       throw new Error(
-        `${filename} does not match NNN_name.sql; rename it before migrating`,
+        `${filename} does not match NNN_name.sql, with a name of lower-case letters, digits and`
+          + ' underscores; rename it before migrating',
       );
     }
     return { version: Number(match[1]), filename };
@@ -83,10 +86,26 @@ export async function migrate(
 ): Promise<MigrateResult> {
   await client.query(VERSION_TABLE_SQL);
   const files = await discoverMigrations(dbDir);
-  const { rows } = await client.query<{ version: number }>(
-    'SELECT version FROM schema_version',
+  const { rows } = await client.query<{ version: number; filename: string }>(
+    'SELECT version, filename FROM schema_version',
   );
   const appliedVersions = new Set(rows.map((row) => row.version));
+  // A version recorded under another file came from another history of this
+  // directory: a number reused on a branch, or a file renamed. Skipping it
+  // would leave this file's schema missing with no error, so every writer
+  // that needs it would fail later. Refused before anything is applied.
+  const recorded = new Map(rows.map((row) => [row.version, row.filename]));
+  for (const file of files) {
+    const name = recorded.get(file.version);
+    if (name !== undefined && name !== file.filename) {
+      throw new Error(
+        `version ${file.version} is recorded as ${name}, but the directory holds ${file.filename}. `
+          + 'Either a row inserted by hand names the file wrongly, or the ledger was migrated from another '
+          + `history of db/. Once the ledger holds what ${file.filename} creates, record it with: `
+          + `UPDATE schema_version SET filename = '${file.filename}' WHERE version = ${file.version}`,
+      );
+    }
+  }
   const highestApplied = rows.reduce((max, row) => Math.max(max, row.version), 0);
 
   const result: MigrateResult = { applied: [], skipped: [] };
@@ -110,9 +129,19 @@ export async function migrate(
         [file.version, file.filename],
       );
     } catch (err) {
-      await client.query('ROLLBACK');
+      // A ROLLBACK on a broken connection throws its own transport error. Let
+      // it replace this failure and the operator loses the lock or timeout
+      // message the by-hand procedures in db/ depend on.
+      let rolledBack = true;
+      let rollbackFault = '';
+      await client.query('ROLLBACK').catch((rollbackError: unknown) => {
+        rolledBack = false;
+        rollbackFault = errorMessage(rollbackError);
+      });
       throw new Error(
-        `${file.filename} failed and rolled back: ${errorMessage(err)}`,
+        rolledBack
+          ? `${file.filename} failed and rolled back: ${errorMessage(err)}`
+          : `${file.filename} failed: ${errorMessage(err)}. Its rollback failed too: ${rollbackFault}`,
       );
     }
     await client.query('COMMIT');

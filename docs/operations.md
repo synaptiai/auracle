@@ -1481,15 +1481,15 @@ strip any copy a client sent.
 A client that reaches the port directly is served when it sends the header
 itself. The console cannot tell that request from a proxied one.
 
-Nine surfaces read live data. The queue, one case, the runs and one run in
-detail. One conversation and one document. The knowledge screen, the control
-bands and the partition latency.
+Eleven surfaces read live data. The queue, one case, the runs and one run in
+detail. One conversation and one document. The knowledge screen, the team
+screen and the routing screen. The control bands and the partition latency.
 
-The rail holds five of them and the design notes, in three groups. Work holds
+The rail holds seven of them and the design notes, in three groups. Work holds
 the queue, named Needs a person, which a reviewer comes to clear. Knowledge
-holds the knowledge screen, named Knowledge base. Admin holds the runs, the
-bands and the latency, which an engineer audits. Admin also holds the design
-notes. The rail draws no group that has no surface.
+holds the knowledge screen, named Knowledge base, and the team screen. Admin
+holds the routing screen, the runs, the bands and the latency. Admin also holds
+the design notes. The rail draws no group that has no surface.
 
 The knowledge screen is at `/knowledge`. It counts the cases a gap blocks over
 the last 14 days (DEC-50). A case is a turn, or a run with no turn. A run of it
@@ -1556,6 +1556,115 @@ The console logs `console_published` and `console_publish_refused` with the
 outcome. Each also holds the lengths of the title and the answer, never their
 text. A fault logs `console_publish_failed` with a tag, and the page names the
 tag.
+
+The team screen is at `/team`. It shows how few cases reach the team, and how
+long a case holds one of its people. Every figure comes from the ledger.
+
+A case is a turn, and its final attempt decides how it ends, as `pnpm run bands`
+counts one. A run with no turn is its own case. One rule differs from bands: a
+run that its twin superseded never stands for its attempt. A stranded walk
+that a new walk hands back leaves such a twin. The screen sorts each case by
+how it ends:
+
+| Ending | The final run |
+|---|---|
+| answered automatically | resolved, with no approver, no park and no earlier attempt |
+| needed a person | parked, approved, closed, snoozed, rewritten, sent back, or on a later attempt |
+| escalated | escalated |
+| in progress | not finished |
+| no answer | abandoned, or superseded by something other than a send-back |
+
+The first card gives the share of today's cases that reach a person, with its
+counts. It counts the cases that ended and the cases that wait for a person.
+Today is the UTC day. A case in progress is outside the share, and the card
+names it. This is a live figure, and it is not the published
+containment figure. That figure comes from the gold report.
+
+The second card gives the team's time on support over the last seven days. It
+adds the hold intervals from the hold history (DEC-46). An interval runs from a
+take or a handover to the next event on the case. No interval runs past its
+lapse, so a lapse the console notices late adds no time.
+
+An open hold ends at the lapse its take recorded. An event records no lapse. So
+a closed interval ends at most one lapse after it starts, at the console's
+current setting.
+
+The third card gives the median case, from the first take to the last send.
+A send that a person undoes and sends again counts as one case. A send that
+a person undoes and never sends again counts as no case sent.
+
+The fourth card gives the oldest case that waits for approval, and who holds
+it. A row for each active reviewer follows. It gives the products they cover,
+their cases, their time, the documents they wrote and what they hold now. The
+roster's products order the queue and grant no access.
+
+A bar for each product then splits its cases into the first three endings. A
+legend names each part in words, and the row gives each count in words. A
+product with no case draws a sentence and no bar. Every figure with no record
+is a sentence, never a zero.
+
+A fault reading the screen logs `console_team_unread`, and the page names the
+tag. The page gives up on the read after six seconds, as the knowledge screen
+does. The log line then names the wait it gave up on. A fault that arrives
+later logs `console_read_late_fault` with the same wait, and gives the reason.
+
+The routing screen is at `/routing`. It shows what each product may do without
+a person, and it writes nothing. It offers no toggle, threshold or new product.
+
+A tab opens each product. Each intent of the taxonomy has a row on the screen,
+with the risk tier a person set (DEC-13). The console holds neither the
+calibration artifact nor a consumer's action profile, so the ledger answers.
+
+The gate step keeps a gate record: the latest gate verdict of each product and
+intent. Each gate record is one row of `gate_latest`. The gate step writes it in
+the fenced move to `gated`, so a refused consumer writes none (DEC-28).
+
+The screen reads the gate records and no journal. So the read costs one gate
+record for each product and intent, whatever the history. Migration `db/037`
+fills the table once from the journal. It reads only runs whose move to
+`gated` commits.
+
+Every gate of one product and intent writes the same gate record. So the gate
+waits half a second at most for it. The gate skips a write that cannot finish,
+and the run goes on to `gated`. The consumer logs `gate_latest_skipped` with
+the run, the intent and the error code.
+
+Code `55P03` is a wait for a lock. The gate record then catches up at the next
+gate of that product and intent. Any other code repeats at every gate until
+someone fixes it, so treat it as a fault. A consumer on the old image writes no
+gate record either, until the upgrade ends.
+
+The threshold is the one in force for that run. The row says whether the fit
+chose it for the intent (DEC-41). When a rule stops a run, the gate does not
+compare its agreement, and the row says so. A rule that stops an action
+whatever the gates read means the product may not act alone. The rules are a
+customer reply, an irreversible action, a high-risk intent and a missing
+adapter capability. When no rule stops the run, the gates decide, so the
+product may act when both pass.
+
+An intent with no gate record says that no run reaches the gate. The backfill
+keeps the newest journal row whose shape the gate writes. It counts the newer
+journal rows it cannot read, and the row on the screen gives that count. When
+it can read no journal row of an intent, the row gives the count instead of a
+record. The first row, any reply to a customer, is fixed. Nobody can change
+it, and it names DEC-12 as its reason.
+
+An intent that the gate records and the taxonomy no longer lists has no row.
+The product's list gives the count of those intents.
+
+The backfill keeps each intent in the classifier's spelling. The gate keys it
+as the policy engine does, so one intent can hold two gate records. The screen
+then shows the newer one. It adds the unread journal rows that can be newer
+than that record, and leaves out the rest. When some of those can also be
+older, the row says "up to" that count.
+
+The ledger records no intake channel. So the screen shows no channel's health,
+and says so. It shows the signals the ledger does record for each product. They
+are the last arrival of a run or a message, the messages that wait, and those
+a consumer retries. A run with no arrival time counts from its start.
+
+A fault reading the screen logs `console_routing_unread`, and the page names
+the tag.
 
 The design notes are at `/notes`, and the page reads no ledger. Each card states
 one rule the console keeps, and the reason for it. A card joins the page only

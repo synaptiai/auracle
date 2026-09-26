@@ -28,6 +28,7 @@ import { UNATTRIBUTED } from '../approval/approver.js';
 import { approvalEditDistance, tokenizeBody } from '../approval/edit_distance.js';
 import { SEED_THRESHOLDS } from '../policy/policy.js';
 import { journalStep } from '../ledger/journal-write.js';
+import { recordGateLatest } from '../routing/latest.js';
 import {
   SEED_DOCUMENTS, followUpFor, inboundMessageFor, mulberry32, type PlannedRun,
 } from './plan.js';
@@ -333,6 +334,14 @@ async function writeJournal(client: PoolClient, run: PlannedRun): Promise<void> 
       // describes a rolling restart in which one consumer holds a fitted pair
       // and another the seeds, so a journal that records the verdict and not
       // the thresholds records a decision nobody can reproduce.
+      thresholds: SEED_THRESHOLDS,
+    });
+    // Issue #112: the latest gate of this product and intent, as the gate
+    // step records it, so the routing screen reads a seeded ledger too.
+    await recordGateLatest(client, {
+      runId: run.runId,
+      intentId: run.classification.intentId,
+      reason: run.reason,
       thresholds: SEED_THRESHOLDS,
     });
   }

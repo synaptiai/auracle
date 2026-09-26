@@ -11,7 +11,7 @@ import { SEED_THRESHOLDS, makeThresholds } from '../policy/policy.js';
 
 import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { coordinateTicket, partitionOf } from './coordinator.js';
 import type { CoordinateInput, CoordinatorDeps } from './coordinator.js';
@@ -917,6 +917,75 @@ describe('section 4.3 run coordinator', () => {
       ],
     );
     expect(total.rows[0]?.n).toBe(1);
+  });
+
+  // The record serves one screen. A write that cannot finish must never stop
+  // a customer's run at the gate: the run goes on, and the record catches up
+  // at the next gate of its product and intent.
+  it('goes on to gated when the gate record cannot be written, and logs the skip', async () => {
+    const first = await coordinateTicket(makeDeps(happyScript()), autoInput('T-' + randomUUID().slice(0, 8), 1n));
+    expect(first.outcome).toBe('resolved');
+    // Another session holds the record's row, so the next gate cannot lock it.
+    const holder = await pool.connect();
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => { logged.push(String(line)); });
+    try {
+      await holder.query('BEGIN');
+      await holder.query("SELECT 1 FROM gate_latest WHERE intent_id = 'password_reset' FOR UPDATE");
+      // A gate that waits on the row with no limit would hold the run until
+      // the other session let go. The race says so rather than hanging.
+      const walk = coordinateTicket(makeDeps(happyScript()), autoInput('T-' + randomUUID().slice(0, 8), 1n));
+      const waited = await Promise.race([
+        walk.then(() => 'finished'),
+        new Promise<string>((resolve) => setTimeout(() => resolve('still waiting after 8 s'), 8_000)),
+      ]);
+      if (waited !== 'finished') {
+        await holder.query('ROLLBACK');
+        await walk;
+      }
+      expect(waited).toBe('finished');
+      const second = await walk;
+      expect(second.outcome).toBe('resolved');
+      const skipped = logged.map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((line) => line['event'] === 'gate_latest_skipped');
+      expect(skipped).toHaveLength(1);
+      expect(skipped[0]).toMatchObject({ runId: second.runId, intentId: 'password_reset' });
+      expect(String(skipped[0]!['error'])).toContain('lock timeout');
+      // The code tells a wait from a fault that repeats, such as a privilege.
+      expect(skipped[0]!['code']).toBe('55P03');
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+      spy.mockRestore();
+    }
+    const latest = await pool.query('SELECT run_id FROM gate_latest');
+    expect(latest.rows).toEqual([{ run_id: first.runId }]);
+  });
+
+  it('records no gate when the fence moves before the run reaches gated (DEC-28)', async () => {
+    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const fake = new FakeProvider(happyScript());
+    let calls = 0;
+    // The judge's verdict is the eleventh chat call and the last before the
+    // gate's transition: a rebalance lands while it runs.
+    const rebalancing: ModelProvider = {
+      kind: fake.kind,
+      complete: async (call) => {
+        calls += 1;
+        if (calls === 11) {
+          await pool.query('UPDATE ticket_epoch SET epoch = epoch + 10 WHERE ticket_id = $1', [ticketId]);
+        }
+        return fake.complete(call);
+      },
+      embed: (call) => fake.embed(call),
+    };
+    const result = await coordinateTicket(
+      makeDeps(happyScript(), undefined, undefined, rebalancing), autoInput(ticketId, 1n));
+    expect(calls).toBe(11);
+    expect(result.outcome).toBe('stale_epoch');
+    // The gate's journal row was written before the refused transition.
+    expect((await journalRows(result.runId)).map((row) => row.step_id)).toContain('gate');
+    expect((await pool.query('SELECT 1 FROM gate_latest')).rows).toEqual([]);
   });
 
   it('refuses a run whose epoch is below the highest accepted epoch (DEC-28)', async () => {

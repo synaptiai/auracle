@@ -222,8 +222,14 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   readKnowledge: 'read',
   readLatency: 'read',
   readQueueToday: 'read',
+  // Issue #112: what each product may do without a person, from the gate
+  // records, read in one READ ONLY transaction.
+  readRouting: 'read',
   readRun: 'read',
   readRunJournal: 'read',
+  // Issue #112: the team screen, read in one READ ONLY transaction. The hold
+  // history it totals is read, never written: a lapse it meets stays unrecorded.
+  readTeam: 'read',
   releaseHold: 'write',
   replyDigest: 'read',
   requireDbUrl: 'read',
@@ -236,6 +242,9 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   saveReply: 'write',
   selectReadBackAdapter: 'read',
   takeHold: 'write',
+  // Issue #112: the length of the team screen's week, so a product's cases a
+  // day are over the days the read counted. A value, and no statement.
+  TEAM_WEEK_DAYS: 'read',
   // DEC-51: the way back inside a held send. It removes the record, the
   // approver, the distance, the approved text and the finish time.
   undoApproval: 'write',

@@ -13,7 +13,9 @@
 --
 -- An adopter with a large ledger should build this by hand instead:
 --   CREATE INDEX CONCURRENTLY turn_created_at_idx ON turn (created_at);
--- then insert the schema_version row for this file.
+-- then check that the index is valid, as db/README.md shows, and record
+-- the file:
+--   INSERT INTO schema_version (version, filename) VALUES (17, '017_turn_created_at.sql');
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 

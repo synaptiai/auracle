@@ -55,9 +55,6 @@
 // bumped, so an old owner still mid-run fails its next write with
 // stale_epoch (DEC-28). A reply parked for a person and a record whose run
 // has finished keep their fence (issue #113), so a restart strands neither.
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 
 import { FreeScoutEgressAdapter, freeScoutConfigFromEnv } from '../adapters/freescout.js';
@@ -83,6 +80,7 @@ import { claimPartition, startConsumer } from './consumer.js';
 import type { CoordinatorDeps } from './coordinator.js';
 import { runEntry } from '../cli/entry.js';
 import { errorMessage } from '../errors.js';
+import { loadTaxonomy } from '../fixtures/load.js';
 import { logLine } from '../log/line.js';
 import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 
@@ -280,13 +278,9 @@ async function main(): Promise<void> {
   if (faults.length > 0) throw new Error(faults.join(' '));
 
   // fixtures/taxonomy.json is curated by a person (section 4.11 step 4).
-  const taxonomyUrl = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '../../fixtures/taxonomy.json',
-  );
-  const taxonomy = JSON.parse(readFileSync(taxonomyUrl, 'utf8')) as {
-    intents: CoordinatorDeps['taxonomy']['intents'];
-  };
+  // Checked as every other reader checks it, so a taxonomy that breaks
+  // section 4.11 stops the consumer before it claims a partition.
+  const taxonomy = loadTaxonomy();
 
   // Deployment-time rebalance: raise the fence of every ticket holding an
   // in-flight run in the claimed partitions, so the previous owner's writes

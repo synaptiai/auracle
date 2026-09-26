@@ -11,6 +11,11 @@ insert. So a failure leaves no half-applied file and no false record.
 The runner refuses a file whose version is below the highest recorded version.
 Applying it out of order could break a later one.
 
+It also refuses a recorded version whose file now has another name. A row
+inserted by hand can name the file wrongly. Or the ledger comes from another
+history of this directory, such as a number that a branch reuses. To skip the
+file leaves its schema missing with no error.
+
 ## Rules for a new file
 
 1. Name it `NNN_short_title.sql`, with `NNN` above every existing number.
@@ -48,6 +53,25 @@ CREATE INDEX CONCURRENTLY run_created_at_idx ON run (created_at);
 and then inserts the `schema_version` row for that file, so the runner skips
 it. A migration that needs `CONCURRENTLY` belongs in that procedure and not in
 this directory.
+
+Check the index before you insert that row. A concurrent build that fails
+leaves an invalid index under the same name. The file's `IF NOT EXISTS` then
+skips it, and every read falls back to a full scan with no error:
+
+```sql
+SELECT indisvalid FROM pg_index WHERE indexrelid = 'run_created_at_idx'::regclass;
+```
+
+Drop an index that reads `false`, and build it again. Then record the file
+under its exact name. The runner refuses a version recorded under any other
+name:
+
+```sql
+INSERT INTO schema_version (version, filename) VALUES (14, '014_run_created_at_index.sql');
+```
+
+A row recorded under the wrong name stops every later migration. The refusal
+gives the `UPDATE` that repairs it.
 
 ## How tests use these files
 

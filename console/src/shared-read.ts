@@ -6,6 +6,7 @@
 // The knowledge screen reads several statements over a 14-day window. Two
 // reviewers loading it together would each hold a pool connection that an
 // approval may need, for the same answer.
+import { randomUUID } from 'node:crypto';
 
 /**
  * `read`, shared by the calls that arrive while it runs.
@@ -36,6 +37,10 @@ export function sharedRead<T>(read: () => Promise<T>): () => Promise<T> {
  * after the page gave up has no page to tell, so `late` hears it, and the
  * console logs it: its reason would otherwise reach no one.
  *
+ * Each give-up names its wait. The page logs the give-up with its own tag,
+ * and `late` hears the same wait, so the tag a reviewer sees leads to the
+ * reason. Two pages waiting on one shared read give up as two waits.
+ *
  * The timer does not keep a stopping console alive, as the other page timers
  * do not.
  */
@@ -43,13 +48,13 @@ export function givingUp<A extends unknown[], T>(
   read: (...args: A) => Promise<T>,
   giveUpMs: number,
   name: string,
-  late: (error: unknown) => void,
+  late: (error: unknown, wait: string) => void,
 ): (...args: A) => Promise<T> {
   return (...args: A) => new Promise<T>((resolve, reject) => {
-    let gaveUp = false;
+    let gaveUp: string | null = null;
     const timer = setTimeout(() => {
-      gaveUp = true;
-      reject(new Error(`${name}: gave up after ${giveUpMs} ms`));
+      gaveUp = randomUUID().slice(0, 8);
+      reject(new Error(`${name}: gave up after ${giveUpMs} ms, wait ${gaveUp}`));
     }, giveUpMs);
     timer.unref?.();
     let started: Promise<T>;
@@ -64,8 +69,19 @@ export function givingUp<A extends unknown[], T>(
       (value) => { clearTimeout(timer); resolve(value); },
       (error: unknown) => {
         clearTimeout(timer);
-        if (gaveUp) late(error);
-        else reject(error);
+        if (gaveUp === null) {
+          reject(error);
+          return;
+        }
+        // Nothing awaits this chain, so a late handler that throws would be
+        // an unhandled rejection, which ends the console.
+        try {
+          late(error, gaveUp);
+        } catch (lateError) {
+          const said = (fault: unknown): string => (fault instanceof Error ? fault.message : String(fault));
+          console.error(`${name}: wait ${gaveUp} failed late (${said(error)}),`
+            + ` and its late fault could not be logged: ${said(lateError)}`);
+        }
       },
     );
   });
@@ -86,11 +102,12 @@ export function knowledgeReads<K, G>(
     readonly readCaseGap: (runId: string) => Promise<G>;
   },
   giveUpMs: number,
-  late: (read: string, error: unknown) => void,
+  late: (read: string, error: unknown, wait: string) => void,
 ): { readonly readKnowledge: () => Promise<K>; readonly readCaseGap: (runId: string) => Promise<G> } {
   return {
     readKnowledge: givingUp(sharedRead(reads.readKnowledge), giveUpMs, 'readKnowledge',
-      (error) => late('readKnowledge', error)),
-    readCaseGap: givingUp(reads.readCaseGap, giveUpMs, 'readCaseGap', (error) => late('readCaseGap', error)),
+      (error, wait) => late('readKnowledge', error, wait)),
+    readCaseGap: givingUp(reads.readCaseGap, giveUpMs, 'readCaseGap',
+      (error, wait) => late('readCaseGap', error, wait)),
   };
 }

@@ -11,6 +11,7 @@
 import { createHash } from 'node:crypto';
 
 import { RISK_TIERS } from '../domain/capabilities.js';
+import { normalizeIntentId } from '../policy/policy.js';
 import {
   CLAIM_GRADES, DOC_KINDS, GOLD_SOURCES, INTENT_CAP,
 } from '../domain/gold-types.js';
@@ -338,6 +339,13 @@ export function validateTaxonomy(raw: unknown): Taxonomy {
     const label = entry['label'];
     const tier = entry['risk_tier'];
     assert(typeof id === 'string' && id.length > 0, 'taxonomy intent has no id');
+    // The classifier returns a label trimmed and lower-cased, and the gate
+    // finds the intent by it. An id in any other form matches no run, and
+    // every run the classifier gives it faults at the gate.
+    assert(
+      id === normalizeIntentId(id),
+      `intent id ${JSON.stringify(id)} is not trimmed and lower-cased, the form the classifier returns`,
+    );
     assert(typeof label === 'string' && label.length > 0, `intent ${id} has no label`);
     assert(
       typeof tier === 'string' && (RISK_TIERS as readonly string[]).includes(tier),

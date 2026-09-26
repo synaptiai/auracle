@@ -111,6 +111,7 @@
   },
   "observed": {
     "ledger": {
+      "gateRecord": null,
       "journal": [
         {
           "cost_micros": 90000,

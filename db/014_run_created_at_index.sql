@@ -19,9 +19,11 @@
 --
 -- An adopter with a large ledger should build this by hand instead:
 --   CREATE INDEX CONCURRENTLY run_created_at_idx ON run (created_at);
--- then insert the schema_version row for this file. CONCURRENTLY takes no
--- blocking lock, and it cannot run here because it cannot run inside a
--- transaction.
+-- then check that the index is valid, as db/README.md shows, and record
+-- the file:
+--   INSERT INTO schema_version (version, filename) VALUES (14, '014_run_created_at_index.sql');
+-- CONCURRENTLY takes no blocking lock, and it cannot run here because it
+-- cannot run inside a transaction.
 SET LOCAL lock_timeout = '5s';
 
 CREATE INDEX IF NOT EXISTS run_created_at_idx ON run (created_at);

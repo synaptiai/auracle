@@ -98,14 +98,61 @@ describe('a read given up', () => {
   it('hands a failure that arrives after the limit to its late handler, and nothing else', async () => {
     vi.useFakeTimers();
     const m = manual();
-    const late: unknown[] = [];
-    const read = givingUp(m.read, 20, 'readLate', (error) => late.push(error));
+    const late: [string, string][] = [];
+    const read = givingUp(m.read, 20, 'readLate', (error, wait) => late.push([(error as Error).message, wait]));
     const answer = read();
     vi.advanceTimersByTime(20);
-    await expect(answer).rejects.toThrow('readLate: gave up after 20 ms');
+    // The page logs this message with its own tag, and the late fault names
+    // the same wait, so the tag on the page leads to the reason.
+    const gaveUp = await answer.then(() => '', (error: unknown) => (error as Error).message);
+    const wait = /^readLate: gave up after 20 ms, wait ([0-9a-f]{8})$/.exec(gaveUp)?.[1];
+    expect(wait).toBeDefined();
     m.fail(new Error('the pool gave no connection'));
     await vi.runAllTimersAsync();
-    expect(late.map((e) => (e as Error).message)).toEqual(['the pool gave no connection']);
+    expect(late).toEqual([['the pool gave no connection', wait]]);
+  });
+
+  it('keeps a late handler that throws from ending the console', async () => {
+    vi.useFakeTimers();
+    const m = manual();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => { logged.push(String(line)); });
+    try {
+      const read = givingUp(m.read, 20, 'readLate', () => { throw new Error('the log line could not be written'); });
+      const answer = read();
+      vi.advanceTimersByTime(20);
+      await expect(answer).rejects.toThrow('gave up');
+      m.fail(new Error('the pool gave no connection'));
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+      expect(logged.join('\n')).toContain('the log line could not be written');
+      // The read's own failure is what the late handler was there to report.
+      expect(logged.join('\n')).toContain('the pool gave no connection');
+    } finally {
+      spy.mockRestore();
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('names each wait it gives up on apart, so two pages on one read keep their own reasons', async () => {
+    vi.useFakeTimers();
+    const m = manual();
+    const waits: string[] = [];
+    const read = givingUp(sharedRead(m.read), 20, 'readShared', (_error, wait) => waits.push(wait));
+    const first = read();
+    const second = read();
+    vi.advanceTimersByTime(20);
+    const said = await Promise.all([first, second].map((page) =>
+      page.then(() => '', (error: unknown) => (error as Error).message)));
+    m.fail(new Error('the pool gave no connection'));
+    await vi.runAllTimersAsync();
+    expect(said.map((message) => /wait ([0-9a-f]{8})$/.exec(message)?.[1])).toEqual(waits);
+    expect(new Set(waits).size).toBe(2);
   });
 
   it('shares one read between a caller that gave up and one that arrives after', async () => {
@@ -136,7 +183,7 @@ describe('the knowledge reads as the console serves them', () => {
     const reads = knowledgeReads(
       { readKnowledge: screen.read, readCaseGap: () => gap.read() },
       20,
-      (read, error) => late.push([read, (error as Error).message]),
+      (read, error, wait) => late.push([read, `${(error as Error).message} (${wait.length})`]),
     );
     const first = reads.readKnowledge();
     const second = reads.readKnowledge();
@@ -153,7 +200,7 @@ describe('the knowledge reads as the console serves them', () => {
     expect(await third).toBe(4);
     gap.fail(new Error('the pool gave no connection'));
     await vi.runAllTimersAsync();
-    expect(late).toEqual([['readCaseGap', 'the pool gave no connection']]);
+    expect(late).toEqual([['readCaseGap', 'the pool gave no connection (8)']]);
   });
 
   it('does not share the case read, which is one case each', async () => {

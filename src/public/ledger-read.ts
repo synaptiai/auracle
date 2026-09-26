@@ -102,6 +102,19 @@ export type {
   RefusedDocument,
 } from '../knowledge/gaps.js';
 
+// The team screen: how little reached a person, and how long a case held one.
+// Time on support is the hold history DEC-46 records.
+export { readTeam, TEAM_WEEK_DAYS } from '../team/query.js';
+export type {
+  CaseCounts, OldestWaiting, TeamPerson, TeamProduct, TeamReport, TeamWindow,
+} from '../team/query.js';
+// The routing screen: what each product may do without a person, from the
+// gate record the gate step keeps for each product and intent (DEC-41, DEC-12).
+export { readRouting } from '../routing/query.js';
+export type {
+  ChannelSignals, GateRecord, RoutingIntent, RoutingProduct, RoutingReport,
+} from '../routing/query.js';
+
 // The relay's statuses on an outbox row, so a surface can say what each means
 // about the customer without repeating the db/006 CHECK.
 export { OUTBOX_STATUSES } from '../ledger/insert.js';

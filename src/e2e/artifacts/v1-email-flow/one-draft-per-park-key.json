@@ -18,7 +18,7 @@
       "title": "Broken shipments",
       "vector": {
         "numbers": 1536,
-        "sha256": "6e881bb0bca7ba5c2e94b7e310bc46af32116a39ea36b1c00c38a2f06a9084b1"
+        "sha256": "d260b1dd9db38b1c215e297a052ad58df1dfa5b1570bc5d88d007fb9a0132355"
       }
     },
     "inbound": [
@@ -71,7 +71,7 @@
         "vectors": [
           {
             "numbers": 1536,
-            "sha256": "6e881bb0bca7ba5c2e94b7e310bc46af32116a39ea36b1c00c38a2f06a9084b1"
+            "sha256": "d260b1dd9db38b1c215e297a052ad58df1dfa5b1570bc5d88d007fb9a0132355"
           }
         ]
       },

@@ -473,6 +473,28 @@ describe('the journal a seeded run leaves', () => {
       [r.step_id, { status: r.status, result: r.result }]));
   }
 
+  // Issue #112: the routing screen reads the latest gate of each product and
+  // intent from one row, which the gate step writes. A seeded run has no
+  // product, so each intent's row is its newest gated run.
+  it('records the latest gate of each intent, as the gate step does', async () => {
+    const newest = new Map<string, PlannedRun>();
+    for (const run of plan) {
+      if (run.gate === null || run.reason === null) continue;
+      const held = newest.get(run.classification.intentId);
+      if (held === undefined || run.createdAt > held.createdAt
+        || (run.createdAt.getTime() === held.createdAt.getTime() && run.runId > held.runId)) {
+        newest.set(run.classification.intentId, run);
+      }
+    }
+    expect(newest.size).toBeGreaterThan(1);
+    const { rows } = await pool.query<{ product: string | null; intent_id: string; run_id: string; reason: string }>(
+      'SELECT product, intent_id, run_id, reason FROM gate_latest ORDER BY intent_id',
+    );
+    expect(rows).toEqual([...newest].sort(([a], [b]) => (a < b ? -1 : 1)).map(([intentId, run]) => ({
+      product: null, intent_id: intentId, run_id: run.runId, reason: run.reason,
+    })));
+  });
+
   it('writes the steps the run\'s own outcome implies, and no others', async () => {
     for (const run of plan.slice(0, 40)) {
       const steps = await stepsOf(run.runId);

@@ -41,7 +41,7 @@ import { isFault } from './confirm.js';
 import type { BatchOutcome } from './confirm.js';
 import type { ApprovalHold, UndoOutcome } from 'auracle/ledger-read';
 import type { HandoverOutcome, ReleaseOutcome, TakeOutcome } from 'auracle/ledger-read';
-import { GAP_WINDOW_DAYS } from 'auracle/ledger-read';
+import { GAP_WINDOW_DAYS, TEAM_WEEK_DAYS } from 'auracle/ledger-read';
 import type {
   CaseGap,
   CaseRerun,
@@ -51,6 +51,9 @@ import type {
   KnowledgeReport,
   PublishOutcome,
   RerunReason,
+} from 'auracle/ledger-read';
+import type {
+  ChannelSignals, RoutingIntent, RoutingReport, TeamPerson, TeamProduct, TeamReport,
 } from 'auracle/ledger-read';
 import { CONSOLE_SCRIPT } from './script.js';
 import { groupQueue } from './queue.js';
@@ -193,10 +196,16 @@ const GROUPS: readonly {
   },
   // DEC-50: the gaps that sent cases to a person, and the documents that
   // need one. Between the work and the admin surfaces.
-  { title: 'Knowledge', surfaces: [{ href: '/knowledge', title: 'Knowledge base' }] },
+  // Issue #112: the team's time on support sits with the knowledge it
+  // writes, and what each product may do alone sits with the admin screens.
+  {
+    title: 'Knowledge',
+    surfaces: [{ href: '/knowledge', title: 'Knowledge base' }, { href: '/team', title: 'Team' }],
+  },
   {
     title: 'Admin',
     surfaces: [
+      { href: '/routing', title: 'Routing' },
       { href: '/runs', title: 'Runs' },
       { href: '/bands', title: 'Control bands' },
       { href: '/latency', title: 'Partition latency' },
@@ -4700,16 +4709,18 @@ function gapRow(group: GapGroup, widest: number, labels: ReadonlyMap<string, str
 
 function documentRow(doc: DocumentNeed, labels: ReadonlyMap<string, string>): string {
   const [flagSays, flagToken] = FLAG_SAYS[doc.flag];
+  // Each label isolated on its own: two right-to-left labels in one isolate
+  // would read in the reverse order.
   const products = doc.products.length === 0
     ? 'every product'
-    : doc.products.map((product) => productLabel(labels, product)).join(', ');
+    : doc.products.map((product) => isolated(productLabel(labels, product))).join(', ');
   return [
     '<div class="item">',
     '<div class="itop">',
     `<span class="isubj"><a href="${escapeHtml(documentHref(doc.docId))}">${isolated(doc.title)}</a></span>`,
     `<span class="age">${isolated(doc.owner)}</span>`,
     '</div>',
-    `<div class="imeta">${isolated(doc.docId)} · ${isolated(products)}</div>`,
+    `<div class="imeta">${isolated(doc.docId)} · ${products}</div>`,
     '<div class="hol" style="justify-content:flex-start; margin-top:6px">',
     chip(`cited by ${casesSays(doc.citations)}`),
     chip(flagSays, flagToken),
@@ -4808,6 +4819,426 @@ export function renderKnowledge(read: KnowledgeRead, labels: ReadonlyMap<string,
       : '',
     '</div>',
     '</div>',
+  ].join('');
+}
+
+/** The team figures, or the tag of the fault that stopped the console reading them. */
+export type TeamRead =
+  | { readonly report: TeamReport }
+  | { readonly unreadTag: string };
+
+/**
+ * A duration as the team screen says it: seconds under a minute, minutes and
+ * seconds under an hour, hours and minutes under two days, days and hours
+ * beyond.
+ */
+export function durationSays(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h ${String(minutes % 60).padStart(2, '0')}m`;
+  return `${Math.floor(hours / 24)}d ${String(hours % 24).padStart(2, '0')}h`;
+}
+
+/** A duration to the nearest minute, as a change on the week before is said. */
+function minutesSays(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
+}
+
+/**
+ * One team card. A figure the ledger holds no record for is its sentence,
+ * drawn where the figure goes, never a zero. `saysHtml` is markup: a value
+ * from outside in it is already isolated.
+ */
+function teamCard(label: string, figure: string | null, absence: string, saysHtml: string): string {
+  return [
+    '<div class="card stack"><header>',
+    `<span class="lbl">${escapeHtml(label)}</span>`,
+    '</header><div class="body">',
+    figure === null
+      ? `<span class="nofig">${escapeHtml(absence)}</span>`
+      : `<span class="big">${escapeHtml(figure)}</span>`,
+    saysHtml === '' ? '' : `<div style="font-size:11.5px; color:var(--mut)">${saysHtml}</div>`,
+    '</div></div>',
+  ].join('');
+}
+
+/** The share as a percentage, to one decimal place. */
+function shareSays(part: number, whole: number): string {
+  return `${((part / whole) * 100).toFixed(1)}%`;
+}
+
+function ofCasesSays(part: number, whole: number): string {
+  return `${part} of ${casesSays(whole)}`;
+}
+
+/** The change on the week before, in words. */
+function trendSays(now: number, before: number | null): string {
+  if (before === null) return 'no case was held the week before';
+  if (Math.round(Math.abs(now - before) / 60_000) === 0) return 'within a minute of the week before';
+  return `${now < before ? 'down' : 'up'} ${minutesSays(Math.abs(now - before))} on the week before`;
+}
+
+function peopleSays(n: number): string {
+  return n === 1 ? '1 person' : `${n} people`;
+}
+
+function documentsSays(n: number): string {
+  return n === 1 ? '1 document' : `${n} documents`;
+}
+
+/** The three endings the product bar draws, in its order, with their words. */
+const ENDINGS = [
+  ['auto', 'answered automatically', 'ok'],
+  ['person', 'needed a person', 'warn'],
+  ['escalated', 'escalated', 'crit'],
+] as const;
+
+/**
+ * The team screen (issue #112): how little reached a person, and how long a
+ * case held one.
+ *
+ * Every figure is the ledger's. The share of cases that reached a person is a
+ * live count over today, and it is not the published containment figure,
+ * which comes from the gold report.
+ */
+export function renderTeam(read: TeamRead, labels: ReadonlyMap<string, string>): string {
+  const says = 'The number that matters is how few cases reach the team, and how long a case holds one of them.';
+  if ('unreadTag' in read) {
+    return [
+      head('Team', says),
+      '<div class="wrap">',
+      '<div class="grid team">',
+      teamCard('reached a person', null, 'not read', ''),
+      teamCard('team time on support', null, 'not read', ''),
+      teamCard('median case', null, 'not read', ''),
+      teamCard('oldest waiting', null, 'not read', ''),
+      '</div>',
+      `<p class="mut">The team figures were not read. The console log names the fault ${escapeHtml(read.unreadTag)}.</p>`,
+      '</div>',
+    ].join('');
+  }
+  const { report } = read;
+  const now = new Date(report.today.to);
+  const today = report.today;
+  const ended = today.auto + today.person + today.escalated;
+  const reached = today.person + today.escalated;
+  const open = [
+    today.inProgress === 0 ? '' : `${casesSays(today.inProgress)} still in progress`,
+    today.noAnswer === 0 ? '' : `${casesSays(today.noAnswer)} ended with no answer`,
+  ].filter((part) => part !== '').join(', ');
+  const oldest = report.oldestWaiting;
+  const widest = Math.max(0, ...report.people.map((person) => person.supportMs));
+  const products = [...new Set<string | null>([...labels.keys(), ...report.products.map((row) => row.product)])]
+    .map((product) => report.products.find((row) => row.product === product)
+      ?? { product, auto: 0, person: 0, escalated: 0, inProgress: 0, noAnswer: 0 });
+  return [
+    head('Team', says, [chip(`${report.week.from.slice(0, 10)} to ${report.week.to.slice(0, 10)} UTC`)]),
+    '<div class="wrap">',
+    '<div class="grid team">',
+    // A case parked for a person counts as one that needed a person, and it
+    // has not ended, so the sentence names both.
+    teamCard(
+      'reached a person',
+      ended === 0 ? null : shareSays(reached, ended),
+      'No case today ended or waits for a person.',
+      escapeHtml((ended === 0 ? '' : `${ofCasesSays(reached, ended)} today that ended or wait for a person,`
+        + ' from the ledger. This is not the published containment figure.')
+        + (open === '' ? '' : `${ended === 0 ? '' : ' '}${open.charAt(0).toUpperCase()}${open.slice(1)}.`)),
+    ),
+    teamCard(
+      'team time on support',
+      report.supportMs === null ? null : durationSays(report.supportMs),
+      'No case was taken this week.',
+      report.supportMs === null
+        ? ''
+        : escapeHtml(`This week, across ${peopleSays(report.supportPeople)}`
+          + ` · ${trendSays(report.supportMs, report.previousSupportMs)}.`),
+    ),
+    teamCard(
+      'median case',
+      report.medianCaseMs === null ? null : durationSays(report.medianCaseMs),
+      'No case was sent from the console this week.',
+      report.medianCaseMs === null
+        ? ''
+        : escapeHtml(`From taking it to sending, over ${casesSays(report.sentCases)} sent this week.`),
+    ),
+    teamCard(
+      'oldest waiting',
+      oldest === null ? null : durationSays(now.getTime() - new Date(oldest.createdAt).getTime()),
+      'Nothing waits for a person.',
+      oldest === null
+        ? ''
+        : `${isolated(productSays(oldest.product, labels))} · `
+          + `${oldest.heldBy === null ? 'nobody holds it' : `held by ${isolated(oldest.heldBy)}`}.`,
+    ),
+    '</div>',
+    '<div class="list card">',
+    '<div class="lhd"><span class="lbl">This week</span>'
+      + ' <span class="mut">time on support, not cases closed — the goal is for this to fall</span></div>',
+    report.people.length === 0
+      ? '<div class="item"><span class="mut">The roster holds no active reviewer.</span></div>'
+      : report.people.map((person) => personRow(person, widest, labels)).join(''),
+    '</div>',
+    '<div class="list card">',
+    '<div class="lhd"><span class="lbl">By product · what still needs a person</span></div>',
+    products.length === 0
+      ? '<div class="item"><span class="mut">No product is mapped, and no case arrived this week.</span></div>'
+      : products.map((row) => productRow(row, labels)).join(''),
+    '<div class="legend">',
+    ...ENDINGS.map(([, words, token]) =>
+      `<span class="lg"><i class="sw" style="background:var(--${token})"></i>${escapeHtml(words)}</span>`),
+    '</div>',
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
+function personRow(person: TeamPerson, widest: number, labels: ReadonlyMap<string, string>): string {
+  // The products the roster lists the person as covering, for the queue's
+  // order. They grant nothing, so the row never says granted. Each label is
+  // isolated on its own.
+  const products = person.products.length === 0
+    ? 'covers no product'
+    : person.products.map((product) => isolated(productLabel(labels, product))).join(', ');
+  const held = person.holding.length === 0
+    ? '<span class="mut">holds nothing</span>'
+    : person.holding.map((runId) =>
+      `<a href="/case/${encodeURIComponent(runId)}" style="color:var(--accent)">holds a case</a>`).join(' ');
+  return [
+    '<div class="item person">',
+    `<span class="avatar">${isolated(initialsOf(person.identity))}</span>`,
+    '<div class="pwho">',
+    `<div class="isubj">${isolated(person.identity)}</div>`,
+    `<div class="imeta">${products}</div>`,
+    '</div>',
+    '<div class="figs">',
+    `<span>${person.cases === 0 ? '<span class="mut">took no case this week</span>' : escapeHtml(casesSays(person.cases))}</span>`,
+    person.supportMs === 0
+      ? '<span class="mut">no time held</span>'
+      : '<span class="pl" style="grid-template-columns:96px auto">'
+        + `<span class="track"><i style="width:${((person.supportMs / widest) * 100).toFixed(1)}%; background:var(--accent)"></i></span>`
+        + `<span class="pv">${escapeHtml(durationSays(person.supportMs))}</span></span>`,
+    person.documents === 0
+      ? '<span class="mut">no document this week</span>'
+      : `<span style="color:var(--ok)">${escapeHtml(documentsSays(person.documents))}</span>`,
+    held,
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
+function productRow(row: TeamProduct, labels: ReadonlyMap<string, string>): string {
+  const ended = row.auto + row.person + row.escalated;
+  const cases = ended + row.inProgress + row.noAnswer;
+  // The split in words as well as in colour: the bar alone names no count.
+  const open = [
+    ...(ended === 0 ? [] : ENDINGS.map(([key, words]) => `${row[key]} ${words}`)),
+    row.inProgress === 0 ? '' : `${casesSays(row.inProgress)} in progress`,
+    row.noAnswer === 0 ? '' : `${casesSays(row.noAnswer)} with no answer`,
+  ].filter((part) => part !== '').join(' · ');
+  return [
+    '<div class="item prod">',
+    `<span class="isubj">${isolated(productSays(row.product, labels))}</span>`,
+    cases === 0
+      ? '<span class="mut">No case this week.</span>'
+      : [
+        `<span class="pv">${escapeHtml(perDaySays(cases))}</span>`,
+        ended === 0
+          ? '<span class="mut">No case ended this week.</span>'
+          : '<span class="stack3">'
+            + ENDINGS.map(([key, words, token]) => {
+              const share = row[key] / ended;
+              return share === 0
+                ? ''
+                : `<i title="${escapeHtml(words)}" style="width:${(share * 100).toFixed(1)}%; background:var(--${token})"></i>`;
+            }).join('')
+            + '</span>',
+        ended === 0 ? '' : `<span class="pv">${escapeHtml(shareSays(row.auto, ended))} auto</span>`,
+      ].join(''),
+    open === '' ? '' : `<div class="imeta">${escapeHtml(open)}</div>`,
+    '</div>',
+  ].join('');
+}
+
+/** Cases a day over the week, to one decimal place. */
+function perDaySays(cases: number): string {
+  return `${(cases / TEAM_WEEK_DAYS).toFixed(1)} / day`;
+}
+
+/** The routing figures, or the tag of the fault that stopped the console reading them. */
+export type RoutingRead =
+  | { readonly report: RoutingReport }
+  | { readonly unreadTag: string };
+
+/** Why a rule stops an action whatever the gates read, in words. */
+const STOP_SAYS: Readonly<Partial<Record<PolicyReason, string>>> = {
+  customer_visible: 'a reply to a customer (DEC-12)',
+  irreversible: 'an action that cannot be undone (DEC-34)',
+  high_risk: 'a high-risk intent (DEC-13)',
+  no_idempotency: 'the adapter cannot key a write (DEC-06)',
+  no_read_back: 'the adapter cannot read a write back (DEC-06)',
+};
+
+const RISK_TOKEN: Readonly<Record<RoutingIntent['risk'], Token>> = { high: 'crit', medium: 'warn', low: 'ok' };
+
+/** The address of one product's tab. Null is the product of no channel. */
+function routingHref(product: string | null): string {
+  return product === null ? '/routing?product=' : `/routing?product=${encodeURIComponent(product)}`;
+}
+
+/**
+ * The routing screen (issue #112): what each product does on its own, and
+ * what it hands to a person.
+ *
+ * It reads, and it writes nothing. Each intent's figures are what the most
+ * recent run of the product recorded at its gate. The first row is fixed:
+ * a customer reply always waits for a person, and no setting changes that.
+ */
+export function renderRouting(
+  read: RoutingRead,
+  labels: ReadonlyMap<string, string>,
+  selected: string | null | undefined,
+  lapseMs: number,
+): string {
+  const says = 'What each product does on its own, and what it hands to a person.'
+    + ' A customer reply always waits for a person, and that row cannot be turned off.';
+  if ('unreadTag' in read) {
+    return [
+      head('Routing', says),
+      '<div class="wrap">',
+      `<p class="mut">The routing figures were not read. The console log names the fault ${escapeHtml(read.unreadTag)}.</p>`,
+      '</div>',
+    ].join('');
+  }
+  const products = read.report.products;
+  if (products.length === 0) {
+    return [
+      head('Routing', says),
+      '<div class="wrap">',
+      '<p class="mut">No product is mapped, and no run has reached the ledger.</p>',
+      '</div>',
+    ].join('');
+  }
+  const current = products.find((row) => row.product === selected) ?? products[0]!;
+  const name = productSays(current.product, labels);
+  const high = current.intents.filter((intent) => intent.risk === 'high').length;
+  return [
+    head('Routing', says),
+    '<div class="wrap">',
+    '<nav class="tabs" aria-label="Products">',
+    ...products.map((row) => row === current
+      ? `<a class="tab on" aria-current="page" href="${escapeHtml(routingHref(row.product))}">${isolated(productSays(row.product, labels))}</a>`
+      : `<a class="tab" href="${escapeHtml(routingHref(row.product))}">${isolated(productSays(row.product, labels))}</a>`),
+    '</nav>',
+    '<div class="list card">',
+    `<div class="lhd"><span class="lbl">${isolated(name)} · intents and what they are allowed to do</span>`
+      + ` <span class="mut">${current.intents.length} intents · ${high} high risk</span></div>`,
+    '<table class="routing"><thead><tr>',
+    '<th>intent</th><th>risk</th><th>may act without a person</th><th>agreement threshold</th><th>recorded</th>',
+    '</tr></thead><tbody>',
+    // DEC-12: fixed, and drawn as a control nobody can operate, with its reason.
+    '<tr class="fixed">',
+    '<td class="mono">any reply to a customer</td>',
+    `<td>${chip('fixed', 'dim')}</td>`,
+    '<td><span class="toggle" role="switch" aria-checked="false" aria-disabled="true"'
+      + ' aria-label="Send a customer reply without a person"'
+      + ' aria-describedby="fixed-why"><i></i></span> never — DEC-12'
+      + '<div class="imeta" id="fixed-why">A customer reply always waits for a person. No setting changes this.</div></td>',
+    '<td class="mut">does not apply: a person approves every reply</td>',
+    '<td class="mut">the register</td>',
+    '</tr>',
+    ...current.intents.map((intent) => intentRow(intent)),
+    '</tbody></table>',
+    current.unlisted === 0
+      ? ''
+      : `<div class="item"><span class="mut">${current.unlisted === 1
+        ? `1 intent the gate recorded for ${isolated(name)} is not in the taxonomy, so no row shows it.`
+        : `${current.unlisted} intents the gate recorded for ${isolated(name)} are not in the taxonomy,`
+          + ' so no row shows them.'}</span></div>`,
+    '</div>',
+    '<div class="grid">',
+    channelCard(current.channels, name),
+    '<div class="card stack"><header><span class="lbl">Who gets what</span></header><div class="body">',
+    '<div style="font-size:11.5px; color:var(--mut)">Nothing is pushed to an individual. Everyone pulls from one queue.'
+      + ` Taking a case holds it for ${escapeHtml(lapseSays(lapseMs))}, and a second person confirms before taking it over.</div>`,
+    '</div></div>',
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
+/** The hold's lapse in words: whole minutes as minutes, anything else as a duration. */
+function lapseSays(ms: number): string {
+  if (ms % 60_000 !== 0) return durationSays(ms);
+  const minutes = ms / 60_000;
+  return minutes === 1 ? '1 minute' : `${minutes} minutes`;
+}
+
+function intentRow(intent: RoutingIntent): string {
+  const gate = intent.gate;
+  // With a record, an unread row is newer than it. With none, every row was
+  // unread, and runs did reach the gate.
+  const unread = intent.unreadable === 0 || gate === null
+    ? ''
+    : `<div class="imeta">${intent.unreadableAtMost ? 'Up to ' : ''}`
+      + `${intent.unreadable === 1 ? '1 newer gate row' : `${intent.unreadable} newer gate rows`}`
+      + ' could not be read.</div>';
+  const may = gate === null
+    ? intent.unreadable === 0
+      ? '<span class="mut">not recorded: no run of this product reached the gate</span>'
+      : `<span class="mut">not read: ${intent.unreadable === 1
+        ? '1 gate row was recorded, and it could not be read'
+        : `${intent.unreadable} gate rows were recorded, and none could be read`}</span>`
+    : gate.mayAct
+      ? '<span style="color:var(--ok)">yes</span> · when both gates pass'
+      : `<span style="color:var(--hot)">no</span> · ${escapeHtml(STOP_SAYS[gate.reason] ?? gate.reason)}`;
+  const threshold = gate === null
+    ? '<span class="mut">not recorded</span>'
+    : '<span class="pl" style="grid-template-columns:56px auto">'
+      + `<span class="track"><i style="width:${(gate.threshold * 100).toFixed(1)}%; background:var(--accent)"></i></span>`
+      + `<span class="pv">${escapeHtml(gate.threshold.toFixed(2))}</span></span>`
+      + `<div class="imeta">${gate.fitted ? 'fitted for this intent' : 'the global threshold'}`
+      // A stop decides before the agreement gate is read (policy.ts).
+      + `${gate.mayAct ? '' : ' · not compared: a rule decided first'}</div>`;
+  return [
+    '<tr>',
+    `<td class="mono">${isolated(intent.id)}</td>`,
+    `<td>${chip(intent.risk, RISK_TOKEN[intent.risk])}</td>`,
+    `<td>${may}${unread}</td>`,
+    `<td>${threshold}</td>`,
+    `<td class="mono mut">${gate === null ? '—' : escapeHtml(whenSays(new Date(gate.at)))}</td>`,
+    '</tr>',
+  ].join('');
+}
+
+function channelCard(channels: ChannelSignals, name: string): string {
+  return [
+    '<div class="card stack"><header><span class="lbl">Where this product\'s cases come from</span></header>',
+    '<div class="body">',
+    '<div style="font-size:11.5px; color:var(--mut)">The ledger records no intake channel, so no channel\'s'
+      + ' health is shown. These are the signals it does record.</div>',
+    '<dl class="kv">',
+    '<dt>last arrival</dt>',
+    `<dd>${channels.lastArrival === null
+      ? `Nothing for ${isolated(name)} has arrived.`
+      : escapeHtml(whenSays(new Date(channels.lastArrival)))}</dd>`,
+    '<dt>waiting for a consumer</dt>',
+    `<dd>${channels.waiting === 0
+      ? 'No message waits.'
+      : escapeHtml(`${channels.waiting === 1 ? '1 message' : `${channels.waiting} messages`}, the oldest since`
+        + ` ${whenSays(new Date(channels.oldestWaiting!))}`)}</dd>`,
+    '<dt>retried</dt>',
+    `<dd>${channels.retried === 0
+      ? 'No waiting message has failed.'
+      : escapeHtml(`${channels.retried === 1 ? '1 waiting message' : `${channels.retried} waiting messages`}`
+        + ' failed at least once')}</dd>`,
+    '</dl>',
+    '</div></div>',
   ].join('');
 }
 
