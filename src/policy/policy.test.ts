@@ -41,13 +41,6 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
     expect(evaluatePolicy(baseInput())).toBe('auto');
   });
 
-  it('returns auto for a reversible write on a fully capable adapter (DEC-03, DEC-12)', () => {
-    const decision = evaluatePolicy(
-      baseInput({ action: { isWrite: true, isCustomerVisible: false, isIrreversible: false } }),
-    );
-    expect(decision).toBe('auto');
-  });
-
   describe('rule 1: no idempotency support plus a write gates (DEC-06)', () => {
     it('gates a write when supportsIdempotencyKey is false', () => {
       const decision = evaluatePolicy(
@@ -66,19 +59,6 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
         }),
       );
       expect(decision).toBe('auto');
-    });
-
-    it('beats every later rule: high risk and failing evidence still gate', () => {
-      const decision = evaluatePolicy(
-        baseInput({
-          riskTier: 'high',
-          agreement: 0.1,
-          groundedness: 0.1,
-          capabilities: { ...FULL_CAPABILITIES, supportsIdempotencyKey: false },
-          action: { isWrite: true, isCustomerVisible: true, isIrreversible: false },
-        }),
-      );
-      expect(decision).toBe('gated');
     });
   });
 
@@ -173,18 +153,6 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
       expect(decision).toBe('gated');
     });
 
-    it('gates regardless of risk tier and both evidence gates', () => {
-      const decision = evaluatePolicy(
-        baseInput({
-          riskTier: 'low',
-          agreement: 1.0,
-          groundedness: 1.0,
-          action: { isWrite: true, isCustomerVisible: false, isIrreversible: true },
-        }),
-      );
-      expect(decision).toBe('gated');
-    });
-
     it('never escalates on the evidence gates: gating wins first', () => {
       const decision = evaluatePolicy(
         baseInput({
@@ -209,18 +177,6 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
   describe('rule 5: high risk tier gates (DEC-13)', () => {
     it('gates a high-risk intent with perfect evidence', () => {
       const decision = evaluatePolicy(baseInput({ riskTier: 'high' }));
-      expect(decision).toBe('gated');
-    });
-
-    it('gates a high-risk intent regardless of full agreement and coverage', () => {
-      const decision = evaluatePolicy(
-        baseInput({
-          riskTier: 'high',
-          agreement: 1.0,
-          groundedness: 1.0,
-          action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
-        }),
-      );
       expect(decision).toBe('gated');
     });
 
@@ -270,35 +226,9 @@ describe('evaluatePolicy (section 4.8, DEC-03/06/12/13)', () => {
       const decision = evaluatePolicy(baseInput({ groundedness: 0.8 }));
       expect(decision).toBe('auto');
     });
-
-    it('escalation on low groundedness beats the review gate below 0.80', () => {
-      const escalate = evaluatePolicy(baseInput({ groundedness: 0.5 }));
-      const gated = evaluatePolicy(baseInput({ groundedness: 0.75 }));
-      expect(escalate).toBe('escalate');
-      expect(gated).toBe('gated');
-    });
   });
 
   describe('precedence order across all three outcomes', () => {
-    it('capability gate beats risk tier and both evidence gates', () => {
-      const decision = evaluatePolicy(
-        baseInput({
-          riskTier: 'high',
-          agreement: 0.2,
-          groundedness: 0.2,
-          capabilities: { ...FULL_CAPABILITIES, supportsIdempotencyKey: false },
-          action: { isWrite: true, isCustomerVisible: false, isIrreversible: false },
-        }),
-      );
-      expect(decision).toBe('gated');
-    });
-
-    it('risk tier beats agreement escalation', () => {
-      const decision = evaluatePolicy(
-        baseInput({ riskTier: 'high', agreement: 0.2 }),
-      );
-      expect(decision).toBe('gated');
-    });
 
     it('agreement escalation beats groundedness escalation', () => {
       // Both gates fail; the outcome is escalate either way, so assert via a

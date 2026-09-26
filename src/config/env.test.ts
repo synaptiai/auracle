@@ -44,11 +44,6 @@ describe('positiveIntEnv', () => {
     );
   });
 
-  it('names the fix in the message it refuses with', () => {
-    process.env['AURACLE_TEST_INT'] = '';
-    expect(() => positiveIntEnv('AURACLE_TEST_INT', 8)).toThrow(/unset it to use the default of 8/);
-  });
-
   it('refuses whitespace, which is empty an operator cannot see', () => {
     process.env['AURACLE_TEST_INT'] = '   ';
     expect(() => positiveIntEnv('AURACLE_TEST_INT', 8)).toThrow(/must be a positive integer/);

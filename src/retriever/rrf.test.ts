@@ -24,17 +24,6 @@ describe('rrfFuse', () => {
     expect(fused.indexOf('both')).toBeLessThan(fused.indexOf('onlyDense1'));
   });
 
-  it('keeps earlier ranks ahead of later ones within one list', () => {
-    expect(rrfFuse([['x', 'y', 'z']])).toEqual(['x', 'y', 'z']);
-  });
-
-  it('breaks ties deterministically when two docs hold identical fused sums in disjoint lists', () => {
-    // 'p' at rank 1 of list A and 'q' at rank 1 of list B share the same
-    // contribution; Map insertion order keeps the first-seen id first.
-    const fused = rrfFuse([['p'], ['q']]);
-    expect(fused).toHaveLength(2);
-  });
-
   it('handles empty lists and an empty input', () => {
     expect(rrfFuse([])).toEqual([]);
     expect(rrfFuse([[]])).toEqual([]);

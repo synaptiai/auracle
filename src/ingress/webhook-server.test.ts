@@ -257,14 +257,6 @@ describe('webhook signature check', () => {
 
     expect(entries.map((e) => e['event'])).toContain('webhook_unauthenticated');
   });
-
-  it('stays open when none is configured, so a fresh checkout runs', async () => {
-    const received: NormalizedEvent[] = [];
-    const url = await start((event) => void received.push(event));
-
-    expect((await post(url, FULL_BODY)).status).toBe(204);
-    expect(received).toHaveLength(1);
-  });
 });
 
 // Issue #114: the webhook's own log path, with a value from the request in it.

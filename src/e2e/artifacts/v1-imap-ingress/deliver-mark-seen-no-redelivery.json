@@ -1,0 +1,58 @@
+{
+  "artifact": "v1-imap-ingress/deliver-mark-seen-no-redelivery",
+  "inputs": {
+    "catalogue": {
+      "channels": {},
+      "products": [
+        {
+          "id": "aurora",
+          "label": "Aurora"
+        },
+        {
+          "id": "ledger",
+          "label": "Ledger"
+        }
+      ]
+    },
+    "inbound": [
+      {
+        "from": "Dana Doe <dana.ingress@example.test>",
+        "messageId": "<order-4471-ingress@example.test>",
+        "subject": "Order 4471 arrived damaged",
+        "text": "The box arrived with a crushed corner. Two tiles are broken.",
+        "to": "support-ingress@acme.example"
+      }
+    ],
+    "partitionCount": 8,
+    "polls": 2
+  },
+  "observed": {
+    "intake": [
+      {
+        "attempts": 0,
+        "conversation_id": "<uuid:1>",
+        "enqueued_at": "<time>",
+        "message_id": "order-4471-ingress@example.test",
+        "partition": "in range",
+        "product": null,
+        "ticket_id": "order-4471-ingress@example.test",
+        "ticket_text": "Order 4471 arrived damaged\n\nThe box arrived with a crushed corner. Two tiles are broken.",
+        "turn_number": 1
+      }
+    ],
+    "logs": [
+      {
+        "at": "<time>",
+        "count": 1,
+        "event": "mail_fetched"
+      },
+      {
+        "at": "<time>",
+        "count": 1,
+        "event": "mail_intaked"
+      }
+    ],
+    "unseenAfter": []
+  },
+  "seed": null
+}

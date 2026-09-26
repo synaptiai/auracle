@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { FreeScoutEgressAdapter } from './freescout.js';
 import { HelpdeskAdapter } from './helpdesk.js';
 import { SmtpEgressAdapter } from './imap-smtp.js';
-import { READ_BACK_ADAPTER_NAMES, selectReadBackAdapter } from './read-back.js';
+import { selectReadBackAdapter } from './read-back.js';
 
 // Synthetic values only (DEC-18). Nothing here opens a connection: each
 // adapter connects when it is asked to read, and no case asks.
@@ -30,10 +30,6 @@ const IMAP_SMTP_ENV = {
 };
 
 describe('selectReadBackAdapter', () => {
-  it('names the three adapters the approval can read back from', () => {
-    expect([...READ_BACK_ADAPTER_NAMES]).toEqual(['helpdesk', 'imap-smtp', 'freescout']);
-  });
-
   it('builds the adapter each name selects', () => {
     expect(selectReadBackAdapter('helpdesk', {})).toBeInstanceOf(HelpdeskAdapter);
     expect(selectReadBackAdapter('freescout', FREESCOUT_ENV)).toBeInstanceOf(FreeScoutEgressAdapter);

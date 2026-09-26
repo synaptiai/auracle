@@ -1,30 +1,15 @@
 // Tests for the approval-edit distance metric (section 4.10).
 //
-// Three bands pin the contract the daily sample depends on: an unchanged
-// draft reads exactly 0, a partially edited draft lands strictly between
-// 0 and 1, and a fully rewritten draft reads exactly 1. A second group
-// pins what does not count as an edit: casing, punctuation and whitespace.
+// The E2E suites pin an unchanged draft at exactly 0 and a partial edit
+// strictly between 0 and 1 (src/e2e/v1-flow.db.test.ts). What is here: a
+// fully rewritten draft reads exactly 1, the empty-body edges, and what does
+// not count as an edit: casing, punctuation and whitespace.
 
 import { describe, expect, it } from 'vitest';
 
 import { approvalEditDistance, tokenizeBody } from './edit_distance.js';
 
 describe('approvalEditDistance', () => {
-  it('reads 0 when the person sent the draft unchanged', () => {
-    const body = 'Please reset your password from the login page.';
-    expect(approvalEditDistance(body, body)).toBe(0);
-  });
-
-  it('reads strictly between 0 and 1 for a partially edited draft', () => {
-    const parked = 'Please reset your password from the login page.';
-    const final = 'Please reset your password from the login page within one hour.';
-
-    const distance = approvalEditDistance(parked, final);
-
-    expect(distance).toBeGreaterThan(0);
-    expect(distance).toBeLessThan(1);
-  });
-
   it('reads 1 when nothing of the draft survived', () => {
     expect(approvalEditDistance('ship it today', 'totally different words here')).toBe(1);
   });

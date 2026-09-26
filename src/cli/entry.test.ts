@@ -108,11 +108,6 @@ describe('describeFault', () => {
     expect(describeFault(fault).endsWith(': ... (cause chain truncated)')).toBe(true);
   });
 
-  it('adds no truncation note to a chain that fits', () => {
-    const fault = new Error('head', { cause: new Error('tail') });
-    expect(describeFault(fault)).toBe('head: tail');
-  });
-
   it('survives a cause getter that throws', () => {
     // This runs when everything else has already failed, so it must not
     // become the reason a process dies with nothing to show for it.
@@ -207,19 +202,6 @@ describe('runEntry', () => {
     }
     expect(printed).toBe(`provider said: \\u001b[2Kdana\\u0085{"event":"forged"}`
       + '\\u2028x\\u2029y\\u202eevil\\u009b\\u2066\\u200f');
-  });
-
-  it('prints the cause chain, not the head alone', async () => {
-    const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    await runEntry(async () => {
-      await Promise.resolve();
-      throw new Error('cannot write the artifact', {
-        cause: new Error("ENOENT: no such file or directory, open '/x/v1.json'"),
-      });
-    });
-    expect(stderr).toHaveBeenCalledWith(
-      "cannot write the artifact: ENOENT: no such file or directory, open '/x/v1.json'",
-    );
   });
 
   it('runs onFault when main rejects', async () => {

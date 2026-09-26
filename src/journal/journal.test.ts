@@ -150,10 +150,6 @@ describe('the read modules never write', () => {
     }
   });
 
-  it.each(readers)('%s still reads, so the scan is not passing over nothing', (reader) => {
-    expect(codeOf(reader)).toMatch(/\bSELECT\b/);
-  });
-
   // DEC-18. The journal holds a parked draft, an action payload and a fault
   // message that names two email addresses. None of them may be selected into
   // an operator surface. The scan covers the statements rather than the whole

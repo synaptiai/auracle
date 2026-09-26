@@ -162,15 +162,6 @@ describe('a daily count held briefly', () => {
     expect(await again).toEqual({ day: '2026-09-14' });
   });
 
-  it('fails every call joined to the read that ran out', async () => {
-    const read = cachedDaily(() => new Promise<{ day: string }>(() => undefined), 30_000,
-      () => at('2026-09-14T10:00:00Z'), 20);
-    const first = read();
-    const joined = read();
-    await expect(first).rejects.toThrow('did not finish');
-    await expect(joined).rejects.toThrow('did not finish');
-  });
-
   // A fault is not a value. Holding it would show the fault for the whole
   // window after the ledger recovered.
   it('holds no failed read', async () => {

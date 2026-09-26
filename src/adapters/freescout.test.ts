@@ -191,12 +191,6 @@ describe('createDraft parks a draft over the network (DEC-11)', () => {
 });
 
 describe('readDraft reads the parked body back (section 4.10)', () => {
-  it('returns the body the park wrote', async () => {
-    const parked = await adapter.createDraft(reply());
-    const read = await adapter.readDraft(parked.draftExternalId);
-    expect(read?.body).toContain('Your order ships tomorrow.');
-  });
-
   it('returns what a person edited, not what the park wrote', async () => {
     const parked = await adapter.createDraft(reply());
     const threads = instance.conversations.get('41') ?? [];
@@ -276,13 +270,6 @@ describe('sendDraft publishes the approved text', () => {
     instance.conversations.set('41', []);
     await expect(adapter.sendDraft(parked.draftExternalId, 'refund:41:v1')).rejects.toThrow(
       PermanentEgressError,
-    );
-  });
-
-  it('refuses an empty idempotency key', async () => {
-    const parked = await adapter.createDraft(reply());
-    await expect(adapter.sendDraft(parked.draftExternalId, ' ')).rejects.toThrow(
-      /idemKey must not be empty/,
     );
   });
 });

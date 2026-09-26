@@ -1,0 +1,268 @@
+{
+  "artifact": "v1-flow/a-automatic",
+  "inputs": {
+    "capabilities": {
+      "supportsDraftState": true,
+      "supportsIdempotencyKey": true,
+      "supportsLedgerReply": false,
+      "supportsReadBack": true,
+      "supportsStructuredFields": true,
+      "supportsThreading": true
+    },
+    "document": {
+      "body": "Open the account settings page and choose security. Choose reset password and follow the link we email you.",
+      "docId": "d1",
+      "kind": "document",
+      "owner": "synthetic-owner",
+      "reviewBy": "2999-01-01",
+      "title": "Reset your password",
+      "vector": {
+        "numbers": 1536,
+        "sha256": "96f77fd8354a48f415df2180b09dc4822b7aa9195a7b12ef4b653d1df5f4beea"
+      }
+    },
+    "limits": {
+      "deadlineAfterMs": 60000,
+      "maxCostMicros": 100000000,
+      "maxSteps": 50
+    },
+    "pins": {
+      "modelVer": "e2e-flow-model",
+      "promptVer": "e2e-flow-prompt"
+    },
+    "script": [
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "vectors": [
+          {
+            "numbers": 1536,
+            "sha256": "96f77fd8354a48f415df2180b09dc4822b7aa9195a7b12ef4b653d1df5f4beea"
+          }
+        ]
+      },
+      {
+        "text": "[doc:d1] Open the account settings page and choose reset password."
+      },
+      {
+        "text": "VERDICT: SUPPORTED"
+      }
+    ],
+    "taxonomy": {
+      "intents": [
+        {
+          "id": "password_reset",
+          "label": "Password reset",
+          "risk_tier": "low"
+        },
+        {
+          "id": "billing_question",
+          "label": "Billing question",
+          "risk_tier": "low"
+        },
+        {
+          "id": "other",
+          "label": "Everything else",
+          "risk_tier": "medium"
+        }
+      ]
+    },
+    "ticket": {
+      "actionClass": "route_ticket",
+      "actionPayload": {
+        "queue": "password-support"
+      },
+      "delivery": "at_most_once",
+      "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+      "epoch": "1",
+      "isCustomerVisible": false,
+      "ticketId": "T-a-automatic",
+      "ticketText": "I cannot sign in to my account. How do I reset my password?"
+    }
+  },
+  "observed": {
+    "helpdesk": {
+      "deliveries": [
+        {
+          "draftExternalId": null,
+          "externalId": "hd-act-0001",
+          "idemKey": "route_ticket:T-a-automatic:dcd559d29fae95db26c004b78ed0c13d8ce5f86dc52f0e1f817fbbe0476e1c2c"
+        }
+      ],
+      "draft": null,
+      "ticket": {
+        "customerAddress": null,
+        "queue": "password-support",
+        "status": "open",
+        "subject": "Cannot sign in",
+        "ticketId": "T-a-automatic"
+      }
+    },
+    "ledger": {
+      "journal": [
+        {
+          "cost_micros": 90000,
+          "model_ver": "e2e-flow-model",
+          "prompt_ver": "e2e-flow-prompt",
+          "result": {
+            "agreement": 1,
+            "intentId": "password_reset"
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "classify"
+        },
+        {
+          "cost_micros": 100000,
+          "model_ver": "e2e-flow-model",
+          "prompt_ver": "e2e-flow-prompt",
+          "result": {
+            "abstained": false,
+            "citedBodies": {
+              "d1": "Open the account settings page and choose security. Choose reset password and follow the link we email you."
+            },
+            "claimCount": 1,
+            "provider": "stub",
+            "sentences": [
+              {
+                "docId": "d1",
+                "text": "Open the account settings page and choose reset password."
+              }
+            ],
+            "staleDocumentIds": []
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "compose"
+        },
+        {
+          "cost_micros": 110000,
+          "model_ver": "e2e-flow-model",
+          "prompt_ver": "e2e-flow-prompt",
+          "result": {
+            "idemKey": "route_ticket:T-a-automatic:dcd559d29fae95db26c004b78ed0c13d8ce5f86dc52f0e1f817fbbe0476e1c2c"
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "execute"
+        },
+        {
+          "cost_micros": 110000,
+          "model_ver": "e2e-flow-model",
+          "prompt_ver": "e2e-flow-prompt",
+          "result": {
+            "claimVerdicts": [
+              {
+                "claimIndex": 0,
+                "supported": true
+              }
+            ],
+            "decision": "auto",
+            "groundedness": 1,
+            "reason": "auto",
+            "riskTier": "low",
+            "thresholds": {
+              "agreement": 0.6,
+              "groundednessBlock": 0.7,
+              "groundednessReview": 0.8
+            }
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "gate"
+        },
+        {
+          "cost_micros": 90000,
+          "model_ver": "e2e-flow-model",
+          "prompt_ver": "e2e-flow-prompt",
+          "result": {
+            "docIds": [
+              "d1"
+            ],
+            "documents": [
+              {
+                "bodyHash": "89d5f43a37e35bcb3e2da1e891ff878c757c599f4c02c32f199fd6794791c7f2",
+                "docId": "d1",
+                "owner": "synthetic-owner",
+                "reviewBy": "2999-01-01",
+                "title": "Reset your password"
+              }
+            ],
+            "embed_model_ver": "e2e-flow-model"
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "retrieve"
+        }
+      ],
+      "outbox": [
+        {
+          "action_class": "route_ticket",
+          "delivery": "at_most_once",
+          "epoch": "1",
+          "idem_key": "route_ticket:T-a-automatic:dcd559d29fae95db26c004b78ed0c13d8ce5f86dc52f0e1f817fbbe0476e1c2c",
+          "not_before": null,
+          "payload": {
+            "queue": "password-support"
+          },
+          "reply": null,
+          "run_id": "<uuid:1>",
+          "status": "sent",
+          "step_id": "execute"
+        }
+      ],
+      "run": {
+        "approval_edit_distance": null,
+        "approved_by": null,
+        "approved_by_source": null,
+        "attempt": 1,
+        "conversation_id": null,
+        "cost_micros": 110000,
+        "created_at": "<time>",
+        "deadline_at": "<time>",
+        "enqueued_at": null,
+        "epoch": "1",
+        "finished_at": "<time>",
+        "model_ver": "e2e-flow-model",
+        "partition": 3,
+        "product": null,
+        "prompt_ver": "e2e-flow-prompt",
+        "run_id": "<uuid:1>",
+        "send_back_note": null,
+        "sent_back_at": null,
+        "snoozed_until": null,
+        "state": "resolved",
+        "steps_used": 5,
+        "ticket_id": "T-a-automatic",
+        "turn_number": null
+      }
+    },
+    "ticketEpoch": "1"
+  },
+  "seed": 42
+}

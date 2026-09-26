@@ -33,7 +33,6 @@ import type { GoldReportArtifact } from './artifact.js';
 import { runGoldReportJob } from './run.js';
 import { SEED_THRESHOLDS, makeThresholds } from '../policy/policy.js';
 import { FakeProvider } from '../models/fake.js';
-import { isFirstTurn } from '../domain/gold-types.js';
 import { loadGoldHalf } from '../fixtures/load.js';
 import { halfDigest, identityOf } from '../fixtures/digest.js';
 import type { GoldFile, GoldTicket } from '../domain/gold-types.js';
@@ -704,39 +703,6 @@ describe('gold report artifact round-trip', () => {
   });
 });
 
-describe('first-turn scope (DEC-39)', () => {
-  function goldTicket(overrides: Partial<GoldTicket> = {}): GoldTicket {
-    return {
-      ticket_id: 'g-1',
-      source: 'synthetic',
-      intent: 'refund-request',
-      queue: 'billing',
-      disposition: {
-        escalated: false,
-        macro_applied: null,
-        refund_issued: true,
-        first_reply_minutes: 12,
-      },
-      subject: 'Refund',
-      body: 'Please refund me.',
-      ...overrides,
-    };
-  }
-
-  it('treats a case with no turn as a first turn', () => {
-    // Every committed fixture is one: the generator writes one subject and
-    // one body per case and records no prior turn.
-    expect(isFirstTurn(goldTicket())).toBe(true);
-    expect(isFirstTurn(goldTicket({ turn_number: 1 }))).toBe(true);
-  });
-
-  it('excludes a later turn from the scored set', () => {
-    // A later turn's disposition reflects the whole conversation, not the
-    // routing decision being scored (DEC-32).
-    expect(isFirstTurn(goldTicket({ turn_number: 2 }))).toBe(false);
-  });
-});
-
 // A published number is only readable beside the gate it was scored through.
 // Before this the artifact recorded the value and not its origin, so a fitted
 // run and a seeded run published different numbers under identical metadata.
@@ -1250,39 +1216,6 @@ describe('a seeded provenance must carry the seed value (DEC-31)', () => {
       }),
     ).toThrow(/gate_calibration_scope/);
   });
-});
-
-// A caveat the register now states, pinned so it cannot rot into a false
-// claim. The wiring is exercised by the mixed-agreement suite above; this
-// records that the COMMITTED corpus cannot exercise it, because the offline
-// stub answers every sample of one ticket alike.
-describe('the offline stub leaves no room for a threshold to bind', () => {
-  it('reports agreement 1.0 for every scripted ticket, whatever the gate', async () => {
-    const { half, steps } = makeScriptedReportHalf();
-    const strict = await runGoldReportJob({
-      provider: new FakeProvider([...steps]),
-      taxonomy: TEST_TAXONOMY,
-      reportHalf: half,
-      artifactDir: tempDirUrl(),
-      modelVer: 'test-stub',
-      thresholds: makeThresholds({ ...SEED_THRESHOLDS, agreement: 0.99 }),
-      provenance: { source: 'calibration', version: 1, scope: 'all_turns', goldSource: 'synthetic' },
-    });
-    const seeded = await runGoldReportJob({
-      provider: new FakeProvider([...makeScriptedReportHalf().steps]),
-      taxonomy: TEST_TAXONOMY,
-      reportHalf: makeScriptedReportHalf().half,
-      artifactDir: tempDirUrl(),
-      modelVer: 'test-stub',
-    });
-
-    // Nine identical samples give agreement 1.0, which clears 0.99 and 0.6
-    // alike. Only the recorded provenance separates the two artifacts.
-    expect(strict.artifact.action_match).toEqual(seeded.artifact.action_match);
-    expect(strict.artifact.containment).toEqual(seeded.artifact.containment);
-    expect(strict.artifact.gate_agreement).toBe(0.99);
-    expect(seeded.artifact.gate_agreement).toBe(SEED_THRESHOLDS.agreement);
-  }, 60_000);
 });
 
 // The strictness this module gained when three loaders were put on one scan.

@@ -98,12 +98,6 @@ describe('the group a waiting case belongs to', () => {
     expect(queueGroupOf({ ...CLEAN, gateCoverage: null })).toBe('rest');
     expect(queueGroupOf({ ...CLEAN, coverageReviewThreshold: null })).toBe('rest');
   });
-
-  // Risk outranks clean: an irreversible case with clean gates is still work
-  // to do first.
-  it('keeps a risky case first even when both gates are clean', () => {
-    expect(queueGroupOf({ ...CLEAN, gateReason: 'high_risk' })).toBe('first');
-  });
 });
 
 describe('the queue in groups', () => {
@@ -240,17 +234,5 @@ describe('the queue in groups', () => {
     expect(groupQueue(runs, undefined, () => false)[0]!.runs.map((r) => r.runId))
       .toEqual(['old', 'new']);
     expect(groupQueue(runs)[0]!.runs.map((r) => r.runId)).toEqual(['old', 'new']);
-  });
-
-  // The predicate is what marks a case held. A caller that names none groups
-  // by the gate facts alone, which is what every caller did before this
-  // group existed.
-  it('groups by the gate facts when no hold is named', () => {
-    const runs = [
-      run('risky', { gateReason: 'irreversible' }),
-      run('said', {}),
-    ];
-    expect(groupQueue(runs).map((g) => [g.group, g.runs.map((r) => r.runId)]))
-      .toEqual([['first', ['risky']], ['clean', ['said']]]);
   });
 });

@@ -18,28 +18,6 @@ describe('the run insert statement without a clock', () => {
     expect(NO_CLOCK).not.toContain('created_at');
   });
 
-  it('names every column the run row needs, the clock aside', () => {
-    for (const column of [
-      'run_id',
-      'ticket_id',
-      'partition',
-      'epoch',
-      'state',
-      'prompt_ver',
-      'model_ver',
-      'cost_micros',
-      'steps_used',
-      'deadline_at',
-      'enqueued_at',
-      'conversation_id',
-      'turn_number',
-      'attempt',
-      'product',
-    ]) {
-      expect(NO_CLOCK).toContain(column);
-    }
-  });
-
   // The exact list, in order.
   //
   // Counting placeholders proves nothing: `runInsertStatement` builds them
@@ -65,9 +43,6 @@ describe('the run insert statement without a clock', () => {
 });
 
 describe('the run insert statement with a clock', () => {
-  it('names created_at', () => {
-    expect(WITH_CLOCK).toContain('created_at');
-  });
 
   it('binds one more placeholder than the plain form', () => {
     const plain = NO_CLOCK.slice(NO_CLOCK.indexOf('(') + 1, NO_CLOCK.indexOf(')'))

@@ -182,11 +182,6 @@ describe('an unmeasured metric', () => {
     expect(html).toContain('>0<');
     expect(html).not.toContain('no verdict');
   });
-
-  it('names the shortfall rather than saying only that a verdict is missing', () => {
-    const html = renderMetricValue({ value: null, shortfall: 'provider_change' });
-    expect(html).toContain('provider_change');
-  });
 });
 
 describe('escaping', () => {

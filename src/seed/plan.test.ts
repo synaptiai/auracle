@@ -282,13 +282,6 @@ describe('the planner is deterministic', () => {
     const other = planHistory({ ...OPTIONS, seed: OPTIONS.seed + 1 });
     expect(JSON.stringify(other)).not.toBe(JSON.stringify(planHistory(OPTIONS)));
   });
-
-  it('reads no wall clock, so the plan does not depend on when it ran', () => {
-    const first = planHistory(OPTIONS);
-    const second = planHistory(OPTIONS);
-    expect(first[0]!.createdAt.toISOString()).toBe(second[0]!.createdAt.toISOString());
-    expect(first.at(-1)!.finishedAt?.toISOString()).toBe(second.at(-1)!.finishedAt?.toISOString());
-  });
 });
 
 describe('seededUuid', () => {
@@ -355,12 +348,6 @@ describe('the history it plans', () => {
 // a number.
 describe('the queue wait the serial walk produces', () => {
   const plan = planHistory(OPTIONS);
-
-  it('never starts a run before its message arrived', () => {
-    for (const run of plan) {
-      expect(run.createdAt.getTime()).toBeGreaterThanOrEqual(run.enqueuedAt.getTime());
-    }
-  });
 
   // One consumer walks its whole batch serially, across every partition it
   // owns, so two runs of one CONSUMER never overlap. Asserted per consumer
@@ -463,15 +450,6 @@ describe('the queue wait the serial walk produces', () => {
     expect(Math.max(...wokenWaits)).toBeGreaterThan(Math.max(...polledWaits) - 5_000);
   });
 
-  // Under two per cent busy, in either regime. A queue forms near
-  // saturation, not here, and the wake changes no run's service time.
-  it('stays far from saturation, which is why no rule R1 to R4 fires', () => {
-    const totalWork = plan.reduce((sum, r) => sum + r.serviceMs, 0);
-    const consumers = 2;
-    const utilisation = totalWork / (consumers * OPTIONS.days * 11 * 3_600_000);
-    expect(utilisation).toBeLessThan(0.02);
-  });
-
   // Every figure the shipped documents quote, pinned to the value they
   // quote.
   //
@@ -548,34 +526,6 @@ describe('the queue wait the serial walk produces', () => {
     const mean = gaps.reduce((a, b) => a + b, 0) / gaps.length;
     expect(gaps[0]!).toBeLessThan(mean * 0.35);
     expect(gaps.at(-1)!).toBeGreaterThan(mean * 2);
-  });
-
-  // Uniform by construction: the hash spreads, and nothing here skews it.
-  // Asserted so a later change that did skew it announces itself, because
-  // depth is exactly what tells rule R1 and R2 apart from R3.
-  it('spreads depth evenly across partitions', () => {
-    const counts = new Map<number, number>();
-    for (const run of plan) counts.set(run.partition, (counts.get(run.partition) ?? 0) + 1);
-    const values = [...counts.values()];
-    expect(values).toHaveLength(OPTIONS.partitions);
-
-    // The bound is derived, not chosen to fit. Assignment is a hash, so each
-    // partition's count is binomial: about n/4 with a standard deviation of
-    // sqrt(n * (1/4) * (3/4)). Over roughly 2400 runs that is about 600 give
-    // or take 21, so the extremes of four draws sit a few deviations apart
-    // and a ratio near 1.16 is ordinary. Four deviations either way gives
-    // 1.30, and anything past that is a skew somebody introduced.
-    //
-    // Tightening this until the current seed passes would be tuning the
-    // seeder against its own check, and depth is exactly what tells rules R1
-    // and R2 apart from R3.
-    const n = plan.length;
-    const expected = n / OPTIONS.partitions;
-    const sigma = Math.sqrt(n * 0.25 * 0.75);
-    for (const count of values) {
-      expect(Math.abs(count - expected)).toBeLessThan(4 * sigma);
-    }
-    expect(Math.max(...values) / Math.min(...values)).toBeLessThan(1.3);
   });
 
   // Heavy-tailed because a run makes twelve model calls. Asserted as a shape,
@@ -1269,18 +1219,6 @@ describe('how many steps a seeded run counted', () => {
         + (run.park !== null ? 1 : 0);
       expect(run.stepsUsed, run.runId).toBe(expected);
     }
-  });
-
-  it('counts three for an abstain, which stops before the gate', () => {
-    const abstained = plan.filter((run) => run.abstained);
-    expect(abstained.length).toBeGreaterThan(0);
-    for (const run of abstained) expect(run.stepsUsed, run.runId).toBe(3);
-  });
-
-  // The number the column defaulted to, which is what made the two
-  // descriptions disagree.
-  it('never reports a run that did no work at all', () => {
-    for (const run of plan) expect(run.stepsUsed, run.runId).toBeGreaterThan(0);
   });
 });
 

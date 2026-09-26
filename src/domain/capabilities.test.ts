@@ -116,28 +116,6 @@ function runtimeSpecifiers(source: string): string[] {
   return loaded;
 }
 
-/** True when the source re-exports a name from elsewhere rather than declaring it. */
-export function reExportsFrom(source: string, name: string, from: string): boolean {
-  const tree = ts.createSourceFile('probe.ts', source, ts.ScriptTarget.ES2022, true);
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (
-      ts.isExportDeclaration(node)
-      && node.moduleSpecifier !== undefined
-      && ts.isStringLiteral(node.moduleSpecifier)
-      && node.moduleSpecifier.text === from
-      && node.exportClause !== undefined
-      && ts.isNamedExports(node.exportClause)
-      && node.exportClause.elements.some((element) => element.name.text === name)
-    ) {
-      found = true;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(tree);
-  return found;
-}
-
 function sourceFiles(dir: string, found: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry === 'dist') continue;
@@ -192,22 +170,6 @@ describe('the adapter contract has one declaration', () => {
       expect(declarers).toEqual([HOME]);
     });
   }
-
-  it('leaves the former homes re-exporting rather than declaring', () => {
-    // A re-export keeps every existing importer working, so nothing had to
-    // move to fix the split.
-    const policy = read('src/policy/policy.ts');
-    const adapters = read('src/adapters/types.ts');
-    const from = '../domain/capabilities.js';
-    expect(reExportsFrom(policy, 'AdapterCapabilities', from)).toBe(true);
-    expect(reExportsFrom(policy, 'RiskTier', from)).toBe(true);
-    expect(reExportsFrom(adapters, 'AdapterCapabilities', from)).toBe(true);
-    // `src/fixtures/load.ts` held the fixture corpus's copy and re-exported
-    // here. The corpus types moved to a sibling of this file, so that is the
-    // module that surfaces the tier to them now, and the specifier is
-    // relative to this directory rather than up out of `src/fixtures/`.
-    expect(reExportsFrom(read(TYPES), 'RiskTier', './capabilities.js')).toBe(true);
-  });
 
   it('imports nothing, so a type does not drag a module behind it', () => {
     // The reason the fixture loader's copy existed: any module that wanted

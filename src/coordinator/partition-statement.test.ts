@@ -71,12 +71,6 @@ describe('the partition key the repository states (DEC-36)', () => {
     expect(naming).toEqual([]);
   });
 
-  it('sends every turn of one conversation to one partition', () => {
-    const first = partitionOf('CONV-1', 8);
-    const second = partitionOf('CONV-1', 8);
-    expect(second).toBe(first);
-  });
-
   it('lands every key inside the partition count', () => {
     // The fallback to the ticket id is chosen by the caller, not here; this
     // function only has to place whatever key it is given.

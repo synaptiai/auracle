@@ -164,6 +164,33 @@ and pushes it to GHCR tagged with the commit SHA. The tag is the SHA and never
 That job says what is missing rather than failing when the environment
 names no host.
 
+## How to test a change
+
+These rules decide what test you write. They apply to every agent and every change.
+
+1. Never write a unit test after you write the code. A test written after the code
+   only restates what the code does. It catches no bug.
+2. Prefer an end-to-end test, and make it the only test when you can. The suites
+   under `src/e2e/` are the model. Use one to prove that a complex feature works.
+3. Make each end-to-end test produce an artifact at its end. The artifact records the
+   inputs, the seed and the observed end state. A second run from the same inputs
+   produces the same artifact, so a reader can verify it.
+4. Test a component in isolation only when an end-to-end test cannot reach the failure.
+   First, write down every way that the component can fail. Then write the tests
+   for that list. Then write the code.
+
+`src/test-support/e2e-artifact.ts` implements rule 3. Each case settles its artifact
+against a committed file under `src/e2e/artifacts/`. A difference fails the case. The
+new text goes to a `.actual.json` file beside the golden, which git ignores. The golden
+does not change, so a second run fails too.
+
+Rerun with `AURACLE_E2E_ACCEPT=1` only when
+the change is intended. Then review `git diff -- src/e2e/artifacts` and commit the file.
+
+A bug fix follows rule 4. Its regression test fails before the fix, as `REVIEW.md`
+requires. Do not add a unit test that an end-to-end test already covers. Do not add
+a test that asserts a mock, a constant or a type.
+
 ## Running one test
 
 The runner is Vitest. Run one file or one case:

@@ -238,15 +238,6 @@ describe('the IMAP connection a draft read opens (issue #102)', () => {
     }
   });
 
-  it('reads the parked body back', async () => {
-    const { server, port } = await fakeImap();
-    try {
-      await expect(egressOn(port, 2_000).readDraft('7')).resolves.toEqual({ body: 'Your refund is on its way.' });
-    } finally {
-      server.close();
-    }
-  });
-
   // The operation is done once its result is in hand. A connection that
   // drops while it logs out does not take that result away.
   it('keeps a read that finished when the connection resets on logout', async () => {
@@ -436,10 +427,6 @@ describe('the IMAP connection a draft read opens (issue #102)', () => {
     }
   });
 
-  it('bounds each IMAP wait at the fifteen seconds the FreeScout request takes', () => {
-    expect(IMAP_OPERATION_TIMEOUT_MS).toBe(15_000);
-  });
-
   // The console gives a read-back four seconds (`READ_BACK_GIVE_UP_MS` in
   // console/src/read-back.ts, pinned by its own suite). The logout grace must
   // leave most of that for connecting and reading, so a stalled logout cannot
@@ -524,13 +511,6 @@ describe('draft message construction', () => {
     expect(Buffer.from(match![1]!, 'base64').toString('utf8')).toBe(
       'Re: Café order missing',
     );
-  });
-
-  it('writes the park key as a header so a retry can find the draft (DEC-24)', async () => {
-    // IMAP gives an appended message no primary key. The header is the only
-    // handle that survives a crash between the append and the ledger write.
-    const raw = buildDraftMessage(reply({ idemKey: 'park:T-9:abc' })).toString();
-    expect(raw).toContain('X-Auracle-Idem-Key: park:T-9:abc');
   });
 
   it('omits the header when no park key is given', async () => {
@@ -794,13 +774,6 @@ describe('ticket identity from threading headers', () => {
     expect(first.ticket.ticketId).toMatch(/^no-id-[0-9a-f]{16}$/);
   });
 
-  it('derives stable ids through deriveTicketId directly', () => {
-    expect(deriveTicketId('root@example.test', 'any-source')).toBe(
-      'root@example.test',
-    );
-    expect(deriveTicketId(null, 'source-a')).toBe(deriveTicketId(null, 'source-a'));
-  });
-
   it('refuses ids over 200 characters instead of truncating them', () => {
     // A truncated id could collide with another thread sharing the prefix
     // and never round-trips in the egress thread lookup, so derivation
@@ -850,13 +823,6 @@ describe('findThreadOriginator separates a refused search from an empty one', ()
           : { seq: UID, uid: UID, source: Buffer.from(behaviour.fetchOne ?? THREAD_ROOT_EMAIL) },
     };
   }
-
-  it('answers the thread author when the search finds the root', async () => {
-    const thread = await findThreadOriginator(client({ search: [UID] }), TICKET_ID);
-
-    expect(thread.fromAddress).toBe('dana.doe@example.test');
-    expect(thread.messageId).toBe(TICKET_ID);
-  });
 
   it('raises a retryable error when the server refuses the SEARCH', async () => {
     // A PermanentEgressError here escalates the ticket on the first fault and

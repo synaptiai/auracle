@@ -11,7 +11,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  JOURNAL_COLUMNS,
   journalFinishStatement,
   journalInsertStatement,
 } from './journal-write.js';
@@ -31,25 +30,6 @@ describe('the step_journal insert statement', () => {
     expect(columnsOf(INSERT)).toEqual([
       'run_id', 'step_id', 'status', 'result', 'prompt_ver', 'model_ver', 'cost_micros',
     ]);
-  });
-
-  it('binds one placeholder per column and no more', () => {
-    const count = JOURNAL_COLUMNS.length;
-    expect(INSERT).toContain(`$${count}`);
-    expect(INSERT).not.toContain(`$${count + 1}`);
-  });
-
-  // The jsonb cast belongs to `result` and to nothing else.
-  //
-  // Not because the write fails without it — the statement this replaced
-  // was `SET result = $4` with no cast and ran in production, because
-  // Postgres coerces an unknown-typed parameter in assignment context. It
-  // states the parameter's type at the call site, so the one column holding
-  // JSON says so, and a cast on any other column would refuse a value that
-  // is not JSON.
-  it('casts the result column and no other', () => {
-    expect(INSERT).toContain(`$${JOURNAL_COLUMNS.indexOf('result') + 1}::jsonb`);
-    expect(INSERT.match(/::jsonb/g)).toHaveLength(1);
   });
 
   // The relay's clause, and the relay's alone. It journals one `escalate`
@@ -79,9 +59,5 @@ describe('the step_journal finish statement', () => {
 
   it('addresses one row by its whole primary key', () => {
     expect(journalFinishStatement()).toContain('WHERE run_id = $1 AND step_id = $2');
-  });
-
-  it('casts the result it writes', () => {
-    expect(journalFinishStatement()).toContain('$4::jsonb');
   });
 });

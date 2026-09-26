@@ -81,3 +81,7 @@ __pycache__/
 # every `git status` reporting it and every workflow preflight blocked on it.
 # docs/internal/ itself is tracked, so the rule names the one directory.
 docs/internal/design_handoff_reviewer_console/
+
+# The new text of an end-to-end artifact that differs from its golden.
+# src/test-support/e2e-artifact.ts writes it; AURACLE_E2E_ACCEPT=1 clears it.
+src/e2e/artifacts/**/*.actual.json

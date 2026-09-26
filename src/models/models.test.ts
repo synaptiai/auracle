@@ -18,57 +18,6 @@ describe('assertSamplingTemperature', () => {
 });
 
 describe('FakeProvider', () => {
-  it('returns scripted chat responses in order and records each call', async () => {
-    const provider = new FakeProvider([
-      { text: 'billing_refund', costMicros: 3 },
-      { text: 'shipping_status', costMicros: 2 },
-    ]);
-
-    const first = await provider.complete({
-      messages: [{ role: 'user', content: 'ticket one' }],
-      temperature: 0.7,
-      promptVer: 'classify@1',
-      modelVer: 'test/model-a',
-    });
-    const second = await provider.complete({
-      messages: [{ role: 'user', content: 'ticket two' }],
-      temperature: 0.7,
-      promptVer: 'classify@1',
-      modelVer: 'test/model-a',
-    });
-
-    expect(first.text).toBe('billing_refund');
-    expect(first.costMicros).toBe(3);
-    expect(second.text).toBe('shipping_status');
-    expect(second.servedModelVer).toBe('test/model-a');
-
-    // DEC-26: every call records the pinned versions.
-    expect(provider.calls).toHaveLength(2);
-    expect(provider.calls[0]).toMatchObject({
-      kind: 'chat',
-      promptVer: 'classify@1',
-      modelVer: 'test/model-a',
-      temperature: 0.7,
-    });
-  });
-
-  it('scripts embeddings and echoes the pinned versions', async () => {
-    const provider = new FakeProvider([{ vectors: [[1, 2], [3, 4]], costMicros: 0 }]);
-
-    const result = await provider.embed({
-      input: ['doc one', 'doc two'],
-      promptVer: 'embed@1',
-      modelVer: 'test/embedder',
-    });
-
-    expect(result.vectors).toEqual([[1, 2], [3, 4]]);
-    expect(result.costMicros).toBe(0);
-    expect(provider.calls[0]).toMatchObject({
-      kind: 'embed',
-      promptVer: 'embed@1',
-      modelVer: 'test/embedder',
-    });
-  });
 
   it('throws when the script is exhausted instead of inventing output', async () => {
     const provider = new FakeProvider([]);

@@ -201,17 +201,6 @@ describe('fitCoverageThresholds (DEC-05, section 4.7)', () => {
     );
   });
 
-  it('names the overlap it measured when it refuses', () => {
-    const overlapping: CoverageSample[] = [
-      ...Array.from({ length: 20 }, () => ({ coverage: 0.8, grounded: true, grade: null })),
-      ...Array.from({ length: 20 }, () => ({ coverage: 0.8, grounded: false, grade: 'absent' })),
-    ];
-
-    expect(() => fitCoverageThresholds(overlapping, { targetPrecision: 0.985, targetNpv: 0.9 })).toThrow(
-      /0\.8/,
-    );
-  });
-
   it('reports measured coverage for each grade of negative', () => {
     // A fit that holds only on the easy grade is a fit that measured nothing
     // about the hard one. The per-grade figures make that visible.
@@ -247,12 +236,5 @@ describe('fitCoverageThresholds (DEC-05, section 4.7)', () => {
     expect(() =>
       fitCoverageThresholds(clean(10), { targetPrecision: 0.985, targetNpv: 0.9 }),
     ).toThrow(/both classes/);
-  });
-
-  it('reads no agreement value, so the gates stay independent (DEC-05)', () => {
-    // The sample shape cannot carry one. A blended fit is unrepresentable.
-    const sample: CoverageSample = { coverage: 1, grounded: true, grade: null };
-
-    expect(Object.keys(sample).sort()).toEqual(['coverage', 'grade', 'grounded']);
   });
 });

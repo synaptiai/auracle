@@ -1,0 +1,137 @@
+{
+  "artifact": "v1-email-flow/one-draft-per-park-key",
+  "inputs": {
+    "capabilities": {
+      "supportsDraftState": true,
+      "supportsIdempotencyKey": false,
+      "supportsLedgerReply": false,
+      "supportsReadBack": false,
+      "supportsStructuredFields": false,
+      "supportsThreading": true
+    },
+    "document": {
+      "body": "We are sorry about the broken tiles. We ship a replacement today.",
+      "docId": "d1",
+      "kind": "document",
+      "owner": "synthetic-owner",
+      "reviewBy": "2999-01-01",
+      "title": "Broken shipments",
+      "vector": {
+        "numbers": 1536,
+        "sha256": "6e881bb0bca7ba5c2e94b7e310bc46af32116a39ea36b1c00c38a2f06a9084b1"
+      }
+    },
+    "inbound": [
+      {
+        "from": "Dana Doe <dana.doe@example.test>",
+        "messageId": "<order-4471-damaged@example.test>",
+        "subject": "Order 4471 arrived damaged",
+        "text": "The box arrived with a crushed corner. Two tiles are broken.",
+        "to": "support@acme.example"
+      }
+    ],
+    "limits": {
+      "deadlineAfterMs": 60000,
+      "maxCostMicros": 100000000,
+      "maxSteps": 50
+    },
+    "pins": {
+      "modelVer": "e2e-email-model",
+      "promptVer": "e2e-email-prompt"
+    },
+    "script": [
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "vectors": [
+          {
+            "numbers": 1536,
+            "sha256": "6e881bb0bca7ba5c2e94b7e310bc46af32116a39ea36b1c00c38a2f06a9084b1"
+          }
+        ]
+      },
+      {
+        "text": "[doc:d1] We are sorry about the broken tiles. We ship a replacement today."
+      },
+      {
+        "text": "VERDICT: SUPPORTED"
+      }
+    ],
+    "taxonomy": {
+      "intents": [
+        {
+          "id": "complaint_resolution",
+          "label": "Complaint resolution",
+          "risk_tier": "low"
+        },
+        {
+          "id": "other",
+          "label": "Everything else",
+          "risk_tier": "medium"
+        }
+      ]
+    },
+    "ticket": {
+      "actionClass": "customer_reply",
+      "actionPayload": {
+        "summary": "replacement shipment answer"
+      },
+      "delivery": "at_least_once",
+      "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+      "epoch": "1",
+      "isCustomerVisible": true,
+      "ticketId": "order-4471-damaged@example.test",
+      "ticketText": "The box arrived with a crushed corner. Two tiles are broken."
+    }
+  },
+  "observed": {
+    "drafts": [
+      {
+        "bodyText": "We are sorry about the broken tiles.",
+        "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+        "from": "support@acme.example",
+        "idemKey": "park:order-4471-damaged@example.test:duplicate-guard",
+        "inReplyTo": "order-4471-damaged@example.test",
+        "references": [
+          "order-4471-damaged@example.test"
+        ],
+        "subject": "Re: Order 4471 arrived damaged",
+        "to": [
+          "dana.doe@example.test"
+        ],
+        "uid": "<uid:1>"
+      }
+    ],
+    "inboxes": {},
+    "parks": {
+      "first": "<uid:1>",
+      "repeat": "<uid:1>"
+    }
+  },
+  "seed": null
+}

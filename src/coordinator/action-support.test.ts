@@ -63,10 +63,6 @@ describe('the declarations the check reads', () => {
     }
   });
 
-  it('name the helpdesk as the adapter nobody set', () => {
-    expect(DEFAULT_EGRESS_ADAPTER).toBe('helpdesk');
-  });
-
   it('read an adapter name as its own entry, never as a property every object has', () => {
     expect(ownEntry(EGRESS_PERFORMS, 'helpdesk')).toBe(EGRESS_PERFORMS['helpdesk']);
     for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'nope']) {
@@ -83,9 +79,6 @@ describe('the declarations the check reads', () => {
     }
   });
 
-  it('send the queue every route needs', () => {
-    expect(CONSUMER_ACTION_PAYLOAD).toEqual({ queue: 'triaged' });
-  });
 });
 
 describe('refuseUnperformedAction', () => {

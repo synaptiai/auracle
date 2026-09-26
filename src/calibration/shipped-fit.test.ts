@@ -284,11 +284,6 @@ describe('a Zipf shape at exponent one, as arithmetic', () => {
     .reduce((a, b) => a + b, 0);
   const fitCasesAtRank = (rank: number): number => FIT_COUNT / harmonic / rank;
 
-  it('gives the most frequent intent many cases and the rarest few', () => {
-    expect(Math.round(fitCasesAtRank(1))).toBe(1074);
-    expect(Math.round(fitCasesAtRank(INTENT_CAP))).toBe(43);
-  });
-
   it('reaches the sample floor for four intents of twenty-five, which is necessary and not sufficient', () => {
     const floor = minimumSupport(DEFAULT_TARGET_PRECISION);
     const reached = Array.from({ length: INTENT_CAP }, (_, i) => fitCasesAtRank(i + 1))

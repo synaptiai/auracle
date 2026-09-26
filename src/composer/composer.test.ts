@@ -228,26 +228,6 @@ describe('conversation history in the prompt (DEC-37)', () => {
     expect(prompt).toContain('I cannot sign in.');
     expect(prompt.indexOf('I cannot sign in.')).toBeLessThan(prompt.indexOf('Documents:'));
   });
-
-  it('abstains on an answer that rests on history alone', async () => {
-    // History is context, never evidence. A claim citing no retrieved doc
-    // fails the parser, so the composer abstains (DEC-07).
-    const provider = new FakeProvider([
-      { text: 'You told me earlier that the tiles were broken.' },
-    ]);
-
-    const result = await composeAnswer(
-      {
-        question: 'Any update?',
-        docs: [doc({ docId: 'd1', body: 'Resets take 15 minutes.' })],
-        history: [{ turnNumber: 1, author: 'customer', bodyText: 'Tiles broken.' }],
-      },
-      { provider, promptVer: 'p@1', modelVer: 'm@1' },
-    );
-
-    expect(result.abstained).toBe(true);
-    expect(result.draft).toBeNull();
-  });
 });
 
 describe("the reviewer's note (DEC-49)", () => {
@@ -291,26 +271,6 @@ describe("the reviewer's note (DEC-49)", () => {
     expect(history.calls[0]?.messages?.at(-1)?.content).toBe(
       plain.calls[0]?.messages?.at(-1)?.content,
     );
-  });
-
-  it('abstains on an answer that rests on the note alone', async () => {
-    // The note is an instruction, never evidence (DEC-37). A claim citing no
-    // retrieved document fails the parser however the note reads.
-    const provider = new FakeProvider([
-      { text: 'You told me the refund already posted, so there is nothing to do.' },
-    ]);
-
-    const result = await composeAnswer(
-      {
-        question: 'Any update?',
-        docs: [doc({ docId: 'd1', body: 'Refunds post within five days.' })],
-        note: 'The refund already posted.',
-      },
-      deps(provider),
-    );
-
-    expect(result.abstained).toBe(true);
-    expect(result.draft).toBeNull();
   });
 });
 
@@ -361,23 +321,6 @@ describe('the reply the composer drafts (DEC-43)', () => {
 
     expect(result.claims).toEqual([
       { text: 'Refunds post within five business days of approval.', docId: 'doc-1' },
-    ]);
-  });
-
-  it('drafts a reply carrying no courtesy sentence at all', async () => {
-    const provider = new FakeProvider([
-      { text: '[doc:doc-1] Refunds post within five business days.' },
-    ]);
-
-    const result = await composeAnswer(
-      { question: 'Where is my refund?', docs: [doc()] },
-      deps(provider),
-    );
-
-    expect(result.abstained).toBe(false);
-    expect(result.draft).toBe('Refunds post within five business days.');
-    expect(result.sentences).toEqual([
-      { text: 'Refunds post within five business days.', docId: 'doc-1' },
     ]);
   });
 

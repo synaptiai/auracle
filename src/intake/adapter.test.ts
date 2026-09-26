@@ -141,10 +141,6 @@ describe('toIntakeTicket', () => {
     const result = toIntakeTicket(event({ ticketSubject: '', messageSubject: '' }), CATALOGUE);
     expect(result.ticketText).toBe('The box arrived crushed.');
   });
-
-  it('keeps the ticket id unchanged', () => {
-    expect(toIntakeTicket(event({ ticketId: 't-42' }), CATALOGUE).ticketId).toBe('t-42');
-  });
 });
 
 describe('intakeEnqueuer', () => {

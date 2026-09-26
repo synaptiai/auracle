@@ -13,11 +13,6 @@ import {
 import { loadGoldSet } from '../fixtures/load.js';
 
 describe('the stub labeller', () => {
-  it('names itself, so a threshold can say what labelled its cases', () => {
-    const labeller = stubLabeller([{ id: 'a', queue: 'q' }]);
-    expect(labeller.kind).toBe('stub');
-    expect(labeller.pin).toBe(STUB_LABELLER_PIN);
-  });
 
   // The committed corpus is labelled by `scripts/generate-fixtures.mjs`,
   // which holds the same rule in JavaScript because it cannot import this

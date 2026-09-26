@@ -15,9 +15,11 @@
 //   (d) DEC-28      a stale-epoch write is refused mid-flow; partial work stays
 //
 // Each hop asserts ledger state, outbox records, journal entries and the
-// adapter-side effects. Synthetic data only (DEC-18).
-import { randomUUID } from 'node:crypto';
-
+// adapter-side effects. Each case ends by settling an artifact of its inputs
+// and end state against src/e2e/artifacts/v1-flow/ (AGENTS.md, rule 3).
+// Synthetic data only (DEC-18).
+import { E2eArtifact } from '../test-support/e2e-artifact.js';
+import { captureEpoch, captureRun } from '../test-support/e2e-ledger.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -94,9 +96,33 @@ function unitVector(seed: number): number[] {
   return v.map((x) => x / norm);
 }
 
+/** The seed of the one synthetic vector every case embeds. */
+const VEC_SEED = 42;
+
 // One shared direction for document and query, so dense retrieval ranks the
 // fixture document first regardless of the lexical channel.
-const VEC = unitVector(42);
+const VEC = unitVector(VEC_SEED);
+
+const TAXONOMY = {
+  intents: [
+    { id: 'password_reset', label: 'Password reset', risk_tier: 'low' },
+    { id: 'billing_question', label: 'Billing question', risk_tier: 'low' },
+    { id: 'other', label: 'Everything else', risk_tier: 'medium' },
+  ],
+} as const;
+
+/** The deadline sits this far after the run starts, so the artifact names the gap. */
+const DEADLINE_AFTER_MS = 60_000;
+const LIMITS = { maxCostMicros: 100_000_000, maxSteps: 50 } as const;
+
+const FIXTURE_DOC = {
+  docId: 'd1',
+  kind: 'document',
+  title: 'Reset your password',
+  body: 'Open the account settings page and choose security. Choose reset password and follow the link we email you.',
+  owner: 'synthetic-owner',
+  reviewBy: '2999-01-01',
+} as const;
 
 /**
  * Script for a run that passes both gates: 9 classifier samples, one embed
@@ -133,21 +159,11 @@ function makeDeps(script: FakeStep[], overrides: DepsOverrides = {}): Coordinato
   return {
     pool,
     provider: overrides.provider ?? new FakeProvider(script),
-    taxonomy: {
-      intents: [
-        { id: 'password_reset', label: 'Password reset', risk_tier: 'low' },
-        { id: 'billing_question', label: 'Billing question', risk_tier: 'low' },
-        { id: 'other', label: 'Everything else', risk_tier: 'medium' },
-      ],
-    },
+    taxonomy: { intents: TAXONOMY.intents.map((intent) => ({ ...intent })) },
     capabilities: CAPABILITIES satisfies PolicyCapabilities,
     egress: overrides.egress ?? new HelpdeskAdapter(),
     pins: PINS,
-    limits: {
-      maxCostMicros: 100_000_000,
-      maxSteps: 50,
-      deadlineAt: new Date(Date.now() + 60_000),
-    },
+    limits: { ...LIMITS, deadlineAt: new Date(Date.now() + DEADLINE_AFTER_MS) },
     partitionCount: 8,
   };
 }
@@ -177,18 +193,46 @@ function replyInput(ticketId: string, epoch: bigint): CoordinateInput {
 }
 
 async function indexFixtureDoc(): Promise<void> {
-  await indexDocument(
-    pool,
-    {
-      docId: 'd1',
-      kind: 'document',
-      title: 'Reset your password',
-      body: 'Open the account settings page and choose security. Choose reset password and follow the link we email you.',
-      owner: 'synthetic-owner',
-      reviewBy: '2999-01-01',
+  await indexDocument(pool, { ...FIXTURE_DOC }, VEC);
+}
+
+/**
+ * Starts the artifact of one case, recording everything the run is given.
+ * `extra` names what a case changes beyond the shared setup.
+ */
+function flowArtifact(caseId: string, ticket: CoordinateInput, extra: Record<string, unknown> = {}): E2eArtifact {
+  return new E2eArtifact(`v1-flow/${caseId}`, {
+    seed: VEC_SEED,
+    inputs: {
+      ticket,
+      script: happyScript(),
+      document: { ...FIXTURE_DOC, vector: VEC },
+      taxonomy: TAXONOMY,
+      capabilities: CAPABILITIES,
+      pins: PINS,
+      limits: { ...LIMITS, deadlineAfterMs: DEADLINE_AFTER_MS },
+      ...extra,
     },
-    VEC,
-  );
+  });
+}
+
+/** Records the ledger for a run and the helpdesk side of the same ticket. */
+async function observeEndState(
+  artifact: E2eArtifact,
+  runId: string,
+  ticketId: string,
+  helpdesk?: HelpdeskAdapter,
+  draftExternalId?: string | null,
+): Promise<void> {
+  artifact.observe('ledger', await captureRun(pool, runId));
+  artifact.observe('ticketEpoch', await captureEpoch(pool, ticketId));
+  if (helpdesk) {
+    artifact.observe('helpdesk', {
+      ticket: helpdesk.getTicket(ticketId) ?? null,
+      draft: draftExternalId ? (helpdesk.getDraft(draftExternalId) ?? null) : null,
+      deliveries: helpdesk.listDeliveries(),
+    });
+  }
 }
 
 type RunRow = {
@@ -326,7 +370,8 @@ describe('V1 flow end to end', () => {
   });
 
   it('(a) automatic path: classify -> gate auto -> outbox -> relay applies the write once', async () => {
-    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const ticketId = 'T-a-automatic';
+    const artifact = flowArtifact('a-automatic', autoInput(ticketId, 1n));
     const helpdesk = helpdeskWith(ticketId);
 
     const result = await coordinateTicket(makeDeps(happyScript(), { egress: helpdesk }), autoInput(ticketId, 1n));
@@ -400,10 +445,15 @@ describe('V1 flow end to end', () => {
     // A later scan finds nothing pending and never re-applies (DEC-24).
     expect(await relayPending(pool, helpdesk)).toEqual([]);
     expect(helpdesk.listDeliveries()).toHaveLength(1);
+
+    // The artifact of this case (AGENTS.md, rule 3).
+    await observeEndState(artifact, runId, ticketId, helpdesk);
+    artifact.finish();
   });
 
   it('(b) gated path: park draft -> approve records edit distance -> relay sends the draft', async () => {
-    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const ticketId = 'T-b-gated';
+    const artifact = flowArtifact('b-gated', replyInput(ticketId, 1n));
     const helpdesk = helpdeskWith(ticketId);
 
     const result = await coordinateTicket(makeDeps(happyScript(), { egress: helpdesk }), replyInput(ticketId, 1n));
@@ -488,13 +538,19 @@ describe('V1 flow end to end', () => {
     // A repeat pass dedupes on the semantic key (DEC-24).
     expect(await relayPending(pool, helpdesk)).toEqual([]);
     expect(helpdesk.listDeliveries()).toHaveLength(1);
+
+    // The artifact of this case (AGENTS.md, rule 3).
+    artifact.observe('approval', approval);
+    await observeEndState(artifact, runId, ticketId, helpdesk, draftExternalId);
+    artifact.finish();
   });
 
   it('(b) a failing measurement rolls the whole approval back (atomicity)', async () => {
     // The crash-safety half of the card: if the measurement write fails
     // inside the approval transaction, the approval itself must not commit.
     // A crash can lose both sides together, never one.
-    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const ticketId = 'T-b-approval-rollback';
+    const artifact = flowArtifact('b-approval-rollback', replyInput(ticketId, 1n));
     const helpdesk = helpdeskWith(ticketId);
     const result = await coordinateTicket(makeDeps(happyScript(), { egress: helpdesk }), replyInput(ticketId, 1n));
     if (result.outcome !== 'awaiting_approval') throw new Error(`unexpected ${result.outcome}`);
@@ -540,10 +596,15 @@ describe('V1 flow end to end', () => {
     // inserts its outbox row under the same semantic identity (DEC-24).
     expect(await approveRun(pool, runId)).toEqual({ outcome: 'approved', idemKey });
     expect((await runRow(runId))?.state).toBe('resolved');
+
+    // The artifact of this case (AGENTS.md, rule 3).
+    await observeEndState(artifact, runId, ticketId, helpdesk, draftExternalId);
+    artifact.finish();
   });
 
   it('(b) approving without a captured body leaves the edit distance null', async () => {
-    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const ticketId = 'T-b-no-captured-body';
+    const artifact = flowArtifact('b-no-captured-body', replyInput(ticketId, 1n));
     const helpdesk = helpdeskWith(ticketId);
     const result = await coordinateTicket(makeDeps(happyScript(), { egress: helpdesk }), replyInput(ticketId, 1n));
     if (result.outcome !== 'awaiting_approval') throw new Error(`unexpected ${result.outcome}`);
@@ -552,10 +613,15 @@ describe('V1 flow end to end', () => {
     const after = await runRow(result.runId);
     expect(after?.state).toBe('resolved');
     expect(after?.approval_edit_distance).toBeNull();
+
+    // The artifact of this case (AGENTS.md, rule 3).
+    await observeEndState(artifact, result.runId, ticketId, helpdesk, result.draftExternalId);
+    artifact.finish();
   });
 
   it('(b) approving an unchanged body records an edit distance of exactly 0', async () => {
-    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const ticketId = 'T-b-unchanged-body';
+    const artifact = flowArtifact('b-unchanged-body', replyInput(ticketId, 1n));
     const helpdesk = helpdeskWith(ticketId);
     const result = await coordinateTicket(makeDeps(happyScript(), { egress: helpdesk }), replyInput(ticketId, 1n));
     if (result.outcome !== 'awaiting_approval') throw new Error(`unexpected ${result.outcome}`);
@@ -563,10 +629,15 @@ describe('V1 flow end to end', () => {
 
     await approveRun(pool, result.runId, { finalBody: parkedBody });
     expect((await runRow(result.runId))?.approval_edit_distance).toBe(0);
+
+    // The artifact of this case (AGENTS.md, rule 3).
+    await observeEndState(artifact, result.runId, ticketId, helpdesk, result.draftExternalId);
+    artifact.finish();
   });
 
   it('(b) approving with read-back records the true distance and sends the edited draft', async () => {
-    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const ticketId = 'T-b-read-back-edit';
+    const artifact = flowArtifact('b-read-back-edit', replyInput(ticketId, 1n));
     const helpdesk = helpdeskWith(ticketId);
     const result = await coordinateTicket(makeDeps(happyScript(), { egress: helpdesk }), replyInput(ticketId, 1n));
     if (result.outcome !== 'awaiting_approval') throw new Error(`unexpected ${result.outcome}`);
@@ -596,10 +667,15 @@ describe('V1 flow end to end', () => {
     expect(await relayPending(pool, helpdesk)).toHaveLength(1);
     expect(helpdesk.getDraft(draftExternalId)?.body).toBe(editedBody);
     expect(helpdesk.getDraft(draftExternalId)?.status).toBe('sent');
+
+    // The artifact of this case (AGENTS.md, rule 3).
+    await observeEndState(artifact, runId, ticketId, helpdesk, draftExternalId);
+    artifact.finish();
   });
 
   it('(b) read-back finds no draft and refuses the approval', async () => {
-    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const ticketId = 'T-b-read-back-missing';
+    const artifact = flowArtifact('b-read-back-missing', replyInput(ticketId, 1n));
     const helpdesk = helpdeskWith(ticketId);
     const result = await coordinateTicket(makeDeps(happyScript(), { egress: helpdesk }), replyInput(ticketId, 1n));
     if (result.outcome !== 'awaiting_approval') throw new Error(`unexpected ${result.outcome}`);
@@ -612,10 +688,22 @@ describe('V1 flow end to end', () => {
     expect((await runRow(runId))?.state).toBe('awaiting_approval');
     expect((await runRow(runId))?.approval_edit_distance).toBeNull();
     expect(await outboxRows(runId)).toEqual([]);
+
+    // The artifact of this case (AGENTS.md, rule 3).
+    artifact.observe('refusal', refusal);
+    await observeEndState(artifact, runId, ticketId, helpdesk, draftExternalId);
+    artifact.finish();
   });
 
   it('(c) DEC-30: a send with unknown delivery state escalates and never retries', async () => {
-    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const ticketId = 'T-c-delivery-unknown';
+    const artifact = flowArtifact('c-delivery-unknown', autoInput(ticketId, 1n), {
+      relayEgress: {
+        name: 'unknown-delivery',
+        capabilities: new UnknownDeliveryEgress().capabilities,
+        behaviour: 'every send and write fails after transmit, so delivery state is unknown',
+      },
+    });
 
     // The run takes the automatic path against the honest capability set.
     const result = await coordinateTicket(makeDeps(happyScript()), autoInput(ticketId, 1n));
@@ -649,10 +737,18 @@ describe('V1 flow end to end', () => {
     // relay, so no second attempt can ever happen.
     await expect(relayPending(pool, egress)).resolves.toEqual([]);
     expect(egress.attempts).toBe(1);
+
+    // The artifact of this case (AGENTS.md, rule 3).
+    artifact.observe('relay', { outcomes: relayed, attempts: egress.attempts });
+    await observeEndState(artifact, result.runId, ticketId);
+    artifact.finish();
   });
 
   it('(d) fencing: a stale-epoch write is refused mid-flow and partial work stays', async () => {
-    const ticketId = 'T-' + randomUUID().slice(0, 8);
+    const ticketId = 'T-d-stale-epoch';
+    const artifact = flowArtifact('d-stale-epoch', autoInput(ticketId, 1n), {
+      epochBump: { during: 'the retrieve step embeds', to: 999n },
+    });
     const deps = makeDeps(happyScript(), {
       provider: new EpochBumpingProvider(new FakeProvider(happyScript()), ticketId, 999n),
     });
@@ -681,6 +777,11 @@ describe('V1 flow end to end', () => {
 
     // Nothing external was ever queued.
     expect(await outboxRows(result.runId)).toEqual([]);
+
+    // The artifact of this case (AGENTS.md, rule 3).
+    artifact.observe('outcome', result);
+    await observeEndState(artifact, result.runId, ticketId);
+    artifact.finish();
   });
 
   afterAll(async () => {

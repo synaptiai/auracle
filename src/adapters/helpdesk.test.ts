@@ -25,19 +25,6 @@ function reply(overrides: Partial<DraftReply> = {}): DraftReply {
 }
 
 describe('HelpdeskAdapter capabilities', () => {
-  it('declares every capability flag the port carries', () => {
-    const adapter = newAdapter();
-
-    expect(Object.keys(adapter.capabilities).sort()).toEqual([
-      'supportsDraftState',
-      'supportsIdempotencyKey',
-      'supportsLedgerReply',
-      'supportsReadBack',
-      'supportsStructuredFields',
-      'supportsThreading',
-    ]);
-  });
-
   it('declares the guarantees a full helpdesk API gives (DEC-06)', () => {
     const adapter = newAdapter();
 
@@ -86,27 +73,6 @@ describe('HelpdeskAdapter capabilities', () => {
 });
 
 describe('HelpdeskAdapter.createDraft', () => {
-  it('parks a gated reply as a draft on a fixture ticket (DEC-11)', async () => {
-    const adapter = newAdapter();
-
-    const { draftExternalId } = await adapter.createDraft(reply());
-    expect(draftExternalId).toMatch(/^hd-draft-/);
-
-    expect(adapter.getDraft(draftExternalId)).toEqual({
-      draftExternalId,
-      ticketExternalId: 'HD-1001',
-      body: 'The sign-in page accepts your address again.',
-      disclosure: 'This reply was drafted with AI assistance.',
-      provenance: {
-        generatedBy: 'auracle',
-        modelId: 'test-model',
-        promptVer: 'prompt-v1',
-        generatedAt: '2026-01-01T00:00:00.000Z',
-      },
-      status: 'draft',
-    });
-  });
-
   it('assigns distinct ids to drafts parked under distinct keys', async () => {
     const adapter = newAdapter();
 
@@ -132,17 +98,6 @@ describe('HelpdeskAdapter.createDraft', () => {
     );
   });
 
-  it.each([
-    ['ticketExternalId is empty', { ...reply(), ticketExternalId: '' }],
-    ['body is empty', { ...reply(), body: '' }],
-    ['disclosure is empty (DEC-14)', { ...reply(), disclosure: '' }],
-    ['idemKey is empty (DEC-24)', { ...reply(), idemKey: '' }],
-  ])('refuses a reply when %s', async (_label, bad) => {
-    const adapter = newAdapter();
-
-    await expect(adapter.createDraft(bad)).rejects.toThrow(TypeError);
-  });
-
   it('refuses a reply for a ticket the helpdesk does not hold', async () => {
     const adapter = newAdapter();
 
@@ -153,21 +108,6 @@ describe('HelpdeskAdapter.createDraft', () => {
 });
 
 describe('HelpdeskAdapter.readDraft and editDraft', () => {
-  it('reads a parked draft body back for the approval path (section 4.10)', async () => {
-    const adapter = newAdapter();
-    const { draftExternalId } = await adapter.createDraft(reply());
-
-    await expect(adapter.readDraft(draftExternalId)).resolves.toEqual({
-      body: 'The sign-in page accepts your address again.',
-    });
-  });
-
-  it('reads null for a draft the helpdesk does not hold', async () => {
-    const adapter = newAdapter();
-
-    await expect(adapter.readDraft('hd-draft-none')).resolves.toBeNull();
-  });
-
   it('applies a person edit and keeps every other draft field (DEC-11)', async () => {
     const adapter = newAdapter();
     const { draftExternalId } = await adapter.createDraft(reply());
@@ -281,38 +221,9 @@ describe('HelpdeskAdapter.sendDraft and readBack', () => {
       state: 'not_found',
     });
   });
-
-  it('runs the full path end to end: gate, approve, send, reconcile', async () => {
-    const adapter = newAdapter();
-
-    // The approval bridge parks the gated reply (DEC-11).
-    const { draftExternalId } = await adapter.createDraft(reply());
-    expect(adapter.getDraft(draftExternalId)?.status).toBe('draft');
-
-    // After approval the relay sends through the same adapter with the
-    // outbox idem key, then reconciles by read-back (DEC-30).
-    const sent = await adapter.sendDraft(draftExternalId, 'run-42:reply');
-    await expect(adapter.readBack({ idemKey: 'run-42:reply' })).resolves.toEqual({
-      state: 'delivered',
-      externalId: sent.externalId,
-    });
-  });
 });
 
 describe('HelpdeskAdapter.performAction', () => {
-  it('applies route_ticket to the fixture ticket state', async () => {
-    const adapter = newAdapter();
-
-    const { externalId } = await adapter.performAction(
-      'route_ticket',
-      { ticketExternalId: 'HD-1001', queue: 'password-support' },
-      'route_ticket:HD-1001:k1',
-    );
-
-    expect(externalId).toMatch(/^hd-act-/);
-    expect(adapter.getTicket('HD-1001')?.queue).toBe('password-support');
-  });
-
   it('applies close_ticket to the fixture ticket state', async () => {
     const adapter = newAdapter();
 

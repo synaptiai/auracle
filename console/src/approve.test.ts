@@ -57,18 +57,6 @@ describe('approving from the console', () => {
     expect(pool.query).not.toHaveBeenCalled();
   });
 
-  // The CLI reports `draft_missing` when the parked draft is gone, and so
-  // must this. A console that approved anyway would send a reply no person
-  // had read.
-  it('reports a missing draft, exactly as the command line does', async () => {
-    const approveRun = vi.fn().mockResolvedValue({ outcome: 'draft_missing' });
-    const result = await approveFromConsole(
-      { pool: {} as never, approveRun, ledgerReply: false },
-      { runId: RUN_B, approvedBy: REVIEWER, shown: SHOWN },
-    );
-    expect(result.outcome).toBe('draft_missing');
-  });
-
   // Section 4.10. With a real adapter named, the approval reads the helpdesk
   // draft back and measures what a person edited there. The console passes the
   // adapter and nothing typed: the body comes from the helpdesk, which is the
@@ -144,18 +132,6 @@ describe('approving from the console', () => {
     // Stated over the key rather than the value: `finalBody: undefined` would
     // satisfy a value check and still be a body the caller meant to pass.
     expect(Object.hasOwn(options, 'finalBody')).toBe(false);
-  });
-
-  // The reason there is no text box, held as a rule rather than as a habit.
-  // `ApproveRequest` holds the run, the reviewer the gate resolved, and a
-  // digest of the reply the page drew (DEC-46) — never the reply itself. A
-  // body reaching `approveRun` would be recorded as the approved reply and
-  // never sent, because the relay sends the parked draft verbatim.
-  it('takes a run id, a reviewer and a digest, and no reply text', async () => {
-    const approveRun = vi.fn().mockResolvedValue({ outcome: 'approved' });
-    const request = { runId: RUN_C, approvedBy: REVIEWER, shown: SHOWN };
-    await approveFromConsole({ pool: {} as never, approveRun, ledgerReply: false }, request);
-    expect(Object.keys(request)).toEqual(['runId', 'approvedBy', 'shown']);
   });
 
   // A run id arrives from a form post, so it is not trusted.

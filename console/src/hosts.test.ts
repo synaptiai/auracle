@@ -29,10 +29,6 @@ describe('allowedHosts', () => {
     expect(allowedHosts('::', 8787)).not.toContain('[::]:8787');
   });
 
-  it('brackets a bare IPv6 bind, because that is what a browser sends', () => {
-    expect(allowedHosts('::1', 8787)).toContain('[::1]:8787');
-  });
-
   it('omits the port on 80 and 443, because the browser omits it', () => {
     expect(allowedHosts('127.0.0.1', 443)).toContain('localhost');
   });

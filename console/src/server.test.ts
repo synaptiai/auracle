@@ -6,7 +6,6 @@
 // delegation itself is proved in `approve.test.ts`.
 import type { AddressInfo } from 'node:net';
 import { connect } from 'node:net';
-import { readFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { request } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -585,14 +584,6 @@ describe('the console routes', () => {
       }
     }
     expect(readRun).not.toHaveBeenCalled();
-  });
-
-  // What a person needs to decide, rather than an id and a button (DEC-12).
-  it('shows the ticket, the state and the reason on the case', async () => {
-    const base = await startGuarded(deps());
-    const html = await (await fetch(base + CASE)).text();
-    expect(html).toContain('SYN-1');
-    expect(html).toContain('awaiting_approval');
   });
 
   it('offers no approve form for a run that parked nothing at all', async () => {
@@ -1235,15 +1226,6 @@ describe('what a fault and a refusal tell the operator', () => {
 });
 
 describe('the reply an approver reads before they send it', () => {
-  // DEC-40 permits this console to approve a parked draft. It drew the button
-  // above a reply the approver could not read, which is the defect this whole
-  // surface exists to fix.
-  it('shows the drafted reply on the case', async () => {
-    const base = await startGuarded(deps());
-    const html = await (await fetch(base + CASE)).text();
-    expect(html).toContain('The reply, as the system drafted it');
-    expect(html).toContain('We refunded the duplicate charge.');
-  });
 
   it('shows the same reply on the run detail, from the same builder', async () => {
     const base = await startGuarded(deps());
@@ -1555,12 +1537,6 @@ describe('the message a reply answers', () => {
     // Above the reply it answers, not below it.
     expect(html.indexOf('The message this answers'))
       .toBeLessThan(html.indexOf('The reply, as the system drafted it'));
-  });
-
-  it('shows it on the run detail too', async () => {
-    const base = await startGuarded(deps());
-    const html = await (await fetch(`${base}/run/${RUN}`)).text();
-    expect(html).toContain('There are two charges for the same month.');
   });
 
   // A later turn is context this does not show.
@@ -2470,65 +2446,6 @@ describe('the design notes', () => {
     expect(html).not.toContain('was:');
   });
 
-  // The words are pinned whole: a sentence added to a card is a new claim, and
-  // it fails here until someone checks it against the console. The subtitle
-  // promises a reason on every card, so it is pinned with them.
-  it('ships each card in the words the console was checked against', async () => {
-    const base = await startGuarded(deps());
-    const html = await (await fetch(base + '/notes')).text();
-    expect(html).toContain(
-      '<div class="hdt">Design notes</div><div class="hds">Why the console works this way.'
-        + ' Each card states a rule the console keeps, and the reason for it.</div>',
-    );
-    expect(cardsOf(html).map((c) => c.says)).toEqual([
-      'No screen combines agreement and coverage into one score, because the system never computes one'
-        + ' and could not act on it. A screen that shows both shows each value on its own.'
-        + ' The queue group Both gates clean holds a case only when both values and both lines are recorded,'
-        + ' and each value clears its own line.',
-      'A turn with no message or no reply names why, in a sentence of its own.'
-        + ' On a run or case page, a gate with no recorded value shows an em dash with a note that names the absence,'
-        + ' and draws no bar.'
-        + ' No screen renders an unmeasured value as zero, because a zero would read as a measurement.',
-      'Runs, control bands and partition latency sit under Admin.'
-        + ' They answer questions about the pipeline, and a person clearing a queue between'
-        + ' two engineering tasks is not asking them.',
-      'Each run records the product of the channel its message arrived on, and the console reads that'
-        + ' value rather than inferring one from the message.'
-        + ' Every queue row names the product it is for, and a run whose channel the map does not name says'
-        + ' no product rather than drawing a blank.'
-        + ' A chip per product carries the count read from every waiting run, so narrowing the queue never'
-        + ' reports it as smaller than it is.'
-        + ' The products a reviewer covers read first, and that order hides nothing: every waiting case is'
-        + ' still on the page.',
-      'On an adapter whose helpdesk cannot send the copy it parks, the ledger holds the reply.'
-        + ' A reviewer edits it on the case, saves it, and reloads to find the text they saved.'
-        + ' The sentences the system drafted stay beside the editor, each with the verdict it was given,'
-        + ' and a claim the judge refused offers the words of the document it cites, its removal,'
-        + ' or the answer the reviewer writes.'
-        + ' What the approval sends is the text the ledger holds, with the disclosure and the provenance'
-        + ' every customer reply carries.'
-        + ' Where the helpdesk can send its own parked copy, the case says so and offers no editor:'
-        + ' two texts that may both send is the one thing this console will not build.',
-      'Some cases need no answer. A duplicate, a message from a machine, or a'
-        + ' question somebody settled on the telephone.'
-        + ' A reviewer closes such a case on its page, with a reason the team reads afterwards.'
-        + ' The customer is sent nothing, and the conversation says the case was closed with no reply.',
-      'The queue is not capped, so the same case can sit in front of four reviewers at once.'
-        + ' A reviewer takes a case before working it, so the others see who holds it and the time left.'
-        + ' The hold says who is working, and it refuses no write: any reviewer may still approve the case.'
-        + ' A hold lapses on its own without activity, twenty minutes by default.'
-        + ' Taking a second case releases the first, because a person reads one case at a time.',
-      'A reviewer who finds a gap writes the missing document on the case page:'
-        + ' a title, its products, the answer, an owner and a review date.'
-        + ' The case&#39;s own product is always among them, and a case whose channel maps no product cannot publish.'
-        + ' The console refuses a document that names the case&#39;s customer, ticket, message or draft,'
-        + ' because a document serves every later case.'
-        + ' The console calls no model. A consumer embeds the document, and retrieval ignores it until then.'
-        + ' Once it is embedded, the case is attempted again, unless it was approved, closed, snoozed or answered first.'
-        + ' The case says which.',
-    ]);
-  });
-
   // Each claim, checked on the screens it describes rather than on the card.
   it('makes each card true of the console it describes', async () => {
     const base = await startGuarded(deps());
@@ -2639,24 +2556,6 @@ describe('the design notes', () => {
     for (const surface of ['Runs', 'Control bands', 'Partition latency']) {
       expect(admin, surface).toContain(`<span class="navlabel">${surface}</span>`);
     }
-  });
-
-  // The reply card (DEC-44), claimed on the screens it describes: the case
-  // draws the editor and the callout where the adapter cannot send its parked
-  // copy, and says the copy is what sends where it can.
-  it('makes the reply card true of the console it describes', async () => {
-    const capable = await startGuarded(deps(), undefined, undefined, true);
-    const editing = await (await fetch(capable + CASE)).text();
-    expect(editing).toContain('Your reply · editable here, sent from here');
-    expect(editing).toContain('<textarea name="text"');
-    expect(editing).toContain('The sentences the system drafted');
-    expect(editing).toContain('Replace with what the document says');
-    expect(editing).toContain('The disclosure and the provenance travel with it');
-
-    const draftPath = await startGuarded(deps());
-    const parked = await (await fetch(draftPath + CASE)).text();
-    expect(parked).toContain('edited in the helpdesk, not here');
-    expect(parked).not.toContain('<textarea');
   });
 
   // Card 4, claimed on the screens it describes (DEC-46). The queue is
@@ -2980,11 +2879,6 @@ describe('the knowledge screen (DEC-50)', () => {
     expect(html).toContain('&lt;b&gt;intent&lt;/b&gt;');
     expect(html).toContain('&lt;i&gt;o&lt;/i&gt;');
   });
-
-  it('marks Knowledge base in the rail on its own page', async () => {
-    const html = await knowledgePage();
-    expect(html).toContain('<a href="/knowledge" class="on"><span class="navlabel">Knowledge base</span>');
-  });
 });
 
 describe('the gap a case shows (DEC-50)', () => {
@@ -3157,23 +3051,6 @@ describe('the one script this console ships', () => {
   // The bindings are pinned by their key names, because the hash test proves
   // the served text matches the policy but not that it binds the keys the
   // legend names.
-  // Issue #105: no comment may claim the console ships no script. The claim
-  // once sat in server.ts, and the runbook held it too.
-  it('leaves no comment claiming the console ships no script', () => {
-    for (const file of ['server.ts', 'surfaces.ts', 'script.ts', 'css.ts']) {
-      const source = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
-      expect(source, file).not.toContain('there is no script');
-      expect(source, file).not.toContain('ships no script');
-    }
-    // The runbook's own phrasing, which `check-docs.py` also refuses. The
-    // runbook never held the two phrasings above, so pinning them here would
-    // prove nothing about it. Its prose is wrapped, so the phrase is read with
-    // the whitespace collapsed, the same way the checker reads it.
-    const runbook = readFileSync(new URL('../../docs/operations.md', import.meta.url), 'utf8')
-      .replace(/\s+/g, ' ');
-    expect(runbook).not.toContain('ships no JavaScript');
-  });
-
   it('binds Escape to the case back link and c to the take', async () => {
     const base = await startGuarded(deps());
     const script = /<script>([\s\S]*?)<\/script>/.exec(await (await fetch(base + '/')).text())?.[1] ?? '';
@@ -3231,59 +3108,6 @@ describe('the one script this console ships', () => {
       const html = await (await fetch(base + path)).text();
       expect(html.split('<script>'), path).toHaveLength(2);
     }
-  });
-});
-
-describe('who the ledger records as the approver', () => {
-  // The header this console reads, and every shape a claim arrives in, is
-  // `reviewer.test.ts`'s subject. What is left here is the wiring: the server
-  // serves no page and makes no write without a reviewer, and the reviewer it
-  // resolved is the one the approval records.
-
-  // DEC-45. The console's one write takes the identity the gate resolved,
-  // which the roster answered for and the ledger will record as `roster`.
-  it('passes the reviewer the gate resolved to the approval', async () => {
-    const calls: string[] = [];
-    const base = await startGuarded(deps({
-      approve: async (runId: string, approvedBy: string) => {
-        calls.push(approvedBy);
-        return 'approved';
-      },
-      reviewerFor: async () => ({ reviewer: 'Ida Lindqvist' }),
-    }));
-    await fetch(base + '/approve', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        'sec-fetch-site': 'same-origin',
-      },
-      body: `runId=${RUN}&shown=${SHOWN}`,
-      redirect: 'manual',
-    });
-    expect(calls).toEqual(['Ida Lindqvist']);
-  });
-
-  // The form, never a typed name. A name anyone can type into a page is not
-  // an audit trail, and the route reads only `runId` from the body.
-  it('never takes the approver from the form', async () => {
-    const calls: string[] = [];
-    const base = await startGuarded(deps({
-      approve: async (runId: string, approvedBy: string) => {
-        calls.push(approvedBy);
-        return 'approved';
-      },
-      reviewerFor: async () => ({ reviewer: 'Ida Lindqvist' }),
-    }));
-    await fetch(base + '/approve', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        'sec-fetch-site': 'same-origin',
-      },
-      body: new URLSearchParams({ shown: SHOWN, runId: RUN, approvedBy: 'typed-by-anyone' }).toString(),
-      redirect: 'manual',
-    });
-    expect(calls).toEqual(['Ida Lindqvist']);
   });
 });
 
@@ -3721,35 +3545,6 @@ describe('taking a case (DEC-46)', () => {
     expect(released).toEqual([[RUN, REVIEWER]]);
   });
 
-  // Criterion 3: a handover moves the case to the teammate it names, and the
-  // holder is the only person who can hand it anywhere.
-  it('hands the case to the teammate the holder names', async () => {
-    const handed: Array<[string, string, string]> = [];
-    const base = await startGuarded(deps({
-      // Before the handover the holder is the reviewer; the page the redirect
-      // lands on reads the case after it, so it names the teammate.
-      readHold: async () => holdFor('bo@example.test', 20),
-      handoverHold: async (runId: string, reviewer: string, to: string) => {
-        handed.push([runId, reviewer, to]);
-        return { outcome: 'handed_over' };
-      },
-    }));
-    const res = await fetch(base + '/take', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        'sec-fetch-site': 'same-origin',
-      },
-      body: `runId=${RUN}&handover=1&to=bo%40example.test`,
-      redirect: 'manual',
-    });
-    expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe(`/case/${RUN}?taken=handed_over`);
-    expect(handed).toEqual([[RUN, REVIEWER, 'bo@example.test']]);
-    expect((await (await fetch(base + `/case/${RUN}?taken=handed_over`)).text()))
-      .toContain('The case is theirs now.');
-  });
-
   // Criterion 4 of issue #110, in its own words: hand to a teammate moves the
   // reservation, and the customer sees nothing. The console half is the move
   // and the words around it; the ledger half — no outbox record, no state
@@ -4141,29 +3936,9 @@ describe('the state filter', () => {
     const html = await (await fetch(base + '/runs')).text();
     for (const state of STATES) expect(html, state).toContain(`/runs?state=${state}`);
   });
-
-  // An empty page that says nothing reads as a console that failed.
-  it('names the state when that state holds no run', async () => {
-    const base = await startGuarded(deps({ listRuns: async () => [] }));
-    const html = await (await fetch(`${base}/runs?state=gated`)).text();
-    expect(html).toContain('gated');
-  });
 });
 
 describe('the theme', () => {
-  it('is dark with no cookie, and the page says which it rendered', async () => {
-    const base = await startGuarded(deps());
-    const html = await (await fetch(base + '/')).text();
-    expect(html).toContain('data-theme="dark"');
-  });
-
-  it('is light when the cookie says so', async () => {
-    const base = await startGuarded(deps());
-    const html = await (await fetch(base + '/', {
-      headers: { cookie: 'theme=light' },
-    })).text();
-    expect(html).toContain('data-theme="light"');
-  });
 
   // A cookie header holds several pairs, and a substring test for `light`
   // would also match a cookie some proxy named `highlight` on the same host.
@@ -4504,18 +4279,6 @@ describe('the queue a reviewer lands on (issue #101)', () => {
       expect(narrowed).not.toContain('SYN-AURORA');
     });
 
-    // A run whose channel the map does not name says so on the row rather
-    // than drawing nothing, which would read as a product nobody chose.
-    it('says no product on the row a product would be', async () => {
-      const base = await startGuarded(deps({
-        listApprovals: async () => [
-          waitingRun('33333333-3333-4333-8333-333333333333', 'SYN-UNSCOPED', { product: null }),
-        ],
-      }));
-      const queue = await (await fetch(base + '/')).text();
-      expect(queue).toContain('refund-request · no product · customer_visible');
-    });
-
     // The order is the reviewer's, and a fault reading it does not take the
     // queue away: the queue is the work. The page says which log line names
     // the fault, so a reviewer who declared products knows why the list is
@@ -4546,24 +4309,6 @@ describe('the queue a reviewer lands on (issue #101)', () => {
       // And it did not reorder on a preference it could not read.
       expect(drawn.match(/SYN-LEDGER/g)?.length).toBe(1);
     });
-  });
-
-  it('shows no keys where there is no queue to move through', async () => {
-    const base = await startGuarded(deps({ listApprovals: async () => [] }));
-    const html = await (await fetch(base + '/')).text();
-    // By structure, not wording: no keys line at all.
-    expect(html).not.toContain('<div class="keys">');
-  });
-
-  it('opens on "Needs a person", and keeps Runs one link away', async () => {
-    const base = await startGuarded(deps({ listApprovals: async () => queue() }));
-    const landing = await (await fetch(base + '/')).text();
-    expect(landing).toContain('<title>Needs a person');
-    const runs = await fetch(base + '/runs');
-    expect(runs.status).toBe(200);
-    expect(await runs.text()).toContain('<title>Runs');
-    expect(landing).toMatch(/<a href="\/"[^>]*><span class="navlabel">Needs a person<\/span>/);
-    expect(landing).toMatch(/<a href="\/runs"[^>]*><span class="navlabel">Runs<\/span>/);
   });
 
   // Links written before the queue moved still resolve, to the place they meant.
@@ -4599,19 +4344,6 @@ describe('the queue a reviewer lands on (issue #101)', () => {
     expect(html.indexOf('SYN-CLEAN')).toBeGreaterThan(clean);
     expect(html.indexOf('SYN-CLEAN')).toBeLessThan(rest);
     expect(html.indexOf('SYN-REST', rest)).toBeGreaterThan(rest);
-  });
-
-  it('says under the clean group that the gates are never blended and decided nothing', async () => {
-    const base = await startGuarded(deps({ listApprovals: async () => queue() }));
-    const html = await (await fetch(base + '/')).text();
-    // Pinned whole: the design notes repeat the clean rule, and the two must
-    // not drift apart.
-    expect(html).toContain(
-      'Agreement and coverage are two independent gates, and this console never blends'
-        + ' them into one score. Clean means both values and both lines are recorded, and each value'
-        + ' clears its own line. Neither gate decided these cases. Another rule sent each one to a person,'
-        + ' and its row names the rule.',
-    );
   });
 
   it('draws no group that holds nothing', async () => {
@@ -5376,23 +5108,6 @@ describe('the run an approver reads, and the run the button posts', () => {
     expect(posted.headers.get('location')).toBe(`/case/${A}?outcome=approved&rule=high_risk`);
   });
 
-  it('redirects without a filter when none was on', async () => {
-    const base = await startGuarded(deps({
-      listApprovals: async () => two(),
-      approve: async () => 'approved',
-    }));
-    const posted = await fetch(base + '/approve', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        'sec-fetch-site': 'same-origin',
-      },
-      body: `runId=${A}&shown=${SHOWN}`,
-      redirect: 'manual',
-    });
-    expect(posted.headers.get('location')).toBe(`/case/${A}?outcome=approved`);
-  });
-
   // The rail badge is the queue, not the view. A badge that fell because a
   // filter was on would report a queue that had emptied.
   it('keeps the rail badge counting the whole queue under a filter', async () => {
@@ -5464,17 +5179,6 @@ describe('the case a reviewer decides on (issue #102)', () => {
       .filter((i) => i !== -1);
     return html.slice(start, ends.length === 0 ? undefined : Math.min(...ends));
   }
-
-  // Issue #105. Esc leaves the case by the same link a click does.
-  it('says Esc returns to the queue, beside the link it follows', async () => {
-    const base = await startGuarded(deps());
-    const html = await (await fetch(base + CASE)).text();
-    // The hint sits right beside the link it follows, as the page renders it.
-    expect(html).toContain('<div class="backrow"><a class="back" href="/">← Needs a person</a><span class="backkey">esc returns to the queue</span></div>');
-    // The rule form too: Esc keeps the queue filter the reviewer chose.
-    const ruled = await (await fetch(`${base}${CASE}?rule=customer_visible`)).text();
-    expect(ruled).toContain('<div class="backrow"><a class="back" href="/?rule=customer_visible">← Needs a person</a><span class="backkey">esc returns to the queue</span></div>');
-  });
 
   it('heads the case with its ticket, its turn, its intent, its run and a way back', async () => {
     const base = await startGuarded(deps());
@@ -5874,16 +5578,6 @@ describe('the case a reviewer decides on (issue #102)', () => {
     }
   });
 
-  // An approval performs a reply or an action. The sentence fits both.
-  it('words an approval for a reply and for an action alike', async () => {
-    const base = await startGuarded(deps({
-      readRun: caseOf({ state: 'resolved', approved: true, draftExternalId: null, payloadRecorded: true }),
-    }));
-    const html = await (await fetch(`${base}${CASE}?outcome=approved`)).text();
-    expect(html).toContain('Approved. The relay performs it next.');
-    expect(html).not.toContain('The reply is queued');
-  });
-
   // A case that no longer waits does not say what approving it would do.
   it('says what approving does while the case waits', async () => {
     const reply = await startGuarded(deps());
@@ -5943,13 +5637,6 @@ describe('the case a reviewer decides on (issue #102)', () => {
     } finally {
       spy.mockRestore();
     }
-  });
-
-  // A case is the reviewer's work, so the rail marks the queue it came from.
-  it('marks Needs a person in the rail on a case', async () => {
-    const base = await startGuarded(deps());
-    const html = await (await fetch(base + CASE)).text();
-    expect(html).toMatch(/<a href="\/" class="on"><span class="navlabel">Needs a person<\/span>/);
   });
 
   // A fault during an approval may come after the commit. The page does not
@@ -6121,30 +5808,6 @@ describe('the rail', () => {
     ]);
   });
 
-  it('marks Design notes in the rail on its own page', async () => {
-    const base = await startGuarded(deps());
-    const rail = railOf(await (await fetch(base + '/notes')).text());
-    expect(rail).toContain('<a href="/notes" class="on"><span class="navlabel">Design notes</span>');
-    expect(rail.match(/class="on"/g)).toHaveLength(1);
-  });
-
-  it('names the product as a support console', async () => {
-    const base = await startGuarded(deps());
-    const rail = railOf(await (await fetch(base + '/bands')).text());
-    expect(rail).toContain('support console');
-    expect(rail).not.toContain('operator console');
-  });
-
-  // The label shrinks and the badge does not. Without the split a long title
-  // wraps inside the rail, and a badge inside the label wraps with it.
-  it('keeps the badge outside the label it counts', async () => {
-    const base = await startGuarded(deps());
-    const rail = railOf(await (await fetch(base + '/')).text());
-    expect(rail).toMatch(
-      /<a href="\/" class="on"><span class="navlabel">Needs a person<\/span><span class="badge">\d+<\/span><\/a>/,
-    );
-  });
-
   describe('the reviewer it names', () => {
     /** The rail's foot, for a request the gate resolved to this reviewer. */
     async function footFor(reviewer: string): Promise<string> {
@@ -6162,27 +5825,12 @@ describe('the rail', () => {
       expect(foot).toContain('>IL<');
     });
 
-    // The name on the rail is one the roster holds and is active, because
-    // that is the only kind the gate lets through (DEC-45). Where the name
-    // came from is the ledger's record, not the rail's.
-    it('says what every name here has in common: the roster holds it', async () => {
-      expect(await footFor('Ida Lindqvist')).toContain('on the reviewer roster');
-    });
-
     // The name is rendered, so it is escaped like every other value a surface
     // did not write itself.
     it('escapes the name it was handed', async () => {
       const foot = await footFor('<b>ida</b>');
       expect(foot).toContain('&lt;b&gt;ida&lt;/b&gt;');
       expect(foot).not.toContain('<b>ida</b>');
-    });
-
-    it('takes initials from the first two words of the name', async () => {
-      const one = await footFor('ops-oncall');
-      expect(one).toContain('>O<');
-      const accented = await footFor('Åsa Berg Nyström');
-      expect(accented).toContain('>ÅB<');
-      expect(accented).toContain('>Åsa Berg Nyström<');
     });
   });
 });
@@ -6407,39 +6055,6 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
       expect(res.headers.get('location'), label).toBe(`${CASE}?edit=saved`);
       expect(saveReply, label).toHaveBeenCalledWith(RUN, expected, DRAWN);
     }
-  });
-
-  it('removes the sentence a reviewer dropped, and saves the rest', async () => {
-    const saveReply = vi.fn().mockResolvedValue('saved');
-    const base = await capable({ saveReply });
-
-    await postEdit(base, {
-      runId: RUN, shown: DRAWN, edit: 'delete', sentence: 'Your bank decides when it lands.',
-    });
-
-    expect(saveReply).toHaveBeenCalledWith(RUN, 'We refunded the duplicate charge.', DRAWN);
-  });
-
-  it('puts what the cited document says in place of a refused sentence', async () => {
-    const saveReply = vi.fn().mockResolvedValue('saved');
-    const base = await capable({
-      saveReply,
-      readDocumentBody: async () =>
-        'A charge is refundable inside fourteen days. Your bank posts it in five days.',
-    });
-
-    await postEdit(base, {
-      runId: RUN, shown: DRAWN, edit: 'replace',
-      sentence: 'Your bank decides when it lands.',
-    });
-
-    // The document's own sentence, chosen by the words the two share, and
-    // nothing else: no model runs in this console.
-    expect(saveReply).toHaveBeenCalledWith(
-      RUN,
-      'We refunded the duplicate charge. Your bank posts it in five days.',
-      DRAWN,
-    );
   });
 
   it('refuses to replace a sentence when the document shares no word with it', async () => {

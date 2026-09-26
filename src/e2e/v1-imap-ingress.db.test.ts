@@ -11,6 +11,9 @@
 //   3. The message gained \Seen only after intake resolved (markSeen path).
 //   4. A second poll finds nothing: seen mail is never redelivered.
 //
+// The case ends by settling an artifact of its inputs and end state against
+// src/e2e/artifacts/v1-imap-ingress/ (AGENTS.md, rule 3).
+//
 // Skipped when Docker or the ledger is unavailable. Synthetic data only
 // (DEC-18): example.test addresses throughout.
 
@@ -19,6 +22,7 @@ import { createTransport } from 'nodemailer';
 import { afterAll, beforeEach, describe, expect, it, inject } from 'vitest';
 
 import { dbUrl } from '../db/config.js';
+import { E2eArtifact } from '../test-support/e2e-artifact.js';
 import { enqueueTicket } from '../coordinator/intake.js';
 import { parseProducts } from '../config/products.js';
 import { toIntakeTicket } from '../intake/adapter.js';
@@ -142,52 +146,76 @@ describe('imap ingress daemon end to end', () => {
   it('delivers real mail to an intake row, marks it seen, never redelivers', async () => {
     const fetcher = realFetcher();
     const logs: ImapDaemonLogEntry[] = [];
-
-    // 1. Customer mail arrives at the support account over SMTP.
-    const inbound = createTransport({
-      host: greenmail.host,
-      port: greenmail.smtpPort,
-      secure: false,
-    });
-    await inbound.sendMail({
+    const mail = {
       from: `Dana Doe <${CUSTOMER_ADDRESS}>`,
       to: SUPPORT_USER,
       subject: 'Order 4471 arrived damaged',
       text: TICKET_TEXT,
       messageId: `<${TICKET_ID}>`,
+    };
+    const artifact = new E2eArtifact('v1-imap-ingress/deliver-mark-seen-no-redelivery', {
+      seed: null,
+      inputs: { inbound: [mail], catalogue: CATALOGUE, partitionCount: PARTITION_COUNT, polls: 2 },
     });
 
-    // Wait until the real fetcher sees exactly one UNSEEN message. The
-    // fetch path is read-only (BODY.PEEK), so polling never sets \Seen.
-    await waitFor(
-      async () => (await fetcher.fetchUnseen()).length === 1,
-      'greenmail to hold one unseen message',
-    );
+    try {
+      // 1. Customer mail arrives at the support account over SMTP.
+      const inbound = createTransport({
+        host: greenmail.host,
+        port: greenmail.smtpPort,
+        secure: false,
+      });
+      await inbound.sendMail(mail);
 
-    // 2. One daemon cycle: fetch -> normalize -> intake -> markSeen.
-    await runCycle(fetcher, logs);
+      // Wait until the real fetcher sees exactly one UNSEEN message. The
+      // fetch path is read-only (BODY.PEEK), so polling never sets \Seen.
+      await waitFor(
+        async () => (await fetcher.fetchUnseen()).length === 1,
+        'greenmail to hold one unseen message',
+      );
 
-    const rows = await pool.query<{ ticket_id: string; ticket_text: string; partition: number }>(
-      'SELECT ticket_id, ticket_text, partition FROM intake',
-    );
-    expect(rows.rows).toHaveLength(1);
-    expect(rows.rows[0]!.ticket_id).toBe(TICKET_ID);
-    expect(rows.rows[0]!.ticket_text).toContain('crushed corner');
-    // DEC-36: the row sits under its conversation's partition, which intake
-    // generates, so it is not a function of the ticket id.
-    expect(rows.rows[0]!.partition).toBeGreaterThanOrEqual(0);
-    expect(rows.rows[0]!.partition).toBeLessThan(PARTITION_COUNT);
-    expect(logs.some((e) => e.event === 'mail_intaked' && e.count === 1)).toBe(true);
+      // 2. One daemon cycle: fetch -> normalize -> intake -> markSeen.
+      await runCycle(fetcher, logs);
 
-    // 3. The message gained \Seen only after intake resolved.
-    await expect(fetcher.fetchUnseen()).resolves.toEqual([]);
+      const rows = await pool.query<{ ticket_id: string; ticket_text: string; partition: number }>(
+        'SELECT ticket_id, ticket_text, partition FROM intake',
+      );
+      expect(rows.rows).toHaveLength(1);
+      expect(rows.rows[0]!.ticket_id).toBe(TICKET_ID);
+      expect(rows.rows[0]!.ticket_text).toContain('crushed corner');
+      // DEC-36: the row sits under its conversation's partition, which intake
+      // generates, so it is not a function of the ticket id.
+      expect(rows.rows[0]!.partition).toBeGreaterThanOrEqual(0);
+      expect(rows.rows[0]!.partition).toBeLessThan(PARTITION_COUNT);
+      expect(logs.some((e) => e.event === 'mail_intaked' && e.count === 1)).toBe(true);
 
-    // 4. A second poll finds nothing new: seen mail is not redelivered.
-    const intakeCount = logs.filter((e) => e.event === 'mail_intaked').length;
-    await runCycle(fetcher, logs);
-    expect(await pool.query('SELECT * FROM intake')).toHaveProperty('rows.length', 1);
-    expect(logs.filter((e) => e.event === 'mail_intaked').length).toBe(intakeCount);
+      // 3. The message gained \Seen only after intake resolved.
+      await expect(fetcher.fetchUnseen()).resolves.toEqual([]);
 
-    fetcher.stop();
+      // 4. A second poll finds nothing new: seen mail is not redelivered.
+      const intakeCount = logs.filter((e) => e.event === 'mail_intaked').length;
+      await runCycle(fetcher, logs);
+      expect(await pool.query('SELECT * FROM intake')).toHaveProperty('rows.length', 1);
+      expect(logs.filter((e) => e.event === 'mail_intaked').length).toBe(intakeCount);
+
+      // The artifact of this case (AGENTS.md, rule 3). The partition is a hash
+      // of a conversation id intake mints at random, so the artifact records
+      // that it is in range rather than which partition it is.
+      const intake = await pool.query<{ partition: number }>('SELECT * FROM intake ORDER BY ticket_id, message_id');
+      artifact.observe(
+        'intake',
+        intake.rows.map((row) => ({
+          ...row,
+          partition: row.partition >= 0 && row.partition < PARTITION_COUNT ? 'in range' : row.partition,
+        })),
+      );
+      artifact.observe('unseenAfter', await fetcher.fetchUnseen());
+      artifact.observe('logs', logs);
+      artifact.finish();
+    } finally {
+      // A failed assertion or a differing artifact still closes the session:
+      // the next mail suite runs in this fork against the same server.
+      fetcher.stop();
+    }
   }, 120_000);
 });

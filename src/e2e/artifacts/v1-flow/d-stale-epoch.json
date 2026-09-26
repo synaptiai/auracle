@@ -1,0 +1,186 @@
+{
+  "artifact": "v1-flow/d-stale-epoch",
+  "inputs": {
+    "capabilities": {
+      "supportsDraftState": true,
+      "supportsIdempotencyKey": true,
+      "supportsLedgerReply": false,
+      "supportsReadBack": true,
+      "supportsStructuredFields": true,
+      "supportsThreading": true
+    },
+    "document": {
+      "body": "Open the account settings page and choose security. Choose reset password and follow the link we email you.",
+      "docId": "d1",
+      "kind": "document",
+      "owner": "synthetic-owner",
+      "reviewBy": "2999-01-01",
+      "title": "Reset your password",
+      "vector": {
+        "numbers": 1536,
+        "sha256": "96f77fd8354a48f415df2180b09dc4822b7aa9195a7b12ef4b653d1df5f4beea"
+      }
+    },
+    "epochBump": {
+      "during": "the retrieve step embeds",
+      "to": "999"
+    },
+    "limits": {
+      "deadlineAfterMs": 60000,
+      "maxCostMicros": 100000000,
+      "maxSteps": 50
+    },
+    "pins": {
+      "modelVer": "e2e-flow-model",
+      "promptVer": "e2e-flow-prompt"
+    },
+    "script": [
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "vectors": [
+          {
+            "numbers": 1536,
+            "sha256": "96f77fd8354a48f415df2180b09dc4822b7aa9195a7b12ef4b653d1df5f4beea"
+          }
+        ]
+      },
+      {
+        "text": "[doc:d1] Open the account settings page and choose reset password."
+      },
+      {
+        "text": "VERDICT: SUPPORTED"
+      }
+    ],
+    "taxonomy": {
+      "intents": [
+        {
+          "id": "password_reset",
+          "label": "Password reset",
+          "risk_tier": "low"
+        },
+        {
+          "id": "billing_question",
+          "label": "Billing question",
+          "risk_tier": "low"
+        },
+        {
+          "id": "other",
+          "label": "Everything else",
+          "risk_tier": "medium"
+        }
+      ]
+    },
+    "ticket": {
+      "actionClass": "route_ticket",
+      "actionPayload": {
+        "queue": "password-support"
+      },
+      "delivery": "at_most_once",
+      "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+      "epoch": "1",
+      "isCustomerVisible": false,
+      "ticketId": "T-d-stale-epoch",
+      "ticketText": "I cannot sign in to my account. How do I reset my password?"
+    }
+  },
+  "observed": {
+    "ledger": {
+      "journal": [
+        {
+          "cost_micros": 90000,
+          "model_ver": "e2e-flow-model",
+          "prompt_ver": "e2e-flow-prompt",
+          "result": {
+            "agreement": 1,
+            "intentId": "password_reset"
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "classify"
+        },
+        {
+          "cost_micros": 90000,
+          "model_ver": "e2e-flow-model",
+          "prompt_ver": "e2e-flow-prompt",
+          "result": {
+            "docIds": [
+              "d1"
+            ],
+            "documents": [
+              {
+                "bodyHash": "89d5f43a37e35bcb3e2da1e891ff878c757c599f4c02c32f199fd6794791c7f2",
+                "docId": "d1",
+                "owner": "synthetic-owner",
+                "reviewBy": "2999-01-01",
+                "title": "Reset your password"
+              }
+            ],
+            "embed_model_ver": "e2e-flow-model"
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "retrieve"
+        }
+      ],
+      "outbox": [],
+      "run": {
+        "approval_edit_distance": null,
+        "approved_by": null,
+        "approved_by_source": null,
+        "attempt": 1,
+        "conversation_id": null,
+        "cost_micros": 90000,
+        "created_at": "<time>",
+        "deadline_at": "<time>",
+        "enqueued_at": null,
+        "epoch": "1",
+        "finished_at": null,
+        "model_ver": "e2e-flow-model",
+        "partition": 2,
+        "product": null,
+        "prompt_ver": "e2e-flow-prompt",
+        "run_id": "<uuid:1>",
+        "send_back_note": null,
+        "sent_back_at": null,
+        "snoozed_until": null,
+        "state": "classified",
+        "steps_used": 1,
+        "ticket_id": "T-d-stale-epoch",
+        "turn_number": null
+      }
+    },
+    "outcome": {
+      "highestAcceptedEpoch": "999",
+      "outcome": "stale_epoch",
+      "runId": "<uuid:1>"
+    },
+    "ticketEpoch": "999"
+  },
+  "seed": 42
+}

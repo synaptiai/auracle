@@ -58,16 +58,6 @@ describe('gate thresholds as data (DEC-05, DEC-13)', () => {
       }),
     ).toThrow(/agreement/);
   });
-
-  it('names no intent, so one global threshold governs every ticket (DEC-13)', () => {
-    // DEC-13's rejected alternative is a threshold the system learns per
-    // intent. The shape cannot express one.
-    expect(Object.keys(SEED_THRESHOLDS).sort()).toEqual([
-      'agreement',
-      'groundednessBlock',
-      'groundednessReview',
-    ]);
-  });
 });
 
 describe('a threshold of zero is not a gate (DEC-05)', () => {

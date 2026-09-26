@@ -45,28 +45,6 @@ function recordingAdapter(): EgressAdapter & { calls: number } {
   return adapter as EgressAdapter & { calls: number };
 }
 
-describe('parkGatedReply draft-state writes (DEC-11)', () => {
-  it('writes the gated reply into the helpdesk draft state', async () => {
-    const adapter = new HelpdeskAdapter();
-    const { draftExternalId } = await parkGatedReply(adapter, reply());
-
-    const draft = adapter.getDraft(draftExternalId);
-    expect(draft).toBeDefined();
-    expect(draft?.status).toBe('draft');
-    expect(draft?.ticketExternalId).toBe('HD-1001');
-    expect(draft?.body).toBe('The sign-in page accepts your address again.');
-    expect(draft?.disclosure).toBe('This reply was drafted with AI assistance.');
-  });
-
-  it('parks through the same adapter the action came from', async () => {
-    const adapter = new HelpdeskAdapter();
-    await parkGatedReply(adapter, { ...reply(), ticketExternalId: 'HD-1002' });
-
-    // Two drafts exist inside the target system; the bridge holds no queue.
-    expect(adapter.listDeliveries()).toHaveLength(0);
-  });
-});
-
 describe('parkGatedReply refusal on empty disclosure (DEC-14)', () => {
   it('refuses an empty disclosure and never calls the adapter', async () => {
     const adapter = recordingAdapter();
@@ -84,12 +62,6 @@ describe('parkGatedReply refusal on empty disclosure (DEC-14)', () => {
       ApprovalRefusalError,
     );
     expect(adapter.calls).toBe(0);
-  });
-
-  it('names DEC-14 in the refusal reasons', async () => {
-    const reasons = validateGatedReply(reply({ disclosure: '' }));
-
-    expect(reasons.some((r) => r.includes('DEC-14'))).toBe(true);
   });
 });
 

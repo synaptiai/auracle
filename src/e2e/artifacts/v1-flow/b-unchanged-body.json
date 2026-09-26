@@ -1,0 +1,284 @@
+{
+  "artifact": "v1-flow/b-unchanged-body",
+  "inputs": {
+    "capabilities": {
+      "supportsDraftState": true,
+      "supportsIdempotencyKey": true,
+      "supportsLedgerReply": false,
+      "supportsReadBack": true,
+      "supportsStructuredFields": true,
+      "supportsThreading": true
+    },
+    "document": {
+      "body": "Open the account settings page and choose security. Choose reset password and follow the link we email you.",
+      "docId": "d1",
+      "kind": "document",
+      "owner": "synthetic-owner",
+      "reviewBy": "2999-01-01",
+      "title": "Reset your password",
+      "vector": {
+        "numbers": 1536,
+        "sha256": "96f77fd8354a48f415df2180b09dc4822b7aa9195a7b12ef4b653d1df5f4beea"
+      }
+    },
+    "limits": {
+      "deadlineAfterMs": 60000,
+      "maxCostMicros": 100000000,
+      "maxSteps": 50
+    },
+    "pins": {
+      "modelVer": "e2e-flow-model",
+      "promptVer": "e2e-flow-prompt"
+    },
+    "script": [
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "text": "password_reset"
+      },
+      {
+        "vectors": [
+          {
+            "numbers": 1536,
+            "sha256": "96f77fd8354a48f415df2180b09dc4822b7aa9195a7b12ef4b653d1df5f4beea"
+          }
+        ]
+      },
+      {
+        "text": "[doc:d1] Open the account settings page and choose reset password."
+      },
+      {
+        "text": "VERDICT: SUPPORTED"
+      }
+    ],
+    "taxonomy": {
+      "intents": [
+        {
+          "id": "password_reset",
+          "label": "Password reset",
+          "risk_tier": "low"
+        },
+        {
+          "id": "billing_question",
+          "label": "Billing question",
+          "risk_tier": "low"
+        },
+        {
+          "id": "other",
+          "label": "Everything else",
+          "risk_tier": "medium"
+        }
+      ]
+    },
+    "ticket": {
+      "actionClass": "customer_reply",
+      "actionPayload": {
+        "summary": "password reset answer"
+      },
+      "delivery": "at_least_once",
+      "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+      "epoch": "1",
+      "isCustomerVisible": true,
+      "ticketId": "T-b-unchanged-body",
+      "ticketText": "I cannot sign in to my account. How do I reset my password?"
+    }
+  },
+  "observed": {
+    "helpdesk": {
+      "deliveries": [],
+      "draft": {
+        "body": "Open the account settings page and choose reset password.",
+        "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+        "draftExternalId": "hd-draft-0001",
+        "provenance": {
+          "generatedAt": "<time>",
+          "generatedBy": "auracle",
+          "modelId": "e2e-flow-model",
+          "promptVer": "e2e-flow-prompt"
+        },
+        "status": "draft",
+        "ticketExternalId": "T-b-unchanged-body"
+      },
+      "ticket": {
+        "customerAddress": null,
+        "queue": "accounts",
+        "status": "open",
+        "subject": "Cannot sign in",
+        "ticketId": "T-b-unchanged-body"
+      }
+    },
+    "ledger": {
+      "journal": [
+        {
+          "cost_micros": 90000,
+          "model_ver": "e2e-flow-model",
+          "prompt_ver": "e2e-flow-prompt",
+          "result": {
+            "agreement": 1,
+            "intentId": "password_reset"
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "classify"
+        },
+        {
+          "cost_micros": 100000,
+          "model_ver": "e2e-flow-model",
+          "prompt_ver": "e2e-flow-prompt",
+          "result": {
+            "abstained": false,
+            "citedBodies": {
+              "d1": "Open the account settings page and choose security. Choose reset password and follow the link we email you."
+            },
+            "claimCount": 1,
+            "provider": "stub",
+            "sentences": [
+              {
+                "docId": "d1",
+                "text": "Open the account settings page and choose reset password."
+              }
+            ],
+            "staleDocumentIds": []
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "compose"
+        },
+        {
+          "cost_micros": 110000,
+          "model_ver": "e2e-flow-model",
+          "prompt_ver": "e2e-flow-prompt",
+          "result": {
+            "claimVerdicts": [
+              {
+                "claimIndex": 0,
+                "supported": true
+              }
+            ],
+            "decision": "gated",
+            "groundedness": 1,
+            "reason": "customer_visible",
+            "riskTier": "low",
+            "thresholds": {
+              "agreement": 0.6,
+              "groundednessBlock": 0.7,
+              "groundednessReview": 0.8
+            }
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "gate"
+        },
+        {
+          "cost_micros": 110000,
+          "model_ver": "e2e-flow-model",
+          "prompt_ver": "e2e-flow-prompt",
+          "result": {
+            "actionClass": "customer_reply",
+            "body": "Open the account settings page and choose reset password.",
+            "delivery": "at_least_once",
+            "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+            "draftExternalId": "hd-draft-0001",
+            "provenance": {
+              "generatedAt": "<time>",
+              "generatedBy": "auracle",
+              "modelId": "e2e-flow-model",
+              "promptVer": "e2e-flow-prompt"
+            }
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "park"
+        },
+        {
+          "cost_micros": 90000,
+          "model_ver": "e2e-flow-model",
+          "prompt_ver": "e2e-flow-prompt",
+          "result": {
+            "docIds": [
+              "d1"
+            ],
+            "documents": [
+              {
+                "bodyHash": "89d5f43a37e35bcb3e2da1e891ff878c757c599f4c02c32f199fd6794791c7f2",
+                "docId": "d1",
+                "owner": "synthetic-owner",
+                "reviewBy": "2999-01-01",
+                "title": "Reset your password"
+              }
+            ],
+            "embed_model_ver": "e2e-flow-model"
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "retrieve"
+        }
+      ],
+      "outbox": [
+        {
+          "action_class": "customer_reply",
+          "delivery": "at_least_once",
+          "epoch": "1",
+          "idem_key": "customer_reply:T-b-unchanged-body:55644c7fda682a586e9608e546d842f82c7e3ef0aa350e2e763a75fdd8463550",
+          "not_before": null,
+          "payload": {
+            "draftExternalId": "hd-draft-0001"
+          },
+          "reply": null,
+          "run_id": "<uuid:1>",
+          "status": "pending",
+          "step_id": "approve"
+        }
+      ],
+      "run": {
+        "approval_edit_distance": 0,
+        "approved_by": "unattributed",
+        "approved_by_source": "none",
+        "attempt": 1,
+        "conversation_id": null,
+        "cost_micros": 110000,
+        "created_at": "<time>",
+        "deadline_at": "<time>",
+        "enqueued_at": null,
+        "epoch": "1",
+        "finished_at": "<time>",
+        "model_ver": "e2e-flow-model",
+        "partition": 3,
+        "product": null,
+        "prompt_ver": "e2e-flow-prompt",
+        "run_id": "<uuid:1>",
+        "send_back_note": null,
+        "sent_back_at": null,
+        "snoozed_until": null,
+        "state": "resolved",
+        "steps_used": 5,
+        "ticket_id": "T-b-unchanged-body",
+        "turn_number": null
+      }
+    },
+    "ticketEpoch": "1"
+  },
+  "seed": 42
+}

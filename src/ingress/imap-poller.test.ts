@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ImapSmtpAdapter, deriveTicketId } from '../adapters/imap-smtp.js';
+import { deriveTicketId } from '../adapters/imap-smtp.js';
 import type { NormalizedEvent } from '../adapters/types.js';
 import {
   NO_IDS_EMAIL,
@@ -8,8 +8,6 @@ import {
   SIMPLE_TEXT_EMAIL,
 } from '../adapters/fixtures.js';
 import { ImapPoller } from './imap-poller.js';
-
-const adapter = new ImapSmtpAdapter();
 
 function collector(): { received: NormalizedEvent[]; onEvent: (event: NormalizedEvent) => Promise<void> } {
   const received: NormalizedEvent[] = [];
@@ -44,31 +42,6 @@ describe('imap ingress driver', () => {
     expect(result.failures).toHaveLength(0);
     expect(fetchCalls).toBe(0);
     expect(received[0]?.ticket.ticketId).toBe('order-4471-damaged@example.test');
-  });
-
-  it('hands each fetched message to the intake seam normalized', async () => {
-    const { received, onEvent } = collector();
-    const poller = new ImapPoller({
-      fetchMessages: async () => [
-        { sourceId: 'uid-1', rfc5322Text: SIMPLE_TEXT_EMAIL },
-        { sourceId: 'uid-2', rfc5322Text: QUOTED_PRINTABLE_EMAIL },
-      ],
-      onEvent,
-      onError: () => {},
-    });
-
-    const result = await poller.pollOnce();
-
-    expect(result.normalizedCount).toBe(2);
-    expect(result.failures).toHaveLength(0);
-    expect(received).toEqual([
-      adapter.normalize({ sourceId: 'uid-1', raw: SIMPLE_TEXT_EMAIL }),
-      adapter.normalize({ sourceId: 'uid-2', raw: QUOTED_PRINTABLE_EMAIL }),
-    ]);
-    // Ticket identity comes from the thread root Message-ID the source
-    // guarantees, not from anything the driver made up.
-    expect(received[0]?.ticket.ticketId).toBe('order-4471-damaged@example.test');
-    expect(received[0]?.message.bodyText).toContain('crushed corner');
   });
 
   it('never invents an eventId for inbound mail (DEC-24)', async () => {

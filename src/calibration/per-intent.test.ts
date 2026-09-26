@@ -109,17 +109,6 @@ describe('the per-intent fit', () => {
     expect(Object.keys(fit.per_intent)).toEqual(['refund-request']);
     expect(fit.below_floor).toContain('billing-dispute');
   });
-
-  // The trigger counts the corpus and the fit consumes half of it, so both
-  // numbers are recorded and neither stands in for the other.
-  it('records the fit population apart from the corpus the trigger counts', () => {
-    const cases = [
-      ...samplesFor('refund-request', 8_000, 7_900),
-      ...samplesFor('chargeback-notice', 12, 11),
-    ];
-    const fit = fitPerIntent(cases, { targetPrecision: TARGET, labelledCases: cases.length * 2 });
-    expect(fit.fit_cases).toBe(8_012);
-  });
 });
 
 // The fit keys its map the same way the gate reads it.

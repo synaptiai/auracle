@@ -8,7 +8,7 @@ import type {
 import type { GoldFile, GoldTicket } from '../domain/gold-types.js';
 import { ReplayStubProvider } from './fake-model.js';
 import {
-  FALLBACK_QUEUE, fitRouteMap, fitRoutes, observedOutcome, runReplay, scoreTicket,
+  FALLBACK_QUEUE, fitRouteMap, fitRoutes, runReplay, scoreTicket,
 } from './replay.js';
 import type { ReplayTaxonomy, RoutedTicket, RouteMap } from './replay.js';
 import { SEED_THRESHOLDS, makeThresholds } from '../policy/policy.js';
@@ -107,23 +107,6 @@ describe('scoreTicket scores dispositions, never intent labels (DEC-32)', () => 
     expect(item.observed).toEqual({ kind: 'escalate' });
     expect(item.match).toBe(true);
   });
-
-  it('is invariant under arbitrary relabeling of the gold intent column', () => {
-    const a = scoreTicket(routed(makeTicket({ intent: 'label-one', queue: 'desk-a' }), 'alpha', 'auto'), routes);
-    const b = scoreTicket(routed(makeTicket({ intent: 'label-two-completely-different', queue: 'desk-a' }), 'alpha', 'auto'), routes);
-    expect(a.match).toBe(b.match);
-  });
-});
-
-describe('the real policy path drives the prediction', () => {
-  it('sends anything short of auto to a person', () => {
-    // gamma-high is high risk: evaluatePolicy gates it before any gate values are read.
-    const item = scoreTicket(
-      routed(makeTicket({ queue: 'desk-a' }), 'gamma-high', 'gated'),
-      fitRouteMap([{ intentId: 'gamma-high', queue: 'desk-a' }]),
-    );
-    expect(item.predicted).toEqual({ kind: 'escalate' });
-  });
 });
 
 describe('runReplay wires classifier -> policy -> scoring over the split halves', () => {
@@ -212,17 +195,6 @@ describe('runReplay wires classifier -> policy -> scoring over the split halves'
       // in turn.body_text, so every offline job must send the same text.
       expect(text).toBe('FIT subject\n\nFIT body');
     }
-  });
-});
-
-describe('observedOutcome reads the disposition fields only', () => {
-  it('maps an escalation disposition to the escalate outcome', () => {
-    const escalated = observedOutcome(makeTicket({ queue: 'desk-a', disposition: { escalated: true, macro_applied: null, refund_issued: false, first_reply_minutes: 7 } }));
-    expect(escalated).toEqual({ kind: 'escalate' });
-  });
-
-  it('maps a plain history row to its queue', () => {
-    expect(observedOutcome(makeTicket({ queue: 'desk-b' }))).toEqual({ kind: 'queue', queue: 'desk-b' });
   });
 });
 

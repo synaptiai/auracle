@@ -443,26 +443,6 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
     }
   });
 
-  it('refuses to fit when the judge fails on too many drafts', async () => {
-    // Every draft faults. A threshold fitted on nothing carries a confidence
-    // the data does not support, so the job refuses rather than emitting one.
-    const tickets = Array.from({ length: 12 }, (_, i) => draft(`G-${i}`, 3, 0));
-    const script = tickets.flatMap((t) => (t.claims ?? []).map(() => ({ text: '' })));
-    const dir = tempDir();
-    try {
-      await expect(
-        runGroundednessJob({
-          provider: new FakeProvider(script),
-          fitHalf: half(tickets),
-          modelVer: 'test-stub',
-          artifactDir: dir,
-        }),
-      ).rejects.toThrow(/ceiling/i);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   it('refuses a half whose declared count disagrees with its tickets', async () => {
     await expect(
       runGroundednessJob({

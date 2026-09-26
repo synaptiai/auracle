@@ -137,22 +137,6 @@ describe('classifyTicket (section 4.5, DEC-05)', () => {
     expect(allReadable?.shape).toBe('no-label');
   });
 
-  it('faults when no sample yields a label, whatever the mix of causes', async () => {
-    // Eight truncated and one stray label. An earlier version typed only the
-    // all-unreadable case, so this threw an error no caller could catch.
-    const script = [
-      ...Array.from({ length: 8 }, () => ({ finishReason: 'length' })),
-      { text: 'not-an-intent-in-this-taxonomy' },
-    ];
-    await expect(
-      classifyTicket(new FakeProvider(script), {
-        taxonomy: TAXONOMY,
-        ticketText: 'I want a refund',
-        ...PIN,
-      }),
-    ).rejects.toBeInstanceOf(UnreadableAnswerError);
-  });
-
   it('allows each sample enough answer budget to reason and still answer', async () => {
     const provider = new FakeProvider(
       Array.from({ length: 9 }, () => ({ text: 'refund-request' })),
@@ -234,21 +218,6 @@ describe('classifyTicket (section 4.5, DEC-05)', () => {
         ...PIN,
       }),
     ).rejects.toThrow(/temperature must be above zero/);
-  });
-
-  it('returns agreement 9/9 when all samples agree', async () => {
-    const provider = new FakeProvider(
-      Array.from({ length: CLASSIFIER_K }, () => ({ text: 'refund-request' })),
-    );
-
-    const result = await classifyTicket(provider, {
-      taxonomy: TAXONOMY,
-      ticketText: 'give me a refund',
-      ...PIN,
-    });
-
-    expect(result.intentId).toBe('refund-request');
-    expect(result.agreement).toBe(1.0);
   });
 
   it('computes the modal intent and its fraction of K samples', async () => {

@@ -239,10 +239,6 @@ describe('the shell', () => {
     expect(badge.get('flex')).toBe('none');
     expect(badge.get('white-space')).toBe('nowrap');
   });
-
-  it('rounds a rail item at the medium radius', () => {
-    expect(rule('.nav a').get('border-radius')).toBe('var(--r-md)');
-  });
 });
 
 describe('reading the stylesheet', () => {
@@ -446,47 +442,6 @@ describe('what reads at every width', () => {
     expect(rule('.turnfact.warn').get('color')).toBe('var(--warn)');
     // No rule still places a half of the turn on a grid column.
     expect(RULES.filter((r) => r.declarations.has('grid-column') && r.selector.includes('said'))).toHaveLength(0);
-  });
-
-  // The handoff's notes: a panel card with a coloured left rule, a title and
-  // a measure of prose, in one column no wider than 1000px.
-  it('sets a design note as a card with a coloured left rule', () => {
-    expect(rule('.designnotes').get('max-width')).toBe('1000px');
-    expect(rule('.designnotes').get('gap')).toBe('12px');
-    const note = rule('.designnote');
-    expect(note.get('background')).toBe('var(--panel)');
-    expect(note.get('border-left-width')).toBe('2px');
-    expect(rule('.designnotetitle').get('font-weight')).toBe('600');
-    expect(rule('.designnotesays').get('max-width')).toBe('88ch');
-  });
-
-  // The keys line sits between the queue header and the list, inset like the
-  // rows it annotates and resting just above the panel edge.
-  it('insets the queue keys line like the rows it annotates', () => {
-    const keys = rule('.keys');
-    const across = (padding: string | undefined) => padding?.split(' ')[1];
-    expect(across(keys.get('padding'))).toBe(across(rule('.item').get('padding')));
-    expect(keys.get('padding')).toBe('10px 16px 12px');
-    expect(keys.get('color')).toBe('var(--dim)');
-  });
-
-  // The absence of a reply reads in the same register as the reply would,
-  // muted and italic, so it takes the place of the text rather than looking
-  // like a caption beneath an empty block.
-  it('sets a turn absence in the serif, muted and italic', () => {
-    const absent = rule('.said .absent');
-    expect(absent.get('font-family')).toContain('Charter');
-    expect(absent.get('font-size')).toBe('15px');
-    expect(absent.get('font-style')).toBe('italic');
-    expect(absent.get('color')).toBe('var(--mut)');
-    expect(rule('.said .absent.waiting').get('color')).toBe('var(--warn)');
-  });
-
-  // The queue no longer draws a case beside itself, so nothing lays one out.
-  it('carries no rule for the pane the queue used to draw', () => {
-    for (const gone of ['.split', '.pane', '.item.on']) {
-      expect(RULES.filter((r) => r.selector === gone), gone).toHaveLength(0);
-    }
   });
 
   it('draws a refusal in another colour from an approval', () => {

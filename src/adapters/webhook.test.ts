@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ImapSmtpAdapter } from './imap-smtp.js';
 import { WebhookAdapter } from './webhook.js';
-import type { IngressAdapter } from './types.js';
 
 const adapter = new WebhookAdapter();
 
@@ -22,23 +20,6 @@ function baseEvent(): Record<string, unknown> {
 function normalize(rawEvent: unknown) {
   return adapter.normalize({ sourceId: 'wh-evt-1', raw: rawEvent });
 }
-
-describe('one port, many adapters (section 4.1)', () => {
-  it('holds every reference adapter in one IngressAdapter[]', () => {
-    const adapters: IngressAdapter[] = [new ImapSmtpAdapter(), new WebhookAdapter()];
-    expect(adapters.map((entry) => entry.name)).toEqual(['imap-smtp', 'webhook']);
-    for (const entry of adapters) {
-      expect(Object.keys(entry.capabilities).sort()).toEqual([
-        'supportsDraftState',
-        'supportsIdempotencyKey',
-        'supportsLedgerReply',
-        'supportsReadBack',
-        'supportsStructuredFields',
-        'supportsThreading',
-      ]);
-    }
-  });
-});
 
 describe('WebhookAdapter capabilities', () => {
   it('declares no guarantee a bare webhook does not give (DEC-06)', () => {

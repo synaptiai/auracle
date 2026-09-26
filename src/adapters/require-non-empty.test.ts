@@ -30,14 +30,6 @@ import { requireNonEmpty } from './types.js';
 
 
 describe('requireNonEmpty', () => {
-  it('returns the trimmed value, which is the contract and not the practice', () => {
-    // Every call site today discards this. It is asserted because the
-    // function promises it, not because a caller relies on it: a reader who
-    // takes the call for normalization would be wrong, and types.ts says so.
-    expect(requireNonEmpty('field', '  spaced  ')).toBe('spaced');
-    expect(requireNonEmpty('field', 'plain')).toBe('plain');
-  });
-
   it('rejects empty and whitespace-only values', () => {
     // The case the three copies disagreed on.
     for (const empty of ['', ' ', '   ', '\t', '\n', ' \t\n ']) {

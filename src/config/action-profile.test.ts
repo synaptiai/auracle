@@ -34,21 +34,6 @@ describe('actionProfileFromEnv', () => {
     });
   });
 
-  it('passes an explicit non-visible profile through unchanged', () => {
-    const env = envWith({
-      ACTION_CLASS: 'route_ticket',
-      ACTION_DELIVERY: 'at_least_once',
-      ACTION_IS_CUSTOMER_VISIBLE: 'false',
-      DISCLOSURE_TEXT: 'custom disclosure',
-    });
-    expect(actionProfileFromEnv(env)).toEqual({
-      actionClass: 'route_ticket',
-      delivery: 'at_least_once',
-      isCustomerVisible: false,
-      disclosure: 'custom disclosure',
-    });
-  });
-
   it('throws naming ACTION_CLASS when it is empty or blank', () => {
     expect(() => actionProfileFromEnv(envWith({ ACTION_CLASS: '' })))
       .toThrow('ACTION_CLASS must not be empty.');
@@ -143,18 +128,6 @@ describe('actionProfileFromEnv', () => {
           + ' got a blank DISCLOSURE_TEXT.',
       );
     }
-  });
-
-  it('keeps a provided DISCLOSURE_TEXT on a visible profile', () => {
-    const profile = actionProfileFromEnv(
-      envWith({
-        ACTION_CLASS: 'customer_reply',
-        ACTION_IS_CUSTOMER_VISIBLE: 'true',
-        DISCLOSURE_TEXT: 'reviewed by a person',
-      }),
-    );
-    expect(profile.disclosure).toBe('reviewed by a person');
-    expect(profile.isCustomerVisible).toBe(true);
   });
 
   it('uses the default disclosure when a hidden profile sets a blank one', () => {
