@@ -31,6 +31,7 @@ import type { LatencyWindow } from './query.js';
 import { runEntry } from '../cli/entry.js';
 import { terminalText } from '../cli/terminal-text.js';
 import { humanMs } from './format.js';
+import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 
 export interface LatencyJobOptions {
   pool: Pool;
@@ -149,7 +150,7 @@ async function main(): Promise<void> {
   // throwaway container and take it for production. Every other entry point
   // in this repository refuses to guess, and this one reads a live ledger.
   // One connection, because the job issues one statement.
-  const pool = new Pool({ connectionString: requireDbUrl('the latency report'), max: 1 });
+  const pool = guardLedgerPool(new Pool({ connectionString: requireDbUrl('the latency report'), max: 1 }), logLedgerPoolError('the latency report'));
   // An idle client that fails reaches the pool as an 'error' event, and with no
   // listener Node rethrows it outside this function's promise chain: the catch
   // below never sees it. The window is the whole artifact write, and it opens

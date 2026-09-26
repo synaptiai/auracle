@@ -920,6 +920,11 @@ export interface SendBackRecord {
   readonly reviewer: string | null;
   /** DEC-45: what the name proves, when the row recorded it. */
   readonly reviewerSource: string | null;
+  /**
+   * DEC-50: the title of the document whose publishing asked for the new
+   * attempt, when a published document asked rather than a note.
+   */
+  readonly documentTitle: string | null;
 }
 
 /**
@@ -962,6 +967,7 @@ function toSendBackRecord(
     note: stringAt(result, 'note'),
     reviewer: stringAt(result, 'reviewer'),
     reviewerSource: stringAt(result, 'reviewerSource'),
+    documentTitle: stringAt(result, 'documentTitle'),
   };
 }
 

@@ -289,6 +289,20 @@ tbody tr:hover { background:var(--panel); }
   font-family:var(--sans); font-size:12.5px;
 }
 .callout a.btn { display:inline-block; text-decoration:none; }
+/* DEC-50: the composer on the case's knowledge card. The fields stack in one
+ * column: a document is written top to bottom, and the card is narrow. */
+.composer { display:flex; flex-direction:column; gap:7px; margin:0; }
+.composer input[type=text], .composer input[type=date], .composer textarea {
+  width:100%; box-sizing:border-box; padding:8px 9px; border-radius:4px;
+  border:1px solid var(--rule2); background:var(--panel2); color:var(--ink);
+  font-family:var(--sans); font-size:12.5px;
+}
+.composer textarea { min-height:160px; resize:vertical; line-height:1.5; }
+.composer fieldset { border:0; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; }
+.composer fieldset label { font-size:12.5px; color:var(--ink); }
+.composer .btn { align-self:flex-start; margin-top:4px; }
+.rerun + .rerun { border-top:1px solid var(--rule2); padding-top:6px; }
+.rerun p { margin:0 0 6px; font-size:12.5px; line-height:1.5; }
 
 /* A queue row's top line: the ticket, and how long it has waited.
  *

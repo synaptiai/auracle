@@ -84,6 +84,7 @@ import type { CoordinatorDeps } from './coordinator.js';
 import { runEntry } from '../cli/entry.js';
 import { errorMessage } from '../errors.js';
 import { logLine } from '../log/line.js';
+import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 
 const EGRESS_ADAPTERS: Readonly<Record<string, () => EgressAdapter>> = {
   helpdesk: () => new HelpdeskAdapter(),
@@ -291,7 +292,7 @@ async function main(): Promise<void> {
   // in-flight run in the claimed partitions, so the previous owner's writes
   // are refused (DEC-27 cost, DEC-28 safety). A reply parked for a person and
   // a record whose run has finished keep their fence (issue #113).
-  const pool = new Pool({ connectionString: requireDbUrl('the consumer'), max: 1 });
+  const pool = guardLedgerPool(new Pool({ connectionString: requireDbUrl('the consumer'), max: 1 }), logLedgerPoolError('the consumer'));
   let bumped = 0;
   for (const partition of partitions) {
     bumped += await claimPartition(pool, partition);

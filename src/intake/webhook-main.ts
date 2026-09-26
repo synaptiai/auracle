@@ -28,6 +28,7 @@ import { productCatalogueFromEnv } from '../config/products.js';
 import { intakeEnqueuer } from './adapter.js';
 import { runEntry } from '../cli/entry.js';
 import { logLine } from '../log/line.js';
+import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 
 async function main(): Promise<void> {
   loadDotEnv();
@@ -41,7 +42,7 @@ async function main(): Promise<void> {
   // product nothing can resolve.
   const catalogue = productCatalogueFromEnv();
 
-  const pool = new Pool({ connectionString: requireDbUrl('the webhook ingress'), max: 1 });
+  const pool = guardLedgerPool(new Pool({ connectionString: requireDbUrl('the webhook ingress'), max: 1 }), logLedgerPoolError('the webhook ingress'));
   const server = createWebhookServer({
     onEvent: intakeEnqueuer(pool, partitionCount, catalogue),
     // Absent means the driver runs open and says so at startup.

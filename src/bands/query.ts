@@ -41,7 +41,9 @@ export interface DayRow {
    */
   provider: string | null;
   /**
-   * DEC-49: how many of the day's runs are a case a reviewer's note steered.
+   * DEC-49, DEC-50: how many of the day's runs are a case a person steered:
+   * a reviewer's note, or a document a reviewer published from the case.
+   * Both raise the attempt, and both mean the system did not answer alone.
    *
    * A count of runs and not a metric: the day's `runs` already counts each
    * turn once, so this is a subset of it, and no band is evaluated over it.
@@ -240,7 +242,8 @@ const SELECT_BY_DAY = `
          -- still to land beside the ones waiting for a person.
          count(*) FILTER (WHERE d.state IN ('awaiting_approval', 'snoozed')) AS still_to_land,
          count(*) FILTER (WHERE p.run_id IS NOT NULL)                   AS undelivered,
-         -- DEC-49: how many of this day's cases a reviewer's note steered.
+         -- DEC-49, DEC-50: how many of this day's cases a person steered,
+         -- with a send-back note or a document published from the case.
          -- A case, not an attempt: day_run already holds one row per turn,
          -- so this counts the turns whose final attempt a person asked for.
          -- It is a day-level count beside the provider and not a metric:

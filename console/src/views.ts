@@ -232,7 +232,13 @@ export function stepSays(step: JournalStep, journal: RunJournal): string | null 
       // reading the new reply can see what was asked for — and never
       // invented: a row holding no note says nothing.
       const sentBack = step.sendBack;
-      if (sentBack === null || sentBack.note === null) return null;
+      if (sentBack === null) return null;
+      // DEC-50: a published document asked for the attempt, and the document
+      // is what the next attempt reads instead of a note.
+      if (sentBack.note === null && sentBack.documentTitle !== null) {
+        return `attempted again by ${sentBack.reviewer ?? 'nobody named'} · after publishing ${sentBack.documentTitle}`;
+      }
+      if (sentBack.note === null) return null;
       return `sent back by ${sentBack.reviewer ?? 'nobody named'} · ${sentBack.note}`;
     }
     case 'supersede': {

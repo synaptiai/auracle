@@ -87,7 +87,9 @@ export interface BandsArtifact {
    */
   provider: string | null;
   /**
-   * DEC-49: how many of this day's cases a reviewer's note steered.
+   * DEC-49, DEC-50: how many of this day's cases a person steered, with a
+   * send-back note or a document published from the case. Both raise the
+   * attempt, and both mean the system did not answer alone.
    *
    * A day-level count, beside the provider and outside `metrics`, because it
    * is not a metric: bands.yaml declares no band for it, and the evaluator

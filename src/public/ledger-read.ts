@@ -46,6 +46,10 @@ export const LEDGER_WRITES: Readonly<Record<string, string>> = {
   // records the note the next attempt reads, and starts no run itself — the
   // consumer that owns the conversation's partition does that on its scan.
   sendBackRun: 'ends a waiting case for a new attempt, and records the note that steers it',
+  // DEC-50: a document a reviewer writes from a case. It writes a pending
+  // console document, which a consumer embeds, and the new attempt of the
+  // case it asks for, which a consumer starts once the document is embedded.
+  publishDocument: 'publishes a document written from a case, and asks for a new attempt of the case',
   takeHold: 'takes a case for one reviewer, and releases the taker\'s others',
   // DEC-51: the way back inside a held send. It removes every effect of the
   // approval — the record, the approver, the distance, the approved text and
@@ -77,6 +81,17 @@ export { readDocument } from '../documents/query.js';
 // DEC-50: the cases a gap blocked. The case screen and the knowledge screen
 // both read through this module, so they count a case one way.
 export { GAP_WINDOW_DAYS, readCaseGap, readKnowledge } from '../knowledge/gaps.js';
+// DEC-50: the document a reviewer publishes from a case, and the new attempt
+// it asks for, as the case page draws it.
+export {
+  MAX_DOCUMENT_BODY_CHARS, MAX_DOCUMENT_OWNER_CHARS, MAX_DOCUMENT_TITLE_CHARS, publishDocument,
+} from '../knowledge/publish.js';
+export type { PublishInput, PublishOutcome } from '../knowledge/publish.js';
+export { readCaseReruns } from '../knowledge/rerun.js';
+// A connection that fails while a caller holds it must not end the process.
+// A listener on the pool, and no statement.
+export { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
+export type { CaseRerun, RerunReason } from '../knowledge/rerun.js';
 export type {
   CaseGap,
   ChangeFlag,

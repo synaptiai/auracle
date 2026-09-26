@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { errorMessage } from '../errors.js';
 import { terminalText } from '../cli/terminal-text.js';
 import { logLine } from '../log/line.js';
+import { guardLedgerPool, logLedgerPoolError } from './client-errors.js';
 
 // Mirrors the credentials in docker-compose.yml. Compose cannot export
 // environment variables to the host shell, so this fallback is the default.
@@ -68,7 +69,7 @@ export async function probeLedger(pool: Pool, processName: string): Promise<void
 }
 
 export async function tryConnect(): Promise<Pool | null> {
-  const pool = new Pool({ connectionString: dbUrl(), max: 1 });
+  const pool = guardLedgerPool(new Pool({ connectionString: dbUrl(), max: 1 }), logLedgerPoolError('the ledger probe'));
   try {
     await pool.query('SELECT 1');
     return pool;

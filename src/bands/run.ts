@@ -37,6 +37,7 @@ import { runEntry } from '../cli/entry.js';
 import { terminalText } from '../cli/terminal-text.js';
 import { humanValue } from './format.js';
 import { lastCompleteDay } from '../time/day.js';
+import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 
 export interface BandsJobOptions {
   pool: Pool;
@@ -248,11 +249,11 @@ async function main(): Promise<void> {
   // write issued from inside a SELECT. `statement_timeout` bounds the other
   // half of "safe against a live database": a report has no business holding
   // a connection open indefinitely on a ledger serving live traffic.
-  const pool = new Pool({
+  const pool = guardLedgerPool(new Pool({
     connectionString: requireDbUrl('the control-band report'),
     max: 1,
     options: '-c default_transaction_read_only=on -c statement_timeout=60000',
-  });
+  }), logLedgerPoolError('the bands report'));
   // An idle client that fails reaches the pool as an 'error' event, and with
   // no listener Node rethrows it outside this function's promise chain.
   pool.on('error', (error: Error & { code?: string }) => {

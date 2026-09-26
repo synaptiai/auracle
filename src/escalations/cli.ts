@@ -25,6 +25,7 @@ import { listEscalations, parseSince, type EscalationItem } from './query.js';
 import { runEntry } from '../cli/entry.js';
 import { terminalText } from '../cli/terminal-text.js';
 import { reportJson } from '../log/line.js';
+import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 
 function optionValue(argv: readonly string[], name: string): string | undefined {
   const i = argv.indexOf(name);
@@ -124,7 +125,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const pool = new Pool({ connectionString: requireDbUrl('the escalations CLI'), max: 1 });
+  const pool = guardLedgerPool(new Pool({ connectionString: requireDbUrl('the escalations CLI'), max: 1 }), logLedgerPoolError('the escalations CLI'));
   try {
     const items = await listEscalations(pool, {
       ...(since === undefined ? {} : { since }),

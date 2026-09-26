@@ -287,9 +287,9 @@ describe('kb loader against postgres', () => {
   // the corpus still loads, and every loaded row records its model.
   it('leaves a document the console wrote as it is, and reports the file', async () => {
     await pool.query(
-      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status, written_by)
        VALUES ('kb-refund-policy', 'document', 'written in the console', 'the console body',
-               'support-docs', $1, 'console', 'pending')`,
+               'support-docs', $1, 'console', 'pending', 'synthetic-reviewer')`,
       [FRESH_REVIEW_BY],
     );
     const stub = new VectorStub([unitVector(11), unitVector(22), unitVector(33)]);
@@ -322,9 +322,9 @@ describe('kb loader against postgres', () => {
     class WritesMeanwhile extends VectorStub {
       override async embed(call: EmbeddingRequest & { modelVer: string }): Promise<EmbeddingResult> {
         await pool.query(
-          `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
+          `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status, written_by)
            VALUES ('kb-refund-policy', 'document', 'written meanwhile', 'the console body',
-                   'support-docs', $1, 'console', 'pending')`,
+                   'support-docs', $1, 'console', 'pending', 'synthetic-reviewer')`,
           [FRESH_REVIEW_BY],
         );
         return super.embed(call);

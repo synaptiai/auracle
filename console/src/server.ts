@@ -44,6 +44,7 @@ import {
   renderConfirm,
   renderConfirmResult,
   renderOutcome,
+  renderPublishRefused,
   renderRuns,
   renderCloseOutcome,
   renderRewriteOutcome,
@@ -57,7 +58,8 @@ import { confirmBatch, isFault, undoBatch, MAX_BATCH } from './confirm.js';
 import type { BatchOutcome } from './confirm.js';
 import type { ConfirmCase, OutcomeRun } from './surfaces.js';
 import type {
-  BandRow, CaseGapRead, CaseHoldRead, CaseSendHoldRead, CopyRead, CustomerRead, DocumentPage,
+  BandRow, CaseGapRead, CaseHoldRead, CaseRerunsRead, CaseSendHoldRead, ComposerFields, CopyRead,
+  CustomerRead, DocumentPage,
   KnowledgeRead, LatencyRow,
   QueueHold, QueueHoldsRead, QueueTodayRead, QueueTodayView,
   RunDetail, RunRow, RunView, Shell,
@@ -70,7 +72,8 @@ import { logLine } from 'auracle/format';
 import type { ReviewerFor } from './reviewer.js';
 import { copyHoldsText, replyDigest } from 'auracle/ledger-read';
 import type {
-  ApprovalHold, CaseGap, CloseOutcome, HandoverOutcome, Hold, KnowledgeReport, ReleaseOutcome,
+  ApprovalHold, CaseGap, CaseRerun, CloseOutcome, HandoverOutcome, Hold, KnowledgeReport, PublishOutcome,
+  ReleaseOutcome,
   RewriteOutcome,
   SendBackOutcome, SnoozeOutcome, TakeOutcome,
   UndoOutcome,
@@ -118,6 +121,23 @@ export interface ConsoleDeps {
    * reached a person with a draft or an abstention.
    */
   readonly readCaseGap: (runId: string) => Promise<CaseGap | null>;
+  /**
+   * DEC-50: the documents published from this run, each with what became of
+   * the new attempt it asked for, read by the verdict the consumer acts on.
+   */
+  readonly readCaseReruns: (runId: string) => Promise<readonly CaseRerun[]>;
+  /**
+   * DEC-50: a document a reviewer writes from a case. The core owns every
+   * rule: the products, the identifier check, the review date, the DEC-46
+   * guard, and the re-run it asks for. This hands it the form and draws the
+   * answer, so a refusal comes back with its reason.
+   */
+  readonly publish: (
+    runId: string,
+    reviewer: string,
+    fields: ComposerFields,
+    shown: string,
+  ) => Promise<PublishOutcome>;
   /**
    * The approval, with the reviewer this request resolved to (DEC-45), the
    * digest of the reply the page drew (DEC-46), and the reviewer's decision
@@ -1380,10 +1400,26 @@ async function route(
       console.error(logLine({ event: 'console_gap_unread', tag, runId, error: describeFault(error) }));
       gap = { unreadTag: tag };
     }
+    // DEC-50: the documents published from this case, and what became of
+    // each re-run. A fault does not take the case away, as the gap's does not.
+    let reruns: CaseRerunsRead;
+    try {
+      reruns = { reruns: await deps.readCaseReruns(runId) };
+    } catch (error) {
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({ event: 'console_reruns_unread', tag, runId, error: describeFault(error) }));
+      reruns = { unreadTag: tag };
+    }
     send(res, 200, page(
       `Case ${run.ticketId}`,
       renderCase({ ...run, customer }, {
         gap,
+        reruns,
+        composing: url.searchParams.get('compose') === '1',
+        published: url.searchParams.get('published') === '1',
+        author: reviewer,
+        productLabels: deps.productLabels,
+        today: new Date().toISOString().slice(0, 10),
         outcome, edit, why, closed, snoozed, rule, product, readBack: options.readBack, hold,
         taken, handoverTo, ledgerReply: options.ledgerReply, writing, copy, sendHold,
         rewritten, rewriting, sentBack, sendingBack,
@@ -1608,6 +1644,13 @@ async function route(
   // is sent.
   if (req.method === 'POST' && path === '/send-back') {
     await sendBackRoute(req, res, deps, reviewer, url, theme);
+    return;
+  }
+
+  // DEC-50: a document a reviewer writes from a case. Its own route: nothing
+  // on the case moves here, and the attempt it asks for is the consumer's.
+  if (req.method === 'POST' && path === '/publish') {
+    await publishRoute(req, res, deps, reviewer, url, theme, shell, options.ledgerReply);
     return;
   }
 
@@ -2480,6 +2523,153 @@ async function closeRoute(
  * what it will record, and a console that also refused a length would be the
  * second place the number lives.
  */
+async function publishRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ConsoleDeps,
+  reviewer: string,
+  url: URL,
+  theme: Theme,
+  shell: (at: string) => Shell,
+  ledgerReply: boolean,
+): Promise<void> {
+  const from = req.socket.remoteAddress ?? null;
+  let form;
+  try {
+    form = await readForm(req);
+  } catch (error) {
+    if (!(error instanceof OversizedForm)) {
+      if (req.destroyed || req.readableAborted) {
+        console.error(logLine({
+          event: 'console_refused', reason: 'client_aborted',
+          host: req.headers.host ?? null, from,
+        }));
+        return;
+      }
+      throw error;
+    }
+    req.destroy();
+    send(res, 413, bare(
+      'Refused',
+      'The document is larger than this console accepts. Nothing was published.',
+      theme,
+      backToQueue(url),
+    ));
+    return;
+  }
+
+  const runId = (form.get('runId') ?? '').trim();
+  if (!isRunId(runId)) {
+    console.error(logLine({
+      event: 'console_refused', reason: 'not_a_run_id',
+      runId: logged(runId), runIdLength: loggedLength(runId),
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 400, bare('Refused', 'That is not a run id, so nothing was published.', theme));
+    return;
+  }
+  const shown = (form.get('shown') ?? '').trim();
+  if (!SHOWN_DIGEST.test(shown)) {
+    console.error(logLine({
+      event: 'console_refused', reason: 'not_a_shown_digest',
+      runId, shownLength: loggedLength(shown),
+      host: req.headers.host ?? null, from,
+    }));
+    send(res, 400, bare(
+      'Refused',
+      'That request carries no reply digest, so this console will not publish from it.'
+        + ' Open the case and write the document there.',
+      theme,
+    ));
+    return;
+  }
+
+  const fields: ComposerFields = {
+    title: form.get('title') ?? '',
+    body: form.get('body') ?? '',
+    owner: form.get('owner') ?? '',
+    reviewBy: (form.get('reviewBy') ?? '').trim(),
+    products: form.getAll('product').map((product) => product.trim()).filter((product) => product !== ''),
+  };
+  const rule = url.searchParams.get('rule');
+  const product = url.searchParams.get('product');
+  let outcome: PublishOutcome;
+  try {
+    outcome = await deps.publish(runId, reviewer, fields, shown);
+  } catch (error) {
+    const tag = randomUUID().slice(0, 8);
+    console.error(logLine({
+      event: 'console_publish_failed', tag, runId,
+      titleLength: loggedLength(fields.title), bodyLength: loggedLength(fields.body),
+      reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+      host: req.headers.host ?? null, from, error: describeFault(error),
+    }));
+    send(res, 500, bare(
+      'Error',
+      `Something failed while publishing, and it may or may not have committed.`
+        + ` The console log names it ${tag}.`,
+      theme,
+      { href: caseHref(runId, rule, product), text: 'Open the case to see what it holds.' },
+    ));
+    return;
+  }
+  // The lengths and the outcome, never the text: a refused document may be
+  // one that named the customer.
+  console.error(logLine({
+    // A repeated post wrote nothing, so it is not logged as a publish.
+    event: outcome.outcome !== 'published'
+      ? 'console_publish_refused'
+      : outcome.repeated === true ? 'console_publish_repeated' : 'console_published',
+    runId,
+    outcome: outcome.outcome,
+    ...(outcome.outcome === 'published' ? { docId: outcome.docId, rerun: outcome.rerun } : {}),
+    titleLength: loggedLength(fields.title),
+    bodyLength: loggedLength(fields.body),
+    reviewer: logged(reviewer),
+    reviewerLength: loggedLength(reviewer),
+    host: req.headers.host ?? null,
+    from,
+  }));
+  if (outcome.outcome !== 'published') {
+    // The composer comes back holding what the reviewer wrote, with the
+    // refusal above it. The case is read again for its product, which the
+    // form fixes, and for its reply: a reply that changed is drawn, and the
+    // form carries its digest, so the reviewer reads it and publishes again
+    // without writing the document twice. A case that cannot be read keeps
+    // the product the form posted first, which is the case's own.
+    let caseProduct: string | null = fields.products[0] ?? null;
+    let current: { readonly text: string; readonly shown: string } | null = null;
+    try {
+      const run = await deps.readRun(runId);
+      if (run !== null) {
+        caseProduct = run.product === null || run.product.trim() === '' ? null : run.product;
+        if (outcome.outcome === 'shown_changed') {
+          const text = replyTextOf(run, ledgerReply) ?? '';
+          current = { text, shown: replyDigest(text) };
+        }
+      }
+    } catch (error) {
+      const tag = randomUUID().slice(0, 8);
+      console.error(logLine({ event: 'console_case_unread', tag, runId, error: describeFault(error) }));
+    }
+    send(res, 422, page(
+      'Publish',
+      renderPublishRefused(runId, current?.shown ?? shown, caseProduct, outcome, fields, {
+        current: current?.text ?? null,
+        rule, product, productLabels: deps.productLabels, today: new Date().toISOString().slice(0, 10),
+      }),
+      { ...shell(`/case/${runId}`), back: caseHref(runId, rule, product) },
+    ));
+    return;
+  }
+  const kept = filtersQuery(rule, product).replace(/^\?/, '&');
+  res.writeHead(303, {
+    ...SAFETY_HEADERS,
+    location: `/case/${encodeURIComponent(runId)}?published=1${kept}#knowledge`,
+  });
+  res.end();
+}
+
 async function sendBackRoute(
   req: IncomingMessage,
   res: ServerResponse,

@@ -504,9 +504,9 @@ describe('section 4.3 partition consumer', () => {
     const ticket = `T-${randomUUID().slice(0, 8)}`;
     const partition = await seedTicket(ticket);
     await pool.query(
-      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status, written_by)
        VALUES ('team-pause', 'document', 'Plan pause', 'A plan may be paused once a year.',
-               'synthetic-owner', '2999-01-01', 'console', 'pending')`,
+               'synthetic-owner', '2999-01-01', 'console', 'pending', 'synthetic-reviewer')`,
     );
     const deps: CoordinatorDeps = {
       ...makeDeps([...happyScript(), { vectors: [unitVector(7)] }], 'with-documents'),

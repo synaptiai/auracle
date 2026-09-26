@@ -1241,6 +1241,25 @@ describe('the send-back a reviewer made (DEC-49)', () => {
     const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'send_back');
     expect(step?.sendBack).toEqual({
       note: 'Answer the second request.', reviewer: 'anna@example.test', reviewerSource: 'roster',
+      documentTitle: null,
+    });
+  });
+
+  // DEC-50: a published document asked for the attempt, with no note.
+  it('returns the title of the document a publish asked for the attempt with', async () => {
+    const runId = await journal([
+      {
+        stepId: 'send_back',
+        status: 'done',
+        result: {
+          note: null, reviewer: 'anna@example.test', reviewerSource: 'roster',
+          document: 'console-1', documentTitle: 'Pausing a plan',
+        },
+      },
+    ]);
+    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'send_back');
+    expect(step?.sendBack).toEqual({
+      note: null, reviewer: 'anna@example.test', reviewerSource: 'roster', documentTitle: 'Pausing a plan',
     });
   });
 

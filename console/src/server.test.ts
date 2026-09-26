@@ -27,7 +27,7 @@ import { UNDO_SAYS } from './surfaces.js';
 import type { ReviewerRefusal, ReviewerVerdict } from './reviewer.js';
 import { cachedDaily } from './daily-cache.js';
 import type { ConsoleDeps } from './server.js';
-import type { KnowledgeReport } from 'auracle/ledger-read';
+import type { CaseRerun, KnowledgeReport, PublishOutcome } from 'auracle/ledger-read';
 
 const RUN = '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34';
 
@@ -257,6 +257,10 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
     // DEC-50: a ledger with nothing in the gap window, and a case no gap blocks.
     readKnowledge: async () => EMPTY_KNOWLEDGE,
     readCaseGap: async () => null,
+    // DEC-50: a case with no document published from it, and a publish the
+    // ledger accepts. The rules are the core suites' subject.
+    readCaseReruns: async () => [],
+    publish: async () => ({ outcome: 'published', docId: 'console-00000000-0000-4000-8000-0000000000d1', rerun: { status: 'waiting' } }),
     readBands: async () => [
       {
         day: '2026-09-04', metric: 'abstain_rate',
@@ -2444,12 +2448,9 @@ describe('the design notes', () => {
       ['accent', 'A case can end without a reply'],
       // DEC-46: the case hold, which the console keeps now.
       ['accent', 'A lock, because four people pull from one uncapped list'],
+      // DEC-50: the document a reviewer writes from the case.
+      ['accent', 'The knowledge base is edited from inside the case'],
     ]);
-    for (const unbuilt of [
-      'The knowledge base is edited from inside the case',
-    ]) {
-      expect(html, unbuilt).not.toContain(unbuilt);
-    }
   });
 
   // The second decision: a card states what the console does, and names no
@@ -2458,7 +2459,7 @@ describe('the design notes', () => {
     const base = await startGuarded(deps());
     const html = await (await fetch(base + '/notes')).text();
     const cards = cardsOf(html);
-    expect(cards).toHaveLength(7);
+    expect(cards).toHaveLength(8);
     for (const card of cards) {
       for (const source of ['was:', '.ts', 'approveControl', 'MESSAGE_ABSENCE', 'gateValue', 'Instrument']) {
         expect(card.says, `${card.title}: ${source}`).not.toContain(source);
@@ -2517,6 +2518,14 @@ describe('the design notes', () => {
         + ' The hold says who is working, and it refuses no write: any reviewer may still approve the case.'
         + ' A hold lapses on its own without activity, twenty minutes by default.'
         + ' Taking a second case releases the first, because a person reads one case at a time.',
+      'A reviewer who finds a gap writes the missing document on the case page:'
+        + ' a title, its products, the answer, an owner and a review date.'
+        + ' The case&#39;s own product is always among them, and a case whose channel maps no product cannot publish.'
+        + ' The console refuses a document that names the case&#39;s customer, ticket, message or draft,'
+        + ' because a document serves every later case.'
+        + ' The console calls no model. A consumer embeds the document, and retrieval ignores it until then.'
+        + ' Once it is embedded, the case is attempted again, unless it was approved, closed, snoozed or answered first.'
+        + ' The case says which.',
     ]);
   });
 
@@ -3296,6 +3305,7 @@ describe('the gate every request passes (DEC-45)', () => {
       // a refused request reaches neither.
       readKnowledge: async () => { asked.push('readKnowledge'); return EMPTY_KNOWLEDGE; },
       readCaseGap: async () => { asked.push('readCaseGap'); return null; },
+      readCaseReruns: async () => { asked.push('readCaseReruns'); return []; },
     }));
     for (const path of [
       '/', '/runs', '/knowledge', '/bands', '/latency', '/notes', `/run/${RUN}`, `/case/${RUN}`, '/console.css',
@@ -3327,6 +3337,17 @@ describe('the gate every request passes (DEC-45)', () => {
     });
     expect(post.status).toBe(403);
     expect(approve).not.toHaveBeenCalled();
+    // DEC-50: nor a document.
+    const publish = vi.fn();
+    const publishing = await startGuarded(deps({ reviewerFor: async () => refuses('no_value'), publish }));
+    const published = await fetch(`${publishing}/publish`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
+      body: `runId=${RUN}&title=t&body=b`,
+      redirect: 'manual',
+    });
+    expect(published.status).toBe(403);
+    expect(publish).not.toHaveBeenCalled();
     // The gate is asked before the route, so no reader ran for any of them.
     expect(asked).toEqual([]);
   });
@@ -9001,5 +9022,288 @@ describe('a value that could reorder the page around it', () => {
     expect(isolated(`ticket ${String.fromCharCode(0x5e9)}`)).toBe(`<bdi>ticket ${String.fromCharCode(0x5e9)}</bdi>`);
     // Phoenician, a right-to-left script no list of names would think to hold.
     expect(isolated('id \u{10900}')).toBe('<bdi>id \u{10900}</bdi>');
+  });
+});
+
+describe('DEC-50: a reviewer writes the missing document from the case', () => {
+  const SAME_ORIGIN = { headers: { 'sec-fetch-site': 'same-origin' } };
+  const DRAWN = createHash('sha256').update(EVIDENCE.draftBody).digest('hex');
+  const DOC = 'console-00000000-0000-4000-8000-0000000000d1';
+  const NEXT = '00000000-0000-4000-8000-0000000000d2';
+
+  async function postPublish(base: string, fields: Record<string, string | string[]>, query = ''): Promise<Response> {
+    const body = new URLSearchParams();
+    for (const [name, value] of Object.entries(fields)) {
+      for (const one of Array.isArray(value) ? value : [value]) body.append(name, one);
+    }
+    return fetch(`${base}/publish${query}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin', origin: base },
+      body: body.toString(),
+      redirect: 'manual',
+    });
+  }
+
+  const FIELDS = {
+    runId: RUN, shown: DRAWN, product: ['aurora', 'ledger'],
+    title: 'Pausing a plan', body: 'A plan may be paused once a year.', owner: 'kb-team', reviewBy: '2999-01-01',
+  };
+
+  it("names the case's product beside its intent", async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(base + CASE, SAME_ORIGIN)).text();
+    expect(html).toContain('turn 1 · refund-request · Aurora · waiting');
+    const none = await startGuarded(deps({ readRun: caseOf({ product: null }) }));
+    expect(await (await fetch(none + CASE, SAME_ORIGIN)).text()).toContain('refund-request · no product · waiting');
+  });
+
+  it('offers the composer behind a link, and draws its fields on the link', async () => {
+    const base = await startGuarded(deps());
+    const closed = await (await fetch(base + CASE, SAME_ORIGIN)).text();
+    expect(closed).toContain(`<a class="btn" href="/case/${RUN}?compose=1#compose">Write the missing document →</a>`);
+    expect(closed).not.toContain('class="composer"');
+
+    const html = await (await fetch(`${base}${CASE}?compose=1&rule=customer_visible`, SAME_ORIGIN)).text();
+    expect(html).toContain('<form method="post" action="/publish?rule=customer_visible" class="composer" id="compose">');
+    expect(buttonInForm(html, '/publish?rule=customer_visible')).toBe(true);
+    expect(html).toContain(`<input type="hidden" name="runId" value="${RUN}">`);
+    expect(html).toContain(`<input type="hidden" name="shown" value="${DRAWN}">`);
+    // The case's own product is fixed: checked, disabled, and carried by a hidden field.
+    expect(html).toContain('<input type="hidden" name="product" value="aurora">');
+    expect(html).toContain('<label><input type="checkbox" checked disabled> Aurora');
+    expect(html).toContain('<label><input type="checkbox" name="product" value="ledger"> Ledger</label>');
+    expect(html).not.toContain('name="product" value="aurora" ');
+    expect(html).toContain('name="title" required maxlength="200" value=""');
+    expect(html).toContain('<textarea id="docbody" name="body" rows="10" required maxlength="7000"></textarea>');
+    // The owner defaults to the reviewer, and the review date opens blank, after today.
+    expect(html).toContain(`name="owner" required maxlength="200" value="${REVIEWER}"`);
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    expect(html).toContain(`<input type="date" id="docreview" name="reviewBy" required min="${tomorrow}" value="">`);
+    expect(html).toContain("must not name this case's customer, ticket, message or draft");
+  });
+
+  it('says the channel must be mapped first, and offers no composer, on a case with no product', async () => {
+    for (const product of [null, '', '  ']) {
+      const base = await startGuarded(deps({ readRun: caseOf({ product }) }));
+      const html = await (await fetch(`${base}${CASE}?compose=1`, SAME_ORIGIN)).text();
+      expect(html, String(product)).toContain("This case's channel maps no product, so no document can be written from it."
+        + ' Map the channel to a product first.');
+      expect(html, String(product)).not.toContain('class="composer"');
+      expect(html, String(product)).not.toContain('Write the missing document');
+    }
+  });
+
+  it('draws what became of each document published from the case', async () => {
+    const reruns: CaseRerun[] = [
+      { docId: DOC, title: 'Waiting doc', state: { kind: 'waiting', on: 'document' } },
+      { docId: DOC, title: 'Waiting case', state: { kind: 'waiting', on: 'case' } },
+      { docId: DOC, title: 'Starting doc', state: { kind: 'starting', faults: 0 } },
+      { docId: DOC, title: 'Faulting doc', state: { kind: 'starting', faults: 3 } },
+      { docId: DOC, title: 'Started doc', state: { kind: 'started', attempt: 2, runId: NEXT } },
+      { docId: DOC, title: 'Started, unwalked', state: { kind: 'started', attempt: 3, runId: null } },
+      { docId: DOC, title: 'Failed doc', state: { kind: 'failed', error: 'the model refused the input: HTTP 400' } },
+      { docId: DOC, title: 'Failed, no reason', state: { kind: 'failed', error: null } },
+      ...(['approved', 'closed', 'snoozed', 'answered', 'another_attempt', 'newer_turn', 'reply_changed', 'ended',
+        'no_turn', 'copy_could_send'] as const)
+        .map((reason) => ({ docId: DOC, title: `Dropped ${reason}`, state: { kind: 'dropped' as const, reason } })),
+    ];
+    const base = await startGuarded(deps({ readCaseReruns: async () => reruns }));
+    const html = await (await fetch(`${base}${CASE}?product=aurora`, SAME_ORIGIN)).text();
+    const says = (kind: string, text: string): string => `<p class="mut" data-rerun="${kind}">${text}</p>`;
+    for (const expected of [
+      says('waiting', 'It waits for its embedding. A new attempt of this case starts once it is embedded.'),
+      says('waiting', 'The system is still working on this case. A new attempt starts once it reaches a person.'),
+      says('starting', 'It is embedded. The consumer starts a new attempt of this case on its next scan.'),
+      says('starting', 'It is embedded. The consumer starts a new attempt of this case on its next scan.'
+        + ' The consumer could not start it 3 times and tries again. Its log names each fault as reruns_unsettled.'),
+      says('started', `<a href="/case/${NEXT}?product=aurora">Attempt 2</a> of this case has started.`),
+      says('started', 'Attempt 3 of this case has started.'),
+      says('failed', 'It could not be embedded, so no new attempt starts.'
+        + ' The consumer recorded why: the model refused the input: HTTP 400'),
+      says('failed', 'It could not be embedded, so no new attempt starts. The consumer recorded no reason.'),
+      says('dropped', 'The case was approved first, so no new attempt starts.'),
+      says('dropped', 'The case was closed first, so no new attempt starts.'),
+      says('dropped', 'The case was snoozed first, so no new attempt starts.'),
+      says('dropped', 'This turn already has a reply or an action that is sent, may be, or will be,'
+        + ' so no new attempt starts.'),
+      says('dropped', 'Another attempt of this case was asked for first, so this one does not start.'),
+      says('dropped', 'The customer wrote again first, so no new attempt starts.'),
+      says('dropped', 'A person saved or rewrote the reply after the document was published,'
+        + ' so no new attempt replaces their work.'),
+      says('dropped', 'The case ended first, so no new attempt starts.'),
+      says('dropped', 'This run has no turn to attempt again, so no new attempt starts.'),
+      says('dropped', 'The helpdesk holds a copy of the reply that a person could send, so no new attempt starts.'),
+    ]) {
+      expect(html).toContain(expected);
+    }
+    expect(html).toContain(`<p><a href="/document/${DOC}">Waiting doc</a> <span class="mut">published from this case.</span></p>`);
+  });
+
+  it('escapes what it draws from the ledger, and names a read it could not make', async () => {
+    const base = await startGuarded(deps({
+      readCaseReruns: async () => [{ docId: '<d>', title: '<t>', state: { kind: 'failed', error: '<e>' } }],
+    }));
+    const html = await (await fetch(base + CASE, SAME_ORIGIN)).text();
+    for (const raw of ['<d>', '<t>', '<e>']) expect(html).not.toContain(raw);
+    expect(html).toContain('<a href="/document/%3Cd%3E">&lt;t&gt;</a>');
+    expect(html).toContain('The consumer recorded why: &lt;e&gt;');
+
+    const failing = await startGuarded(deps({ readCaseReruns: async () => { throw new Error('ledger down'); } }));
+    const unread = await (await fetch(failing + CASE, SAME_ORIGIN)).text();
+    expect(unread).toMatch(/The documents published from this case were not read\. The console log names the fault [0-9a-f]{8}\./);
+    // The case is still drawn.
+    expect(unread).toContain('Write the missing document');
+  });
+
+  it('hands the form to the ledger and returns to the case, keeping the filters', async () => {
+    const publish = vi.fn<ConsoleDeps['publish']>().mockResolvedValue({ outcome: 'published', docId: DOC, rerun: { status: 'waiting' } });
+    const base = await startGuarded(deps({ publish }));
+    const res = await postPublish(base, FIELDS, '?rule=customer_visible&product=aurora');
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(`/case/${RUN}?published=1&rule=customer_visible&product=aurora#knowledge`);
+    expect(publish).toHaveBeenCalledWith(RUN, REVIEWER, {
+      title: 'Pausing a plan', body: 'A plan may be paused once a year.', owner: 'kb-team', reviewBy: '2999-01-01',
+      products: ['aurora', 'ledger'],
+    }, DRAWN);
+    const html = await (await fetch(`${base}${CASE}?published=1`, SAME_ORIGIN)).text();
+    expect(html).toContain('<p class="outcome ok" data-published="1">Published. A consumer embeds the document,'
+      + ' and retrieval ignores it until then.</p>');
+  });
+
+  it('draws a refusal with the composer holding what the reviewer wrote', async () => {
+    const answers: Array<[Exclude<PublishOutcome, { outcome: 'published' }>, string]> = [
+      [{ outcome: 'identifier', field: 'body', kind: 'address' }, 'The answer names this case&#39;s customer address. Remove it and publish again.'],
+      [{ outcome: 'identifier', field: 'title', kind: 'ticket' }, 'The title names this case&#39;s ticket id. Remove it and publish again.'],
+      [{ outcome: 'identifier', field: 'body', kind: 'message' }, 'The answer names this case&#39;s message id.'],
+      [{ outcome: 'identifier', field: 'body', kind: 'draft' }, 'The answer names this case&#39;s draft.'],
+      [{ outcome: 'identifier', field: 'owner', kind: 'address' }, 'The owner names this case&#39;s customer address.'],
+      [{ outcome: 'no_product' }, 'This case&#39;s channel maps no product, so no document can be written from it. Map the channel to a product first.'],
+      [{ outcome: 'product_missing', product: 'aurora' }, 'A document written from this case must serve its product, Aurora.'],
+      [{ outcome: 'unknown_product', product: 'nova' }, 'The product catalogue does not name nova.'],
+      [{ outcome: 'no_products' }, 'Choose at least one product.'],
+      [{ outcome: 'title_empty' }, 'Write a title.'],
+      [{ outcome: 'title_too_long' }, 'A title may be 200 characters at most.'],
+      [{ outcome: 'body_empty' }, 'Write the answer.'],
+      [{ outcome: 'body_too_long' }, 'The answer is longer than the model reads in one piece.'
+        + ' Shorten it to about 7,000 characters of English.'],
+      [{ outcome: 'busy' }, 'Another write held this case, so nothing was published. Publish again.'],
+      [{ outcome: 'owner_empty' }, 'Name the owner, a person or a team who keeps the document current.'],
+      [{ outcome: 'owner_too_long' }, 'The owner may be 200 characters at most.'],
+      [{ outcome: 'no_author' }, 'The console could not name you as the author, so nothing was published.'],
+      [{ outcome: 'unprintable', field: 'body' }, 'The body holds a character the ledger cannot store.'],
+      [{ outcome: 'review_date_invalid' }, 'Choose a review date.'],
+      [{ outcome: 'review_date_not_ahead' }, 'Choose a review date after today. Retrieval ignores a document once its review date has passed.'],
+      [{ outcome: 'shown_changed' }, 'The reply on this case changed since the page was drawn, so nothing was published.'
+        + ' It is drawn below. Publish again once you have read it.'],
+      [{ outcome: 'unknown_run' }, 'The ledger holds no such run, so nothing was published.'],
+      [{ outcome: 'already_published', docId: DOC }, 'This case already published a document with this title and answer,'
+        + ' so nothing was published. Change the document, or open the one it published.'
+        + ` <a href="/document/${DOC}">The published document →</a>`],
+    ];
+    for (const [outcome, said] of answers) {
+      const base = await startGuarded(deps({ publish: async () => outcome }));
+      const res = await postPublish(base, { ...FIELDS, title: 'A <b>title</b>', body: 'Write to pat@customer.test.' });
+      expect(res.status, outcome.outcome).toBe(422);
+      const html = await res.text();
+      expect(html, outcome.outcome).toContain(`data-publish="${outcome.outcome}">${said}`);
+      // What the reviewer wrote comes back, escaped, in the composer.
+      expect(html, outcome.outcome).toContain('value="A &lt;b&gt;title&lt;/b&gt;"');
+      expect(html, outcome.outcome).toContain('>Write to pat@customer.test.</textarea>');
+      expect(html, outcome.outcome).toContain('<label><input type="checkbox" name="product" value="ledger" checked> Ledger</label>');
+      expect(html, outcome.outcome).toContain('value="2999-01-01"');
+      expect(html, outcome.outcome).toContain(`<a href="/case/${RUN}">Back to the case</a>`);
+    }
+  });
+
+  it('draws the reply that changed, and carries its digest, so the reviewer can publish again', async () => {
+    const now = 'The reply a teammate saved since.';
+    const base = await startGuarded(deps({
+      publish: async () => ({ outcome: 'shown_changed' }),
+      readRun: caseOf({ request: { ...REQUEST, savedReplyText: now } }),
+    }), undefined, undefined, true);
+    const html = await (await postPublish(base, FIELDS)).text();
+    expect(html).toContain(`<div class="prose">${now}</div>`);
+    expect(html).toContain(`<input type="hidden" name="shown" value="${createHash('sha256').update(now).digest('hex')}">`);
+    expect(html).not.toContain(`value="${DRAWN}"`);
+  });
+
+  it('draws what the reviewer wrote when no form can be drawn', async () => {
+    const base = await startGuarded(deps({
+      publish: async () => ({ outcome: 'no_product' }),
+      readRun: caseOf({ product: null }),
+    }));
+    const html = await (await postPublish(base, { ...FIELDS, title: 'A <b>title</b>' })).text();
+    expect(html).not.toContain('class="composer"');
+    expect(html).toContain('<p><strong>A &lt;b&gt;title&lt;/b&gt;</strong></p><div class="prose">A plan may be paused once a year.</div>');
+  });
+
+  it('keeps the composer when the case cannot be read after a refusal', async () => {
+    const base = await startGuarded(deps({
+      publish: async () => ({ outcome: 'title_empty' }),
+      readRun: async () => { throw new Error('ledger down'); },
+    }));
+    const html = await (await postPublish(base, FIELDS)).text();
+    expect(html).toContain('<input type="hidden" name="product" value="aurora">');
+    expect(html).toContain('>A plan may be paused once a year.</textarea>');
+  });
+
+  it('isolates a title or a reason written in another direction', async () => {
+    const rlo = String.fromCharCode(0x202e);
+    const base = await startGuarded(deps({
+      readCaseReruns: async () => [{ docId: DOC, title: `a${rlo}b`, state: { kind: 'failed', error: `c${rlo}d` } }],
+    }));
+    const html = await (await fetch(base + CASE, SAME_ORIGIN)).text();
+    expect(html).not.toContain(rlo);
+    expect(html).toContain('<bdi>a<span class="ctl" dir="ltr">U+202E</span>b</bdi>');
+    expect(html).toContain('<bdi>c<span class="ctl" dir="ltr">U+202E</span>d</bdi>');
+  });
+
+  it('logs the lengths and the outcome, never the text', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => { logged.push(String(line)); });
+    try {
+      const base = await startGuarded(deps({ publish: async () => ({ outcome: 'identifier', field: 'body', kind: 'address' }) }));
+      await postPublish(base, { ...FIELDS, body: 'Write to pat@customer.test.' });
+      const record = logged.map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find((entry) => entry['event'] === 'console_publish_refused');
+      expect(record).toMatchObject({ runId: RUN, outcome: 'identifier', bodyLength: 27, titleLength: 14 });
+      expect(logged.join('\n')).not.toContain('pat@customer.test');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('logs a repeated post as a repeat, not as a second publish', async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => { logged.push(String(line)); });
+    try {
+      const base = await startGuarded(deps({
+        publish: async () => ({ outcome: 'published', docId: DOC, rerun: { status: 'waiting' }, repeated: true }),
+      }));
+      expect((await postPublish(base, FIELDS)).status).toBe(303);
+      const events = logged.map((line) => (JSON.parse(line) as Record<string, unknown>)['event']);
+      expect(events).toContain('console_publish_repeated');
+      expect(events).not.toContain('console_published');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('refuses a request with no run id, or no reply digest, before the ledger', async () => {
+    const publish = vi.fn();
+    const base = await startGuarded(deps({ publish }));
+    expect((await postPublish(base, { ...FIELDS, runId: 'not-a-run' })).status).toBe(400);
+    const noDigest = await postPublish(base, { ...FIELDS, shown: '' });
+    expect(noDigest.status).toBe(400);
+    expect(await noDigest.text()).toContain('That request carries no reply digest, so this console will not publish from it.');
+    expect((await postPublish(base, { ...FIELDS, body: 'x'.repeat(70_000) })).status).toBe(413);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('answers a failed publish without claiming it did not commit', async () => {
+    const base = await startGuarded(deps({ publish: async () => { throw new Error('ledger down'); } }));
+    const res = await postPublish(base, FIELDS);
+    expect(res.status).toBe(500);
+    expect(await res.text()).toMatch(/Something failed while publishing, and it may or may not have committed\. The console log names it [0-9a-f]{8}\./);
   });
 });

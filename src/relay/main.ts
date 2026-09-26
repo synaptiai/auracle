@@ -25,6 +25,7 @@ import { loadDotEnv, positiveIntEnv } from '../config/env.js';
 import { requireDbUrl } from '../db/config.js';
 import { startRelayDaemon } from './daemon.js';
 import { runEntry } from '../cli/entry.js';
+import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 
 const EGRESS_ADAPTERS: Readonly<Record<string, () => EgressAdapter>> = {
   helpdesk: () => new HelpdeskAdapter(),
@@ -38,7 +39,7 @@ async function main(): Promise<void> {
   // function every object inherits.
   const adapter = knownEntry(EGRESS_ADAPTERS, process.env['RELAY_ADAPTER'] ?? 'helpdesk', 'RELAY_ADAPTER')();
   const intervalMs = positiveIntEnv('RELAY_INTERVAL_MS', 5000);
-  const pool = new Pool({ connectionString: requireDbUrl('the relay'), max: 1 });
+  const pool = guardLedgerPool(new Pool({ connectionString: requireDbUrl('the relay'), max: 1 }), logLedgerPoolError('the relay'));
 
   const daemon = startRelayDaemon({ pool, adapter, intervalMs });
 

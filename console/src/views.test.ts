@@ -237,7 +237,7 @@ describe('what a send-back step says', () => {
   function sendBack(fields: Record<string, unknown>): { step: JournalStep; journal: RunJournal } {
     return journal({
       stepId: 'send_back',
-      sendBack: { note: null, reviewer: null, reviewerSource: null, ...fields },
+      sendBack: { note: null, reviewer: null, reviewerSource: null, documentTitle: null, ...fields },
     } as Partial<JournalStep>);
   }
 
@@ -262,6 +262,12 @@ describe('what a send-back step says', () => {
   it('says nothing it cannot support when the row recorded no note', () => {
     const { step, journal: j } = sendBack({});
     expect(stepSays(step, j)).toBeNull();
+  });
+
+  // DEC-50: a published document asked for the attempt, with no note.
+  it('names the document a publish asked for the attempt with', () => {
+    const { step, journal: j } = sendBack({ reviewer: 'anna@example.test', documentTitle: 'Pausing a plan' });
+    expect(stepSays(step, j)).toBe('attempted again by anna@example.test · after publishing Pausing a plan');
   });
 });
 

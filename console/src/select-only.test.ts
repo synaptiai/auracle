@@ -134,7 +134,7 @@ const CALLED_BY_THE_ENTRY_POINT = ['handoverHold', 'readHold', 'releaseHold', 't
 
 /** The writes the entry point hands to a helper instead of calling. */
 const PASSED_ON_BY_THE_ENTRY_POINT = [
-  'approveRun', 'closeRun', 'rewriteReply', 'sendBackRun', 'snoozeRun',
+  'approveRun', 'closeRun', 'publishDocument', 'rewriteReply', 'sendBackRun', 'snoozeRun',
 ];
 
 /**
@@ -151,6 +151,12 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   // takes from the barrel: the form's own `maxlength` and the ledger's bound
   // are one number, and a page that spelled its own would be the second.
   MAX_SEND_BACK_NOTE_CHARS: 'read',
+  // DEC-50: the bounds of a document's title, answer and owner. The fields'
+  // own `maxlength` and the ledger's bound are one number each. Values, and
+  // no statement.
+  MAX_DOCUMENT_BODY_CHARS: 'read',
+  MAX_DOCUMENT_OWNER_CHARS: 'read',
+  MAX_DOCUMENT_TITLE_CHARS: 'read',
   activeReviewer: 'read',
   approveRun: 'write',
   // DEC-48: the case a reviewer finishes with no reply. The console's fourth
@@ -166,12 +172,20 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   // DEC-49: the case a reviewer sends back. It writes the run it ends and the
   // note the next attempt reads; the attempt itself is the consumer's.
   sendBackRun: 'write',
+  // DEC-50: a document a reviewer writes from a case. It writes the pending
+  // document and the re-run request; the embedding and the attempt are the
+  // consumer's.
+  publishDocument: 'write',
   conversationOfRun: 'read',
   // DEC-44: whether a copy read back from the helpdesk holds text. A rule
   // read by the approval and by the page, and no statement either way.
   copyHoldsText: 'read',
   // DEC-50: the gap window the screen names. A number, and no statement.
   GAP_WINDOW_DAYS: 'read',
+  // A listener on the pool for a connection that fails while a request holds
+  // it, and the log line it writes. No statement.
+  guardLedgerPool: 'read',
+  logLedgerPoolError: 'read',
   handoverHold: 'write',
   LEDGER_STATES: 'read',
   listEscalations: 'read',
@@ -196,6 +210,9 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   productCatalogueFromEnv: 'read',
   // DEC-50: the case's gap, read in one READ ONLY transaction.
   readCaseGap: 'read',
+  // DEC-50: the documents published from a case, read in one READ ONLY
+  // transaction.
+  readCaseReruns: 'read',
   readConversation: 'read',
   readDays: 'read',
   readDocument: 'read',

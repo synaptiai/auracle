@@ -23,6 +23,7 @@ import { requireDbUrl } from '../db/config.js';
 import { embeddingPriceFromEnv, openRouterFromEnv } from '../models/from-env.js';
 import { DEFAULT_EMBED_MODEL, loadKbDirectory } from './loader.js';
 import { runEntry } from '../cli/entry.js';
+import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 
 /** OpenRouter list prices, USD per million tokens (DEC-25). */
 const USD_PER_MTOK: Readonly<Record<string, number>> = {
@@ -56,7 +57,7 @@ async function main(): Promise<void> {
   // accounting needs whichever answered.
   const provider = openRouterFromEnv({ embeddingsUsdPerMTok: usdPerMTok });
 
-  const pool = new Pool({ connectionString: requireDbUrl('the knowledge-base CLI'), max: 1 });
+  const pool = guardLedgerPool(new Pool({ connectionString: requireDbUrl('the knowledge-base CLI'), max: 1 }), logLedgerPoolError('the knowledge-base CLI'));
   try {
     console.log(`indexing ${dir} with ${embedModelVer}...`);
     const report = await loadKbDirectory(pool, provider, dir, embedModelVer, productCatalogueFromEnv());

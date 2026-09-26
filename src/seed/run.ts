@@ -23,6 +23,7 @@ import { runEntry } from '../cli/entry.js';
 import { errorMessage } from '../errors.js';
 import { terminalText } from '../cli/terminal-text.js';
 import { lastCompleteDay } from '../time/day.js';
+import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 
 /** 'Arca', the same constant `scripts/generate-fixtures.mjs` uses. */
 export const DEFAULT_SEED = 0x41726361;
@@ -101,7 +102,7 @@ async function main(): Promise<void> {
   // `requireDbUrl`, never `dbUrl`. This command writes, and a compose
   // fallback would let an operator who lost DATABASE_URL seed 45 days into
   // whichever database happened to answer.
-  const pool = new Pool({ connectionString: requireDbUrl('the traffic seeder'), max: 4 });
+  const pool = guardLedgerPool(new Pool({ connectionString: requireDbUrl('the traffic seeder'), max: 4 }), logLedgerPoolError('the traffic seeder'));
   pool.on('error', (error: Error) => {
     console.error(`seed-history: database connection lost: ${terminalText(error.message)}`);
     process.exitCode = 1;

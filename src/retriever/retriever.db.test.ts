@@ -307,9 +307,9 @@ describe('section 4.6 retriever', () => {
     const base = unitVector(rand);
     await indexDocument(pool, doc('embedded', 'refund window policy', 'refund window of thirty days'), base);
     await pool.query(
-      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status, written_by)
        VALUES ('waiting', 'document', 'refund window refund window', 'refund window refund window refund',
-               'synthetic-owner', $1, 'console', 'pending')`,
+               'synthetic-owner', $1, 'console', 'pending', 'synthetic-reviewer')`,
       [FRESH_REVIEW_BY],
     );
     // Its words match better than the embedded document's, so a filter on
@@ -331,9 +331,9 @@ describe('section 4.6 retriever', () => {
   // the table, so a reload must leave it alone and say so, never rewrite it.
   it('never rewrites a document the console wrote, and says so', async () => {
     await pool.query(
-      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status, written_by)
        VALUES ('team-1', 'document', 'written in the console', 'the console body',
-               'synthetic-owner', $1, 'console', 'pending')`,
+               'synthetic-owner', $1, 'console', 'pending', 'synthetic-reviewer')`,
       [FRESH_REVIEW_BY],
     );
     await expect(

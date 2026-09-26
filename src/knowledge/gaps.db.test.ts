@@ -145,8 +145,9 @@ async function documentOf(docId: string, spec: DocSpec = {}): Promise<string> {
   const body = spec.body ?? `The synthetic body of ${docId}.`;
   await pool.query(
     `INSERT INTO document (doc_id, kind, title, body, owner, review_by, products, source,
-                           embedding_status, embedding_error, created_at)
-     VALUES ($1, 'document', $2, $3, 'kb-team', CURRENT_DATE + $4::integer, $5, $6, $7, $8, $9)`,
+                           embedding_status, embedding_error, created_at, written_by)
+     VALUES ($1, 'document', $2, $3, 'kb-team', CURRENT_DATE + $4::integer, $5, $6, $7, $8, $9,
+             CASE WHEN $6 = 'console' THEN 'synthetic-reviewer' END)`,
     [
       docId, `Title of ${docId}`, body, spec.reviewOffsetDays ?? 30, spec.products ?? ['plan-basic'],
       spec.source ?? 'loader', spec.failed === undefined ? 'pending' : 'failed', spec.failed ?? null,

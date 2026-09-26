@@ -24,8 +24,11 @@ describe('the console as a long-running process', () => {
   // chain, so the route's catch-all cannot see it and Node rethrows. The
   // offline jobs guard this and run for seconds; this runs for as long as an
   // operator keeps the page open.
+  // The pool's listeners live in the core's guard, which listens on the pool
+  // and on each client it opens (src/db/client-errors.ts); the core's parsed
+  // guard test holds every shipped pool to it.
   it('listens for a pool error, so a dropped connection is not a process death', () => {
-    expect(MAIN).toMatch(/pool\.on\(\s*'error'/);
+    expect(MAIN).toMatch(/guardLedgerPool\(new Pool\(consolePoolConfig\(connectionString\)\), logLedgerPoolError\('the console'\)\)/);
   });
 
   // Order again, and this one was a hang rather than a nuisance.
@@ -66,15 +69,19 @@ describe('the console as a long-running process', () => {
     // from the adapter the read-back chose, never from the environment a
     // second time.
     //
-    // Counted, and not merely found. Six sites read it — the approval, the
-    // close, the snooze, the rewrite and the send-back, whose guards compare
-    // the text a page drew, and the pages themselves — and the failure this
-    // guards is any of them disagreeing: an editor offered to a reviewer
-    // whose text the approval never sends, or a close refused against a text
-    // the case never drew. `indexOf` and `toMatch` both pass while one of the
-    // six says something else.
+    // Counted, and not merely found. Seven sites read it — the approval, the
+    // close, the snooze, the rewrite, the send-back and the publish, whose
+    // guards compare the text a page drew, and the pages themselves — and the
+    // failure this guards is any of them disagreeing: an editor offered to a
+    // reviewer whose text the approval never sends, or a close refused
+    // against a text the case never drew. `indexOf` and `toMatch` both pass
+    // while one of the seven says something else.
     const declaration = /ledgerReply: readBack\?\.supportsLedgerReply \?\? false/g;
-    expect([...MAIN.matchAll(declaration)]).toHaveLength(6);
+    expect([...MAIN.matchAll(declaration)]).toHaveLength(7);
+    // DEC-50: and the case's re-run read, which draws a parked draft as a
+    // copy a person could send exactly where the publish's verdict does.
+    expect([...MAIN.matchAll(/readCaseReruns\(pool, runId, readBack\?\.supportsLedgerReply \?\? false\)/g)])
+      .toHaveLength(1);
     expect(MAIN).not.toContain('approveFromConsole');
   });
 

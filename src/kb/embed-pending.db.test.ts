@@ -44,8 +44,9 @@ const vector = (fill: number): number[] => Array.from({ length: DIM }, () => fil
 /** A document written in the console, waiting for its embedding. */
 async function pending(docId: string, title = 'a title', body = 'a body'): Promise<void> {
   await pool.query(
-    `INSERT INTO document (doc_id, kind, title, body, owner, review_by, products, source, embedding_status)
-     VALUES ($1, 'document', $2, $3, 'synthetic-owner', '2999-01-01', '{web}', 'console', 'pending')`,
+    `INSERT INTO document (doc_id, kind, title, body, owner, review_by, products, source, embedding_status, written_by)
+     VALUES ($1, 'document', $2, $3, 'synthetic-owner', '2999-01-01', '{web}', 'console', 'pending',
+             'synthetic-reviewer')`,
     [docId, title, body],
   );
 }

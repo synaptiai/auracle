@@ -63,6 +63,7 @@ import { fencedTransition } from '../ledger/insert.js';
 import { TURN_CLOSING_STATUSES, lockTurnAttempt, turnReplyRun } from '../ledger/conversation.js';
 import { journalStep } from '../ledger/journal-write.js';
 import { unsnoozeExpired } from '../outcomes/snooze.js';
+import { startPublishedReruns } from '../knowledge/rerun-start.js';
 import { embedPendingDocuments } from '../kb/embed-pending.js';
 import { PARKED_RUN_STATES, TERMINAL_RUN_STATE_NAMES } from '../ledger/run-state.js';
 import { logLine } from '../log/line.js';
@@ -444,6 +445,11 @@ interface SentBackTurn {
   attempt: number;
   /** The run that was sent back, which the log names. */
   sentBackRunId: string;
+  /**
+   * Who asked for the attempt: a reviewer's send-back, or a published
+   * document (DEC-50). The escalation a turn ends with names which.
+   */
+  source: 'send_back' | 'publish';
   note: string | null;
   product: string | null;
   bodyText: string | null;
@@ -766,6 +772,7 @@ export async function startSentBackAttempts(
     turn_number: number;
     attempt: number;
     sent_back_run_id: string;
+    by_publish: boolean;
     note: string | null;
     product: string | null;
     body_text: string | null;
@@ -774,6 +781,13 @@ export async function startSentBackAttempts(
   }>(
     `SELECT sb.ticket_id, sb.partition, t.conversation_id, t.turn_number, t.attempt,
             sb.run_id AS sent_back_run_id, sb.send_back_note AS note, sb.product,
+            -- DEC-50: a published document asked for this attempt.
+            EXISTS (
+              SELECT 1 FROM document_rerun asked
+               WHERE asked.conversation_id = t.conversation_id
+                 AND asked.turn_number = t.turn_number
+                 AND asked.status = 'started'
+                 AND asked.started_attempt = t.attempt) AS by_publish,
             -- The customer's words: the turn's, or a held redelivery's when
             -- the turn holds none (a turn recorded before db/010). Either way
             -- the attempt the reviewer asked for walks with the question and
@@ -791,13 +805,29 @@ export async function startSentBackAttempts(
                  AND r.turn_number = t.turn_number
                  AND o.status = ANY ($4::text[])) AS reached
        FROM turn t
+       -- The request: a run a reviewer sent back, or a run a published
+       -- document asked to attempt again (DEC-50). An escalated run is not
+       -- stamped sent back, because its service time was the system's work,
+       -- so its request is the document's row, started at the turn's attempt.
        JOIN LATERAL (
               SELECT run_id, ticket_id, partition, send_back_note, product
-                FROM run
-               WHERE conversation_id = t.conversation_id
-                 AND turn_number = t.turn_number
-                 AND sent_back_at IS NOT NULL
-               ORDER BY attempt DESC, sent_back_at DESC
+                FROM (
+                  SELECT run_id, ticket_id, partition, send_back_note, product, attempt,
+                         sent_back_at AS asked_at
+                    FROM run
+                   WHERE conversation_id = t.conversation_id
+                     AND turn_number = t.turn_number
+                     AND sent_back_at IS NOT NULL
+                  UNION ALL
+                  SELECT r.run_id, r.ticket_id, r.partition, r.send_back_note, r.product, r.attempt,
+                         q.ended_at
+                    FROM document_rerun q
+                    JOIN run r ON r.run_id = q.run_id
+                   WHERE q.conversation_id = t.conversation_id
+                     AND q.turn_number = t.turn_number
+                     AND q.status = 'started'
+                ) asked
+               ORDER BY attempt DESC, asked_at DESC
                LIMIT 1
             ) sb ON true
        LEFT JOIN conversation c ON c.conversation_id = t.conversation_id
@@ -830,6 +860,7 @@ export async function startSentBackAttempts(
       turnNumber: row.turn_number,
       attempt: Number(row.attempt),
       sentBackRunId: row.sent_back_run_id,
+      source: row.by_publish ? 'publish' : 'send_back',
       note: row.note,
       product: row.product,
       bodyText: row.body_text,
@@ -848,6 +879,7 @@ export async function startSentBackAttempts(
             event: 'send_back_ended',
             at: new Date().toISOString(),
             runId: turn.sentBackRunId,
+            source: turn.source,
             escalatedRunId: ended.runId,
             reason: ended.reason,
           }),
@@ -904,12 +936,12 @@ async function endWithoutAWalk(
   reached: boolean,
 ): Promise<{ runId: string | null; reason: string } | null> {
   if (reached) {
-    const reason = `send_back_dropped on turn ${String(turn.turnNumber)}:`
+    const reason = `${turn.source === 'publish' ? 'rerun' : 'send_back'}_dropped on turn ${String(turn.turnNumber)}:`
       + ' a reply on this turn may already have reached the customer';
     return { runId: await fileSendBackEnd(deps.pool, turn, reason), reason };
   }
   if (turn.bodyText === null || turn.bodyText.trim().length === 0) {
-    const reason = `send_back_no_question on turn ${String(turn.turnNumber)}:`
+    const reason = `${turn.source === 'publish' ? 'rerun' : 'send_back'}_no_question on turn ${String(turn.turnNumber)}:`
       + ' the turn holds no question';
     // No held message has text either — the scan reads a held redelivery's
     // words when the turn holds none. The held messages stay queued: they are
@@ -931,7 +963,7 @@ async function endWithoutAWalk(
   );
   const failures = Number(dead.rows[0]?.n ?? 0);
   if (failures >= MAX_ATTEMPT_FAILURES) {
-    const reason = `send_back_failed after ${String(failures)} attempts of turn`
+    const reason = `${turn.source === 'publish' ? 'rerun' : 'send_back'}_failed after ${String(failures)} attempts of turn`
       + ` ${String(turn.turnNumber)}`;
     return { runId: await fileSendBackEnd(deps.pool, turn, reason), reason };
   }
@@ -1150,6 +1182,33 @@ export async function processQueuedTickets(
     console.error(
       logLine({
         event: 'document_embedding_scan_failed',
+        at: new Date().toISOString(),
+        error: errorMessage(error),
+      }),
+    );
+  }
+
+  // DEC-50: and the attempts published documents asked for. After the
+  // embedding, so a document embedded on this scan raises its turn now, and
+  // the send-back scan above walks the attempt on the next. Its own guard, for
+  // the reason each scan here has one.
+  try {
+    const reruns = await startPublishedReruns(deps.pool, {
+      partitions: options.partitions,
+      ledgerReply: deps.capabilities.supportsLedgerReply,
+    });
+    for (const [event, list] of [
+      ['reruns_started', reruns.started],
+      ['reruns_dropped', reruns.dropped],
+      ['reruns_failed', reruns.failed],
+      ['reruns_unsettled', reruns.faults],
+    ] as const) {
+      if (list.length > 0) console.error(logLine({ event, at: new Date().toISOString(), requests: list }));
+    }
+  } catch (error) {
+    console.error(
+      logLine({
+        event: 'rerun_scan_failed',
         at: new Date().toISOString(),
         error: errorMessage(error),
       }),

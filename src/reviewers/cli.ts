@@ -37,6 +37,7 @@ import {
   type DeactivateOutcome,
   type ReviewerRow,
 } from './roster.js';
+import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 
 /**
  * An `--add` that changed something, or stated something. The refusal is not
@@ -311,7 +312,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const pool = new Pool({ connectionString: requireDbUrl('the reviewer roster') });
+  const pool = guardLedgerPool(new Pool({ connectionString: requireDbUrl('the reviewer roster') }), logLedgerPoolError('the reviewer roster'));
   try {
     // `help` is answered above, and the compiler holds that: it is not
     // comparable here, so an arm for it would be dead code.

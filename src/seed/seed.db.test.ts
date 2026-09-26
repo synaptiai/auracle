@@ -104,8 +104,9 @@ describe('the document corpus the seeder writes', () => {
   it('leaves a document written in the console, and does not count it', async () => {
     const held = SEED_DOCUMENTS[0]!.docId;
     await pool.query(
-      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
-       VALUES ($1, 'document', 'Console title', 'Console body', 'synthetic-owner', '2999-01-01', 'console', 'pending')`,
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status, written_by)
+       VALUES ($1, 'document', 'Console title', 'Console body', 'synthetic-owner', '2999-01-01', 'console', 'pending',
+               'synthetic-reviewer')`,
       [held],
     );
     expect(await writeDocuments(pool)).toEqual({ written: SEED_DOCUMENTS.length - 1, heldByConsole: [held] });

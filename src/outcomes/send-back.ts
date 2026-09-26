@@ -301,67 +301,10 @@ export async function sendBackRun(
         if (replyDigest(saved ?? park.body) === shown) return false;
         throw new StoodDown('shown_changed');
       },
-      afterWrite: async (client: PoolClient): Promise<void> => {
-        // DEC-49: the durable marker the consumer's scan reads, and the note
-        // it hands the next attempt. One statement, so neither can be recorded
-        // without the other.
-        await client.query(
-          'UPDATE run SET sent_back_at = clock_timestamp(), send_back_note = $2'
-            + ' WHERE run_id = $1',
-          [runId, note],
-        );
-        // DEC-48, DEC-49: the reply a person saved on this turn belongs to the
-        // attempt they are rejecting. The approval prefers the saved text over
-        // the park body, so leaving it would make the new attempt inert: the
-        // reviewer would approve the new reply and the customer would receive
-        // the older, saved one. Cleared here, in the transaction that ends the
-        // attempt, and what was cleared is journalled — a person's words do not
-        // disappear without a record of them.
-        const cleared = await client.query<{ text: string | null }>(
-          `WITH cleared AS (
-             SELECT saved_reply_text AS text FROM turn
-              WHERE conversation_id = $1 AND turn_number = $2
-                AND saved_reply_text IS NOT NULL)
-           UPDATE turn
-              SET saved_reply_text = NULL, saved_reply_provenance = NULL
-            WHERE conversation_id = $1 AND turn_number = $2
-              AND saved_reply_text IS NOT NULL
-          RETURNING (SELECT text FROM cleared) AS text`,
-          [conversationId, turnNumber],
-        );
-        const clearedReply = cleared.rows[0]?.text ?? null;
-        // DEC-49: the turn is on the next attempt from this commit on. The
-        // queue files a redelivered message at it, the scan starts it, and an
-        // approval, a save or a rewrite of the attempt this ended is refused.
-        await client.query(
-          'UPDATE turn SET attempt = $3 WHERE conversation_id = $1 AND turn_number = $2',
-          [conversationId, turnNumber, runAttempt + 1],
-        );
-        await journalStep(client, {
-          runId,
-          stepId: 'send_back',
-          status: 'done',
-          result: {
-            note,
-            reviewer: sentBackBy,
-            reviewerSource: sentBackBySource,
-            // The reply the rejected attempt held, when it held a person's.
-            // With the note, the whole of what this write removed.
-            ...(clearedReply === null ? {} : { clearedReply }),
-            // The attempt this ended, so the record reads as the history of a
-            // turn rather than as one event on one run.
-            attempt: runAttempt,
-          },
-          promptVer: 'console',
-          modelVer: 'console',
-          costMicros: 0,
-        });
-        // DEC-46: the case leaves the queue for good — a later attempt is a new
-        // run — so the reservation ends here, in the transaction that ends it.
-        // Its own kind, because the team's history is what a reader uses to
-        // tell a case that was closed from one that was sent back.
-        await releaseHoldIn(client, { runId, reviewer: sentBackBy, kind: 'send_back' });
-      },
+      afterWrite: (client: PoolClient): Promise<void> => recordSendBackIn(client, {
+        runId, conversationId, turnNumber, runAttempt, note,
+        reviewer: sentBackBy, reviewerSource: sentBackBySource,
+      }),
     });
   } catch (error) {
     // The precondition stands the write down by throwing, so the reason is
@@ -391,4 +334,109 @@ export async function sendBackRun(
     case 'unknown_run':
       throw new Error(`run vanished between read and transition: ${runId}`);
   }
+}
+
+/** What one send-back records, in the transaction that ends the attempt. */
+export interface SendBackRecordInput {
+  readonly runId: string;
+  readonly conversationId: string;
+  readonly turnNumber: number;
+  /** The attempt this ends. The turn moves to the next one. */
+  readonly runAttempt: number;
+  /**
+   * The reviewer's instruction, or null when the attempt was asked for by a
+   * published document (DEC-50): the document is what changed, and the next
+   * attempt composes with it rather than with a note.
+   */
+  readonly note: string | null;
+  readonly reviewer: string;
+  readonly reviewerSource: 'roster' | 'header' | 'none';
+  /** The document whose publishing asked for the attempt, when one did. */
+  readonly document?: { readonly docId: string; readonly title: string };
+  /**
+   * Whether the run is stamped sent back. True for a run that waited for a
+   * person, which this commit ends. False for an escalated run a published
+   * document asks to attempt again: it ended before, and its service time
+   * was the system's work, so latency must not read it as rejected.
+   */
+  readonly stampRun?: boolean;
+}
+
+/**
+ * The writes of a send-back, inside the caller's transaction, after the run
+ * has moved to `superseded` under its own lock and the turn's.
+ *
+ * Shared by the reviewer's send-back and the attempt a published document
+ * asks for (`src/knowledge/rerun-start.ts`), so a case rejected either way
+ * leaves the same record: the durable marker the consumer's scan reads, the
+ * saved reply cleared and journalled, the turn on the next attempt, and the
+ * hold released.
+ */
+export async function recordSendBackIn(client: PoolClient, input: SendBackRecordInput): Promise<void> {
+  const { runId, conversationId, turnNumber, runAttempt, note } = input;
+  // DEC-49: the durable marker the consumer's scan reads, and the note it
+  // hands the next attempt. One statement, so neither can be recorded without
+  // the other. An escalated run is not stamped: its request is the
+  // document's row, which the scan reads instead.
+  if (input.stampRun !== false) {
+    await client.query(
+      'UPDATE run SET sent_back_at = clock_timestamp(), send_back_note = $2'
+        + ' WHERE run_id = $1',
+      [runId, note],
+    );
+  }
+  // DEC-48, DEC-49: the reply a person saved on this turn belongs to the
+  // attempt being rejected. The approval prefers the saved text over the park
+  // body, so leaving it would make the new attempt inert: the reviewer would
+  // approve the new reply and the customer would receive the older, saved
+  // one. Cleared here, in the transaction that ends the attempt, and what was
+  // cleared is journalled — a person's words do not disappear without a
+  // record of them.
+  const cleared = await client.query<{ text: string | null }>(
+    `WITH cleared AS (
+       SELECT saved_reply_text AS text FROM turn
+        WHERE conversation_id = $1 AND turn_number = $2
+          AND saved_reply_text IS NOT NULL)
+     UPDATE turn
+        SET saved_reply_text = NULL, saved_reply_provenance = NULL
+      WHERE conversation_id = $1 AND turn_number = $2
+        AND saved_reply_text IS NOT NULL
+    RETURNING (SELECT text FROM cleared) AS text`,
+    [conversationId, turnNumber],
+  );
+  const clearedReply = cleared.rows[0]?.text ?? null;
+  // DEC-49: the turn is on the next attempt from this commit on. The queue
+  // files a redelivered message at it, the scan starts it, and an approval, a
+  // save or a rewrite of the attempt this ended is refused.
+  await client.query(
+    'UPDATE turn SET attempt = $3 WHERE conversation_id = $1 AND turn_number = $2',
+    [conversationId, turnNumber, runAttempt + 1],
+  );
+  await journalStep(client, {
+    runId,
+    stepId: 'send_back',
+    status: 'done',
+    result: {
+      note,
+      reviewer: input.reviewer,
+      reviewerSource: input.reviewerSource,
+      // The reply the rejected attempt held, when it held a person's. With
+      // the note, the whole of what this write removed.
+      ...(clearedReply === null ? {} : { clearedReply }),
+      // The attempt this ended, so the record reads as the history of a turn
+      // rather than as one event on one run.
+      attempt: runAttempt,
+      ...(input.document === undefined
+        ? {}
+        : { document: input.document.docId, documentTitle: input.document.title }),
+    },
+    promptVer: 'console',
+    modelVer: 'console',
+    costMicros: 0,
+  });
+  // DEC-46: the case leaves the queue for good — a later attempt is a new run
+  // — so the reservation ends here, in the transaction that ends it. Its own
+  // kind, because the team's history is what a reader uses to tell a case
+  // that was closed from one that was sent back.
+  await releaseHoldIn(client, { runId, reviewer: input.reviewer, kind: 'send_back' });
 }

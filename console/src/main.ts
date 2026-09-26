@@ -47,8 +47,10 @@ import { LEDGER_STATES, listEscalations, listRuns, readQueueToday, readRun } fro
 import { readRunJournal } from 'auracle/ledger-read';
 import { conversationOfRun, readConversation, turnAnsweredBy } from 'auracle/ledger-read';
 import { readCaseGap, readDocument, readKnowledge } from 'auracle/ledger-read';
+import { guardLedgerPool, logLedgerPoolError } from 'auracle/ledger-read';
 import {
-  closeRun, readApprovalHold, rewriteReply, saveReply, sendBackRun, snoozeRun, undoApproval,
+  closeRun, publishDocument, readApprovalHold, readCaseReruns, rewriteReply, saveReply, sendBackRun, snoozeRun,
+  undoApproval,
 } from 'auracle/ledger-read';
 import { readLatency } from 'auracle/ledger-read';
 import { humanMs } from 'auracle/format';
@@ -64,7 +66,8 @@ import { developmentReviewer } from './dev-reviewer.js';
 import { readBackFor } from './read-back.js';
 import { SHUTDOWN_GRACE_MS } from './shutdown.js';
 import { CONSOLE_CSS } from './css.js';
-import { knowledgeReads } from './shared-read.js';
+import { givingUp, knowledgeReads } from './shared-read.js';
+import { publishFor } from './publish.js';
 import { allowedHosts, identityHeader } from './hosts.js';
 import { ledgerName } from './ledger-name.js';
 import {
@@ -308,6 +311,9 @@ async function main(): Promise<void> {
   // Built here, so a name or a configuration the adapter refuses stops the
   // console before it opens the pool, rather than on the first approval.
   const readBack = readBackFor(process.env, selectReadBackAdapter, log);
+  // DEC-47: the product catalogue, read once. Its labels name each product on
+  // the page, and its ids are the products a document may be published for.
+  const catalogue = productCatalogueFromEnv();
   // DEC-46: the period a case counts as held after its last take.
   const lapseMs = requireHoldLapse(process.env['CONSOLE_HOLD_LAPSE_MS']);
   // DEC-51: the period a batch's sends wait before the relay may post them.
@@ -316,7 +322,9 @@ async function main(): Promise<void> {
   const sendHoldMs = requireSendHold(process.env['CONSOLE_SEND_HOLD_MS']);
   const connectionString = requireDbUrl('the operator console');
 
-  const pool = new Pool(consolePoolConfig(connectionString));
+  // A connection that fails while a request holds it would otherwise end the
+  // console, with every reviewer's page (src/db/client-errors.ts).
+  const pool = guardLedgerPool(new Pool(consolePoolConfig(connectionString)), logLedgerPoolError('the console'));
 
   // `pool.end()` rejects when it is called twice, and two paths call it: the
   // bind-failure handler and the signal shutdown. A bind failure followed by
@@ -337,19 +345,6 @@ async function main(): Promise<void> {
   };
   closePool = endPool;
 
-  // An idle client that fails reaches the pool as an 'error' event, and with
-  // no listener Node rethrows it outside every promise chain. The route's
-  // catch-all cannot see it, because it is emitted rather than thrown. The
-  // offline jobs guard the same edge, and they run for seconds; this console
-  // runs for as long as an operator keeps it open, so the exposure is its
-  // whole uptime.
-  pool.on('error', (error: Error & { code?: string }) => {
-    console.error(logLine({
-      event: 'console_pool_error',
-      error: error.message,
-      code: error.code ?? null,
-    }));
-  });
 
   // The pool connects lazily, so a wrong `DATABASE_URL` starts cleanly and
   // fails one request at a time as a 500 page. The operator reads "console
@@ -563,6 +558,24 @@ async function main(): Promise<void> {
       KNOWLEDGE_GIVE_UP_MS,
       lateFault,
     ),
+    // DEC-50: the documents published from a case, and what became of each
+    // re-run, on the adapter's declaration: where the ledger holds the reply,
+    // a parked draft is no copy a person could send. The page gives up on it
+    // at the same limit as the case's gap.
+    readCaseReruns: givingUp(
+      async (runId: string) => readCaseReruns(pool, runId, readBack?.supportsLedgerReply ?? false),
+      KNOWLEDGE_GIVE_UP_MS,
+      'readCaseReruns',
+      (error) => lateFault('readCaseReruns', error),
+    ),
+    // DEC-50: a document a reviewer writes from a case, for the catalogue's
+    // products, on the same declaration the send-back reads.
+    publish: publishFor({
+      pool,
+      publishDocument,
+      catalogue: catalogue.products.map((product) => product.id),
+      ledgerReply: readBack?.supportsLedgerReply ?? false,
+    }),
     // DEC-44: the callout's first button takes the cited document's own
     // sentence, so the document is read where the edit is applied and not
     // where the page is drawn.
@@ -615,9 +628,7 @@ async function main(): Promise<void> {
     // DEC-47: what each product is called on the page. Read once, from the
     // file the ingress processes read, so a chip says `Aurora` where the
     // catalogue does.
-    productLabels: new Map(
-      productCatalogueFromEnv().products.map((product) => [product.id, product.label]),
-    ),
+    productLabels: new Map(catalogue.products.map((product) => [product.id, product.label])),
     // DEC-46: the case hold. The two reads serve the case bar and the queue;
     // the three writes are the console's own, and `select-only.test.ts` names
     // them.

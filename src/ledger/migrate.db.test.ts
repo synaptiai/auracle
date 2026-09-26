@@ -420,8 +420,10 @@ describe('migrate', () => {
 
     // A console document may wait with no vector.
     await client.query(
-      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status)
-       VALUES ('SYN-034-PENDING', 'document', 't', 'b', 'o', '2999-01-01', 'console', 'pending')`,
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status,
+                             written_by)
+       VALUES ('SYN-034-PENDING', 'document', 't', 'b', 'o', '2999-01-01', 'console', 'pending',
+               'reviewer-a')`,
     );
 
     const refused: Array<[string, string]> = [
@@ -456,6 +458,75 @@ describe('migrate', () => {
     expect(comment.rows[0]?.description).toContain('DEC-50');
     await client.query('DELETE FROM schema_version WHERE version >= 34');
     await expect(migrate(client)).resolves.toBeDefined();
+  });
+
+  // DEC-50: a document written from a case names who wrote it, and the case
+  // it came from holds a request for a new attempt. The request's status and
+  // its fields agree by constraint, so no writer can record half an outcome.
+  it('records who wrote a document and the re-run it asks for (db/035, DEC-50)', async () => {
+    await migrate(client);
+    const runId = await seedRun();
+    const doc = (id: string, source: string, writtenBy: string | null): string =>
+      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, source, embedding_status,
+                             written_by)
+       VALUES ('${id}', 'document', 't', 'b', 'o', '2999-01-01', '${source}', 'pending',
+               ${writtenBy === null ? 'NULL' : `'${writtenBy}'`})`;
+    await client.query(doc('SYN-035-A', 'console', 'reviewer-a'));
+    await client.query(doc('SYN-035-B', 'console', 'reviewer-a'));
+
+    // A request waits with no outcome, and each outcome carries its own fields.
+    await client.query(
+      `INSERT INTO document_rerun (doc_id, run_id, attempt) VALUES ('SYN-035-A', $1, 1)`,
+      [runId],
+    );
+    const waiting = await client.query<{ status: string; reason: string | null; ended: boolean }>(
+      `SELECT status, reason, ended_at IS NOT NULL AS ended FROM document_rerun
+        WHERE doc_id = 'SYN-035-A'`,
+    );
+    expect(waiting.rows[0]).toEqual({ status: 'waiting', reason: null, ended: false });
+    await client.query(
+      `UPDATE document_rerun SET status = 'started', started_attempt = 2, ended_at = now()
+        WHERE doc_id = 'SYN-035-A'`,
+    );
+    await client.query(
+      `INSERT INTO document_rerun (doc_id, run_id, attempt, status, reason, ended_at)
+       VALUES ('SYN-035-B', $1, 1, 'dropped', 'approved', now())`,
+      [runId],
+    );
+
+    const refused: Array<[string, string]> = [
+      ['a console document with no author', doc('SYN-035-X1', 'console', null)],
+      ['a loader document with an author', doc('SYN-035-X2', 'loader', 'reviewer-a')],
+      ['a waiting request with a reason',
+        `UPDATE document_rerun SET status = 'waiting', started_attempt = NULL, ended_at = NULL,
+                reason = 'approved' WHERE doc_id = 'SYN-035-A'`],
+      ['a started request with no attempt',
+        `UPDATE document_rerun SET started_attempt = NULL WHERE doc_id = 'SYN-035-A'`],
+      ['a dropped request with no reason',
+        `UPDATE document_rerun SET reason = NULL WHERE doc_id = 'SYN-035-B'`],
+      ['a dropped request with an unknown reason',
+        `UPDATE document_rerun SET reason = 'bored' WHERE doc_id = 'SYN-035-B'`],
+      ['an ended request with no end',
+        `UPDATE document_rerun SET ended_at = NULL WHERE doc_id = 'SYN-035-B'`],
+      ['an unknown status',
+        `UPDATE document_rerun SET status = 'queued' WHERE doc_id = 'SYN-035-B'`],
+    ];
+    for (const [what, sql] of refused) {
+      await expect(client.query(sql), what).rejects.toThrow(/violates check constraint/);
+    }
+    await expect(
+      client.query(
+        `INSERT INTO document_rerun (doc_id, run_id, attempt)
+         VALUES ('SYN-035-NONE', $1, 1)`,
+        [runId],
+      ),
+      'a request for no document',
+    ).rejects.toThrow(/violates foreign key constraint/);
+
+    const comment = await client.query<{ description: string }>(
+      `SELECT obj_description('document_rerun'::regclass, 'pg_class') AS description`,
+    );
+    expect(comment.rows[0]?.description).toContain('DEC-50');
   });
 
   // DEC-47: the product of the channel a message arrived on, recorded at

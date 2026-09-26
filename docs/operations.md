@@ -711,6 +711,93 @@ psql "$DATABASE_URL" -c \
   "UPDATE document SET embedding_status = 'pending', embedding_failures = 0, embedding_error = NULL WHERE embedding_status = 'failed';"
 ```
 
+A document a reviewer publishes from a case also asks for a new attempt of
+that case (DEC-50, DEC-49). This runbook calls that request a re-run. It waits
+in `document_rerun` until a consumer embeds the document. Each scan then reads
+the waiting re-runs of its own partitions, after it embeds documents.
+
+The scan starts the attempt only while the case is as the reviewer left it. A
+re-run ends when a person approves, closes or snoozes the case first. A turn
+whose reply or action the relay sends, or holds to send, ends it too.
+So does another attempt that somebody asks for first, or a later message from
+the customer. An automatic write that resolves the case ends it as well.
+
+A person may save or rewrite a reply on the turn after the publish. The re-run
+then ends too, so a new attempt never throws their work away (DEC-46). A
+failed embedding never starts the attempt. A re-run on a run the system still
+walks waits for a person. After three hours in the system's hands, the scan
+takes the run as dead and ends the re-run. The case page draws the same
+answer, from the same rule, before the scan records it.
+
+The same post from the case then asks for that re-run again. The new request
+keeps the time and the replies of the first one. So a reply that a person
+saved since then still ends it. A re-run that a person's act ends stays ended.
+
+Two documents from one case wait for each other. The scan starts one attempt
+once a consumer embeds both, and marks both re-runs started.
+
+A case that waits for a person ends `superseded`, as a send-back ends it, with
+no note. An escalated case keeps its state and its finish time. So its service
+time stays the system's work in `pnpm run latency`. Either way the turn moves
+to the next attempt. The scan clears a reply saved on the turn and journals
+it. The send-back scan then walks the attempt, with the published document in
+reach.
+
+`pnpm run bands` counts a case whose final attempt is above one as assisted.
+A send-back note and a published document both raise the attempt. So a case a
+published document answers counts as assisted: a person writes the answer.
+
+Bands also counts a case once, on the day of its final attempt. So a re-run of
+an older case moves it to the day of its new attempt, as a send-back does. The
+figures of that earlier day and the baseline change with it.
+
+A publish on a case that the system cannot attempt again still publishes, and
+records the reason at once. A run with no turn gives that reason. So does a
+case with a helpdesk copy a person could send, or a case that already ended.
+
+The escalation reasons of an attempt that a document asks for begin `rerun_`,
+as a send-back's begin `send_back_`. The console and every consumer must
+declare the same egress adapter. The page reads the console's declaration,
+and the scan reads the consumer's.
+
+A scan reads ten waiting re-runs per pass, the ones it read longest ago first.
+So a re-run that waits or faults cannot hold the others up. After a fault, no
+scan reads the re-run again for a minute per fault, ten at most. The case page
+says how often the consumer fails to start it.
+
+A publish waits five seconds at most for a lock or a statement. Past that it
+writes nothing, and the page says to publish again. The same post twice from
+one case publishes once, and the console logs the second as
+`console_publish_repeated`. The console refuses a post with the same title and
+answer that differs otherwise. Such a post is a second copy of one answer.
+
+The consumer logs these events:
+
+| Event | Fields |
+|---|---|
+| `reruns_started` | `requests`: the documents whose attempt started |
+| `reruns_dropped` | `requests`, each with `docId` and `reason` |
+| `reruns_failed` | `requests`: the documents whose embedding failed |
+| `reruns_unsettled` | `requests`, each with `docId` and `error`. The request waits for the next scan |
+| `rerun_scan_failed` | `error`, a fault of the ledger that settles no request |
+
+Read the requests that are still waiting:
+
+```sh
+psql "$DATABASE_URL" -c \
+  "SELECT doc_id, run_id, attempt, requested_at FROM document_rerun WHERE status = 'waiting';"
+```
+
+Every process listens on each connection to the ledger, and on its pool. A
+connection can fail when the ledger restarts, fails over or ends the session.
+A statement it was running fails as usual, and that failure is the report.
+The process also logs `db_client_failed` once the connection is gone. That
+line can follow the statement's own failure. It holds the process, the reason,
+and `held`: whether a caller had the connection when the event arrived.
+
+Without the listeners Node ends the process. That ends the console with every
+page, or a consumer in the middle of a scan.
+
 The split discipline holds (DEC-31). Calibration reads only the fit half. The
 gold report reads only the report half. A threshold picked on the report cases
 inflates every published number. Never fit and publish on the same cases.
@@ -1442,6 +1529,34 @@ rollback has three more. So it holds a connection six seconds at most. A page
 gives up on a read after six seconds. A read that fails after that logs
 `console_read_late_fault`, with its reason.
 
+A case page also holds the knowledge card. A reviewer writes the missing
+document there: a title, the products, the answer, an owner and a review date.
+The review date opens blank, and it must fall after today (DEC-23). The case's
+own product is always among the products (DEC-47). A case whose channel maps no
+product cannot publish, and the card says to map the channel first. The answer
+takes 7,000 bytes at most, which the model reads in one piece.
+
+The console refuses a document whose title, answer or owner names the case. It
+looks for the customer address, in any case. It also looks for every ticket
+id, message id and draft handle of the conversation. It matches each as a
+whole token. It reads a number alone as a ticket id only after a mark. The
+mark is `#`, or a word such as ticket, case or conversation.
+
+The check reads the text after it folds look-alike characters, dashes, digits
+of other scripts, and percent and HTML encoding. It finds the case's own
+identifiers and nothing else. It is not a personal-data check.
+
+A refused publish draws the form again, holding what the reviewer wrote. The
+card lists each document published from the case, and the state of its new
+attempt. The attempt waits, it has started, or it does not start. It does not
+start when the embedding fails, with the reason, or when the case changes
+first. A fault reading that list logs `console_reruns_unread`.
+
+The console logs `console_published` and `console_publish_refused` with the
+outcome. Each also holds the lengths of the title and the answer, never their
+text. A fault logs `console_publish_failed` with a tag, and the page names the
+tag.
+
 The design notes are at `/notes`, and the page reads no ledger. Each card states
 one rule the console keeps, and the reason for it. A card joins the page only
 when the console makes it true. So a card ships with the feature it describes.
@@ -1848,7 +1963,9 @@ named in. Each lives for the life of its row, and nothing removes any of it.
 | `run.send_back_note` | the note that steers a new attempt | the console's send-back |
 | `step_journal.result` on `send_back` | the same note | the console's send-back |
 | `conversation.customer_address` | the participant the messages come from | the first sender that names itself |
-| `document.embedding_error` | the provider's message when an embedding call fails, which may quote any document of the same call | every consumer. The knowledge screen shows it to reviewers |
+| `document.embedding_error` | the provider's message when an embedding call fails, which may quote any document of the same call | every consumer. The knowledge screen and the case page show it to reviewers |
+| `document.title` and `document.body` on a console row | a document a reviewer wrote from a case. The check refuses the case's own identifiers, not a name or other personal data | the console's publish |
+| `step_journal.result` on `send_back` | the title of the document whose publishing asked for the attempt | the consumer's re-run scan |
 
 A failed call records one message on every document it carries, so a waiting
 document's row can quote another. Removing a document does not clear such a
@@ -1955,13 +2072,13 @@ removes them.
 Clearing a draft does not reach the helpdesk. The draft parks there as well
 (DEC-11), and the adapter's own retention governs that copy.
 
-**The console writes the ledger in eleven places.** Each one is named here.
+**The console writes the ledger in twelve places.** Each one is named here.
 
 It approves a reply, saves an edited reply, and rewrites one from scratch. It
 closes a case with no reply. It puts a case aside for a period, and sends one
-back for a new attempt. It takes a case, releases a case, and hands a case to
-a teammate. It also clears a hold whose period ran out, and takes a send back
-inside its hold.
+back for a new attempt. It publishes a document written from a case. It takes
+a case, releases a case, and hands a case to a teammate. It also clears a hold
+whose period ran out, and takes a send back inside its hold.
 
 Every other statement it issues is a SELECT. So it is otherwise as safe
 against a live database as `pnpm run bands` and `pnpm run latency`. That

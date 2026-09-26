@@ -29,7 +29,8 @@ import {
 import { COMPENSATION_ACTION_CLASS, CUSTOMER_REPLY_ACTION_CLASS } from 'auracle/domain';
 import type { PolicyReason } from 'auracle/policy';
 import {
-  MAX_CLOSE_REASON_CHARS, MAX_SEND_BACK_NOTE_CHARS, MAX_SNOOZE_MS, MIN_SNOOZE_MS, replyDigest,
+  MAX_CLOSE_REASON_CHARS, MAX_DOCUMENT_BODY_CHARS, MAX_DOCUMENT_OWNER_CHARS, MAX_DOCUMENT_TITLE_CHARS,
+  MAX_SEND_BACK_NOTE_CHARS, MAX_SNOOZE_MS, MIN_SNOOZE_MS, replyDigest,
 } from 'auracle/ledger-read';
 import type {
   CloseOutcome, MessageAbsence, OutboxStatus, ReplyAbsence, RewriteOutcome, SendBackOutcome,
@@ -43,10 +44,13 @@ import type { HandoverOutcome, ReleaseOutcome, TakeOutcome } from 'auracle/ledge
 import { GAP_WINDOW_DAYS } from 'auracle/ledger-read';
 import type {
   CaseGap,
+  CaseRerun,
   ChangeFlag,
   DocumentNeed,
   GapGroup,
   KnowledgeReport,
+  PublishOutcome,
+  RerunReason,
 } from 'auracle/ledger-read';
 import { CONSOLE_SCRIPT } from './script.js';
 import { groupQueue } from './queue.js';
@@ -999,8 +1003,8 @@ function callouts(
       '</form>',
       // The third way out, and the only one that asks for something. It opens
       // a field rather than a page: the answer a person writes here replaces
-      // the sentence the document could not support (DEC-44, #109), and the
-      // document they would publish is #112's job.
+      // the sentence the document could not support (DEC-44, #109). The
+      // document itself is written on the case's knowledge card (DEC-50).
       writing
         ? [
           `<form method="post" action="/edit${escapeHtml(filtersQuery(edit.rule, edit.product))}">`,
@@ -2337,6 +2341,18 @@ function gapLine(read: CaseGapRead, runId: string, rewritten: boolean): string {
 export interface CaseOptions {
   /** DEC-50: whether a gap blocks the case, as the knowledge screen counts it. */
   readonly gap: CaseGapRead;
+  /** DEC-50: the documents published from this case, and what became of each re-run. */
+  readonly reruns: CaseRerunsRead;
+  /** DEC-50: whether the page draws the composer rather than its link. */
+  readonly composing: boolean;
+  /** DEC-50: a document was just published from this case. */
+  readonly published: boolean;
+  /** DEC-45: the reviewer reading the page, the composer's default owner. */
+  readonly author: string;
+  /** DEC-47: the catalogue's products and their labels, for the composer and the case's own. */
+  readonly productLabels: ReadonlyMap<string, string>;
+  /** Today, as `YYYY-MM-DD`: the review date must fall after it. */
+  readonly today: string;
   /** The outcome of the approval just posted, drawn above the case. */
   readonly outcome: string;
   /**
@@ -2744,6 +2760,254 @@ export interface CaseHold {
  * The case reads any run the ledger holds, so the outcome of an approval is
  * drawn on the case it approved. Only a waiting run offers the approval.
  */
+/** The re-runs published from a case, or the tag of the fault that stopped the read. */
+export type CaseRerunsRead =
+  | { readonly reruns: readonly CaseRerun[] }
+  | { readonly unreadTag: string };
+
+/** Why a re-run never started, in the words the case shows. */
+const RERUN_DROPPED_SAYS: Readonly<Record<RerunReason, string>> = {
+  approved: 'The case was approved first, so no new attempt starts.',
+  closed: 'The case was closed first, so no new attempt starts.',
+  snoozed: 'The case was snoozed first, so no new attempt starts.',
+  answered: 'This turn already has a reply or an action that is sent, may be, or will be,'
+    + ' so no new attempt starts.',
+  another_attempt: 'Another attempt of this case was asked for first, so this one does not start.',
+  newer_turn: 'The customer wrote again first, so no new attempt starts.',
+  reply_changed: 'A person saved or rewrote the reply after the document was published,'
+    + ' so no new attempt replaces their work.',
+  ended: 'The case ended first, so no new attempt starts.',
+  no_turn: 'This run has no turn to attempt again, so no new attempt starts.',
+  copy_could_send: 'The helpdesk holds a copy of the reply that a person could send,'
+    + ' so no new attempt starts.',
+};
+
+/** What became of one re-run, as a sentence under the document's title. */
+function rerunSays(rerun: CaseRerun, filters: { rule: string | null; product: string | null }): string {
+  const state = rerun.state;
+  switch (state.kind) {
+    case 'waiting':
+      return escapeHtml(state.on === 'document'
+        ? 'It waits for its embedding. A new attempt of this case starts once it is embedded.'
+        : 'The system is still working on this case. A new attempt starts once it reaches a person.');
+    case 'starting':
+      return escapeHtml('It is embedded. The consumer starts a new attempt of this case on its next scan.'
+        + (state.faults > 0
+          ? ` The consumer could not start it ${state.faults === 1 ? 'once' : `${String(state.faults)} times`}`
+            + ' and tries again. Its log names each fault as reruns_unsettled.'
+          : ''));
+    case 'started':
+      return state.runId === null
+        ? escapeHtml(`Attempt ${state.attempt} of this case has started.`)
+        : `<a href="${escapeHtml(caseHref(state.runId, filters.rule, filters.product))}">Attempt ${
+          escapeHtml(String(state.attempt))}</a> of this case has started.`;
+    case 'failed':
+      return escapeHtml('It could not be embedded, so no new attempt starts. ')
+        + (state.error === null
+          ? escapeHtml('The consumer recorded no reason.')
+          : `${escapeHtml('The consumer recorded why: ')}${isolated(state.error)}`);
+    case 'dropped':
+      return escapeHtml(RERUN_DROPPED_SAYS[state.reason]);
+  }
+}
+
+/**
+ * The case's knowledge card (DEC-50): the documents published from it, and
+ * the way to write the one it needed.
+ *
+ * A case whose channel maps no product cannot publish, and the card says the
+ * channel must be mapped first rather than offering a form that would refuse.
+ */
+function knowledgeCard(view: CaseView, options: CaseOptions): string {
+  const filters = { rule: options.rule, product: options.product };
+  const reruns = 'unreadTag' in options.reruns
+    ? `<p class="mut">The documents published from this case were not read. The console log names the fault ${
+      escapeHtml(options.reruns.unreadTag)}.</p>`
+    : options.reruns.reruns.map((rerun) => '<div class="rerun">'
+      + `<p><a href="/document/${encodeURIComponent(rerun.docId)}">${isolated(rerun.title)}</a>`
+      + ` <span class="mut">published from this case.</span></p>`
+      + `<p class="mut" data-rerun="${escapeHtml(rerun.state.kind)}">${rerunSays(rerun, filters)}</p>`
+      + '</div>').join('');
+  const product = view.product === null || view.product.trim() === '' ? null : view.product;
+  const write = product === null
+    ? '<p class="mut">This case\'s channel maps no product, so no document can be written from it.'
+      + ' Map the channel to a product first.</p>'
+    : options.composing
+      ? composerForm(view.runId, replyDigest(replyTextOf(view, options.ledgerReply) ?? ''), product, {
+        title: '', body: '', owner: options.author, reviewBy: '', products: [product],
+      }, options)
+      : `<p><a class="btn" href="${
+        escapeHtml(withQuery(caseHref(view.runId, options.rule, options.product), 'compose', '1'))
+      }#compose">Write the missing document →</a></p>`
+        + '<p class="mut">Publishing asks for a new attempt of this case once the document is embedded.</p>';
+  return [
+    '<div class="card" id="knowledge"><header>',
+    '<span class="lbl">The knowledge base</span>',
+    '</header><div class="body">',
+    options.published
+      ? '<p class="outcome ok" data-published="1">Published. A consumer embeds the document,'
+        + ' and retrieval ignores it until then.</p>'
+      : '',
+    reruns,
+    write,
+    '</div></div>',
+  ].join('');
+}
+
+/** What a reviewer typed into the composer, drawn back into it. */
+export interface ComposerFields {
+  readonly title: string;
+  readonly body: string;
+  readonly owner: string;
+  readonly reviewBy: string;
+  readonly products: readonly string[];
+}
+
+/** The day after `today`, both as `YYYY-MM-DD`. */
+function dayAfter(today: string): string {
+  const next = new Date(`${today}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+}
+
+/**
+ * The composer (DEC-50): a title, the products, the body, an owner and a
+ * review date (DEC-23). The case's own product is always among the products:
+ * its box is drawn checked and fixed, and a hidden field carries it, because
+ * a disabled box posts nothing. The review date opens blank, so a person
+ * chooses it.
+ */
+function composerForm(
+  runId: string,
+  shown: string,
+  caseProduct: string,
+  fields: ComposerFields,
+  options: {
+    readonly rule: string | null;
+    readonly product: string | null;
+    readonly productLabels: ReadonlyMap<string, string>;
+    readonly today: string;
+  },
+): string {
+  const others = [...options.productLabels.keys()].filter((id) => id !== caseProduct);
+  return [
+    `<form method="post" action="/publish${
+      escapeHtml(filtersQuery(options.rule, options.product))}" class="composer" id="compose">`,
+    `<input type="hidden" name="runId" value="${escapeHtml(runId)}">`,
+    `<input type="hidden" name="shown" value="${escapeHtml(shown)}">`,
+    `<input type="hidden" name="product" value="${escapeHtml(caseProduct)}">`,
+    '<label class="lbl" for="doctitle">Title</label>',
+    `<input type="text" id="doctitle" name="title" required maxlength="${String(MAX_DOCUMENT_TITLE_CHARS)}"`
+      + ` value="${escapeHtml(fields.title)}">`,
+    '<fieldset><legend class="lbl">Products</legend>',
+    `<label><input type="checkbox" checked disabled> ${escapeHtml(productLabel(options.productLabels, caseProduct))}`
+      + ' <span class="mut">this case\'s product, always included</span></label>',
+    ...others.map((id) => `<label><input type="checkbox" name="product" value="${escapeHtml(id)}"${
+      fields.products.includes(id) ? ' checked' : ''}> ${escapeHtml(productLabel(options.productLabels, id))}</label>`),
+    '</fieldset>',
+    '<label class="lbl" for="docbody">The answer</label>',
+    `<textarea id="docbody" name="body" rows="10" required maxlength="${String(MAX_DOCUMENT_BODY_CHARS)}">${
+      escapeHtml(fields.body)}</textarea>`,
+    '<p class="discl">A document serves every later case of its products, so it must not name this case\'s'
+      + ' customer, ticket, message or draft. The console refuses one that does.</p>',
+    '<label class="lbl" for="docowner">Owner</label>',
+    `<input type="text" id="docowner" name="owner" required maxlength="${String(MAX_DOCUMENT_OWNER_CHARS)}"`
+      + ` value="${escapeHtml(fields.owner)}">`,
+    '<label class="lbl" for="docreview">Review date</label>',
+    `<input type="date" id="docreview" name="reviewBy" required min="${escapeHtml(dayAfter(options.today))}"`
+      + ` value="${escapeHtml(fields.reviewBy)}">`,
+    '<button class="btn" type="submit">Publish the document</button>',
+    '</form>',
+  ].join('');
+}
+
+/** What each refusal of a publish says, with what the reviewer does next. */
+function publishRefusalSays(
+  outcome: Exclude<PublishOutcome, { outcome: 'published' }>,
+  labels: ReadonlyMap<string, string>,
+): string {
+  switch (outcome.outcome) {
+    case 'unknown_run': return 'The ledger holds no such run, so nothing was published.';
+    case 'busy': return 'Another write held this case, so nothing was published. Publish again.';
+    case 'already_published':
+      return 'This case already published a document with this title and answer, so nothing was published.'
+        + ' Change the document, or open the one it published.';
+    case 'no_product':
+      return 'This case\'s channel maps no product, so no document can be written from it.'
+        + ' Map the channel to a product first.';
+    case 'no_products': return 'Choose at least one product.';
+    case 'product_missing':
+      return `A document written from this case must serve its product, ${productLabel(labels, outcome.product)}.`;
+    case 'unknown_product': return `The product catalogue does not name ${outcome.product}.`;
+    case 'title_empty': return 'Write a title.';
+    case 'title_too_long': return `A title may be ${String(MAX_DOCUMENT_TITLE_CHARS)} characters at most.`;
+    case 'body_empty': return 'Write the answer.';
+    case 'body_too_long':
+      return 'The answer is longer than the model reads in one piece.'
+        + ` Shorten it to about ${MAX_DOCUMENT_BODY_CHARS.toLocaleString('en-GB')} characters of English.`;
+    case 'owner_empty': return 'Name the owner, a person or a team who keeps the document current.';
+    case 'owner_too_long': return `The owner may be ${String(MAX_DOCUMENT_OWNER_CHARS)} characters at most.`;
+    case 'no_author': return 'The console could not name you as the author, so nothing was published.';
+    case 'unprintable': return `The ${outcome.field} holds a character the ledger cannot store.`;
+    case 'review_date_invalid': return 'Choose a review date.';
+    case 'review_date_not_ahead':
+      return 'Choose a review date after today. Retrieval ignores a document once its review date has passed.';
+    case 'identifier': {
+      const what = { address: 'customer address', ticket: 'ticket id', message: 'message id', draft: 'draft' }[outcome.kind];
+      const field = { title: 'title', body: 'answer', owner: 'owner' }[outcome.field];
+      return `The ${field} names this case's ${what}. Remove it and publish again.`;
+    }
+    case 'shown_changed':
+      return 'The reply on this case changed since the page was drawn, so nothing was published.'
+        + ' It is drawn below. Publish again once you have read it.';
+  }
+}
+
+/**
+ * A publish the ledger refused, with the composer drawn again holding what
+ * the reviewer wrote. A refusal that dropped a document would ask a person to
+ * write it twice.
+ */
+export function renderPublishRefused(
+  runId: string,
+  shown: string,
+  caseProduct: string | null,
+  outcome: Exclude<PublishOutcome, { outcome: 'published' }>,
+  fields: ComposerFields,
+  options: {
+    /** The reply the case holds now, drawn when it changed under the page. */
+    readonly current: string | null;
+    readonly rule: string | null;
+    readonly product: string | null;
+    readonly productLabels: ReadonlyMap<string, string>;
+    readonly today: string;
+  },
+): string {
+  return [
+    head('Nothing was published', 'The document is below, as you wrote it.'),
+    '<div class="wrap">',
+    `<p class="outcome refused" data-publish="${escapeHtml(outcome.outcome)}">${
+      escapeHtml(publishRefusalSays(outcome, options.productLabels))}${
+      outcome.outcome === 'already_published'
+        ? ` <a href="/document/${encodeURIComponent(outcome.docId)}">The published document →</a>`
+        : ''}</p>`,
+    options.current === null
+      ? ''
+      : '<div class="card"><header><span class="lbl">The reply the case holds now</span></header>'
+        + `<div class="body"><div class="prose">${isolated(options.current)}</div>`
+        + '<p class="mut">Publishing again asks for a new attempt against this reply.</p></div></div>',
+    caseProduct === null
+      // No form can be drawn without the case's product. What the reviewer
+      // wrote is still drawn, so it can be copied rather than lost.
+      ? '<div class="card"><header><span class="lbl">What you wrote</span></header><div class="body">'
+        + `<p><strong>${isolated(fields.title)}</strong></p><div class="prose">${isolated(fields.body)}</div>`
+        + `<p class="mut">Owner ${isolated(fields.owner)} · review by ${isolated(fields.reviewBy)}</p></div></div>`
+      : composerForm(runId, shown, caseProduct, fields, options),
+    `<p><a href="${escapeHtml(caseHref(runId, options.rule, options.product))}">Back to the case</a></p>`,
+    '</div>',
+  ].join('');
+}
+
 export function renderCase(view: CaseView, options: CaseOptions): string {
   const act = actOf(view, options.ledgerReply);
   const waiting = view.state === 'awaiting_approval';
@@ -2763,6 +3027,9 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
     isolated([
       view.request === null ? 'no turn' : `turn ${view.request.turnNumber}`,
       view.intentId ?? 'intent unrecorded',
+      // DEC-47: the product of the channel the message arrived on, which the
+      // knowledge card below writes a document for.
+      productSays(view.product, options.productLabels),
       // An age says how long a case has waited, which is true only while it
       // waits. A case that left the queue says when it opened.
       waiting ? `waiting ${ageSays(view.createdAt)}` : `opened ${whenSays(view.createdAt)}`,
@@ -2877,6 +3144,7 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
     '</div>',
     '<div class="caseside">',
     whyBlock(view, act),
+    knowledgeCard(view, options),
     '<div class="card"><header>',
     '<span class="lbl">The two gates</span>',
     chip('independent · never combined'),
@@ -4767,6 +5035,18 @@ const DESIGN_NOTES: readonly { readonly token: Token; readonly title: string; re
       + ' The hold says who is working, and it refuses no write: any reviewer may still approve the case.'
       + ' A hold lapses on its own without activity, twenty minutes by default.'
       + ' Taking a second case releases the first, because a person reads one case at a time.',
+  },
+  {
+    token: 'accent',
+    title: 'The knowledge base is edited from inside the case',
+    says: 'A reviewer who finds a gap writes the missing document on the case page:'
+      + ' a title, its products, the answer, an owner and a review date.'
+      + ' The case\'s own product is always among them, and a case whose channel maps no product cannot publish.'
+      + ' The console refuses a document that names the case\'s customer, ticket, message or draft,'
+      + ' because a document serves every later case.'
+      + ' The console calls no model. A consumer embeds the document, and retrieval ignores it until then.'
+      + ' Once it is embedded, the case is attempted again, unless it was approved, closed, snoozed or answered first.'
+      + ' The case says which.',
   },
 ];
 

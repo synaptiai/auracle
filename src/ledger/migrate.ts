@@ -16,6 +16,7 @@ import type { PoolClient } from 'pg';
 import { runEntry } from '../cli/entry.js';
 import { errorMessage } from '../errors.js';
 import { startedAsCommand } from '../corpus/output-path.js';
+import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 const defaultDbDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../db',
@@ -129,7 +130,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const pool = guardLedgerPool(new Pool({ connectionString: databaseUrl, max: 1 }), logLedgerPoolError('the migrator'));
   try {
     // One dedicated connection: the transactional guarantee in migrate()
     // requires every statement on a single session.

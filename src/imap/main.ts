@@ -27,6 +27,7 @@ import { intakeEnqueuer } from '../intake/adapter.js';
 import { startImapDaemon } from './daemon.js';
 import { ImapMailboxFetcher, imapFlowFactory } from './fetcher.js';
 import { runEntry } from '../cli/entry.js';
+import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 
 async function main(): Promise<void> {
   loadDotEnv();
@@ -45,7 +46,7 @@ async function main(): Promise<void> {
   // nothing can resolve.
   const catalogue = productCatalogueFromEnv();
 
-  const pool = new Pool({ connectionString: requireDbUrl('the IMAP ingress'), max: 1 });
+  const pool = guardLedgerPool(new Pool({ connectionString: requireDbUrl('the IMAP ingress'), max: 1 }), logLedgerPoolError('the IMAP ingress'));
   const fetcher = new ImapMailboxFetcher(config, imapFlowFactory(config));
 
   const daemon = startImapDaemon({

@@ -40,6 +40,7 @@ import { terminalText } from '../cli/terminal-text.js';
 import { runEntry } from '../cli/entry.js';
 import { startedAsCommand } from '../corpus/output-path.js';
 import { reportJson } from '../log/line.js';
+import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 
 /** The shape a digest has, so a mistyped one is refused rather than ignored. */
 const DIGEST = /^[0-9a-f]{64}$/;
@@ -152,7 +153,7 @@ async function main(): Promise<void> {
   }
 
   const options = approvalOptionsFor(argv, process.env);
-  const pool = new Pool({ connectionString: requireDbUrl('the approval CLI'), max: 1 });
+  const pool = guardLedgerPool(new Pool({ connectionString: requireDbUrl('the approval CLI'), max: 1 }), logLedgerPoolError('the approval CLI'));
   try {
     const result = await approveRun(pool, runId, options);
     console.log(reportJson(result));
