@@ -41,56 +41,199 @@ function shippedModules(dir: string, acc: string[] = []): string[] {
 }
 
 /**
+ * One file as the compiler reads it: TypeScript and JavaScript as code, and a
+ * JSON file as JSON, which the tsconfig files here write with comments. Any
+ * other file is not code, and it has no tree.
+ *
+ * A file the parser cannot read is refused. The parser recovers from a
+ * syntax error and hands back a tree, but that tree is a guess, and a sweep
+ * that reads a guess can pass on code it never saw. JSX is read only in a
+ * `.tsx` or `.jsx` file.
+ */
+function tree(file: string, text: string): ts.SourceFile | null {
+  if (/\.json$/.test(file)) {
+    const error = ts.parseConfigFileTextToJson(file, text).error;
+    if (error !== undefined) throw new Error(`${file} does not parse: ${ts.flattenDiagnosticMessageText(error.messageText, ' ')}`);
+    return ts.parseJsonText(file, text);
+  }
+  if (!/\.[cm]?[jt]sx?$/.test(file)) return null;
+  const kind = /\.tsx$/.test(file) ? ts.ScriptKind.TSX : /\.jsx$/.test(file) ? ts.ScriptKind.JSX
+    : /\.[cm]?js$/.test(file) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
+  const errors = ts.transpileModule(text, { fileName: file, reportDiagnostics: true }).diagnostics ?? [];
+  const first = errors[0];
+  if (first !== undefined) {
+    throw new Error(`${file} does not parse: ${ts.flattenDiagnosticMessageText(first.messageText, ' ')}`);
+  }
+  return ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
+}
+
+/**
  * Removes comments and keeps everything else, string literals included.
  *
- * A scanner rather than two regular expressions, because the regular
- * expression version cut at the `//` inside `'http://console.invalid'` and
- * erased the rest of that line. A statement written after a URL on one line
- * would have been erased with it, and the sweep would have reported the
- * package clean. String contents are the one place the rule most needs to
- * look, because SQL travels as a string.
+ * The comments are the ones the compiler finds, as trivia between tokens.
+ * A pattern or a character loop has to guess where a string ends, and each
+ * guess failed: a regular expression cut at the `//` inside
+ * `'http://console.invalid'`, and a loop that knew no regular-expression
+ * literal paired the quote inside `/"/` with a later one (issue #146). Either
+ * way the rest of the line was erased, and a statement written there went
+ * unread. String contents are the one place the rule most needs to look,
+ * because SQL travels as a string.
  *
  * The consequence is that HTML counts too. A `<select>` element in a surface
  * trips the SQL sweep below, and that is the sweep working rather than a
  * fault. Rename the offender or narrow the rule; do not stop reading strings.
+ *
+ * A file with no tree keeps its text whole: reading too much is the safe
+ * direction for a guard. JSX text is text, so a line of it that starts with
+ * `//` stays.
+ *
+ * The core's `src/test-support/source-reader.ts` holds the same reader. This
+ * package reaches the core only through its published barrels, and test
+ * support is not one of them, so the console keeps its own copy, which also
+ * reads the JSON its tsconfig files are written in. From `const ranges`
+ * onward the two are the same text, and a core case holds them to it.
+ *
+ * The file name decides whether JSX is read, so it is required.
  */
-function stripComments(source: string): string {
-  let out = '';
-  let i = 0;
-  while (i < source.length) {
-    const two = source.slice(i, i + 2);
-    if (two === '//') {
-      while (i < source.length && source[i] !== '\n') i += 1;
-      continue;
-    }
-    if (two === '/*') {
-      const end = source.indexOf('*/', i + 2);
-      i = end === -1 ? source.length : end + 2;
-      continue;
-    }
-    const quote = source[i]!;
-    if (quote === "'" || quote === '"' || quote === '`') {
-      out += quote;
-      i += 1;
-      while (i < source.length) {
-        const ch = source[i]!;
-        out += ch;
-        i += 1;
-        if (ch === '\\') {
-          if (i < source.length) {
-            out += source[i]!;
-            i += 1;
-          }
-          continue;
-        }
-        if (ch === quote) break;
-      }
-      continue;
-    }
-    out += quote;
-    i += 1;
+function stripComments(text: string, file: string): string {
+  const source = tree(file, text);
+  if (source === null) return text;
+  const ranges = new Map<number, number>();
+  const jsxText: Array<[number, number]> = [];
+  const visit = (node: ts.Node): void => {
+    if (node.kind === ts.SyntaxKind.JsxText) jsxText.push([node.getStart(source), node.getEnd()]);
+    for (const range of ts.getLeadingCommentRanges(text, node.getFullStart()) ?? []) ranges.set(range.pos, range.end);
+    for (const range of ts.getTrailingCommentRanges(text, node.getEnd()) ?? []) ranges.set(range.pos, range.end);
+    for (const child of node.getChildren(source)) visit(child);
+  };
+  visit(source);
+  for (const [pos] of ranges) {
+    if (jsxText.some(([start, end]) => pos >= start && pos < end)) ranges.delete(pos);
   }
-  return out;
+  let out = '';
+  let at = 0;
+  for (const [pos, end] of [...ranges].sort(([a], [b]) => a - b)) {
+    if (pos < at) continue;
+    out += text.slice(at, pos);
+    at = end;
+  }
+  return out + text.slice(at);
+}
+
+/** A text that reaches a query method: `.query`, or a `['query']` key. */
+const QUERY_IN_TEXT = /\.\s*query\b|\[\s*['"`]query['"`]\s*\]/g;
+
+/**
+ * Every place a file takes a module at runtime: `import(…)`, `require(…)`,
+ * `createRequire`, code built at runtime and the module methods on
+ * `process`.
+ *
+ * The barrel sweep below reads import declarations, and a dynamic import of
+ * the barrel took a write outside the entry point with nothing to see it.
+ * The console imports nothing at runtime, so any such import is refused.
+ *
+ * This catches a mistake written in ordinary code. Code written to evade a
+ * source sweep can always find a spelling it does not list. The console
+ * writes the ledger by design, so the barrier against that is the database
+ * role the console connects as, not this sweep.
+ */
+function dynamicImports(text: string, file: string): string[] {
+  const source = tree(file, text);
+  if (source === null || /\.json$/.test(file)) return [];
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+      || (ts.isIdentifier(node.expression) && ['require', 'createRequire'].includes(node.expression.text)))) {
+      found.push(node.getText(source));
+    }
+    // A module also loads through code built at runtime, `eval` and
+    // `Function`, and through the methods on `process` that hand out a
+    // module or a native binding. The console uses none of them.
+    if (ts.isIdentifier(node) && ['eval', 'Function'].includes(node.text)
+      && !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)) {
+      found.push(node.parent.getText(source));
+    }
+    if (ts.isPropertyAccessExpression(node) && ['getBuiltinModule', 'binding', 'dlopen'].includes(node.name.text)) {
+      found.push(node.getText(source));
+    }
+    // `createRequire` makes a `require` under any name, so the module that
+    // offers it is refused wherever it is imported.
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)
+      && ['module', 'node:module'].includes(node.moduleSpecifier.text)) {
+      found.push(node.getText(source));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+/**
+ * Every place a file reaches a query method: `pool.query`, or
+ * `pool['query']`, which reaches the ledger exactly as the dot does.
+ *
+ * In code, any use counts, not only a call: `pool.query.bind(pool)` hands the
+ * method on, and a call through it is still a statement. So does a
+ * destructure, `const { query: run } = pool`, and `Reflect.get(pool,
+ * 'query')`. Read from the tree, so a mention in a comment is none, and one
+ * after a string or a comment is still one.
+ *
+ * A string that holds code reaching the method counts as well. `new
+ * Function('p', "return p.query(…)")` and a child process started with
+ * `node -e` run the code a string holds, so the text of every literal is read
+ * as the text of a `package.json` script is.
+ *
+ * A file with no tree, and the JSON beside the code, is read as text with its
+ * comments removed. A `package.json` script holds code in a string, and a
+ * `db:*` script that queried the pool is the second write path this rule
+ * forbids.
+ *
+ * A key must come from somewhere. `pool[METHOD](…)` with `METHOD = 'query'`
+ * holds the name in a literal, so the literal `'query'` counts wherever it
+ * stands, and a key read from a variable that holds it counts too. A key
+ * assembled at runtime from pieces, `'qu' + 'ery'`, spells no name, and no
+ * reader of the source can say what it reaches. The console writes the
+ * ledger by design, so no read-only transaction stands behind this rule, and
+ * that one spelling is outside what it can see.
+ */
+function queryCalls(text: string, file: string): number[] {
+  const source = tree(file, text);
+  if (source === null || /\.json$/.test(file)) {
+    const bare = stripComments(text, file);
+    return [...bare.matchAll(QUERY_IN_TEXT)].map((match) => match.index);
+  }
+  const keyText = (node: ts.Node | undefined): string | null =>
+    node !== undefined && (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
+      ? node.text
+      : null;
+  const found: number[] = [];
+  const visit = (node: ts.Node): void => {
+    const byName = ts.isPropertyAccessExpression(node) && node.name.text === 'query';
+    const byKey = ts.isElementAccessExpression(node)
+      && !ts.isIdentifier(node.argumentExpression) && keyText(node.argumentExpression) === 'query';
+    const byBinding = ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)
+      && keyText(node.propertyName ?? node.name) === 'query';
+    const byReflect = ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+      && node.expression.name.text === 'get' && ts.isIdentifier(node.expression.expression)
+      && node.expression.expression.text === 'Reflect' && node.arguments.length >= 2
+      && !ts.isIdentifier(node.arguments[1]!) && keyText(node.arguments[1]) === 'query';
+    // The literal is a key already counted when it keys an access, a
+    // `Reflect.get` or a destructure; anywhere else it is a name held for one.
+    const keys = (literal: ts.Node): boolean => {
+      const parent = literal.parent;
+      return (ts.isElementAccessExpression(parent) && parent.argumentExpression === literal)
+        || (ts.isBindingElement(parent) && parent.propertyName === literal)
+        || (ts.isCallExpression(parent) && parent.arguments[1] === literal && ts.isPropertyAccessExpression(parent.expression)
+          && parent.expression.name.text === 'get');
+    };
+    const inText = (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
+      && ([...node.text.matchAll(QUERY_IN_TEXT)].length > 0 || (node.text === 'query' && !keys(node)));
+    const inTemplate = ts.isTemplateExpression(node) && [...node.getText(source).matchAll(QUERY_IN_TEXT)].length > 0;
+    if (byName || byKey || byBinding || byReflect || inText || inTemplate) found.push(node.getStart(source));
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
 }
 
 // From the package root, not from `src`. The docstring above and
@@ -392,12 +535,28 @@ describe('the console against a live database', () => {
   // there goes unread.
   it('keeps a statement written after a URL on the same line', () => {
     const line = `const u = 'http://console.invalid'; const q = 'SELECT 1';`;
-    expect(stripComments(line)).toContain('SELECT 1');
+    expect(stripComments(line, 'm.ts')).toContain('SELECT 1');
+  });
+
+  // Issue #146. A quote inside a regular expression shifted the pairing of
+  // quotes, so the `//` of a later URL read as a comment and blanked the rest
+  // of the line.
+  it('keeps a statement written after a regular expression holding a quote', () => {
+    const line = `const r = /"/; const u = "http://console.invalid"; const q = 'SELECT 1';`;
+    expect(stripComments(line, 'm.ts')).toContain('SELECT 1');
   });
 
   it('still removes a comment, of either kind', () => {
-    expect(stripComments('const a = 1; // SELECT 1\n')).not.toContain('SELECT');
-    expect(stripComments('const a = /* SELECT 1 */ 1;')).not.toContain('SELECT');
+    expect(stripComments('const a = 1; // SELECT 1\n', 'm.ts')).not.toContain('SELECT');
+    expect(stripComments('const a = /* SELECT 1 */ 1;', 'm.ts')).not.toContain('SELECT');
+    // A comment in a tsconfig file, which is JSON with comments.
+    expect(stripComments('{ /* SELECT 1 */ "a": 1 // SELECT 1\n}', 'tsconfig.json')).not.toContain('SELECT');
+    expect(stripComments('{ "a": "SELECT 1" }', 'tsconfig.json')).toContain('SELECT 1');
+  });
+
+  it('keeps a statement written after a string that holds an apostrophe', () => {
+    expect(stripComments(`const a = "it's"; const u = 'http://console.invalid'; const q = 'SELECT 1';`, 'm.ts'))
+      .toContain('SELECT 1');
   });
 
   // Every statement-shaped keyword, not only the writing ones. A SELECT here
@@ -405,7 +564,7 @@ describe('the console against a live database', () => {
   it('names no SQL statement of its own, of any kind', () => {
     const offenders: string[] = [];
     for (const file of MODULES) {
-      const source = stripComments(readFileSync(file, 'utf8'));
+      const source = stripComments(readFileSync(file, 'utf8'), file);
       for (const keyword of statementKeywords(source)) {
         offenders.push(`${relative(PACKAGE_ROOT, file)} names ${keyword}`);
       }
@@ -438,16 +597,60 @@ describe('the console against a live database', () => {
   it('never calls pool.query, so it cannot issue a statement at all', () => {
     const offenders: string[] = [];
     for (const file of MODULES) {
-      const source = stripComments(readFileSync(file, 'utf8'));
-      // Both spellings. `pool['query'](…)` reaches the ledger exactly as
-      // `pool.query(…)` does, and a dot-only pattern would miss it.
-      for (const pattern of [/\.query\s*\(/g, /\[\s*['"`]query['"`]\s*\]/g]) {
-        for (const match of source.matchAll(pattern)) {
-          offenders.push(`${relative(PACKAGE_ROOT, file)} reaches query at ${match.index}`);
-        }
+      for (const at of queryCalls(readFileSync(file, 'utf8'), file)) {
+        offenders.push(`${relative(PACKAGE_ROOT, file)} reaches query at ${at}`);
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  // Both spellings reach the ledger, and neither hides behind a string or a
+  // comment, before it or around it (issue #146).
+  it('reads a query method handed on, and one a package script reaches', () => {
+    expect(queryCalls("const run = pool['query'].bind(pool);", 'm.ts')).toHaveLength(1);
+    expect(queryCalls('const run = pool.query.bind(pool);', 'm.ts')).toHaveLength(1);
+    expect(queryCalls("const { query: run } = pool; await run('upd' + 'ate run set x = 1');", 'm.ts')).toHaveLength(1);
+    expect(queryCalls("const { 'query': run } = pool;", 'm.ts')).toHaveLength(1);
+    expect(queryCalls("const run = Reflect.get(pool, 'query');", 'm.ts')).toHaveLength(1);
+    // Code held in a string runs as surely as code in the tree.
+    expect(queryCalls(`const f = new Function('p', "return p.query('DEL' + 'ETE FROM run')");`, 'm.ts')).toHaveLength(1);
+    expect(queryCalls(`export const c = ['node', '-e', "import('x').then((m) => m.pool.query(q))"];`, 'm.ts'))
+      .toHaveLength(1);
+    expect(queryCalls('{ "scripts": { "db:x": "node -e \\"m.pool.query(q)\\"" } }', 'package.json')).toHaveLength(1);
+    expect(queryCalls('{ /* pool.query(q) */ "a": 1 }', 'tsconfig.json')).toHaveLength(0);
+  });
+
+  it('reads a query call in every spelling, and none in a comment', () => {
+    expect(queryCalls("await pool.query('SELECT 1');", 'm.ts')).toHaveLength(1);
+    expect(queryCalls("await pool['query']('SELECT 1');", 'm.ts')).toHaveLength(1);
+    expect(queryCalls('const r = /"/; const u = "http://console.invalid"; await pool.query(q);', 'm.ts')).toHaveLength(1);
+    expect(queryCalls(`const a = "it's"; await pool.query(q); const b = 'x';`, 'm.ts')).toHaveLength(1);
+    expect(queryCalls('// pool.query(q)\n/* pool.query(q) */ const query = 1;', 'm.ts')).toHaveLength(0);
+  });
+
+  it('reads a key held in a constant, and takes no module at runtime', () => {
+    expect(queryCalls("const METHOD = 'query'; await pool[METHOD]('upd' + 'ate run set x = 1');", 'm.ts').length)
+      .toBeGreaterThan(0);
+    expect(queryCalls('const METHOD = `query`; const run = Reflect.get(pool, METHOD);', 'm.ts').length).toBeGreaterThan(0);
+    expect(dynamicImports("const ledger = await import('auracle/ledger-read');", 'm.ts')).toHaveLength(1);
+    expect(dynamicImports("const m = require('auracle/ledger-read');", 'm.ts')).toHaveLength(1);
+    expect(dynamicImports("import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); load('auracle/ledger-read');", 'm.ts'))
+      .toHaveLength(2);
+    expect(dynamicImports("const load = process.getBuiltinModule('node:module').createRequire(import.meta.url);", 'm.ts'))
+      .toHaveLength(1);
+    expect(dynamicImports("const m = (0, eval)(\"import('auracle/ledger-read')\");", 'm.ts')).toHaveLength(1);
+    expect(dynamicImports("const m = new Function(\"return import('auracle/ledger-read')\");", 'm.ts')).toHaveLength(1);
+  });
+
+  it('takes no module at runtime, so no write escapes the barrel sweep', () => {
+    const offenders = MODULES.flatMap((file) => dynamicImports(readFileSync(file, 'utf8'), file)
+      .map((text) => `${relative(PACKAGE_ROOT, file)}: ${text}`));
+    expect(offenders).toEqual([]);
+  });
+
+  it('refuses a file the parser cannot read', () => {
+    expect(() => queryCalls("const q = 'SELECT 1;\nf(a);", 'm.ts')).toThrow(/m\.ts does not parse/);
+    expect(() => queryCalls('{ "a": ', 'tsconfig.json')).toThrow(/tsconfig\.json does not parse/);
   });
 
   // DEC-46, criterion 11. Every write is named above, and the sweep is what

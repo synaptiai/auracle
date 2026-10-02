@@ -16,6 +16,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { boundedReads, parseSource, queryStatements } from '../test-support/source-reader.js';
+
 const REPO_ROOT = new URL('../../', import.meta.url).pathname;
 /** This suite states the stale phrase, so it must not scan itself. */
 const SELF = new URL(import.meta.url).pathname;
@@ -27,6 +29,12 @@ function shippedFiles(dir: string, acc: string[] = []): string[] {
     else if (/\.(ts|md|sql)$/.test(entry)) acc.push(path);
   }
   return acc;
+}
+
+/** The text of every statement the calls pass, with SQL comments of both kinds removed. */
+function statementText(calls: ReadonlyArray<{ readonly statement: string | null }>): string {
+  return calls.map((call) => (call.statement ?? '').replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, ' '))
+    .join('\n');
 }
 
 describe('the register on the run-timing columns', () => {
@@ -47,18 +55,39 @@ describe('the register on the run-timing columns', () => {
   // columns in prose and selected something else would satisfy the case above
   // while leaving the loop exactly as open as it was.
   it('reads the three columns the migration added', () => {
-    // Both comment syntaxes blanked, in this order. The file's prose names all
-    // three columns, in JavaScript comments around the statement and in SQL
-    // comments inside it. Stripping only the JavaScript ones still left
+    // The statements alone: what each `query` call passes, read from the tree,
+    // with SQL comments removed. The file's prose names all three columns, in
+    // JavaScript comments around the statement, in SQL comments inside it and
+    // in message strings. Stripping only the JavaScript comments still left
     // `-- db/005: queue wait = created_at - enqueued_at` behind, so the case
     // stayed green with the statement gutted to `SELECT partition` — which is
     // precisely the reader it exists to forbid. Falsified by that mutation.
-    const code = readFileSync(`${REPO_ROOT}src/latency/query.ts`, 'utf8')
-      .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')
-      .replace(/--[^\n]*/g, '');
+    // A column named only in a message string passes nothing either, and a
+    // `//` in a literal no longer blanks the rest of its line (issue #146).
+    // The statements the report sends, from its read-only path. It sends one.
+    const calls = boundedReads(`${REPO_ROOT}src/latency/query.ts`).statements;
+    expect(calls.length, 'the latency reader sends a different number of statements').toBe(1);
+    expect(calls.map((call) => call.statement), 'a statement the scan cannot read').not.toContain(null);
+    const code = statementText(calls);
     for (const column of ['enqueued_at', 'created_at', 'finished_at']) {
       expect(code, `the latency reader never reads ${column}`).toContain(column);
     }
+  });
+
+  // The reader of the case above, on the shapes that blinded the old one. A
+  // column counts only when a statement reads it: not in a message string,
+  // not in a SQL comment of either kind, and not lost after a URL or a quote
+  // inside a regular expression on the same line.
+  it('reads a column only where a statement reads it', () => {
+    const columns = (text: string): string => statementText(queryStatements(parseSource('query.ts', text)));
+    const read = columns([
+      `const r = /"/; const u = 'https://example.test'; await pool.query('SELECT enqueued_at FROM run');`,
+      "throw new Error('created_at is missing');",
+      "await pool.query('SELECT partition /* finished_at */ FROM run -- created_at\\n');",
+    ].join('\n'));
+    expect(read).toContain('enqueued_at');
+    expect(read).not.toContain('finished_at');
+    expect(read).not.toContain('created_at');
   });
 
   // The open item asks for the data a correction needs, not for a correction.

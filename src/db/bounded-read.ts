@@ -9,6 +9,14 @@ import type { Pool, QueryConfig, QueryResultRow } from 'pg';
 /** The longest delay a Node timer keeps; a longer one fires after 1 ms. */
 const MAX_TIMER_MS = 2_147_483_647;
 
+/**
+ * A statement that starts as a read. Inside a transaction block, no such
+ * statement can end the transaction, and an extended query holds one
+ * statement. A leading comment is refused as well, which is the safe way to
+ * be wrong.
+ */
+const READ_STATEMENT = /^\s*(?:\(|(?:select|with|values|table)\b)/i;
+
 /** The message node-pg gives a query that outlasted its `query_timeout`. */
 const CLIENT_TIMEOUT = 'Query read timeout';
 
@@ -31,9 +39,15 @@ export type BoundedQuery = <R extends QueryResultRow>(
  * A statement that outlasts it fails, and its connection is destroyed rather
  * than returned, so neither a dead socket nor a long read keeps a pool slot.
  * Time `read` spends between statements is the server's idle bound's. The
- * COMMIT or the ROLLBACK that ends the read gets one more whole bound, so a
- * read that finished, or failed, just before the deadline still hands back a
- * clean session, and the read holds the connection twice the bound at most.
+ * end of the read — its COMMIT or ROLLBACK, and the discard of the session's
+ * state after it — shares one more whole bound. So a read that finished, or
+ * failed, just before the deadline still hands back a clean session, and the
+ * read holds the connection twice the bound at most.
+ *
+ * The read may send only a statement that starts as a read: SELECT, WITH,
+ * VALUES, TABLE or a parenthesis. Any other is refused before it is sent. A
+ * read that sent `COMMIT` as a statement of its own ended the transaction,
+ * and every statement after it ran outside READ ONLY and committed.
  * Nothing here bounds the wait for a connection from the pool. That bound is
  * the pool's own.
  *
@@ -82,18 +96,52 @@ export async function boundedRead<T>(
   // `query_timeout` is an option node-pg reads on each query, and its type
   // declarations leave it off `QueryConfig`, so it is added here. Each
   // statement gets what is left of the read's deadline, and at least 1 ms, so
-  // a statement issued after the deadline times out at once. The COMMIT and
-  // the ROLLBACK get the whole bound, so a read that ends near the deadline
-  // can still hand back a clean session.
-  const bounded = (text: string, values?: unknown[], whole = false): QueryConfig => {
-    const left = whole ? bound : Math.max(1, deadline - Date.now());
-    const config: QueryConfig & { readonly query_timeout: number } = {
-      text, query_timeout: left, ...(values === undefined ? {} : { values }),
+  // a statement issued after the deadline times out at once. The end of the
+  // read shares one whole bound from the moment it starts, so a read that
+  // ends near the deadline can still hand back a clean session.
+  //
+  // `queryMode` is the same kind of option. node-pg sends a statement with no
+  // values as a simple query, and Postgres runs every statement a simple
+  // query holds. So `SELECT 1; COMMIT; INSERT …` ended the READ ONLY
+  // transaction, and the INSERT committed on its own. An extended query holds
+  // exactly one statement, and the server refuses a second.
+  let endBy: number | undefined;
+  const bounded = (text: string, values?: unknown[], ending = false): QueryConfig => {
+    if (ending) endBy ??= Date.now() + bound;
+    const left = Math.max(1, (ending ? endBy! : deadline) - Date.now());
+    const config: QueryConfig & { readonly query_timeout: number; readonly queryMode: 'extended' } = {
+      text, query_timeout: left, queryMode: 'extended', ...(values === undefined ? {} : { values }),
     };
     return config;
   };
-  const query: BoundedQuery = async <R extends QueryResultRow>(text: string, values?: unknown[]) =>
-    (await client.query<R>(bounded(text, values))).rows;
+  // READ ONLY refuses a write to a table, and nothing that changes the
+  // session. A setting made for the session, an advisory lock, a prepared
+  // statement and a LISTEN each outlived the read on the connection the pool
+  // handed out next, and the console writes on that pool. So each read ends
+  // by discarding the session's state. A connection whose state cannot be
+  // discarded is destroyed rather than returned.
+  const discard = async (): Promise<boolean> => {
+    try {
+      await client.query(bounded('DISCARD ALL', undefined, true));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  // Whether the read has started to end. The statement function outlives the
+  // read: a chain that swallowed the read's failure, or a reference kept past
+  // its return, sent a statement after the ROLLBACK or inside the next
+  // caller's transaction, and a data-modifying WITH committed. So the flag is
+  // set before the end's first await, and every statement after it is
+  // refused.
+  let ended = false;
+  const query: BoundedQuery = async <R extends QueryResultRow>(text: string, values?: unknown[]) => {
+    if (ended) throw new Error(`${name}: refuses a statement after its read ended`);
+    if (!READ_STATEMENT.test(text)) {
+      throw new Error(`${name}: refuses a statement that is not a read: ${text.trimStart().slice(0, 40)}`);
+    }
+    return (await client.query<R>(bounded(text, values))).rows;
+  };
   // The server's reason, when the client errored before the query did. Read
   // from `early`, the error held when the failure reached the catch: one the
   // client emits later, while a rollback waits, is a consequence of the
@@ -121,9 +169,11 @@ export async function boundedRead<T>(
       [String(Math.trunc(timeoutMs))],
     ));
     result = await read(query);
+    ended = true;
     committing = true;
     await client.query(bounded('COMMIT', undefined, true));
   } catch (error) {
+    ended = true;
     early = cause;
     // The client gave up waiting. The connection may be dead or still busy,
     // and either way it is not one to hand back. A COMMIT that failed is the
@@ -141,9 +191,11 @@ export async function boundedRead<T>(
       release(true);
       throw reasoned(error);
     }
-    release(false);
+    release(!(await discard()));
     throw reasoned(error);
   }
-  release(false);
+  // The read succeeded, so its result stands whether or not the session's
+  // state could be discarded. Only the connection's fate depends on that.
+  release(!(await discard()));
   return result;
 }

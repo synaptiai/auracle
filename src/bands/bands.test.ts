@@ -19,6 +19,9 @@ import { validateBandsArtifact, writeBandsArtifact } from './artifact.js';
 import { bandLine, parseDay } from './run.js';
 import { humanValue } from './format.js';
 import { lastCompleteDay } from '../time/day.js';
+import ts from 'typescript';
+
+import { nodesOf, parseSource, withoutComments } from '../test-support/source-reader.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -693,20 +696,37 @@ const READ_ONLY_MODULES = readdirSync(join(REPO_ROOT, 'src/bands'))
   .map((name) => `src/bands/${name}`);
 
 /**
- * Source with comments blanked, so prose about writing never trips the scan.
+ * Source with comments removed, so prose about writing never trips the scan.
+ *
+ * The compiler finds the JavaScript comments. A pattern that cut at every
+ * `//` erased the rest of a line holding a URL, and a statement written there
+ * went unread (issue #146).
  *
  * SQL comments are stripped too, because a column name survives inside one and
  * an earlier guard of this shape passed its own mutation twice. Only a line
  * that is entirely a SQL comment is removed: blanking from any `--` onward
  * also blanked the rest of `args.indexOf('--day')`, which hid every statement
- * written after it on that line.
+ * written after it on that line. And only inside a literal, where SQL lives.
+ * A line of code that starts with `--` is a decrement, and blanking it hid a
+ * statement written after it.
  */
+function codeOfText(text: string, file: string): string {
+  let out = text;
+  for (const node of nodesOf(parseSource(file, text))) {
+    if (!(ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node)
+      || ts.isTemplateMiddle(node) || ts.isTemplateTail(node))) continue;
+    const start = node.getStart();
+    const end = node.getEnd();
+    // Blanked in place, so every position after it stays where it was.
+    const blanked = out.slice(start, end)
+      .replace(/(\n)([ \t]*--[^\n]*)/g, (_whole, lead: string, line: string) => lead + ' '.repeat(line.length));
+    out = out.slice(0, start) + blanked + out.slice(end);
+  }
+  return withoutComments(out, file);
+}
+
 function codeOf(relative: string): string {
-  return readFileSync(join(REPO_ROOT, relative), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')
-    .split('\n')
-    .map((line) => (line.trimStart().startsWith('--') ? '' : line))
-    .join('\n');
+  return codeOfText(readFileSync(join(REPO_ROOT, relative), 'utf8'), relative);
 }
 
 describe('the bands command never writes', () => {
@@ -720,6 +740,18 @@ describe('the bands command never writes', () => {
         new RegExp(`\\b${verb}\\b`, 'i'),
       );
     }
+  });
+
+  // The shapes that blinded the pattern this reader replaced (issue #146).
+  it('reads a statement written after a URL, and none in a comment', () => {
+    expect(codeOfText(`const u = 'http://x'; const w = 'DELETE FROM run';`, 'm.ts')).toContain('DELETE FROM run');
+    expect(codeOfText(`const r = /"/; const u = "http://x"; const w = 'DELETE FROM run';`, 'm.ts'))
+      .toContain('DELETE FROM run');
+    expect(codeOfText('// DELETE FROM run\n/* DELETE FROM run */ const a = 1;', 'm.ts')).not.toContain('DELETE');
+    // A SQL comment inside a statement goes; a decrement in code stays, and so
+    // does the statement after it.
+    expect(codeOfText('const q = `SELECT 1\n  -- DELETE FROM run\n`;', 'm.ts')).not.toContain('DELETE');
+    expect(codeOfText("--n; await pool.query('UPDATE run SET x = 1');", 'm.ts')).toContain('UPDATE run');
   });
 
   // A positive control for each scanned module, not just the one holding SQL.

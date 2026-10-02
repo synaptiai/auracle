@@ -15,8 +15,18 @@ import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_CHAT_MODEL_VER } from './env.js';
 import { isFrozenRecord } from '../test-support/frozen-records.js';
+import { constantText, memberReaches, nodesOf, parseSource } from '../test-support/source-reader.js';
 
 const REPO_ROOT = new URL('../../', import.meta.url).pathname;
+
+/**
+ * The counts the two scans must find: the model call sites and the pinned
+ * defaults the tree holds today. A reader that lost one would pass a floor
+ * while a new site stood in for it, so each count is exact. A new site or
+ * default changes it here, on purpose.
+ */
+const MODEL_CALL_SITES = 6;
+const PINNED_DEFAULTS = 5;
 
 /**
  * Every shipped source and document.
@@ -50,27 +60,152 @@ function shipped(): string[] {
 }
 
 /**
- * Blanks the comments in a source file, and optionally its string literals,
- * in one pass so whichever construct opens first wins. Stripping comments in a
- * pass of their own reads a `//` inside a string literal as a comment and
- * blanks the rest of that line — which can hide a declared escalation reason
- * or a stated answer budget and let a scan pass over the very thing it guards.
+ * Every call to a model's `complete` in a module, read from the tree, with the
+ * text of each whole call (issue #146).
  *
- * Lengths are preserved, so an index taken on the result addresses the same
- * character in the original.
+ * The scan used to blank comments and strings with one pattern, and then walk
+ * parentheses to find a call's end. A pattern has to guess where a string
+ * ends: a `//` inside a URL once blanked the stated budget after it, and a
+ * quote inside a regular expression would have shifted every string after
+ * it. The compiler reads the call whole, so neither a string nor a comment
+ * can hide one or pose as one, and a paren in a message is only text.
  */
-function blankNoise(src: string, options: { literals: boolean }): string {
-  return src.replace(
-    /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
-    (tok) => {
-      const isLiteral = /^['"`]/.test(tok);
-      if (isLiteral && !options.literals) return tok;
-      const blank = tok.replace(/[^\n]/g, ' ');
-      // A blanked literal keeps its quotes, so a scan reading a call body
-      // still sees an argument where one stood.
-      return isLiteral ? tok[0] + blank.slice(2) + tok[0] : blank;
-    },
-  );
+function completeCalls(
+  text: string,
+  file: string,
+): Array<{ text: string; statesBudget: boolean; passesThrough: boolean }> {
+  const source = parseSource(file, text);
+  // A budget is a property of that name on the call's own request: the
+  // object literal it passes first. A comment or a string that names it is
+  // not one. Nor is a key nested in another object, one inside a callback,
+  // or one set to `undefined`, which states no budget at all.
+  const statesBudget = (call: ts.CallExpression): boolean => {
+    const request = call.arguments[0];
+    if (request === undefined || !ts.isObjectLiteralExpression(request)) return false;
+    return request.properties.some((property) => {
+      if (!(ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property))) return false;
+      const key = property.name;
+      if (!((ts.isIdentifier(key) || ts.isStringLiteral(key)) && key.text === 'maxOutputTokens')) return false;
+      if (ts.isShorthandPropertyAssignment(property)) return true;
+      const value = property.initializer;
+      return !(ts.isIdentifier(value) && value.text === 'undefined') && !ts.isVoidExpression(value);
+    });
+  };
+  // The callee inside any wrapper that changes nothing: `m[METHOD]!(…)`.
+  const callee = (call: ts.CallExpression): ts.Expression => {
+    let at: ts.Expression = call.expression;
+    while (ts.isParenthesizedExpression(at) || ts.isNonNullExpression(at) || ts.isAsExpression(at)
+      || ts.isSatisfiesExpression(at)) at = at.expression;
+    return at;
+  };
+  return nodesOf(source)
+    .filter(ts.isCallExpression)
+    .filter((call) => {
+      const at = callee(call);
+      if (ts.isPropertyAccessExpression(at)) return at.name.text === 'complete';
+      // A key a constant holds names the method as a literal key does.
+      if (!ts.isElementAccessExpression(at)) return false;
+      const key = at.argumentExpression;
+      return (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key) ? key.text : constantText(key)) === 'complete';
+    })
+    .map((call) => ({
+      text: call.getText(source),
+      statesBudget: statesBudget(call),
+      // The meter forwards a call it was handed and states no budget of its
+      // own. The case below allows exactly that one site, in that module, and
+      // no other call that passes its argument through.
+      passesThrough: call.arguments.length === 1 && ts.isIdentifier(call.arguments[0]!)
+        && call.arguments[0].text === 'call',
+    }));
+}
+
+/**
+ * Every reach of a model's `complete` that does not call it: `bind`, `call`,
+ * a destructure, `Reflect.get`. Each hands the method on, and the call made
+ * through it states a budget no scan here reads.
+ */
+function completeHandedOn(text: string, file: string): string[] {
+  const source = parseSource(file, text);
+  return memberReaches(source, 'complete').filter(({ call }) => call === null).map(({ node }) => node.getText(source));
+}
+
+/** The one module that may forward a call it was handed: the step context's meter. */
+const METER_MODULE = 'src/coordinator/steps/context.ts';
+
+/**
+ * The node a literal stands for once the wrappers that change nothing are
+ * climbed: parentheses, `as`, `satisfies`, a type assertion, and either
+ * branch of a conditional, which picks one of two defaults.
+ */
+function standingFor(node: ts.Node): ts.Node {
+  let at = node;
+  for (;;) {
+    const parent = at.parent;
+    if (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent) || ts.isSatisfiesExpression(parent)
+      || ts.isTypeAssertionExpression(parent)) {
+      at = parent;
+    } else if (ts.isConditionalExpression(parent) && parent.condition !== at) {
+      at = parent;
+    } else {
+      return at;
+    }
+  }
+}
+
+/** The operators whose right side is a default: a fallback or an assignment. */
+const DEFAULTING = new Set([
+  ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken, ts.SyntaxKind.BarBarEqualsToken,
+]);
+
+/**
+ * Every model id `text` pins as a default, read from the tree (issue #146):
+ * a literal that is a fallback (`?? 'x'`), an assignment or an initializer,
+ * a property's value, or a returned value, in any quote. A literal that is an
+ * object key is none: a price or dimension table keys by model, and a key
+ * pins nothing. The pattern this replaced matched single quotes alone, so a
+ * double-quoted default was invisible.
+ */
+function pinnedDefaults(text: string, vendor: string, file: string): string[] {
+  const id = new RegExp(`^${vendor}/[a-z0-9.:-]+$`);
+  return nodesOf(parseSource(file, text))
+    .filter((node): node is ts.StringLiteral | ts.NoSubstitutionTemplateLiteral =>
+      (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && id.test(node.text))
+    .filter((literal) => {
+      // `'openai/a' as const`, `(x ? 'openai/a' : 'openai/b')` and a
+      // parenthesized literal each pin as surely as the bare literal.
+      const node = standingFor(literal);
+      const parent = node.parent;
+      if (ts.isBinaryExpression(parent)) return parent.right === node && DEFAULTING.has(parent.operatorToken.kind);
+      if (ts.isVariableDeclaration(parent) || ts.isParameter(parent) || ts.isPropertyDeclaration(parent)
+        || ts.isBindingElement(parent)) {
+        return parent.initializer === node;
+      }
+      if (ts.isPropertyAssignment(parent)) return parent.initializer === node;
+      if (ts.isShorthandPropertyAssignment(parent)) return parent.objectAssignmentInitializer === node;
+      if (ts.isArrowFunction(parent)) return parent.body === node;
+      return ts.isReturnStatement(parent);
+    })
+    .map((node) => node.text);
+}
+
+/**
+ * The members of a string-literal union type, and any member that is not a
+ * literal. A member that is a type reference would hide its reasons from a
+ * reader of the literals, so it is returned apart to be refused.
+ */
+function unionMembers(text: string, name: string): { literals: string[]; others: string[] } | null {
+  const alias = nodesOf(parseSource('types.ts', text)).find((node): node is ts.TypeAliasDeclaration =>
+    ts.isTypeAliasDeclaration(node) && node.name.text === name);
+  if (alias === undefined) return null;
+  const members = ts.isUnionTypeNode(alias.type) ? [...alias.type.types] : [alias.type];
+  const literals: string[] = [];
+  const others: string[] = [];
+  for (const member of members) {
+    if (ts.isLiteralTypeNode(member) && ts.isStringLiteral(member.literal)) literals.push(member.literal.text);
+    else others.push(member.getText());
+  }
+  return { literals, others };
 }
 
 describe('the answer budget every model call states', () => {
@@ -82,69 +217,97 @@ describe('the answer budget every model call states', () => {
     // newline before the closing paren.
     const sites = shipped()
       .filter((path) => path.endsWith('.ts') && !path.endsWith('.test.ts'))
-      .flatMap((path) => {
-        const src = readFileSync(path, 'utf8');
-        // Comments and string literals are both blanked before the walk. The
-        // walk counted a paren inside a message string, which ran the body
-        // past the call and absorbed a later call's budget. An unbalanced
-        // paren in a comment does the same, and blanking only the literals
-        // left that half of the bypass open: a budget line replaced by
-        // `// note (` hid the site and took the next call's budget as its own.
-        const scan = blankNoise(src, { literals: true });
-        return [...scan.matchAll(/\.complete\(/g)].map((m) => {
-          // Read to the matching paren so a one-line call is covered too.
-          let depth = 0;
-          let i = (m.index ?? 0) + '.complete('.length - 1;
-          do {
-            if (scan[i] === '(') depth++;
-            else if (scan[i] === ')') depth--;
-            i++;
-          } while (depth > 0 && i < scan.length);
-          return { path: path.slice(REPO_ROOT.length), body: src.slice(m.index ?? 0, i) };
-        });
-      })
-      // The meter forwards a call it was handed and states no budget of its
-      // own; it is the one site that legitimately passes its argument through.
-      .filter((site) => !/\.complete\(\s*call\s*\)/.test(site.body));
-    expect(sites.length).toBeGreaterThanOrEqual(5);
-    for (const site of sites) {
-      expect(site.body, `${site.path} calls a model with no answer budget`).toContain(
-        'maxOutputTokens',
-      );
+      .flatMap((path) => completeCalls(readFileSync(path, 'utf8'), path)
+        .map((call) => ({ path: path.slice(REPO_ROOT.length), ...call })));
+    expect(sites.length).toBe(MODEL_CALL_SITES);
+    const forwarded = sites.filter((site) => site.passesThrough);
+    expect(forwarded.map((site) => site.path), 'a call forwarded without a budget, outside the meter')
+      .toEqual([METER_MODULE]);
+    for (const site of sites.filter((s) => !s.passesThrough)) {
+      expect(site.statesBudget, `${site.path} calls a model with no answer budget: ${site.text}`).toBe(true);
     }
+    const handedOn = shipped()
+      .filter((path) => path.endsWith('.ts') && !path.endsWith('.test.ts'))
+      .flatMap((path) => completeHandedOn(readFileSync(path, 'utf8'), path).map((text) => `${path.slice(REPO_ROOT.length)}: ${text}`));
+    expect(handedOn, 'a model call handed on, whose budget no scan reads').toEqual([]);
   });
 });
 
-describe('the scan that blanks a source file before reading it', () => {
-  it('does not let a comment marker inside a string swallow the code after it', () => {
-    // The sharp case, and the reason both scans share one pass. Stripping
-    // block comments in a pass of their own starts at the `/*` inside this
-    // string and runs to the next `*/` anywhere later in the file, which can
-    // remove a whole declaration and let a scan pass over what it guards.
-    const src = [
-      "const note = 'see /* the docs';",
-      "export type EscalationReason = 'limit_cost' | 'gate_blocked';",
-      '/* an ordinary block comment */',
+describe('the readers the two scans use', () => {
+  it('reads every complete call whole, and none in a string or a comment', () => {
+    const text = [
+      "const r = /\"/; const u = \"https://x\"; await m.complete({ maxOutputTokens: 1024 });",
+      "const a = \"it's\"; await m.complete({ note: 'see /* the docs (', maxOutputTokens: 256 });",
+      "// await m.complete({})",
+      "const s = 'await m.complete({})';",
+      "await meter.complete(call);",
     ].join('\n');
-
-    const bare = blankNoise(src, { literals: false });
-    expect(bare).toContain("'limit_cost'");
-    expect(bare).toContain("'gate_blocked'");
-    // The ordinary comment is still gone, so the blanking did happen.
-    expect(bare).not.toContain('an ordinary block comment');
-    // Lengths are preserved, so an index taken here addresses the original.
-    expect(bare.length).toBe(src.length);
+    const calls = completeCalls(text, 'm.ts');
+    expect(calls.map((call) => [call.statesBudget, call.passesThrough])).toEqual([[true, false], [true, false], [false, true]]);
   });
 
-  it('does not read a comment marker inside a string as a comment', () => {
-    // A `//` in a URL blanked the rest of its line. Where that line also
-    // carried a stated answer budget, the budget went missing and the guard
-    // reported a call site that states one as a call site that does not.
-    const src = "await m.complete({ url: 'https://x', maxOutputTokens: 1024 });";
-    const scan = blankNoise(src, { literals: true });
-    expect(scan).toContain('maxOutputTokens');
-    expect(scan).not.toContain('https');
-    expect(scan.length).toBe(src.length);
+  it('reads a model call handed on rather than made', () => {
+    expect(completeHandedOn([
+      'const run = deps.provider.complete.bind(deps.provider);',
+      'await deps.provider.complete.call(deps.provider, { prompt });',
+      'const { complete } = deps.provider;',
+      "const METHOD = 'complete'; const c = Reflect.get(deps.provider, METHOD);",
+      'await deps.provider.complete({ prompt, maxOutputTokens: 1 });',
+    ].join('\n'), 'm.ts')).toEqual([
+      'deps.provider.complete', 'deps.provider.complete', 'complete', 'Reflect.get(deps.provider, METHOD)',
+    ]);
+  });
+
+  it('reads a budget named only in a comment or a string as no budget', () => {
+    const calls = completeCalls([
+      "await m.complete({ /* maxOutputTokens: 1024 */ prompt });",
+      "await m.complete({ note: 'maxOutputTokens: 1024' });",
+      "await m.complete(request);",
+      "await m['complete']({ prompt });",
+      "const METHOD = 'complete'; await m[METHOD]({ prompt });",
+      "const METHOD = 'complete'; await m[METHOD]!({ prompt });",
+      'await m.complete({ meta: { maxOutputTokens: 1024 }, prompt });',
+      'await m.complete({ prompt, parse: () => ({ maxOutputTokens: 1024 }) });',
+      'await m.complete({ prompt, maxOutputTokens: undefined });',
+    ].join('\n'), 'm.ts');
+    expect(calls.map((call) => call.statesBudget)).toEqual([false, false, false, false, false, false, false, false, false]);
+  });
+
+  it('reads a pinned default in any quote, and no model id that is a key', () => {
+    const vendor = '(?:openai|z-ai)';
+    expect(pinnedDefaults([
+      "const a = process.env['X'] ?? 'openai/one';",
+      'const b = process.env["Y"] ?? "openai/two";',
+      "const c = { model: `z-ai/three` };",
+      "function d() { return 'openai/four'; }",
+      "const prices = { 'openai/key': 1 };",
+      "// const e = 'openai/comment';",
+      "export const f = 'openai/as' as const;",
+      "const g = fast ? 'openai/then' : 'openai/else';",
+      "const { model = 'openai/binding' } = opts;",
+      "const h = x ?? ('openai/paren');",
+      "const i = x || 'openai/or';",
+      "m ??= 'openai/assign';",
+      "const j = () => 'openai/arrow';",
+      "if (model === 'openai/compared') f();",
+    ].join('\n'), vendor, 'm.ts')).toEqual([
+      'openai/one', 'openai/two', 'z-ai/three', 'openai/four', 'openai/as', 'openai/then', 'openai/else',
+      'openai/binding', 'openai/paren', 'openai/or', 'openai/assign', 'openai/arrow',
+    ]);
+  });
+
+  it('reads a union\'s members, and refuses one that is not a literal', () => {
+    const text = [
+      "const note = 'see /* the docs';",
+      '/** A doc comment; with a semicolon. */',
+      "export type EscalationReason =",
+      "  | 'limit_cost' // a note; with a semicolon",
+      "  | 'gate_blocked'",
+      '  | HelperReasons;',
+    ].join('\n');
+    expect(unionMembers(text, 'EscalationReason')).toEqual({
+      literals: ['limit_cost', 'gate_blocked'], others: ['HelperReasons'],
+    });
   });
 });
 
@@ -219,28 +382,17 @@ describe('the escalation reasons the runbook explains', () => {
     // reads the directory rather than one file. A step added there with a
     // reason of its own is seen; a scan pinned to `coordinator.ts` would
     // have silently stopped seeing any of them.
-    const source = readFileSync(join(REPO_ROOT, 'src/coordinator/types.ts'), 'utf8');
-    // The declaration, read to its terminating semicolon rather than to the
-    // next export. A member written without a leading pipe was invisible to a
-    // pipe-anchored scan, and a member contributed after the old end marker
-    // fell outside the slice entirely; both passed silently.
-    // Comments are blanked first. A semicolon inside a member's doc comment
-    // truncated the slice and hid every member after it, which is the same
-    // silent pass this scan was rewritten to close — and semicolons in prose
-    // comments are idiomatic in this tree. The literals stay: the reasons are
-    // read out of them. Blanking them in a pass of their own read a `//`
-    // inside a string as a comment and took the rest of that line with it.
-    const bare = blankNoise(source, { literals: false });
-    const start = bare.indexOf('export type EscalationReason');
-    expect(start).toBeGreaterThan(-1);
-    const declaration = bare.slice(start, bare.indexOf(';', start));
-    const declared = [...declaration.matchAll(/'([a-z_]+)'/g)].map((m) => m[1] as string);
+    // The declaration, read from the tree. A member written without a leading
+    // pipe was invisible to a pipe-anchored scan, a member after the old end
+    // marker fell outside the slice, and a semicolon in a doc comment
+    // truncated it; each passed silently. The compiler reads the union whole,
+    // and a comment in it is trivia (issue #146).
+    const union = unionMembers(readFileSync(join(REPO_ROOT, 'src/coordinator/types.ts'), 'utf8'), 'EscalationReason');
+    expect(union, 'the EscalationReason declaration was not found').not.toBeNull();
+    const declared = union!.literals;
     // A member that is a type reference rather than a literal would hide its
     // reasons from this scan, so refuse one rather than pass over it.
-    const referenced = declaration
-      .replace(/'[a-z_]+'/g, '')
-      .match(/\|\s*([A-Z][A-Za-z0-9_]*)/g);
-    expect(referenced, 'a reason contributed by a helper union cannot be read here').toBe(null);
+    expect(union!.others, 'a reason contributed by a helper union cannot be read here').toEqual([]);
     // Plus every reason actually escalated with a literal, so one escalated
     // and never declared is caught too.
     // Every literal inside the call's own parentheses, so a reason chosen by
@@ -309,12 +461,10 @@ describe('the default chat model pin', () => {
     const vendor = '(?:openai|z-ai|anthropic|nvidia|google|meta-llama|mistralai|deepseek|qwen|x-ai)';
     // `return` counts too: a default handed back from a function is still a
     // default, and an anchor of assignment alone could not see one.
-    const asDefault = new RegExp(`(?:\\?\\?|=|:|\\breturn)\\s*'(${vendor}/[a-z0-9.:-]+)'`, 'g');
     const defaults = shipped()
       .filter((path) => path.endsWith('.ts') && !path.endsWith('.test.ts'))
-      .flatMap((path) => [...readFileSync(path, 'utf8').matchAll(asDefault)]
-        .map((m) => m[1] as string));
-    expect(defaults.length).toBeGreaterThan(0);
+      .flatMap((path) => pinnedDefaults(readFileSync(path, 'utf8'), vendor, path));
+    expect(defaults.length).toBe(PINNED_DEFAULTS);
     for (const id of new Set(defaults)) {
       expect(runbook, `${id} is pinned in source and named nowhere in the runbook`).toContain(id);
     }

@@ -17,10 +17,18 @@
  * test, while the shipping path compared in SQL. The two disagreed, and the
  * test of the unused one is where that hid.
  *
- * Every statement is a SELECT. The module never writes, so it is safe to run
- * against a live database.
+ * Every statement is a SELECT, and each read runs in one READ ONLY
+ * transaction through `boundedRead`. The module never writes, and the
+ * database refuses a write if one is ever added, so it is safe to run
+ * against a live database. The console runs these reads on page loads, so
+ * each statement runs under a timeout and each read under a client deadline.
  */
 import type { Pool } from 'pg';
+
+import { boundedRead } from '../db/bounded-read.js';
+
+/** The bound on each statement of a read, in milliseconds. */
+export const DOCUMENT_TIMEOUT_MS = 2_000;
 
 /** One document of the index, as it stands now (DEC-22, DEC-23). */
 export interface IndexedDocument {
@@ -72,8 +80,11 @@ const SELECT_DOCUMENT = `
 export async function readDocument(
   pool: Pool,
   docId: string,
+  timeoutMs: number = DOCUMENT_TIMEOUT_MS,
+  clientTimeoutMs: number = timeoutMs + 1_000,
 ): Promise<IndexedDocument | null> {
-  const { rows } = await pool.query(SELECT_DOCUMENT, [docId]);
+  const rows = await boundedRead(pool, 'readDocument', timeoutMs, clientTimeoutMs, (query) =>
+    query(SELECT_DOCUMENT, [docId]));
   const row = rows[0] as Record<string, unknown> | undefined;
   if (row === undefined) return null;
   return {

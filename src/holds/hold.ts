@@ -474,7 +474,7 @@ export async function handoverHold(
 /**
  * The live hold on one case, or null.
  *
- * It clears a hold whose period has run out, which makes it a read that
+ * It clears every hold whose period has run out, which makes it a read that
  * writes: the spec's answer for a lapse nobody acted on. The queue does not
  * use it — `readHolds` is a pure read and leaves the lapse for this call.
  */

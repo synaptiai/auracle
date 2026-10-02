@@ -68,6 +68,35 @@ export function declaredNames(source: string): string[] {
 }
 
 /**
+ * Every module a file names, in source order, whether it loads at runtime or
+ * is erased: each import, each re-export, each import-equals `require`, each
+ * `import(…)` call and each inline type import, `import('./y.js').Z`. A module
+ * that imports nothing names none.
+ */
+function namedModules(source: string): string[] {
+  const parsed = ts.createSourceFile('probe.ts', source, ts.ScriptTarget.ESNext, true);
+  const named: string[] = [];
+  const visit = (node: ts.Node): void => {
+    let specifier: ts.Expression | undefined;
+    if (ts.isImportDeclaration(node)) specifier = node.moduleSpecifier;
+    else if (ts.isExportDeclaration(node)) specifier = node.moduleSpecifier;
+    else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      specifier = node.moduleReference.expression;
+    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      specifier = node.arguments[0];
+    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)
+      && ts.isStringLiteral(node.argument.literal)) {
+      // `import('./y.js').Z` and `typeof import('./y.js')` name a module in a type.
+      specifier = node.argument.literal;
+    }
+    if (specifier !== undefined) named.push(ts.isStringLiteral(specifier) ? specifier.text : specifier.getText(parsed));
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+  return named;
+}
+
+/**
  * The modules a file loads at runtime, in source order.
  *
  * Parsed with the compiler, because a line regex is defeated by ordinary
@@ -90,27 +119,22 @@ function runtimeSpecifiers(source: string): string[] {
       clause = statement.importClause;
       specifier = statement.moduleSpecifier;
       // `import './x.js'` carries no clause and still loads the module.
-      if (clause !== undefined && clause.isTypeOnly) continue;
+      if (clause !== undefined && clause.phaseModifier === ts.SyntaxKind.TypeKeyword) continue;
     } else if (ts.isExportDeclaration(statement)) {
       if (statement.moduleSpecifier === undefined) continue;
       clause = statement.exportClause;
       specifier = statement.moduleSpecifier;
       if (statement.isTypeOnly) continue;
+    } else if (ts.isImportEqualsDeclaration(statement) && ts.isExternalModuleReference(statement.moduleReference)) {
+      // `import x = require('./x.js')` loads the module. A type-only one is erased.
+      if (statement.isTypeOnly) continue;
+      specifier = statement.moduleReference.expression;
     } else {
       continue;
     }
-    // A named clause whose every specifier says `type` emits nothing, the
-    // same as a clause-level `type`. TypeScript allows either spelling.
-    if (clause !== undefined && ts.isNamedImports(clause.kind === ts.SyntaxKind.ImportClause
-      ? ((clause as ts.ImportClause).namedBindings ?? clause)
-      : clause)) {
-      const named = clause.kind === ts.SyntaxKind.ImportClause
-        ? ((clause as ts.ImportClause).namedBindings as ts.NamedImports)
-        : (clause as ts.NamedImports | ts.NamedExports);
-      if (named.elements.length > 0 && named.elements.every((element) => element.isTypeOnly)) {
-        continue;
-      }
-    }
+    // A named clause whose every specifier says `type` still loads the
+    // module. Under `verbatimModuleSyntax` it compiles to `import {} from`,
+    // so only a clause-level `type` is erased.
     if (specifier !== undefined && ts.isStringLiteral(specifier)) loaded.push(specifier.text);
   }
   return loaded;
@@ -174,7 +198,26 @@ describe('the adapter contract has one declaration', () => {
   it('imports nothing, so a type does not drag a module behind it', () => {
     // The reason the fixture loader's copy existed: any module that wanted
     // the word `RiskTier` had to import fixture file I/O to get it.
-    expect(read(HOME)).not.toMatch(/^\s*import\b/m);
+    //
+    // Read as every module the file names, not as lines that start with
+    // `import`: a re-export names a module as surely as an import does. A
+    // type-only import names one too, and this module imports nothing, so it
+    // is refused here. The rule below is the weaker one.
+    expect(namedModules(read(HOME))).toEqual([]);
+  });
+
+  it('reads every module a file names, a type-only one included', () => {
+    expect(namedModules("import type { X } from './y.js';")).toEqual(['./y.js']);
+    expect(namedModules("export type { X } from './y.js';")).toEqual(['./y.js']);
+    expect(namedModules("export { X } from './y.js';")).toEqual(['./y.js']);
+    expect(namedModules("import x = require('./y.js');")).toEqual(['./y.js']);
+    expect(namedModules("export const m = () => import('./y.js');")).toEqual(['./y.js']);
+    // An inline type import names a module as an import declaration does.
+    expect(namedModules("export type X = import('./y.js').Z;")).toEqual(['./y.js']);
+    expect(namedModules("export type M = typeof import('./y.js');")).toEqual(['./y.js']);
+    expect(namedModules('export const RISK_TIERS = [1] as const;')).toEqual([]);
+    // The weaker rule still lets the corpus types name this module for a type.
+    expect(runtimeSpecifiers("import type { X } from './y.js';")).toEqual([]);
   });
 
   it('the corpus types import no value, so they drag no module either', () => {
@@ -214,8 +257,13 @@ describe('the adapter contract has one declaration', () => {
     expect(runtimeSpecifiers("import type { RiskTier } from './capabilities.js';")).toEqual([]);
     expect(runtimeSpecifiers("export type { RiskTier } from './capabilities.js';")).toEqual([]);
     expect(runtimeSpecifiers("export type { A, B } from './x.js';")).toEqual([]);
-    // Every specifier marked `type` individually: the clause emits nothing.
-    expect(runtimeSpecifiers("import { type A, type B } from './x.js';")).toEqual([]);
+    // Every specifier marked `type` individually still loads the module.
+    // Under `verbatimModuleSyntax` the line compiles to `import {} from`.
+    expect(runtimeSpecifiers("import { type A, type B } from './x.js';")).toEqual(['./x.js']);
+    expect(runtimeSpecifiers("export { type A } from './x.js';")).toEqual(['./x.js']);
+    // An import-equals require is a load, and a type-only one is erased.
+    expect(runtimeSpecifiers("import x = require('./x.js');")).toEqual(['./x.js']);
+    expect(runtimeSpecifiers("import type x = require('./x.js');")).toEqual([]);
     // A local re-export names no module and loads none.
     expect(runtimeSpecifiers('export { thing };')).toEqual([]);
   });

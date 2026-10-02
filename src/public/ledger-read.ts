@@ -29,7 +29,7 @@ export const LEDGER_WRITES: Readonly<Record<string, string>> = {
   // run lands `closed`, the journal records who and why, and the hold ends.
   closeRun: 'finishes a waiting case with no reply, and records who closed it and why',
   handoverHold: 'moves a live hold to the teammate it names',
-  readHold: 'clears a hold whose period ran out and records the lapse it found',
+  readHold: 'clears every hold whose period has run out and records each lapse',
   releaseHold: 'ends the holder\'s hold on a case',
   // DEC-44: the reply a reviewer edits on the case screen, saved onto the
   // turn it answers. One statement under the run's row lock, and no state

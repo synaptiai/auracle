@@ -122,12 +122,17 @@ describe('a bounded read', () => {
     expect(given.find(([text]) => text === 'COMMIT')?.[1]).toBe(400);
   });
 
+  // A write that starts as a read, through a data-modifying WITH, passes the
+  // statement check and reaches the server, which the transaction refuses.
   it('refuses a write, since the transaction is read only, and returns the session clean', async () => {
     const before = await session();
     await expect(boundedRead(pool, 'test', 1_000, 2_000, (query) => query(
-      `INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding_status)
-       VALUES ('DOC-WRITE', 'document', 'A synthetic title', 'A synthetic body.', 'kb-team',
-               CURRENT_DATE + 30, 'pending')`,
+      `WITH written AS (
+         INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding_status)
+         VALUES ('DOC-WRITE', 'document', 'A synthetic title', 'A synthetic body.', 'kb-team',
+                 CURRENT_DATE + 30, 'pending')
+         RETURNING doc_id)
+       SELECT doc_id FROM written`,
     ))).rejects.toThrow(/read-only transaction/);
     expect(await session()).toEqual({ pid: before.pid, statement: '0', idle: '0', inTx: false });
     expect((await pool.query('SELECT count(*)::int AS n FROM document')).rows[0].n).toBe(0);
@@ -236,5 +241,94 @@ describe('a bounded read', () => {
     });
     expect([first, second]).toEqual([0, 0]);
     expect((await pool.query<{ n: number }>(count)).rows[0]!.n).toBe(1);
+  });
+
+  // A statement sent with no values went out as a simple query, and Postgres
+  // runs every statement a simple query holds. A COMMIT among them ended the
+  // READ ONLY transaction, and the write after it ran in a transaction of its
+  // own. Every statement is sent as an extended query now, which holds one.
+  it('refuses a chained write in a statement sent with no values', async () => {
+    const chained = "SELECT 1; COMMIT; INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding_status) VALUES ('DOC-ESCAPE', 'document', 'A synthetic title', 'A synthetic body.', 'kb-team', CURRENT_DATE + 30, 'pending')";
+    await expect(boundedRead(pool, 'test', 2_000, 3_000, async (query) => query(chained))).rejects.toThrow();
+    await expect(boundedRead(pool, 'test', 2_000, 3_000, async (query) => query(chained, []))).rejects.toThrow();
+    expect((await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM document WHERE doc_id = 'DOC-ESCAPE'")).rows[0]!.n)
+      .toBe(0);
+  });
+
+  // A read that sent COMMIT as a statement of its own ended the transaction,
+  // and the INSERT after it committed outside READ ONLY. A statement that does
+  // not start as a read is refused before it is sent.
+  it.each([
+    ['COMMIT'], ['ROLLBACK'], ['END'], ['ABORT'], ['/* a note */ COMMIT'], ['-- a note\nCOMMIT'],
+    ["SET transaction_read_only = off"], ['BEGIN'],
+  ])('refuses %j sent by the read, and writes nothing after it', async (ender) => {
+    const insert = "INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding_status) VALUES ('DOC-AFTER', 'document', 'A synthetic title', 'A synthetic body.', 'kb-team', CURRENT_DATE + 30, 'pending')";
+    await expect(boundedRead(pool, 'test', 2_000, 3_000, async (query) => {
+      await query(ender);
+      await query(insert);
+    })).rejects.toThrow(/refuses a statement that is not a read/);
+    await expect(boundedRead(pool, 'test', 2_000, 3_000, async (query) => query(insert)))
+      .rejects.toThrow(/refuses a statement that is not a read/);
+    expect((await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM document WHERE doc_id = 'DOC-AFTER'")).rows[0]!.n)
+      .toBe(0);
+  });
+
+  // The statement function outlived its read. A chain that swallowed the
+  // read's failure sent a data-modifying WITH after the ROLLBACK, and a kept
+  // reference sent one inside the next caller's transaction. Each committed.
+  it('refuses a statement once its read has started to end', async () => {
+    const write = (id: string): string => `WITH written AS (
+       INSERT INTO document (doc_id, kind, title, body, owner, review_by, embedding_status)
+       VALUES ('${id}', 'document', 'A synthetic title', 'A synthetic body.', 'kb-team', CURRENT_DATE + 30, 'pending')
+       RETURNING doc_id) SELECT doc_id FROM written`;
+    // The chain's outcome is taken as it settles, so its refusal is never an
+    // unhandled rejection while the read is still failing.
+    let late: Promise<string> | undefined;
+    await expect(boundedRead(pool, 'test', 2_000, 3_000, async (query) => {
+      late = query('SELECT 1').then(() => query('SELECT 1/0')).catch(() => undefined)
+        .then(() => query(write('DOC-LATE-CHAIN')))
+        .then(() => 'sent', (error: Error) => error.message);
+      await query('SELECT 1/0');
+    })).rejects.toThrow(/division by zero/);
+    expect(await late).toMatch(/refuses a statement after its read ended/);
+
+    let kept: ((text: string) => Promise<unknown>) | undefined;
+    await boundedRead(pool, 'test', 2_000, 3_000, async (query) => {
+      kept = query;
+      await query('SELECT 1');
+    });
+    await expect(kept!(write('DOC-LATE-KEPT'))).rejects.toThrow(/refuses a statement after its read ended/);
+    const { rows } = await pool.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM document WHERE doc_id IN ('DOC-LATE-CHAIN', 'DOC-LATE-KEPT')",
+    );
+    expect(rows[0]!.n).toBe(0);
+  });
+
+  it('sends each statement that starts as a read', async () => {
+    const rows = await boundedRead(pool, 'test', 2_000, 3_000, async (query) => [
+      ...(await query<{ n: number }>('  SELECT 1 AS n')),
+      ...(await query<{ n: number }>('WITH a AS (SELECT 2 AS n) SELECT n FROM a')),
+      ...(await query<{ n: number }>('(SELECT 3 AS n)')),
+      ...(await query<{ n: number }>('VALUES (4)')).map((row) => ({ n: Number(Object.values(row)[0]) })),
+    ]);
+    expect(rows.map((row) => Number(row.n))).toEqual([1, 2, 3, 4]);
+  });
+
+  // READ ONLY refuses a write to a table, and nothing that changes the
+  // session. A setting made for the session and an advisory lock both
+  // outlived the read on the connection the pool handed out next.
+  it('hands back a session with no setting and no lock the read made', async () => {
+    const before = await session();
+    await boundedRead(pool, 'test', 2_000, 3_000, async (query) => {
+      await query("SELECT set_config('search_path', 'pg_catalog', false)");
+      await query('SELECT pg_advisory_lock(146)');
+    });
+    const after = await pool.query<{ pid: number; path: string; locks: number }>(
+      `SELECT pg_backend_pid() AS pid, current_setting('search_path') AS path,
+              (SELECT count(*)::int FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()) AS locks`,
+    );
+    expect(after.rows[0]!.pid).toBe(before.pid);
+    expect(after.rows[0]!.path).not.toBe('pg_catalog');
+    expect(after.rows[0]!.locks).toBe(0);
   });
 });

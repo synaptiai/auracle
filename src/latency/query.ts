@@ -12,10 +12,21 @@
  * latency on busy partitions". An operator could not see that. This makes a
  * partition that is falling behind visible beside the ones that are not.
  *
- * Every statement is a SELECT. The module never writes, so it is safe to run
- * against a live database without approval (DEC-17, DEC-19).
+ * Every statement is a SELECT, and the read runs in one READ ONLY transaction
+ * through `boundedRead`. The module never writes, and the database refuses a
+ * write if one is ever added, so it is safe to run against a live database
+ * without approval (DEC-17, DEC-19).
  */
 import type { Pool } from 'pg';
+
+import { boundedRead } from '../db/bounded-read.js';
+
+/**
+ * The bound on the report's statement, in milliseconds: the bound the bands
+ * job sets. The statement reads the whole ledger or a window of it, and an
+ * offline report may take longer than a page may.
+ */
+export const LATENCY_TIMEOUT_MS = 60_000;
 
 /**
  * States a run never leaves. Exported, and pinned against the ledger's own
@@ -272,18 +283,19 @@ function toMs(value: unknown): number | null {
 /**
  * Queue wait and service time per partition, over the whole ledger or a window.
  *
- * Read-only. Safe against a live database.
+ * Read-only, in the database as well as in its source. Safe against a live
+ * database.
  */
 export async function readLatency(
   pool: Pool,
   window: LatencyWindow = {},
+  timeoutMs: number = LATENCY_TIMEOUT_MS,
+  clientTimeoutMs: number = timeoutMs + 1_000,
 ): Promise<LatencyReport> {
-  const { rows } = await pool.query(SELECT_BY_PARTITION, [
-    window.since ?? null,
-    TERMINAL_STATE_LIST,
-  ]);
+  const rows = await boundedRead(pool, 'readLatency', timeoutMs, clientTimeoutMs, (query) =>
+    query<Record<string, unknown>>(SELECT_BY_PARTITION, [window.since ?? null, TERMINAL_STATE_LIST]));
 
-  const partitions: PartitionLatency[] = rows.map((row: Record<string, unknown>) => ({
+  const partitions: PartitionLatency[] = rows.map((row) => ({
     partition: Number(row['partition']),
     runs: toCount(row['runs']),
     wait: {

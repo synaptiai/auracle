@@ -2186,14 +2186,41 @@ Clearing a draft does not reach the helpdesk. The draft parks there as well
 It approves a reply, saves an edited reply, and rewrites one from scratch. It
 closes a case with no reply. It puts a case aside for a period, and sends one
 back for a new attempt. It publishes a document written from a case. It takes
-a case, releases a case, and hands a case to a teammate. It also clears a hold
-whose period ran out, and takes a send back inside its hold.
+a case, releases a case, and hands a case to a teammate. It also clears every
+hold whose period has run out, and takes a send back inside its hold.
 
 Every other statement it issues is a SELECT. So it is otherwise as safe
 against a live database as `pnpm run bands` and `pnpm run latency`. That
 claim is its own, not inherited. `console/src/select-only.test.ts` refuses
 any SQL keyword in the package, and a call to `pool.query`. It holds every
 write to the one module that makes it.
+
+A console read runs read-only when it goes through `boundedRead`. Nine reader
+modules read that way. Four of them are the run journal, the conversation, the
+document and the latency report. Each such read runs in one READ ONLY
+transaction, and each statement goes out alone. The helper refuses a statement
+that does not start as a read before it sends one. So the database refuses a
+write to a table from these readers.
+
+Each such read also discards its session state before the pool takes the
+connection back. A console read that does not go through `boundedRead` uses a
+plain connection, with no statement timeout and no discard. One of them
+writes: the case page's hold read clears every hold whose period has run out.
+
+READ ONLY does not refuse every effect. A function can still act on another
+session. A superuser's session can still write to the catalog or create a
+replication slot. A reader role without those rights would refuse them.
+
+Each reader that goes through `boundedRead` sets its own statement timeout.
+The latency report uses sixty seconds, and each other one uses two. The statements of
+one read share a client deadline one second longer than that timeout. The end
+of the read, its commit or rollback and the discard, shares one more deadline
+of that length. Each read waits at most three seconds for a pool connection.
+
+A read that outlasts a bound fails, and the console logs the failure with a
+tag. A page that cannot draw without the read answers with an error. A page
+that can draw without it marks that part as not read. The error page, and each
+part marked as not read, names the tag.
 
 Approving in the console calls the same function `pnpm run approve` calls.
 So the transaction and the fencing epoch are the same whichever path an
@@ -2335,8 +2362,9 @@ pnpm run latency
 pnpm run latency --since 2026-09-01T00:00:00Z
 ```
 
-Every statement it runs is a SELECT, so it is safe against a live database.
-It writes nothing to the ledger.
+Its one statement is a SELECT, so it is safe against a live database. It
+writes nothing to the ledger. The statement runs alone in one READ ONLY
+transaction, with a 60-second timeout.
 
 It reports two quantities per partition. The queue wait is the time from a
 ticket arriving to a consumer picking it up. The service time is the time from

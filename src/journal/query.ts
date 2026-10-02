@@ -34,7 +34,9 @@
  * fused list of ids is journalled, so a retrieved document carries the
  * position it was recorded at and nothing else. See `RetrievedDocument`.
  *
- * Every statement is a SELECT. The module never writes, so it is safe to run
+ * Every statement is a SELECT, and each read runs in one READ ONLY
+ * transaction through `boundedRead`. The module never writes, and the
+ * database refuses a write if one is ever added, so it is safe to run
  * against a live database.
  *
  * It returns the drafted reply and what each claim cited. It did not, on the
@@ -50,11 +52,15 @@
  * names two customer addresses — so its presence is reported and its text is
  * not.
  */
-import type { Pool, PoolClient } from 'pg';
+import type { Pool } from 'pg';
 
+import { boundedRead } from '../db/bounded-read.js';
 import { escalationHead } from '../escalations/reason.js';
 import { agreementThresholdFor } from '../policy/policy.js';
 import type { GateThresholds } from '../policy/policy.js';
+
+/** The bound on each statement of a journal read, in milliseconds. */
+export const RUN_JOURNAL_TIMEOUT_MS = 2_000;
 
 /**
  * The order a run walks its steps, which is this module's own statement and
@@ -1196,131 +1202,132 @@ function doneResult(
  * null here exactly as an id that names nothing does. The caller that knows
  * whether the run exists is the one that read the run row.
  *
- * Two statements, not one. The second reads the ids the first returned. They
- * are not atomic with respect to each other, and that costs nothing here:
- * `document` rows are mutable in place anyway, so the metadata is already
- * today's rather than the run's, which the type says.
+ * Two statements, not one. The second reads the ids the first returned. Both
+ * run in one READ ONLY transaction, so they read one snapshot. `document` rows
+ * are mutable in place anyway, so the metadata is today's rather than the
+ * run's, which the type says.
  *
- * Read-only. Safe against a live database.
+ * The console runs this on every load of a run's page, so each statement
+ * runs under `timeoutMs`, and the read under `clientTimeoutMs`.
+ * `boundedRead` enforces both bounds.
  */
 export async function readRunJournal(
-  pool: Pool | PoolClient,
+  pool: Pool,
   runId: string,
+  timeoutMs: number = RUN_JOURNAL_TIMEOUT_MS,
+  clientTimeoutMs: number = timeoutMs + 1_000,
 ): Promise<RunJournal | null> {
   // The column is `uuid`, so a value that is not one makes the database
   // raise a syntax fault rather than answer. A console route takes this id
   // out of a URL, and an unparsable id there is a request for a run that
   // cannot exist — the same answer as an id that names nothing.
   if (!UUID.test(runId)) return null;
+  return boundedRead(pool, 'readRunJournal', timeoutMs, clientTimeoutMs, async (query) => {
+    const rows = await query<Record<string, unknown>>(SELECT_STEPS, [runId, STEP_ORDER]);
+    if (rows.length === 0) return null;
 
-  const journal = await pool.query(SELECT_STEPS, [runId, STEP_ORDER]);
-  const rows = journal.rows as unknown as Record<string, unknown>[];
-  if (rows.length === 0) return null;
+    const steps = rows.map(toStep);
+    const byStep = new Map<string, Record<string, unknown> | null>();
+    for (const row of rows) {
+      const raw = row['result_object'];
+      byStep.set(String(row['step_id']), isObject(raw) ? raw : null);
+    }
 
-  const steps = rows.map(toStep);
-  const byStep = new Map<string, Record<string, unknown> | null>();
-  for (const row of rows) {
-    const raw = row['result_object'];
-    byStep.set(String(row['step_id']), isObject(raw) ? raw : null);
-  }
+    // The two gates, read from two rows and kept apart (DEC-05).
+    const classified = doneResult(steps, byStep, 'classify');
+    const gated = doneResult(steps, byStep, 'gate');
 
-  // The two gates, read from two rows and kept apart (DEC-05).
-  const classified = doneResult(steps, byStep, 'classify');
-  const gated = doneResult(steps, byStep, 'gate');
+    const intentId = stringAt(classified, 'intentId');
+    const agreementValue = numberAt(classified, 'agreement');
+    const thresholds = readGateThresholds(gated === null ? null : gated['thresholds']);
+    const agreement: AgreementReading | null =
+      intentId === null || agreementValue === null
+        ? null
+        : {
+            intentId,
+            agreement: agreementValue,
+            unreadableSamples: numberAt(classified, 'unreadableSamples'),
+            threshold: agreementThresholdFromJournal(intentId, thresholds),
+          };
 
-  const intentId = stringAt(classified, 'intentId');
-  const agreementValue = numberAt(classified, 'agreement');
-  const thresholds = readGateThresholds(gated === null ? null : gated['thresholds']);
-  const agreement: AgreementReading | null =
-    intentId === null || agreementValue === null
-      ? null
-      : {
-          intentId,
-          agreement: agreementValue,
-          unreadableSamples: numberAt(classified, 'unreadableSamples'),
-          threshold: agreementThresholdFromJournal(intentId, thresholds),
-        };
+    const groundedness = numberAt(gated, 'groundedness');
+    const decision = stringAt(gated, 'decision');
+    const coverage: CoverageReading | null =
+      groundedness === null || decision === null
+        ? null
+        : {
+            groundedness,
+            decision,
+            // A gate row written before the reason key existed has a decision
+            // and no reason. Reported as an absence, never as a rule nobody named.
+            reason: stringAt(gated, 'reason'),
+            blockThreshold: thresholds?.groundednessBlock ?? null,
+            reviewThreshold: thresholds?.groundednessReview ?? null,
+            claimVerdicts: gateVerdictsOf(gated),
+          };
 
-  const groundedness = numberAt(gated, 'groundedness');
-  const decision = stringAt(gated, 'decision');
-  const coverage: CoverageReading | null =
-    groundedness === null || decision === null
-      ? null
-      : {
-          groundedness,
-          decision,
-          // A gate row written before the reason key existed has a decision
-          // and no reason. Reported as an absence, never as a rule nobody named.
-          reason: stringAt(gated, 'reason'),
-          blockThreshold: thresholds?.groundednessBlock ?? null,
-          reviewThreshold: thresholds?.groundednessReview ?? null,
-          claimVerdicts: gateVerdictsOf(gated),
-        };
+    // DEC-48: the reply a person wrote in place of the draft. What decides is
+    // the turn's provenance, not this run's row: the reply a sibling run sends
+    // is the same text, so its page reports the same thing about it. The record
+    // — who wrote it and what it replaced — comes from this run's own row when
+    // it has one, and reads as all-null when the rewrite was another run's.
+    const provenance = rows[0]!['reply_provenance'];
+    const wroteReply = provenance !== null && provenance !== undefined;
+    const rewrite: RewriteRecord | null = wroteReply
+      ? toRewriteRecord(doneResult(steps, byStep, 'rewrite'), byStep.get('rewrite') === null)
+      : null;
 
-  // DEC-48: the reply a person wrote in place of the draft. What decides is
-  // the turn's provenance, not this run's row: the reply a sibling run sends
-  // is the same text, so its page reports the same thing about it. The record
-  // — who wrote it and what it replaced — comes from this run's own row when
-  // it has one, and reads as all-null when the rewrite was another run's.
-  const provenance = rows[0]!['reply_provenance'];
-  const wroteReply = provenance !== null && provenance !== undefined;
-  const rewrite: RewriteRecord | null = wroteReply
-    ? toRewriteRecord(doneResult(steps, byStep, 'rewrite'), byStep.get('rewrite') === null)
-    : null;
+    // A retrieval that finished. A failed one carries a shape and no ids, and
+    // reading it would report a fault as a search that returned nothing.
+    const retrieved = doneResult(steps, byStep, 'retrieve');
+    const rawIds = retrieved === null ? undefined : retrieved['docIds'];
+    // Three states, not two. A completed retrieval whose `docIds` cannot be
+    // read is neither a run that never retrieved nor a retrieval that found
+    // nothing, and reporting it as either would name a fact the ledger does not
+    // hold. It is reported under its own name, the way `resultMalformed` is.
+    //
+    // The list is taken whole or not at all. Filtering the members that are
+    // strings would hand `SELECT_DOCUMENTS` a shorter list, and its
+    // `WITH ORDINALITY` then numbers positions over that shorter list — so a
+    // dropped member renders as a complete retrieval with the wrong positions.
+    const readable = Array.isArray(rawIds) && rawIds.every((id) => typeof id === 'string');
+    const documentsMalformed = retrieved !== null && !readable;
+    let documents: RetrievedDocument[] | null = null;
+    if (readable) {
+      const docIds = rawIds as string[];
+      // What the run recorded about each document, keyed by id. Absent on a run
+      // journalled before the snapshot was written, and every field below then
+      // answers null rather than guessing from today's row.
+      const snapshot = snapshotOf(retrieved);
+      documents =
+        docIds.length === 0
+          ? []
+          : (await query<Record<string, unknown>>(SELECT_DOCUMENTS, [docIds])).map((row) => {
+              const docId = String(row['doc_id']);
+              const recorded = snapshot?.[docId];
+              const digest = row['body_digest'] as string | null;
+              return {
+                docId,
+                position: Number(row['position']),
+                resolved: row['resolved'] === true,
+                title: (row['title'] as string | null) ?? null,
+                kind: (row['kind'] as string | null) ?? null,
+                owner: (row['owner'] as string | null) ?? null,
+                reviewBy: (row['review_by'] as string | null) ?? null,
+                titleAtRun: recorded?.title ?? null,
+                ownerAtRun: recorded?.owner ?? null,
+                reviewByAtRun: recorded?.reviewBy ?? null,
+                // Three answers, not two. Null is "the question cannot be
+                // asked": the run recorded no digest, or the id no longer
+                // resolves so there is no body to compare against.
+                bodyUnchanged:
+                  recorded?.bodyHash === undefined || digest === null
+                    ? null
+                    : recorded.bodyHash === digest,
+              };
+            });
+    }
 
-  // A retrieval that finished. A failed one carries a shape and no ids, and
-  // reading it would report a fault as a search that returned nothing.
-  const retrieved = doneResult(steps, byStep, 'retrieve');
-  const rawIds = retrieved === null ? undefined : retrieved['docIds'];
-  // Three states, not two. A completed retrieval whose `docIds` cannot be
-  // read is neither a run that never retrieved nor a retrieval that found
-  // nothing, and reporting it as either would name a fact the ledger does not
-  // hold. It is reported under its own name, the way `resultMalformed` is.
-  //
-  // The list is taken whole or not at all. Filtering the members that are
-  // strings would hand `SELECT_DOCUMENTS` a shorter list, and its
-  // `WITH ORDINALITY` then numbers positions over that shorter list — so a
-  // dropped member renders as a complete retrieval with the wrong positions.
-  const readable = Array.isArray(rawIds) && rawIds.every((id) => typeof id === 'string');
-  const documentsMalformed = retrieved !== null && !readable;
-  let documents: RetrievedDocument[] | null = null;
-  if (readable) {
-    const docIds = rawIds as string[];
-    // What the run recorded about each document, keyed by id. Absent on a run
-    // journalled before the snapshot was written, and every field below then
-    // answers null rather than guessing from today's row.
-    const snapshot = snapshotOf(retrieved);
-    documents =
-      docIds.length === 0
-        ? []
-        : ((await pool.query(SELECT_DOCUMENTS, [docIds])).rows as unknown as Record<
-            string,
-            unknown
-          >[]).map((row) => {
-            const docId = String(row['doc_id']);
-            const recorded = snapshot?.[docId];
-            const digest = row['body_digest'] as string | null;
-            return {
-              docId,
-              position: Number(row['position']),
-              resolved: row['resolved'] === true,
-              title: (row['title'] as string | null) ?? null,
-              kind: (row['kind'] as string | null) ?? null,
-              owner: (row['owner'] as string | null) ?? null,
-              reviewBy: (row['review_by'] as string | null) ?? null,
-              titleAtRun: recorded?.title ?? null,
-              ownerAtRun: recorded?.owner ?? null,
-              reviewByAtRun: recorded?.reviewBy ?? null,
-              // Three answers, not two. Null is "the question cannot be
-              // asked": the run recorded no digest, or the id no longer
-              // resolves so there is no body to compare against.
-              bodyUnchanged:
-                recorded?.bodyHash === undefined || digest === null
-                  ? null
-                  : recorded.bodyHash === digest,
-            };
-          });
-  }
-
-  return { runId, steps, agreement, coverage, rewrite, documents, documentsMalformed };
+    return { runId, steps, agreement, coverage, rewrite, documents, documentsMalformed };
+  });
 }

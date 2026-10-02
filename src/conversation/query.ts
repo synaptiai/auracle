@@ -12,13 +12,20 @@
  * by name rather than skipped. The two would be one function only by making
  * the prompt carry sentences about missing rows.
  *
- * Every statement is a SELECT. The module never writes, so it is safe to run
- * against a live database.
+ * Every statement is a SELECT, and each read runs in one READ ONLY
+ * transaction through `boundedRead`. The module never writes, and the
+ * database refuses a write if one is ever added, so it is safe to run
+ * against a live database. The console runs these reads on page loads, so
+ * each statement runs under a timeout and each read under a client deadline.
  */
 import type { Pool } from 'pg';
 
 import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
+import { boundedRead } from '../db/bounded-read.js';
 import { OUTBOX_STATUSES, TERMINAL_RUN_STATES, type OutboxStatus } from '../ledger/insert.js';
+
+/** The bound on each statement of a read, in milliseconds. */
+export const CONVERSATION_TIMEOUT_MS = 2_000;
 
 /** A run identity the ledger can be asked about. The columns are `uuid`. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -358,23 +365,30 @@ function outboxStatusOf(value: unknown): OutboxStatus | null {
 export async function readConversation(
   pool: Pool,
   conversationId: string,
+  timeoutMs: number = CONVERSATION_TIMEOUT_MS,
+  clientTimeoutMs: number = timeoutMs + 1_000,
 ): Promise<ConversationThread | null> {
   // Asked before the ledger is, because a malformed uuid is a client error
   // and the `uuid` column would answer it with a driver exception.
   if (!UUID.test(conversationId)) return null;
 
-  const head = await pool.query(SELECT_THREAD, [conversationId]);
-  const row = head.rows[0] as Record<string, unknown> | undefined;
-  if (row === undefined) return null;
-
-  const turns = await pool.query(SELECT_TURNS, [conversationId, CUSTOMER_REPLY_ACTION_CLASS]);
+  // Both statements in one READ ONLY transaction, so the turns are the
+  // turns of the thread the first statement read.
+  const read = await boundedRead(pool, 'readConversation', timeoutMs, clientTimeoutMs, async (query) => {
+    const head = await query<Record<string, unknown>>(SELECT_THREAD, [conversationId]);
+    if (head[0] === undefined) return null;
+    const turns = await query<Record<string, unknown>>(SELECT_TURNS, [conversationId, CUSTOMER_REPLY_ACTION_CLASS]);
+    return { row: head[0], turns };
+  });
+  if (read === null) return null;
+  const { row, turns } = read;
   return {
     conversationId,
     primaryTicketId: String(row['primary_ticket_id']),
     state: String(row['state']),
     openedAt: row['opened_at'] as Date,
     participantNamed: row['participant_named'] === true,
-    turns: (turns.rows as Record<string, unknown>[]).map((turn) => {
+    turns: turns.map((turn) => {
       const bodyText = (turn['body_text'] as string | null) ?? null;
       const replyText = (turn['approved_reply_text'] as string | null) ?? null;
       const runState = (turn['run_state'] as string | null) ?? null;
@@ -445,9 +459,11 @@ export interface AnsweredTurn {
 export async function turnAnsweredBy(
   pool: Pool,
   runId: string,
+  timeoutMs: number = CONVERSATION_TIMEOUT_MS,
+  clientTimeoutMs: number = timeoutMs + 1_000,
 ): Promise<AnsweredTurn | null> {
   if (!UUID.test(runId)) return null;
-  const { rows } = await pool.query(
+  const rows = await boundedRead(pool, 'turnAnsweredBy', timeoutMs, clientTimeoutMs, (query) => query(
     `SELECT t.conversation_id, t.turn_number, t.body_text, t.saved_reply_text,
             t.approved_reply_text
        FROM run r
@@ -456,7 +472,7 @@ export async function turnAnsweredBy(
         AND t.turn_number = r.turn_number
       WHERE r.run_id = $1`,
     [runId],
-  );
+  ));
   const row = rows[0] as Record<string, unknown> | undefined;
   if (row === undefined) return null;
   const bodyText = (row['body_text'] as string | null) ?? null;
@@ -482,12 +498,14 @@ export async function turnAnsweredBy(
 export async function conversationOfRun(
   pool: Pool,
   runId: string,
+  timeoutMs: number = CONVERSATION_TIMEOUT_MS,
+  clientTimeoutMs: number = timeoutMs + 1_000,
 ): Promise<string | null> {
   if (!UUID.test(runId)) return null;
-  const { rows } = await pool.query(
+  const rows = await boundedRead(pool, 'conversationOfRun', timeoutMs, clientTimeoutMs, (query) => query(
     'SELECT conversation_id FROM run WHERE run_id = $1',
     [runId],
-  );
+  ));
   const row = rows[0] as Record<string, unknown> | undefined;
   return (row?.['conversation_id'] as string | null) ?? null;
 }

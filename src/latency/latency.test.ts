@@ -11,6 +11,7 @@ import { excluded, parseSince } from './run.js';
 import { humanMs } from './format.js';
 import { TERMINAL_STATE_LIST } from './query.js';
 import { validateLatencyArtifact } from './artifact.js';
+import { boundedReads, withoutComments } from '../test-support/source-reader.js';
 
 const REPO_ROOT = new URL('../../', import.meta.url).pathname;
 
@@ -169,10 +170,25 @@ describe('the latency artifact', () => {
 // statement added there would have shipped green.
 const READ_ONLY_MODULES = ['src/latency/query.ts', 'src/latency/run.ts'];
 
-/** Source with comments blanked, so prose about writing never trips the scan. */
+/**
+ * Source with its comments removed, so prose about writing never trips the
+ * scan. The compiler finds the comments: a pattern that cut at every `//`
+ * erased the rest of a line holding a URL, and a statement written there went
+ * unread (issue #146).
+ */
 function codeOf(relative: string): string {
-  return readFileSync(join(REPO_ROOT, relative), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  return withoutComments(readFileSync(join(REPO_ROOT, relative), 'utf8'), relative);
 }
+
+describe('the reader the latency guard uses', () => {
+  // The shapes that blinded the pattern this reader replaced.
+  it('reads a statement written after a URL or a regular expression, and none in a comment', () => {
+    expect(withoutComments(`const u = 'http://x'; const w = 'DELETE FROM run';`, 'm.ts')).toContain('DELETE FROM run');
+    expect(withoutComments(`const r = /"/; const u = "http://x"; const w = 'DELETE FROM run';`, 'm.ts'))
+      .toContain('DELETE FROM run');
+    expect(withoutComments('// DELETE FROM run\n/* DELETE FROM run */ const a = 1;', 'm.ts')).not.toContain('DELETE');
+  });
+});
 
 describe('the latency command never writes', () => {
   it.each(READ_ONLY_MODULES)('issues no statement in %s that could change the ledger', (module) => {
@@ -189,8 +205,23 @@ describe('the latency command never writes', () => {
     }
   });
 
+  // The verb scan above reads words, and a verb built at runtime,
+  // `'DEL' + 'ETE'`, spells none. So the database holds the rule too: the
+  // report's one statement runs in a READ ONLY transaction, and nothing in
+  // the module reaches the pool another way. The journal suite holds the
+  // statement itself to the reader rules, with every other reader.
+  it('reads only inside a read-only transaction', () => {
+    const { statements, faults } = boundedReads(join(REPO_ROOT, 'src/latency/query.ts'));
+    expect(faults).toEqual([]);
+    expect(statements.map((s) => s.argument)).toEqual(['SELECT_BY_PARTITION']);
+  });
+
+  // One control for each module the scan reads. The query module issues the
+  // statements and the entry point opens the pool, so each read of its own
+  // file must find what that file is for.
   it('still reads, so the scan is not passing over an empty file', () => {
     expect(codeOf('src/latency/query.ts')).toMatch(/\bSELECT\b/);
+    expect(codeOf('src/latency/run.ts')).toMatch(/new Pool\(/);
   });
 
   // The report reads timestamps and a partition number. A ticket id, subject
