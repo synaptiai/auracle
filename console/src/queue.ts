@@ -17,10 +17,25 @@ import { isReadableTime } from './render.js';
  * cleared the review line, each on its own. `rest`: everything else waiting.
  * `held` (DEC-46): somebody else took the case, so it is not work to start —
  * it waits last, and returns to its own group when the hold ends.
+ * `waiting` (issue #154): every case nobody else holds, in one list, under a
+ * sort other than risk first.
  */
-export type QueueGroup = 'first' | 'clean' | 'rest' | 'held';
+export type QueueGroup = 'first' | 'clean' | 'rest' | 'held' | 'waiting';
 
 export const QUEUE_GROUPS: readonly QueueGroup[] = ['first', 'clean', 'rest', 'held'];
+
+/**
+ * The order a reviewer asked for (issue #154).
+ *
+ * `risk` is the queue's own order: the groups above, the reader's products
+ * first inside each, then the longest wait. `oldest` and `mine` set the
+ * groups aside: every case nobody else holds is one list, `waiting`, ordered
+ * by age alone or by the reader's products and then age. The held group stays
+ * last under every sort, because a held case is not work to start.
+ */
+export type QueueSort = 'risk' | 'oldest' | 'mine';
+
+export const QUEUE_SORTS: readonly QueueSort[] = ['risk', 'oldest', 'mine'];
 
 /** What the grouping reads from a waiting run. */
 export interface Groupable {
@@ -120,6 +135,7 @@ export function groupQueue<T extends Groupable & { readonly createdAt: Date | nu
   runs: readonly T[],
   held?: (run: T) => boolean,
   mine?: (run: T) => boolean,
+  sort: QueueSort = 'risk',
 ): QueueSection<T>[] {
   // An unreadable time is no more a date than a missing one, and sorts with
   // the undated rather than throwing or scattering the order.
@@ -141,6 +157,15 @@ export function groupQueue<T extends Groupable & { readonly createdAt: Date | nu
     const right = mine(b) ? 0 : 1;
     return left - right;
   };
+  if (sort !== 'risk') {
+    const order = sort === 'mine'
+      ? (a: T, b: T): number => byOwnProductFirst(a, b) || byAge(a, b)
+      : byAge;
+    return [
+      { group: 'waiting' as const, runs: runs.filter((run) => held?.(run) !== true).sort(order) },
+      { group: 'held' as const, runs: runs.filter((run) => held?.(run) === true).sort(byAge) },
+    ].filter((section) => section.runs.length > 0);
+  }
   return QUEUE_GROUPS
     .map((group) => ({
       group,
@@ -149,4 +174,15 @@ export function groupQueue<T extends Groupable & { readonly createdAt: Date | nu
         .sort((a, b) => byOwnProductFirst(a, b) || byAge(a, b)),
     }))
     .filter((section) => section.runs.length > 0);
+}
+
+/**
+ * The cases a reviewer could start, in the order the page draws them.
+ *
+ * Every group but the held one, first to last (issue #154). "Take next case"
+ * starts from the head of this list, and a case's position on its own page is
+ * its place in it.
+ */
+export function workOrder<T>(sections: readonly QueueSection<T>[]): T[] {
+  return sections.filter((section) => section.group !== 'held').flatMap((section) => section.runs);
 }

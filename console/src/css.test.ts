@@ -361,11 +361,18 @@ describe('what reads at every width', () => {
   // Twelve run states do not fit beside the rail at 907px. A control that
   // clips its children hid four of them, and a mouse could reach none of the
   // last three. The segments wrap, and each one grows to fill its row.
+  //
+  // Issue #154: a segment that grew to fill its row stretched the last option
+  // of a wrapped control across the whole width. Each segment keeps its own
+  // width, and draws its own divider, so a short last row leaves no bare
+  // strip of divider colour either.
   it('wraps a segmented control rather than clipping its options', () => {
     const seg = rule('.seg');
     expect(seg.get('flex-wrap')).toBe('wrap');
-    expect(seg.get('overflow')).toBe('hidden');
-    expect(rule('.seg a').get('flex')).toBe('1 0 auto');
+    expect(seg.has('background')).toBe(false);
+    const option = rule('.seg a');
+    expect(option.get('flex')).toBe('none');
+    expect(option.get('box-shadow')).toBe('0 0 0 1px var(--rule2)');
   });
 
   // A chip is one token, such as a date, and breaking it inside reads as two.
@@ -414,9 +421,13 @@ describe('what reads at every width', () => {
     expect(bar.get('position')).toBe('sticky');
     expect(bar.get('bottom')).toBe('0');
     expect(bar.get('background')).toBe('var(--panel)');
-    // The warning beside the button, wrapping below it when the bar is narrow.
+    // Issue #154: one row of controls that wraps when it must, and the send
+    // warning on a line of its own under them.
     expect(bar.get('flex-wrap')).toBe('wrap');
-    expect(rule('.actionbar .warnbar').get('flex')).toBe('1 1 420px');
+    const acts = rule('.actionbar .acts');
+    expect(acts.get('display')).toBe('flex');
+    expect(acts.get('flex-wrap')).toBe('wrap');
+    expect(rule('.actionbar .barsays').get('flex')).toBe('1 1 100%');
     expect(rule('.actionbar form').get('flex')).toBe('none');
   });
 
@@ -471,6 +482,85 @@ describe('the type', () => {
     const named = RULES.flatMap((r) => [...r.declarations.entries()])
       .filter(([name, value]) => name === 'font-family' && /Plex/.test(value));
     expect(named).toEqual([]);
+  });
+});
+
+// Issue #154. Each value below is the handoff's: its type table, and the
+// computed style of its own controls on the case screen.
+describe('the handoff, where the console had drifted from it', () => {
+  it('sets the page title at 21px, 600 and -.015em', () => {
+    const title = rule('.hdt');
+    expect(title.get('font-size')).toBe('21px');
+    expect(title.get('font-weight')).toBe('600');
+    expect(title.get('letter-spacing')).toBe('-.015em');
+  });
+
+  it('sets a metric numeral at 34px mono, 500 and -.03em, tabular', () => {
+    const metric = rule('.metric');
+    expect(metric.get('font-family')).toBe('var(--mono)');
+    expect(metric.get('font-size')).toBe('34px');
+    expect(metric.get('font-weight')).toBe('500');
+    expect(metric.get('letter-spacing')).toBe('-.03em');
+    expect(metric.get('font-variant-numeric')).toBe('tabular-nums');
+  });
+
+  it('sets a gate value at 19px mono, 400, tabular', () => {
+    const value = rule('.gate .big');
+    expect(value.get('font-size')).toBe('19px');
+    expect(value.get('font-weight')).toBe('400');
+    expect(value.get('letter-spacing')).toBe('normal');
+  });
+
+  it('draws a secondary button as the handoff does: a ring, muted text, no fill', () => {
+    const button = rule('.btn');
+    expect(button.get('background')).toBe('transparent');
+    expect(button.get('color')).toBe('var(--mut)');
+    expect(button.get('border')).toBe('1px solid var(--rule2)');
+    expect(button.get('border-radius')).toBe('var(--r-md)');
+    expect(button.get('font-weight')).toBe('400');
+    const primary = rule('.btn.primary');
+    expect(primary.get('background')).toBe('var(--ok)');
+    expect(primary.get('color')).toBe('#0d0e10');
+    expect(primary.get('border-color')).toBe('transparent');
+    expect(primary.get('font-weight')).toBe('600');
+  });
+
+  // A field the stylesheet left alone drew white on the dark theme.
+  it('draws every text field on the panel, in ink, in both themes', () => {
+    const field = rule('.root input[type=text], .root input[type=number], .root input[type=date], .root textarea');
+    expect(field.get('background')).toBe('var(--panel2)');
+    expect(field.get('color')).toBe('var(--ink)');
+    expect(field.get('border')).toBe('1px solid var(--rule2)');
+    expect(field.get('font-family')).toBe('var(--sans)');
+    expect(rule('.root').get('color-scheme')).toBe('dark');
+    expect(rule('.root[data-theme="light"]').get('color-scheme')).toBe('light');
+  });
+
+  // A mono value with no break in it set the runs table's least width, and
+  // the page scrolled sideways at 907px.
+  it('lets a mono table cell break, so a table never widens the page', () => {
+    expect(rule('tbody td.m').get('overflow-wrap')).toBe('anywhere');
+    expect(rule('tbody td.m.id').get('white-space')).toBe('nowrap');
+  });
+
+  it('fills the chosen product tab, as a chosen segment is filled', () => {
+    const on = rule('.tab.on');
+    expect(on.get('background')).toBe('var(--accent)');
+    expect(on.get('color')).toBe('#0d0e10');
+    expect(on.get('border-color')).toBe('var(--accent)');
+    expect(rule('.root[data-theme="light"] .tab.on').get('color')).toBe('#ffffff');
+  });
+
+  // A group's note sat flush against the column edge while its rows were
+  // inset 16px, so it read as a line outside the list.
+  it('insets a group note as far as the group\'s own label', () => {
+    expect(rule('.qnote').get('padding')).toBe('0 16px 10px');
+    expect(rule('.qgroup').get('padding')).toBe('12px 16px 8px');
+  });
+
+  it('marks a risk row with a 3px rule in the risk colour, and the wait in --warn', () => {
+    expect(rule('.qrow.risk').get('box-shadow')).toBe('inset 3px 0 0 var(--hot)');
+    expect(rule('.age.wait').get('color')).toBe('var(--warn)');
   });
 });
 

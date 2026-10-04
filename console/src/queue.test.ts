@@ -11,7 +11,7 @@
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
 import { describe, expect, it } from 'vitest';
 
-import { groupQueue, queueGroupOf } from './queue.js';
+import { groupQueue, queueGroupOf, workOrder } from './queue.js';
 import type { Groupable } from './queue.js';
 
 const CLEAN = {
@@ -234,5 +234,68 @@ describe('the queue in groups', () => {
     expect(groupQueue(runs, undefined, () => false)[0]!.runs.map((r) => r.runId))
       .toEqual(['old', 'new']);
     expect(groupQueue(runs)[0]!.runs.map((r) => r.runId)).toEqual(['old', 'new']);
+  });
+
+  // Issue #154: the sort a reviewer picks. Its failures, written first:
+  //   - oldest reorders inside each group only, so it draws as risk first;
+  //   - oldest or my products lists a case somebody else holds as work;
+  //   - my products drops age inside each half;
+  //   - the work order takes a held case, or loses the order the page drew.
+  describe('the sort a reviewer picks (issue #154)', () => {
+    const queue = [
+      run('rest-old', { gateCoverage: 0.5, product: 'ledger', createdAt: at('2026-09-14T06:00:00Z') }),
+      run('risk-new', { gateReason: 'irreversible', product: 'aurora', createdAt: at('2026-09-14T11:00:00Z') }),
+      run('clean-mid', { product: 'aurora', createdAt: at('2026-09-14T09:00:00Z') }),
+      run('held-oldest', { gateReason: 'high_risk', product: 'aurora', createdAt: at('2026-09-14T05:00:00Z') }),
+      run('rest-newest', { gateCoverage: 0.5, product: 'aurora', createdAt: at('2026-09-14T12:00:00Z') }),
+    ];
+    const held = (r: QueueRun): boolean => r.runId.startsWith('held-');
+    const mine = (r: QueueRun): boolean => r.product === 'aurora';
+    const shape = (sort: 'risk' | 'oldest' | 'mine') => groupQueue(queue, held, mine, sort)
+      .map((g) => [g.group, g.runs.map((r) => r.runId)]);
+
+    it('keeps the groups under risk first, as the queue has always drawn', () => {
+      expect(shape('risk')).toEqual([
+        ['first', ['risk-new']],
+        ['clean', ['clean-mid']],
+        // The reader covers aurora, so the newest aurora case leads its group.
+        ['rest', ['rest-newest', 'rest-old']],
+        ['held', ['held-oldest']],
+      ]);
+    });
+
+    // The rest case from 06:00 is older than the risk case from 11:00. Risk
+    // first puts the risk case ahead; oldest must not.
+    it('lists every case nobody else holds oldest first, then the held ones', () => {
+      expect(shape('oldest')).toEqual([
+        ['waiting', ['rest-old', 'clean-mid', 'risk-new', 'rest-newest']],
+        ['held', ['held-oldest']],
+      ]);
+    });
+
+    it('lists the reader\'s products first and then the rest, each oldest first', () => {
+      expect(shape('mine')).toEqual([
+        ['waiting', ['clean-mid', 'risk-new', 'rest-newest', 'rest-old']],
+        ['held', ['held-oldest']],
+      ]);
+    });
+
+    it('orders the held group by age under every sort', () => {
+      const two = [
+        run('held-new', { createdAt: at('2026-09-14T09:00:00Z') }),
+        run('held-old', { createdAt: at('2026-09-14T04:00:00Z') }),
+      ];
+      for (const sort of ['risk', 'oldest', 'mine'] as const) {
+        const held = groupQueue(two, () => true, mine, sort).find((g) => g.group === 'held')!;
+        expect(held.runs.map((r) => r.runId), sort).toEqual(['held-old', 'held-new']);
+      }
+    });
+
+    it('works through the cases in the order the page drew them, and never a held one', () => {
+      expect(workOrder(groupQueue(queue, held, mine, 'risk')).map((r) => r.runId))
+        .toEqual(['risk-new', 'clean-mid', 'rest-newest', 'rest-old']);
+      expect(workOrder(groupQueue(queue, held, mine, 'oldest')).map((r) => r.runId))
+        .toEqual(['rest-old', 'clean-mid', 'risk-new', 'rest-newest']);
+    });
   });
 });

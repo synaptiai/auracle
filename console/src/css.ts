@@ -33,6 +33,9 @@
 export const CONSOLE_CSS = `
 body { margin: 0; }
 .root {
+  /* Native controls follow the theme: a scrollbar, a checkbox and a date
+     picker drew light on the dark theme without it. */
+  color-scheme:dark;
   --bg:#0d0e10; --panel:#141619; --panel2:#1a1d21; --ink:#e6e7e8; --mut:#878d95;
   --dim:#5b626a; --rule:#25292e; --rule2:#31363c;
   --accent:oklch(0.66 0.11 255); --warn:oklch(0.72 0.11 78); --hot:oklch(0.66 0.13 42);
@@ -62,6 +65,7 @@ body { margin: 0; }
   -webkit-font-smoothing:antialiased;
 }
 .root[data-theme="light"] {
+  color-scheme:light;
   --bg:#f7f7f5; --panel:#ffffff; --panel2:#f1f1ee; --ink:#17181a; --mut:#5f656c;
   --dim:#9198a0; --rule:#e4e4e0; --rule2:#d3d3ce;
   --accent:oklch(0.52 0.12 255); --warn:oklch(0.58 0.11 78); --hot:oklch(0.55 0.14 42);
@@ -105,6 +109,8 @@ a:hover { color:var(--ink); text-decoration:underline; }
    title wraps to two lines inside 194px and breaks the rail's rhythm. */
 .navlabel { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .nav .badge { flex:none; white-space:nowrap; }
+/* The knowledge badge is a count to read, not a call to act (issue #154). */
+.badge.plain { background:transparent; color:var(--dim); font-weight:400; }
 .nav a:hover { background:var(--panel2); color:var(--ink); text-decoration:none; }
 .nav a.on { background:var(--panel2); color:var(--ink); box-shadow:inset 2px 0 0 var(--accent); }
 .badge { font-family:var(--mono); font-size:11px; padding:1px 6px;
@@ -131,12 +137,12 @@ a:hover { color:var(--ink); text-decoration:underline; }
 .filters { display:flex; align-items:center; gap:8px; padding:11px 20px;
   border-bottom:1px solid var(--rule); flex-wrap:wrap; }
 /* The options wrap rather than clip: twelve run states do not fit beside the
- * rail at 907px. The rule colour shows through a 1px gap as the dividers, and
- * each option grows to fill its row, so a wrapped row leaves no bare strip. */
-.seg { display:flex; flex-wrap:wrap; gap:1px; background:var(--rule2); border:1px solid var(--rule2);
-  border-radius:4px; overflow:hidden; }
-.seg a { flex:1 0 auto; text-align:center; padding:4px 10px; font-size:11px; font-family:var(--mono);
-  color:var(--mut); background:var(--bg); }
+ * rail at 907px. Each option keeps its own width and draws its own 1px ring,
+ * and the 1px gap lets two rings meet as one divider. An option that grew to
+ * fill its row stretched the last one of a wrapped control across the page. */
+.seg { display:flex; flex-wrap:wrap; gap:1px; padding:1px; border-radius:4px; overflow:hidden; }
+.seg a { flex:none; text-align:center; padding:4px 10px; font-size:11px; font-family:var(--mono);
+  color:var(--mut); background:var(--bg); box-shadow:0 0 0 1px var(--rule2); }
 .seg a:hover { background:var(--panel2); color:var(--ink); text-decoration:none; }
 .seg a.on { background:var(--accent); color:#0d0e10; }
 /* 11px text needs 4.5:1, and near-black on the light accent reads 3.5:1. */
@@ -149,7 +155,7 @@ a:hover { color:var(--ink); text-decoration:underline; }
 .wrap { padding:20px 24px 28px; display:flex; flex-direction:column; gap:16px; }
 .hd { display:flex; align-items:flex-start; justify-content:space-between; gap:20px;
   padding-bottom:14px; border-bottom:1px solid var(--rule); flex-wrap:wrap; }
-.hdt { font-size:16px; font-weight:600; }
+.hdt { font-size:21px; font-weight:600; letter-spacing:-.015em; }
 .hds { color:var(--mut); font-size:12px; margin-top:4px; max-width:78ch; }
 .card { background:var(--panel); border:1px solid var(--rule); border-radius:5px; }
 .card > header { padding:10px 14px; border-bottom:1px solid var(--rule); display:flex;
@@ -161,6 +167,12 @@ a:hover { color:var(--ink); text-decoration:underline; }
 .kv dd { margin:0; font-family:var(--mono); color:var(--mut); }
 .big { font-family:var(--mono); font-size:27px; font-weight:500;
   letter-spacing:-.02em; font-variant-numeric:tabular-nums; line-height:1; }
+/* A gate value is a reading beside its track, not a headline (issue #154). */
+.gate .big { font-size:19px; font-weight:400; letter-spacing:normal; }
+/* A stat card's figure, at the handoff's metric size. Its colour is the
+ * verdict the card's label names, so the colour never stands alone. */
+.metric { font-family:var(--mono); font-size:34px; font-weight:500;
+  letter-spacing:-.03em; font-variant-numeric:tabular-nums; line-height:1; }
 .discl { border-left:2px solid var(--warn); padding:9px 12px; background:var(--panel2);
   font-size:11.5px; color:var(--mut); }
 .note { display:flex; gap:9px; align-items:flex-start; padding:12px 15px; background:var(--panel);
@@ -173,6 +185,11 @@ thead th { text-align:left; font-size:10px; letter-spacing:.09em; text-transform
   color:var(--dim); font-weight:500; padding:9px 12px; border-bottom:1px solid var(--rule2);
   position:sticky; top:0; background:var(--bg); }
 tbody td { padding:8px 12px; border-bottom:1px solid var(--rule); font-size:12px; vertical-align:middle; }
+/* A mono value has no break in it, so it set the table's least width and the
+ * runs page scrolled sideways at 907px. It may break anywhere instead. */
+tbody td.m { overflow-wrap:anywhere; }
+/* An id is one token, so it never breaks; the text columns give way. */
+tbody td.m.id { overflow-wrap:normal; white-space:nowrap; }
 tbody tr:hover { background:var(--panel); }
 .st { display:inline-flex; align-items:center; gap:6px;
   font-family:var(--mono); font-size:11px; }
@@ -202,11 +219,21 @@ tbody tr:hover { background:var(--panel); }
 .lhd { padding:14px 16px; border-bottom:1px solid var(--rule); }
 .item { display:block; padding:12px 16px; border-bottom:1px solid var(--rule); color:inherit; }
 .item:hover { background:var(--panel2); text-decoration:none; color:inherit; }
-.btn { padding:8px 18px; border-radius:4px; font-size:12.5px; font-weight:600;
-  border:1px solid transparent; font-family:var(--sans); cursor:pointer; }
-.primary { background:var(--ok); color:#0d0e10; }
-.warnbar { display:flex; gap:9px; align-items:flex-start; border:1px solid var(--rule2);
-  border-left:2px solid var(--accent); border-radius:4px; padding:11px 13px; background:var(--panel); }
+/* The handoff's buttons: a secondary one is a ring and muted text with no
+ * fill, and the primary one is the only filled control on a page. Left to the
+ * browser, a secondary button drew grey on both themes. */
+.btn { padding:9px 14px; border-radius:var(--r-md); font-size:12.5px; font-weight:400;
+  background:transparent; color:var(--mut); border:1px solid var(--rule2);
+  font-family:var(--sans); cursor:pointer; }
+.btn:hover { color:var(--ink); }
+.btn.primary { background:var(--ok); color:#0d0e10; border-color:transparent; font-weight:600;
+  padding:9px 20px; font-size:13px; }
+/* Every text field, in both themes. A field the stylesheet left alone drew
+ * white on the dark theme. */
+.root input[type=text], .root input[type=number], .root input[type=date], .root textarea {
+  box-sizing:border-box; padding:8px 9px; border-radius:var(--r-sm);
+  border:1px solid var(--rule2); background:var(--panel2); color:var(--ink);
+  font-family:var(--sans); font-size:12.5px; }
 .outcome { border:1px solid var(--rule2); border-left:2px solid var(--accent); border-radius:4px;
   padding:11px 13px; background:var(--panel); font-size:12px; margin:0; }
 /* Only an approval reads as a success. A refusal sent nothing, and it must not
@@ -256,7 +283,9 @@ tbody tr:hover { background:var(--panel); }
 /* The routing screen (issue #112): product tabs, then each intent's rules. */
 .tabs { display:flex; flex-wrap:wrap; gap:6px; }
 .tab { padding:6px 12px; border:1px solid var(--rule2); border-radius:4px; font-size:12px; color:var(--mut); }
-.tab.on { color:var(--ink); border-color:var(--accent); }
+.tab.on { background:var(--accent); color:#0d0e10; border-color:var(--accent); }
+/* 12px text needs 4.5:1, as the chosen segment does. */
+.root[data-theme="light"] .tab.on { color:#ffffff; }
 table.routing td { vertical-align:top; }
 tr.fixed td { background:var(--panel2); }
 .toggle { display:inline-block; width:26px; height:14px; border-radius:7px; background:var(--rule2);
@@ -349,7 +378,7 @@ tr.fixed td { background:var(--panel2); }
  * aside says where the escalated runs are. */
 .qaside { margin: 0; padding: 10px 26px; border-bottom: 1px solid var(--rule); font-size: 12px; color: var(--mut); }
 .qgroup { padding: 12px 16px 8px; border-bottom: 1px solid var(--rule); }
-.qnote { margin: 6px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--mut); }
+.qnote { margin: 0; padding: 0 16px 10px; font-size: 11.5px; line-height: 1.5; color: var(--mut); }
 /* The keys line above the queue, inset like the rows it annotates. */
 .keys { font-size:11px; color:var(--dim); padding:10px 16px 12px; }
 
@@ -358,13 +387,21 @@ tr.fixed td { background:var(--panel2); }
  * The box rides beside the row's anchor rather than inside it, and the row is
  * the flex container: the anchor keeps the full width it had, so a queue with
  * a checkbox column reads exactly like one without. */
-.qrow { display:flex; align-items:flex-start; gap:9px; padding-left:14px; }
+.qrow { display:flex; align-items:flex-start; gap:9px; }
 .qrow > .item { flex:1 1 auto; min-width:0; }
-.qrow > input[type=checkbox] { margin-top:17px; accent-color:var(--ok); }
+.qrow > input[type=checkbox] { margin:17px 0 0 14px; accent-color:var(--ok); }
+/* Issue #154: a risk row carries the risk colour down its edge, as the
+ * handoff's risk group does, and the wait reads in the waiting colour. */
+.qrow.risk { box-shadow:inset 3px 0 0 var(--hot); }
+/* The row's own take sits beside its link, and never squeezes the text. */
+.qrow > .take { flex:none; align-self:center; margin-right:16px; padding:5px 11px; font-size:11.5px; }
+.takenext { margin:0; }
+.age.wait { color:var(--warn); }
 .qgroup .btn { margin-left:10px; }
 /* The batch's answer: what was sent, what came back, and the undo. */
 .panel { border:1px solid var(--rule2); border-radius:6px; padding:18px 20px; margin:18px 0; }
 .panel.ok { border-left:2px solid var(--ok); }
+.panel.refused { border-left:2px solid var(--hot); }
 .panel .big { display:block; margin-bottom:6px; }
 .panel form { display:inline-block; margin-top:10px; }
 
@@ -512,36 +549,39 @@ td a, dd a { display: inline-block; }
 .why p { margin:0 0 8px; font-size:12.5px; }
 .why p:last-child { margin-bottom:0; }
 /* The approval stays in reach at the foot of the window, however long the
- * reply is. The warning sits beside the button, so the bar stays short enough
- * to leave the case readable on a short screen, and wraps when it cannot. */
+ * reply is. Issue #154: one row of controls, as the handoff draws it, and the
+ * send warning under them. An outcome that needs a field opens it in the
+ * case, so no field makes the bar taller than a short window. */
 .actionbar { position:sticky; bottom:0; z-index:1; background:var(--panel);
   border-top:1px solid var(--rule2); padding:10px 24px; display:flex; flex-wrap:wrap;
-  align-items:center; gap:8px 16px; }
-.actionbar .warnbar { flex:1 1 420px; min-width:0; }
+  align-items:center; gap:6px 16px; }
+.actionbar .acts { display:flex; flex-wrap:wrap; align-items:center; gap:8px; flex:1 1 100%; }
 .actionbar form { flex:none; margin:0; }
-.actionbar .discl { flex:1 1 100%; margin:0; }
-.actionbar .readback { flex:1 1 100%; margin:0; font-size:11px; color:var(--mut); }
-/* DEC-48: the case a reviewer finishes with no reply. Its own row under the
- * approval, so the primary control stays the one a reviewer reaches for and
- * the close is never one stray press away from it. */
-.actionbar .closebar, .actionbar .snoozebar, .actionbar .rewritebar,
-.actionbar .sendbackbar {
-  flex:1 1 100%; display:flex; flex-wrap:wrap;
-  align-items:center; gap:8px 12px; border-top:1px solid var(--rule2); padding-top:9px; }
-.actionbar .closebar .discl, .actionbar .snoozebar .discl,
-.actionbar .rewritebar .discl, .actionbar .sendbackbar .discl { flex:1 1 100%; margin:0; }
-.actionbar .closebar form, .actionbar .snoozebar form, .actionbar .rewritebar form,
-.actionbar .sendbackbar form {
-  flex:none; display:flex; gap:8px; align-items:center; margin:0; }
+.actionbar .barsays { flex:1 1 100%; margin:0; font-size:11.5px; line-height:1.45; color:var(--mut); }
+.actionbar .barsays.refused { color:var(--hot); }
+/* The step a link has opened, marked as a chosen segment is. */
+.btn.on { color:var(--ink); border-color:var(--accent); }
+/* The key chord the primary button answers, quieter than its label. */
+.kbd { font-family:var(--mono); font-size:11px; opacity:.7; margin-left:4px; }
+/* The open outcome's form, at the head of the case. */
+.stepcard { border-color:var(--accent); }
+.stepcard > .body { display:flex; flex-direction:column; gap:10px; align-items:flex-start; }
+.stepcard form { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0; width:100%; }
+.stepcard form label { flex:1 1 100%; }
+.stepcard textarea { flex:1 1 100%; min-height:96px; }
+.stepcard .discl { margin:0; }
 /* The period field is narrow: a number of minutes, not a paragraph. */
-.actionbar .snoozebar input[name="minutes"] { width:6.5em; }
-/* The rewritten reply is a textarea, so the bar stacks it over its button. */
-.actionbar .rewritebar form { flex:1 1 100%; flex-wrap:wrap; }
-.actionbar .rewritebar textarea { flex:1 1 100%; width:auto; min-height:96px; }
-/* DEC-49: the note a send-back carries. Shorter than a reply: a reviewer
- * writes an instruction, not a draft. */
-.actionbar .sendbackbar form { flex:1 1 100%; flex-wrap:wrap; }
-.actionbar .sendbackbar textarea { flex:1 1 100%; width:auto; min-height:64px; }
+.stepcard input[name="minutes"] { width:6.5em; }
+/* The hold and the case's place in the queue, in the case header. */
+.caseops { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:8px; }
+.caseops form { margin:0; }
+.caseops .btn { padding:4px 11px; font-size:11.5px; }
+.casehd .discl { margin:8px 0 0; }
+/* The undo of a held send, between the header and the case. */
+.holdbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:12px 24px 0; }
+.holdbar .discl, .holdbar form { margin:0; }
+/* What an approval records about the edit, under the reply it is about. */
+.readback { margin:0; font-size:11px; color:var(--mut); }
 /* The gates one above the other, in a column too narrow for two cards. */
 .gates.rows { grid-template-columns:minmax(0, 1fr); }
 /* Why a gate has no value, beside its dash. */

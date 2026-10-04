@@ -957,7 +957,9 @@ describe('what a fault and a refusal tell the operator', () => {
         'content-type': 'application/x-www-form-urlencoded',
         'sec-fetch-site': 'same-origin',
       },
-      body: `runId=${RUN}&pad=${'x'.repeat(70 * 1024)}`,
+      // Past the approval's own bound, which is larger than a save's because
+      // the send may carry an untouched draft (issue #154).
+      body: `runId=${RUN}&pad=${'x'.repeat(1025 * 1024)}`,
     });
     expect(res.status).toBe(413);
     expect(approved).toEqual([]);
@@ -1353,7 +1355,7 @@ describe('the reply an approver reads before they send it', () => {
     expect(html).not.toContain('action="/approve"');
     // DEC-48: the close is still offered. This is the dead end the outcome
     // exists to end — nobody can approve it, and somebody has to finish it.
-    expect(buttonInForm(html, '/close')).toBe(true);
+    expect(html).toContain('?close=1#step');
     expect(html).toContain('Close, no reply');
   });
 
@@ -1368,7 +1370,7 @@ describe('the reply an approver reads before they send it', () => {
     expect(html).toContain('This run parked a reply in the ledger alone, with no helpdesk draft');
     expect(html).not.toContain('action="/approve"');
     expect(html).not.toContain('performs customer_reply');
-    expect(buttonInForm(html, '/close')).toBe(true);
+    expect(html).toContain('?close=1#step');
     // It is a reply, not an internal write: its close says so.
     expect(html).toContain('Close, no reply');
     expect(html).not.toContain('Close, not performed');
@@ -2671,7 +2673,7 @@ describe('the design notes', () => {
     }));
 
     // The case offers the close, with the field the reason is written in.
-    const html = await (await fetch(base + CASE)).text();
+    const html = await (await fetch(base + CASE + '?close=1')).text();
     expect(html).toContain('Close, no reply');
     expect(html).toMatch(/<input[^>]*name="reason"/);
     expect(html).toContain('The customer is sent nothing.');
@@ -2812,7 +2814,7 @@ describe('the knowledge screen (DEC-50)', () => {
 
   it('draws the four cards with the figures the ledger gave', async () => {
     const html = await knowledgePage({ readKnowledge: async () => REPORT });
-    const cards = [...html.matchAll(/<span class="lbl">([^<]*)<\/span><\/header><div class="body"><span class="big">([^<]*)<\/span>/g)]
+    const cards = [...html.matchAll(/<span class="lbl">([^<]*)<\/span><\/header><div class="body"><span class="metric"[^>]*>([^<]*)<\/span>/g)]
       .map((m) => [m[1], m[2]]);
     expect(cards).toEqual([
       ['Cases blocked by a gap', '5'],
@@ -2821,6 +2823,15 @@ describe('the knowledge screen (DEC-50)', () => {
       ['Cases those documents now answer', '4'],
     ]);
     expect(html).toContain('2026-09-06 to 2026-09-20 UTC');
+  });
+
+  // Issue #154: the handoff colours each figure by the verdict its label
+  // names: a gap and a waiting count warn, a lapsed review is hot, and what
+  // the team wrote and what it now answers is a good outcome.
+  it('colours each figure by the verdict its card names', async () => {
+    const html = await knowledgePage({ readKnowledge: async () => REPORT });
+    const colours = [...html.matchAll(/<span class="metric" style="color:var\(--([a-z]+)\)">/g)].map((m) => m[1]);
+    expect(colours).toEqual(['warn', 'hot', 'ok', 'ok']);
   });
 
   it('names the cases whose journal it could not read, since the count leaves them out', async () => {
@@ -2856,7 +2867,7 @@ describe('the knowledge screen (DEC-50)', () => {
       const res = await fetch(base + '/knowledge');
       const html = await res.text();
       expect(res.status).toBe(200);
-      expect(html.match(/<span class="big" style="color:var\(--dim\)">not read<\/span>/g)).toHaveLength(4);
+      expect(html.match(/<span class="metric" style="color:var\(--dim\)">not read<\/span>/g)).toHaveLength(4);
       const tag = /The knowledge figures were not read\. The console log names the fault ([0-9a-f]{8})\./.exec(html)?.[1];
       expect(tag).toBeDefined();
       const line = JSON.parse(logged.find((l) => l.includes('console_knowledge_unread'))!);
@@ -3131,7 +3142,7 @@ describe('the one script this console ships', () => {
     expect(script).toContain('takeForm.submit();');
     expect(script).toContain('if (rowUrl.origin !== window.location.origin) return;');
     // c acts on the focused row alone, so it never chooses one for a reviewer.
-    expect(script).toContain('if (at < 0) return;');
+    expect(script).toContain('if (at < 0 || pressed || event.repeat) return;');
     // The j/k/c guard at its own site, so removing it is not hidden by the
     // same line serving Esc.
     expect(script).toContain('if (rows.length === 0) return;\n    if (inControl(event)) return;');
@@ -3139,10 +3150,8 @@ describe('the one script this console ships', () => {
     // names only j, because k is its other half.
     expect(script).toContain("event.key === 'j'");
     expect(script).toContain("event.key !== 'j' && event.key !== 'k' && event.key !== 'c'");
-    // Enter stays unbound on purpose (#51): the focused anchor already opens.
-    // Both spellings, so a quote reformat cannot hide a binding.
-    expect(script).not.toContain("'Enter'");
-    expect(script).not.toContain('"Enter"');
+    // Enter stays the focused control's (#51). Issue #154 binds it with
+    // nothing focused and with ⌘ or Ctrl; `script.test.ts` runs both.
     expect(script).toContain('BUTTON: 1');
     expect(script).toContain("typing['SEL' + 'ECT'] = 1;");
     // No key acts while the reviewer types: the guard names every field.
@@ -3159,6 +3168,19 @@ describe('the one script this console ships', () => {
     // protocol check keeps a javascript: or data: link inert.
     expect(script).toContain('event.preventDefault();\n          window.location.href = url.href;');
     expect(script).toContain("url.protocol === 'http:' || url.protocol === 'https:'");
+  });
+
+  // Issue #154: the approval sends the reply the ledger holds, not the text
+  // in the editor. So a chord pressed in an editor holding changes saves
+  // them, and a send while changes are unsaved is stopped and says why.
+  // Issue #154: the markup the script's guards read. What the script does
+  // with it is tested by running it, in `script.test.ts`.
+  it('marks the editor and draws the note a send shows over unsaved changes', async () => {
+    const base = await startGuarded(deps(), undefined, undefined, true);
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).toContain('<form class="editor" data-editor id="reply-editor" method="post"');
+    expect(html).toContain('<p class="barsays refused" data-unsaved hidden>Save the reply first.'
+      + ' A send carries the saved reply, and the changes above are not saved.</p>');
   });
 
   it('ships exactly one, on every surface', async () => {
@@ -3424,7 +3446,7 @@ describe('taking a case (DEC-46)', () => {
   it('offers a take on a free case', async () => {
     const base = await startGuarded(deps({ readHold: async () => null }));
     const html = await (await fetch(base + CASE)).text();
-    expect(html).toContain('Nobody holds this case.');
+    expect(html).toContain('Nobody holds this case');
     expect(html).toContain('Take this case');
     expect(html).toContain('action="/take"');
     // No takeover field: one press takes a free case.
@@ -3738,7 +3760,7 @@ describe('taking a case (DEC-46)', () => {
   it('does not claim a holder the read no longer finds', async () => {
     const base = await startGuarded(deps({ readHold: async () => null }));
     const html = await (await fetch(base + `${CASE}?taken=held_by_other`)).text();
-    expect(html).toContain('Nobody holds this case.');
+    expect(html).toContain('Nobody holds this case');
     expect(html).toContain('The hold moved, and nobody holds this case now.');
     // No name, and no claim that somebody has it.
     expect(html).not.toContain('anna@example.test');
@@ -4208,12 +4230,29 @@ describe('the queue a reviewer lands on (issue #101)', () => {
     // on it because DEC-51 gives the batch confirm a key, and the legend
     // names the keys that act.
     expect(html).toContain(
-      '<div class="keys">j / k move · enter opens · c takes the case · a confirms the clean cases</div>',
+      '<div class="keys">j / k move · enter opens · c takes the case · a confirms the clean cases'
+        + ' · enter on the page takes the next case</div>',
     );
     // Above the rows, where an uncapped queue cannot push it under the fold.
     expect(html.indexOf('<div class="keys">')).toBeLessThan(html.indexOf('<div class="list">'));
     // Degraded, the keys lose nothing: every row is still an anchor.
     expect(html).toMatch(/<a class="item" href="\/case\//);
+  });
+
+  // Issue #154: the risk group's rows carry the risk colour down their edge,
+  // as the handoff draws them, and every row's wait reads in the waiting
+  // colour. A row in another group carries no risk edge.
+  it('marks a risk row, and only a risk row, and puts every wait in the waiting colour', async () => {
+    const base = await startGuarded(deps({ listApprovals: async () => queue() }));
+    const html = await (await fetch(base + '/')).text();
+    const rowOf = (ticket: string): string => {
+      const at = html.indexOf(`>${ticket}<`);
+      return html.slice(html.lastIndexOf('<div class="qrow', at), at);
+    };
+    expect(rowOf('SYN-RISK')).toMatch(/^<div class="qrow risk">/);
+    expect(rowOf('SYN-CLEAN')).toMatch(/^<div class="qrow">/);
+    expect(rowOf('SYN-REST')).toMatch(/^<div class="qrow">/);
+    expect(html.match(/<span class="age wait">/g)).toHaveLength(3);
   });
 
   // DEC-47: a chip per product the queue holds, each with the count read
@@ -4462,8 +4501,9 @@ describe('the queue a reviewer lands on (issue #101)', () => {
     expect(html).not.toContain('class="pane"');
     expect(html).not.toContain('The reply, as the system drafted it');
     expect(html).toContain('<form method="post" action="/confirm">');
-    expect([...html.matchAll(/<form/g)]).toHaveLength(1);
-    expect([...html.matchAll(/name="runId"/g)]).toHaveLength(1);
+    // Issue #154: and one take per row, which holds a case and sends nothing.
+    expect([...html.matchAll(/<form method="post" action="\/(?!take)/g)]).toHaveLength(1);
+    expect([...html.matchAll(/type="checkbox" name="runId"/g)]).toHaveLength(1);
     expect([...html.matchAll(/type="checkbox"/g)]).toHaveLength(1);
     // The control owns its form. Emitted after the form opened, the button
     // had no owner and submitted nothing, and every other assertion here
@@ -4674,8 +4714,8 @@ describe('the approval queue', () => {
     expect(html).not.toContain('D-2');
     // The one control on the page is the batch confirm of the clean group
     // (DEC-51). What it does not draw is a case: no reply text, and no
-    // control that sends one on its own.
-    expect([...html.matchAll(/<form/g)]).toHaveLength(1);
+    // control that sends one on its own. A take (issue #154) sends nothing.
+    expect([...html.matchAll(/<form method="post" action="\/(?!take)/g)]).toHaveLength(1);
     expect(html).toContain('Confirm all');
     expect(html).not.toContain('The reply, as the system drafted it');
   });
@@ -5184,7 +5224,8 @@ describe('the run an approver reads, and the run the button posts', () => {
       listApprovals: async () => two().map((run) => ({ ...run, gateReason: 'high_risk' })),
     }));
     const html = await (await fetch(base + '/')).text();
-    expect(html).not.toContain('class="seg"');
+    // The sort control is there (issue #154); no rule filter is.
+    expect(html).not.toContain('href="/?rule=');
   });
 
   it('says which rule narrowed the list, in the words the chip uses', async () => {
@@ -5327,7 +5368,7 @@ describe('the case a reviewer decides on (issue #102)', () => {
     expect(card).toContain('2026-09-06');
     expect(card).toContain('open');
     expect(card).toContain('a participant is named');
-    expect(card).toContain(`href="/conversation/${CONVERSATION}"`);
+    expect(card).toContain(`href="/conversation/${CONVERSATION}?from=${RUN}"`);
     expect(card).toContain('The ledger holds no name, plan, tenure or account history for this customer.');
     for (const invented of ['plan:', 'tenure:', 'refunds in', 'case count']) {
       expect(card.toLowerCase()).not.toContain(invented);
@@ -6263,6 +6304,11 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
     // Choosing the copy is a save, so the choice travels as one.
     expect(html).toContain('Send the helpdesk copy');
     expect(html).toContain('name="edit" value="text"');
+    // ERR-1: the other half of the choice is a send, so where the editor is
+    // drawn it posts the editor's form, and a change nobody saved is refused.
+    // Both buttons carry the guard the script reads.
+    expect(html).toMatch(/<button class="btn" type="submit" form="reply-editor" formaction="\/approve" formmethod="post" name="ack" value="[0-9a-f]{64}" data-send>Send the reply above<\/button>/);
+    expect(html).toContain('<button class="btn" type="submit" data-send>Send the helpdesk copy</button>');
   });
 
   // The refusal's sentence promises two texts. A copy a person deleted since
@@ -6344,9 +6390,10 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
     const html = await (await fetch(`${base}${CASE}?outcome=copy_changed`)).text();
 
     expect(html).toContain('Send the reply above');
-    // The route the form posts to, read off the page: a control that posts
-    // nowhere is the defect the replace button shipped with.
-    expect(html).toContain(`<form method="post" action="/approve">`);
+    // The route it posts to, read off the page: a control that posts nowhere
+    // is the defect the replace button shipped with. Issue #154: where the
+    // editor is drawn, it posts the editor's form to the approval.
+    expect(html).toMatch(/form="reply-editor" formaction="\/approve" formmethod="post" name="ack"/);
     // The digest the form carries is of the text drawn above it, which is
     // what makes the acknowledgement a decision about text somebody read.
     expect(html).toContain(`name="ack" value="${digestOf(copy)}"`);
@@ -6361,18 +6408,23 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
     const base = await capable({ readCopy: async () => copy, approve });
     const html = await (await fetch(`${base}${CASE}?outcome=copy_changed`)).text();
 
-    // The form whose button sends the ledger's reply, found by that button,
-    // and the action the page names. A form that posts to the wrong route
-    // fails here rather than passing on a URL this test chose.
-    const rendered = [...html.matchAll(/<form method="post" action="([^"]*)">(.*?)<\/form>/gs)]
-      .find(([, , body]) => body!.includes('Send the reply above'));
-    expect(rendered).toBeDefined();
+    // The button that sends the ledger's reply names the form it posts and
+    // the route; a browser sends that form's fields and the button's own name
+    // and value. A button that posts to the wrong route fails here rather
+    // than passing on a URL this test chose.
+    const button = /<button[^>]*form="([^"]+)" formaction="([^"]*)" formmethod="post" name="ack" value="([^"]*)"[^>]*>Send the reply above<\/button>/
+      .exec(html);
+    expect(button).not.toBeNull();
+    const formBody = new RegExp(`<form[^>]*id="${button![1]}"[^>]*>(.*?)</form>`, 's').exec(html)?.[1] ?? '';
     const fields: Record<string, string> = {};
-    for (const [, name, value] of rendered![2]!.matchAll(/name="([^"]+)" value="([^"]*)"/g)) {
+    for (const [, name, value] of formBody.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)) {
       fields[name!] = value!;
     }
+    const text = /<textarea name="text"[^>]*>([^<]*)<\/textarea>/.exec(formBody)?.[1] ?? '';
+    fields['text'] = text.replaceAll('&amp;', '&').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"').replaceAll('&#39;', "'");
+    fields['ack'] = button![3]!;
 
-    const res = await fetch(`${base}${rendered![1]}`, {
+    const res = await fetch(`${base}${button![2]!.replaceAll('&amp;', '&')}`, {
       method: 'POST',
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
@@ -6841,6 +6893,21 @@ describe('DEC-51: the batch confirm and its undo', () => {
 
     expect(page).toContain('nothing is held here, so there is no undo');
     expect(page).not.toContain('holds each one for');
+  });
+
+  // Issue #154: the panel wears the success colour only when something was
+  // approved. A batch every case of which was refused sent nothing, and must
+  // not read as one that did.
+  it('draws a batch nobody approved without the success colour', async () => {
+    const approve = vi.fn().mockResolvedValue('read_back_failed');
+    const base = await startGuarded(deps(batchDeps({ approve })), undefined, undefined, true);
+    const html = await (await post(base, '/confirm/apply', {
+      runId: [CLEAN_A, CLEAN_B],
+      shown: [digestOf(FIRST_REPLY), digestOf(SECOND_REPLY)],
+    })).text();
+    expect(html).toContain('0 replies approved.');
+    expect(html).not.toContain('<div class="panel ok">');
+    expect(html).toContain('<div class="panel refused">');
   });
 
   it('approves each case with its digest and the hold, and offers the undo', async () => {
@@ -7401,7 +7468,7 @@ describe('DEC-48: the console closes a case with no reply', () => {
 
   it('offers the close on a waiting case, with the reason field inside its own form', async () => {
     const base = await startGuarded(deps());
-    const html = await (await fetch(base + CASE)).text();
+    const html = await (await fetch(base + CASE + '?close=1')).text();
 
     expect(buttonInForm(html, '/close')).toBe(true);
     // The button the handoff names, and the field the record needs.
@@ -7471,7 +7538,7 @@ describe('DEC-48: the console closes a case with no reply', () => {
   it('words the close of an internal write as an action left unperformed', async () => {
     const action = { draftExternalId: null, payloadRecorded: true, actionClass: 'compensate', delivery: 'at_most_once' };
     const base = await startGuarded(deps({ readRun: caseOf(action) }));
-    const html = await (await fetch(base + CASE)).text();
+    const html = await (await fetch(base + CASE + '?close=1')).text();
     expect(html).toContain('Closing finishes this case without performing the action it parked.');
     expect(html).toContain('placeholder="why this action is not needed"');
     expect(buttonInForm(html, '/close')).toBe(true);
@@ -7671,7 +7738,7 @@ describe('DEC-48: the console closes a case with no reply', () => {
 
   it('bounds the reason in the form, so the field cannot post one the ledger refuses', async () => {
     const base = await startGuarded(deps());
-    const html = await (await fetch(base + CASE)).text();
+    const html = await (await fetch(base + CASE + '?close=1')).text();
     expect(html).toContain(`maxlength="${MAX_CLOSE_REASON_CHARS}"`);
   });
 });
@@ -7695,7 +7762,7 @@ describe('DEC-48: the console puts a case aside', () => {
 
   it('offers the snooze on a waiting case, with the period inside its own form', async () => {
     const base = await startGuarded(deps());
-    const html = await (await fetch(base + CASE)).text();
+    const html = await (await fetch(base + CASE + '?snooze=1')).text();
 
     expect(buttonInForm(html, '/snooze')).toBe(true);
     expect(html).toContain('Snooze');
@@ -8046,7 +8113,7 @@ describe('DEC-49: the console sends a case back for a new attempt', () => {
     const action = { draftExternalId: null, payloadRecorded: true, actionClass: 'route_ticket', evidence: { ...EVIDENCE, parkedAction: true } };
     const base = await startGuarded(deps({ readRun: caseOf(action) }));
     const panel = await (await fetch(`${base}${CASE}?sendback=1`, SAME_ORIGIN)).text();
-    const note = /<div class="sendbackbar"><p class="discl">([^<]*)<\/p>/.exec(panel)?.[1];
+    const note = /id="step">[^]*?<p class="discl">([^<]*)<\/p>/.exec(panel)?.[1];
     expect(note).toContain('nothing is sent or performed until a person approves what it produces');
     expect(note).not.toContain('reply');
     const refused = await startGuarded(deps({ readRun: caseOf({ ...action, attemptRejected: true }) }));
@@ -9043,17 +9110,26 @@ describe('the team screen (issue #112)', () => {
     return (await fetch(base + '/team')).text();
   };
   const cards = (html: string): string[][] =>
-    [...html.matchAll(/<span class="lbl">([^<]*)<\/span><\/header><div class="body"><span class="(big|nofig)">([^<]*)<\/span>/g)]
+    [...html.matchAll(/<span class="lbl">([^<]*)<\/span><\/header><div class="body"><span class="(metric|nofig)"(?: style="[^"]*")?>([^<]*)<\/span>/g)]
       .map((m) => [m[1]!, m[2]!, m[3]!]);
+
+  // Issue #154: the handoff's colours. How few cases reached a person and how
+  // short a case ran are good outcomes, the team's time is the accent, and
+  // the oldest wait warns.
+  it('colours each figure by the verdict its card names', async () => {
+    const html = await teamPage({ readTeam: async () => TEAM });
+    const colours = [...html.matchAll(/<span class="metric" style="color:var\(--([a-z]+)\)">/g)].map((m) => m[1]);
+    expect(colours).toEqual(['ok', 'accent', 'ok', 'warn']);
+  });
 
   it('draws the four cards with the ledger\'s figures, and the share with its counts', async () => {
     const html = await teamPage({ readTeam: async () => TEAM });
     expect(cards(html)).toEqual([
       // Two of the three that ended reached a person; the one in progress is apart.
-      ['reached a person', 'big', '66.7%'],
-      ['team time on support', 'big', '3h 40m'],
-      ['median case', 'big', '4m 10s'],
-      ['oldest waiting', 'big', '2h 06m'],
+      ['reached a person', 'metric', '66.7%'],
+      ['team time on support', 'metric', '3h 40m'],
+      ['median case', 'metric', '4m 10s'],
+      ['oldest waiting', 'metric', '2h 06m'],
     ]);
     // A case parked for a person has not ended, and it counts as one that
     // needed a person: the sentence names both.
@@ -9067,7 +9143,7 @@ describe('the team screen (issue #112)', () => {
       oldestWaiting: { ...TEAM.oldestWaiting!, createdAt: '2026-09-15T08:00:00.000Z', heldBy: 'reviewer-b' },
     }) });
     // Five days and four hours: past two days a wait reads in days.
-    expect(cards(held)[3]).toEqual(['oldest waiting', 'big', '5d 04h']);
+    expect(cards(held)[3]).toEqual(['oldest waiting', 'metric', '5d 04h']);
     expect(held).toContain('Aurora · held by reviewer-b.');
     const close = await teamPage({ readTeam: async () => ({ ...TEAM, previousSupportMs: TEAM.supportMs! + 29_000 }) });
     expect(close).toContain('within a minute of the week before');
@@ -9283,5 +9359,971 @@ describe('the routing screen (issue #112)', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// Issue #154: the queue's sort, a reviewer preference kept as the theme is,
+// in a cookie a GET sets on its way back. So a take, a filter change and the
+// theme toggle keep it without every link carrying it.
+describe('the sort a reviewer picks (issue #154)', () => {
+  const waiting = (runId: string, ticketId: string, over: Record<string, unknown>) => ({
+    runId, ticketId, state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+    riskTier: 'medium', reason: null, stepsUsed: 4, draftExternalId: 'D-1', coverage: null,
+    agreement: 0.91, agreementThreshold: 0.8, gateCoverage: 0.86, coverageReviewThreshold: 0.8,
+    ...over,
+  });
+  // The rest case is the oldest and the risk case the newest, so risk first
+  // and oldest first disagree about which comes first.
+  const queue = () => [
+    waiting('11111111-1111-4111-8111-111111111111', 'SYN-REST-OLD', {
+      gateCoverage: 0.5, createdAt: new Date('2026-09-14T06:00:00Z'), product: 'ledger',
+    }),
+    waiting('22222222-2222-4222-8222-222222222222', 'SYN-CLEAN-MID', {
+      createdAt: new Date('2026-09-14T09:00:00Z'), product: 'aurora',
+    }),
+    waiting('33333333-3333-4333-8333-333333333333', 'SYN-RISK-NEW', {
+      gateReason: 'irreversible', createdAt: new Date('2026-09-14T11:00:00Z'), product: 'aurora',
+    }),
+  ];
+  const order = (html: string): string[] =>
+    [...html.matchAll(/<span class="m isubj">([^<]*)<\/span>/g)].map((m) => m[1]!);
+  const page = async (cookie: string, path = '/', over: Partial<ConsoleDeps> = {}): Promise<string> => {
+    const base = await startGuarded(deps({ listApprovals: async () => queue(), ...over }));
+    return (await fetch(base + path, { headers: { cookie } })).text();
+  };
+
+  it('offers the three sorts, each a link back to the queue it was on', async () => {
+    const html = await page('', '/?product=aurora');
+    expect(html).toContain('<span class="lbl">sort</span>');
+    // Risk first is the queue's own order, so it is the one marked.
+    expect(html).toContain('<a href="/sort?to=risk&amp;back=%2F%3Fproduct%3Daurora" class="on">risk first</a>');
+    expect(html).toContain('<a href="/sort?to=oldest&amp;back=%2F%3Fproduct%3Daurora">oldest</a>');
+    expect(html).toContain('<a href="/sort?to=mine&amp;back=%2F%3Fproduct%3Daurora">my products</a>');
+  });
+
+  it('keeps the groups under risk first', async () => {
+    expect(order(await page(''))).toEqual(['SYN-RISK-NEW', 'SYN-CLEAN-MID', 'SYN-REST-OLD']);
+  });
+
+  it('lists every case oldest first under oldest, with no clean group to confirm', async () => {
+    const html = await page('sort=oldest');
+    expect(order(html)).toEqual(['SYN-REST-OLD', 'SYN-CLEAN-MID', 'SYN-RISK-NEW']);
+    expect(html).toContain('<span class="lbl">Oldest first');
+    expect(html).not.toContain('Both gates clean');
+    expect(html).not.toContain('type="submit" data-batch-confirm');
+    expect(html).toContain('<a href="/sort?to=oldest&amp;back=%2F" class="on">oldest</a>');
+  });
+
+  it('lists the reviewer\'s products first under my products, then the oldest', async () => {
+    const html = await page('sort=mine', '/', { readReviewerProducts: async () => ['ledger'] });
+    expect(order(html)).toEqual(['SYN-REST-OLD', 'SYN-CLEAN-MID', 'SYN-RISK-NEW']);
+    const aurora = await page('sort=mine', '/', { readReviewerProducts: async () => ['aurora'] });
+    expect(order(aurora)).toEqual(['SYN-CLEAN-MID', 'SYN-RISK-NEW', 'SYN-REST-OLD']);
+    expect(aurora).toContain('<span class="lbl">Your products first, then the oldest');
+  });
+
+  // F6: under oldest and my products there is no clean group, so `a` acts on
+  // nothing, and a legend names only keys that act.
+  it('names no batch key where the sort draws no clean group', async () => {
+    const html = await page('sort=oldest');
+    expect(html).toContain('<div class="keys">j / k move · enter opens · c takes the case'
+      + ' · enter on the page takes the next case</div>');
+  });
+
+  // F3: without the reviewer's products, "my products" orders by age, and the
+  // page names the order it drew rather than the one it could not.
+  it('names the order it drew when the reviewer\'s products were not read', async () => {
+    const down = { readReviewerProducts: async () => { throw new Error('ledger down'); } };
+    const mine = await page('sort=mine', '/', down);
+    expect(order(mine)).toEqual(['SYN-REST-OLD', 'SYN-CLEAN-MID', 'SYN-RISK-NEW']);
+    expect(mine).toContain('<span class="lbl">Oldest first');
+    expect(mine).not.toContain('Your products first');
+    // Under oldest the products decide nothing, so the page does not say
+    // they were missing.
+    expect(await page('sort=oldest', '/', down)).not.toContain('The products you cover were not read');
+    expect(await page('', '/', down)).toContain('The products you cover were not read');
+  });
+
+  it('reads its own cookie beside the theme, and an unknown value as risk first', async () => {
+    const both = await page('theme=light; sort=oldest');
+    expect(both).toContain('data-theme="light"');
+    expect(order(both)).toEqual(['SYN-REST-OLD', 'SYN-CLEAN-MID', 'SYN-RISK-NEW']);
+    expect(order(await page('sort=sideways'))).toEqual(['SYN-RISK-NEW', 'SYN-CLEAN-MID', 'SYN-REST-OLD']);
+    expect(order(await page('resort=oldest'))).toEqual(['SYN-RISK-NEW', 'SYN-CLEAN-MID', 'SYN-REST-OLD']);
+  });
+
+  it('sets the cookie and returns to the queue it came from, never elsewhere', async () => {
+    const base = await startGuarded(deps({ listApprovals: async () => queue() }));
+    const set = await fetch(base + '/sort?to=oldest&back=%2F%3Fproduct%3Daurora', { redirect: 'manual' });
+    expect(set.status).toBe(303);
+    expect(set.headers.get('location')).toBe('/?product=aurora');
+    expect(set.headers.get('set-cookie')).toBe('sort=oldest; Path=/; Max-Age=31536000; SameSite=Strict; HttpOnly');
+    const away = await fetch(base + '/sort?to=oldest&back=https%3A%2F%2Felsewhere.example', { redirect: 'manual' });
+    expect(away.headers.get('location')).toBe('/');
+    const bogus = await fetch(base + '/sort?to=sideways', { redirect: 'manual' });
+    expect(bogus.status).toBe(404);
+    expect(bogus.headers.get('set-cookie')).toBeNull();
+    // A write, so a GET alone: HEAD and POST set nothing.
+    const head = await fetch(base + '/sort?to=oldest', { method: 'HEAD', redirect: 'manual' });
+    expect(head.headers.get('set-cookie')).toBeNull();
+  });
+});
+
+// Issue #154: "Take next case" and a Take on each row. Both are the take a
+// case page already posts (DEC-46): one press holds a free case, and a case
+// somebody else holds is never moved. Their failures, written first:
+//   - take next takes a case somebody else holds, or stops at the first
+//     refusal instead of trying the next;
+//   - it reads the whole queue rather than the filters and the sort on the
+//     page it was pressed from;
+//   - it re-takes a case the reviewer already holds instead of a new one;
+//   - with nothing free it claims a take;
+//   - a row's Take sits inside the batch form, so it posts the batch.
+describe('taking the next case, and a row\'s Take (issue #154)', () => {
+  const hold = (reviewer: string) => ({
+    reviewer, takenAt: new Date(Date.now() - 60_000), lapsesAt: new Date(Date.now() + 600_000),
+  });
+  const waiting = (runId: string, ticketId: string, over: Record<string, unknown>) => ({
+    runId, ticketId, state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+    riskTier: 'medium', reason: null, stepsUsed: 4, draftExternalId: 'D-1', coverage: null,
+    agreement: 0.91, agreementThreshold: 0.8, gateCoverage: 0.86, coverageReviewThreshold: 0.8,
+    ...over,
+  });
+  const HELD = '11111111-1111-4111-8111-111111111111';
+  const OTHER_PRODUCT = '22222222-2222-4222-8222-222222222222';
+  const RACED = '33333333-3333-4333-8333-333333333333';
+  const FREE = '44444444-4444-4444-8444-444444444444';
+  const MINE = '55555555-5555-4555-8555-555555555555';
+  // Oldest first: the held case, one for ledger, one a teammate takes
+  // between the page and the press, then a free one. All risk first.
+  const queue = () => [
+    waiting(HELD, 'SYN-HELD', { gateReason: 'irreversible', product: 'aurora', createdAt: new Date('2026-09-14T05:00:00Z') }),
+    waiting(OTHER_PRODUCT, 'SYN-LEDGER', { gateReason: 'irreversible', product: 'ledger', createdAt: new Date('2026-09-14T06:00:00Z') }),
+    waiting(RACED, 'SYN-RACED', { gateReason: 'irreversible', product: 'aurora', createdAt: new Date('2026-09-14T07:00:00Z') }),
+    waiting(FREE, 'SYN-FREE', { gateReason: 'irreversible', product: 'aurora', createdAt: new Date('2026-09-14T08:00:00Z') }),
+  ];
+  const post = (base: string, path: string, body: string) => fetch(base + path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
+    body,
+    redirect: 'manual',
+  });
+
+  it('takes the first free case in the filtered order, skipping a hold and a race', async () => {
+    const tried: string[] = [];
+    const base = await startGuarded(deps({
+      listApprovals: async () => queue(),
+      readHolds: async () => new Map([[HELD, hold('anna@example.test')]]),
+      takeHold: async (runId: string, reviewer: string, over: boolean) => {
+        tried.push(`${runId}:${reviewer}:${String(over)}`);
+        return runId === RACED
+          ? { outcome: 'held_by_other' as const, holder: hold('ben@example.test') }
+          : { outcome: 'taken' as const };
+      },
+    }));
+    const res = await post(base, '/take?product=aurora', 'next=1');
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(`/case/${FREE}?taken=taken&product=aurora`);
+    // The held case is never tried, the ledger case is outside the filter,
+    // and the race is tried, refused, and passed over. Never a takeover.
+    expect(tried).toEqual([`${RACED}:${REVIEWER}:false`, `${FREE}:${REVIEWER}:false`]);
+  });
+
+  it('follows the sort the reviewer chose', async () => {
+    const tried: string[] = [];
+    const base = await startGuarded(deps({
+      listApprovals: async () => [
+        ...queue(),
+        waiting(MINE, 'SYN-REST', { gateCoverage: 0.5, product: 'aurora', createdAt: new Date('2026-09-14T04:00:00Z') }),
+      ],
+      takeHold: async (runId: string) => {
+        tried.push(runId);
+        return { outcome: 'taken' as const };
+      },
+    }));
+    // Risk first puts the risk cases ahead of the older rest case; oldest
+    // first does not.
+    await post(base, '/take', 'next=1');
+    const res = await fetch(base + '/take', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin', cookie: 'sort=oldest',
+      },
+      body: 'next=1',
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(303);
+    expect(tried).toEqual([HELD, MINE]);
+  });
+
+  it('passes over a case the reviewer already holds', async () => {
+    const tried: string[] = [];
+    const base = await startGuarded(deps({
+      listApprovals: async () => queue(),
+      readHolds: async () => new Map([[HELD, hold(REVIEWER)]]),
+      takeHold: async (runId: string) => {
+        tried.push(runId);
+        return { outcome: 'taken' as const };
+      },
+    }));
+    await post(base, '/take', 'next=1');
+    expect(tried).toEqual([OTHER_PRODUCT]);
+  });
+
+  it('says so when nothing was free, and takes nothing', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => queue(),
+      takeHold: async () => ({ outcome: 'held_by_other' as const, holder: hold('ben@example.test') }),
+    }));
+    const res = await post(base, '/take?product=aurora', 'next=1');
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/?product=aurora&taken=none_free');
+    const html = await (await fetch(base + '/?product=aurora&taken=none_free')).text();
+    expect(html).toContain('Nothing in this queue was free to take. Every case on it is held, or has just finished.');
+  });
+
+  // A fault can arrive after the take committed and before this process read
+  // the answer, so the page says it may have, as the case page's take does.
+  it('says a take may have committed when one faults on the way', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => queue(),
+      takeHold: async () => { throw new Error('connection reset'); },
+    }));
+    const res = await post(base, '/take', 'next=1');
+    expect(res.status).toBe(500);
+    expect(await res.text()).toMatch(/The take may or may not have committed, and the console log names the fault [0-9a-f]{8}\./);
+  });
+
+  // Without the holds the console cannot tell a free case from a held one,
+  // so it takes nothing rather than walk the queue on refusals.
+  it('takes nothing when the holds were not read, and says why', async () => {
+    const tried: string[] = [];
+    const base = await startGuarded(deps({
+      listApprovals: async () => queue(),
+      readHolds: async () => { throw new Error('ledger down'); },
+      takeHold: async (runId: string) => {
+        tried.push(runId);
+        return { outcome: 'taken' as const };
+      },
+    }));
+    const res = await post(base, '/take', 'next=1');
+    expect(res.status).toBe(503);
+    expect(await res.text()).toMatch(/The holds were not read, so the console cannot tell which case is free\. Nothing was taken\. The console log names the fault [0-9a-f]{8}\./);
+    expect(tried).toEqual([]);
+  });
+
+  // Ten refusals in a row with cases left untried is a race, not a full
+  // queue, and the page must not say every case is held.
+  it('says the cases it tried were taken just now when it stops before the end', async () => {
+    const many = Array.from({ length: 12 }, (_, i) => waiting(
+      `${String(i).padStart(8, '0')}-1111-4111-8111-111111111111`, `SYN-${String(i)}`,
+      { gateReason: 'irreversible', createdAt: new Date(Date.UTC(2026, 8, 14, i)) },
+    ));
+    const base = await startGuarded(deps({
+      listApprovals: async () => many,
+      takeHold: async () => ({ outcome: 'held_by_other' as const, holder: hold('ben@example.test') }),
+    }));
+    const res = await post(base, '/take', 'next=1');
+    expect(res.headers.get('location')).toBe('/?taken=all_raced');
+    const html = await (await fetch(base + '/?taken=all_raced')).text();
+    expect(html).toContain('The cases take next tried were taken or finished by someone else a moment ago. Nothing was taken, so try again.');
+  });
+
+  // ERR-1: the answer is read from what happened, never from a count.
+  it('says the queue is empty, or holds only your cases, rather than that it is all held', async () => {
+    const empty = await startGuarded(deps({ listApprovals: async () => [] }));
+    const none = await post(empty, '/take', 'next=1');
+    expect(none.headers.get('location')).toBe('/?taken=nothing_waiting');
+    const emptyPage = await (await fetch(empty + '/?taken=nothing_waiting')).text();
+    expect(emptyPage).toContain('Nothing is waiting in this queue, so nothing was taken.');
+    expect(emptyPage).not.toContain('Somebody else holds');
+
+    const yours = await startGuarded(deps({
+      listApprovals: async () => queue().slice(0, 1),
+      readHolds: async () => new Map([[HELD, hold(REVIEWER)]]),
+    }));
+    const own = await post(yours, '/take', 'next=1');
+    expect(own.headers.get('location')).toBe('/?taken=all_yours');
+    expect(await (await fetch(yours + '/?taken=all_yours')).text())
+      .toContain('Every case left in this queue is one you hold already, so nothing was taken.');
+  });
+
+  // Every case shown is a teammate's: the queue is not empty and not yours.
+  it('says somebody else holds every case when teammates hold them all', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => queue(),
+      readHolds: async () => new Map(queue().map((run) => [run.runId, hold('anna@example.test')])),
+    }));
+    const res = await post(base, '/take', 'next=1');
+    expect(res.headers.get('location')).toBe('/?taken=none_free');
+    const mixed = await startGuarded(deps({
+      listApprovals: async () => queue().slice(0, 2),
+      readHolds: async () => new Map([[HELD, hold(REVIEWER)], [OTHER_PRODUCT, hold('anna@example.test')]]),
+    }));
+    expect((await post(mixed, '/take', 'next=1')).headers.get('location')).toBe('/?taken=none_free');
+  });
+
+  // ERR-4: a fault reading the queue is a refusal that took nothing.
+  it('takes nothing when the queue could not be read, and says so', async () => {
+    const base = await startGuarded(deps({ listApprovals: async () => { throw new Error('ledger down'); } }));
+    const res = await post(base, '/take', 'next=1');
+    expect(res.status).toBe(503);
+    expect(await res.text()).toMatch(/The queue was not read, so nothing was taken\. The console log names the fault [0-9a-f]{8}\./);
+  });
+
+  // Without the reviewer's products take next still takes, in the ledger's
+  // own order, and the case it lands on says so.
+  it('says the order was the ledger\'s when the reviewer\'s products were not read', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => queue(),
+      readReviewerProducts: async () => { throw new Error('ledger down'); },
+    }));
+    const res = await post(base, '/take', 'next=1');
+    expect(res.headers.get('location')).toBe(`/case/${HELD}?taken=taken&mine=unread`);
+    const html = await (await fetch(base + `/case/${HELD}?taken=taken&mine=unread`)).text();
+    expect(html).toContain('The products you cover were not read, so take next used the queue\'s own order.');
+    // Under my products the order it fell back to is the oldest first.
+    const res2 = await fetch(base + '/take', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin', cookie: 'sort=mine' },
+      body: 'next=1', redirect: 'manual',
+    });
+    expect(res2.headers.get('location')).toContain('mine=unread');
+    const mineCase = await (await fetch(base + `/case/${HELD}?taken=taken&mine=unread`, { headers: { cookie: 'sort=mine' } })).text();
+    expect(mineCase).toContain('The products you cover were not read, so take next took the oldest case first.');
+    // F7: a link cannot make the page say it. The note needs the page's own
+    // read of the products to have failed.
+    const read = await startGuarded(deps({ listApprovals: async () => queue() }));
+    const forged = await (await fetch(read + `/case/${HELD}?taken=taken&mine=unread`)).text();
+    expect(forged).not.toContain('The products you cover were not read');
+    // Under oldest the products decide nothing, so the case says nothing of them.
+    const oldestCase = await (await fetch(base + `/case/${HELD}?taken=taken&mine=unread`, { headers: { cookie: 'sort=oldest' } })).text();
+    expect(oldestCase).not.toContain('The products you cover were not read');
+    // Under oldest the products decide nothing, so the take says nothing of them.
+    const res3 = await fetch(base + '/take', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin', cookie: 'sort=oldest' },
+      body: 'next=1', redirect: 'manual',
+    });
+    expect(res3.headers.get('location')).not.toContain('mine=unread');
+  });
+
+  it('refuses a take that names a case and asks for the next one at once', async () => {
+    const tried: string[] = [];
+    const base = await startGuarded(deps({
+      listApprovals: async () => queue(),
+      takeHold: async (runId: string) => {
+        tried.push(runId);
+        return { outcome: 'taken' as const };
+      },
+    }));
+    const res = await post(base, '/take', `next=1&runId=${FREE}`);
+    expect(res.status).toBe(400);
+    expect(tried).toEqual([]);
+  });
+
+  it('offers take next in the header, and a Take on each row nobody else holds', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => [
+        ...queue(),
+        // A clean case, so its row sits inside the batch form.
+        waiting(MINE, 'SYN-CLEAN', { createdAt: new Date('2026-09-14T09:00:00Z') }),
+      ],
+      readHolds: async () => new Map([[HELD, hold('anna@example.test')]]),
+    }));
+    const html = await (await fetch(base + '/?product=aurora')).text();
+    expect(html).toContain('<form method="post" action="/take?product=aurora" class="takenext">'
+      + '<input type="hidden" name="next" value="1">'
+      + '<button class="btn primary" type="submit">Take next case ↵</button></form>');
+    // A row's Take names its form rather than sitting in one, because the
+    // clean group's rows are inside the batch form and forms do not nest.
+    expect(html).toContain(`<button class="btn take" type="submit" form="take-${FREE}">Take</button>`);
+    expect(html).toContain(`<form method="post" action="/take?product=aurora" id="take-${FREE}">`
+      + `<input type="hidden" name="runId" value="${FREE}"></form>`);
+    expect(html).not.toContain(`form="take-${HELD}"`);
+    const batch = html.slice(html.indexOf('action="/confirm'), html.indexOf('</form>', html.indexOf('action="/confirm')));
+    expect(batch).not.toContain('id="take-');
+  });
+});
+
+// Issue #154: the case reads as the handoff draws it. The hold and the
+// case's place in the queue sit in the header, the bar at the foot is one row
+// of controls with the send warning under it, and each outcome that needs a
+// field opens it in the case rather than in the bar. Their failures, written
+// first:
+//   - the bar carries a field for every outcome, so it covers the case;
+//   - a step opens its form in the bar, or opens none;
+//   - the position counts the whole queue rather than the filtered one, or
+//     counts a case somebody else holds;
+//   - the hold leaves the header, or the release and the takeover go with it.
+describe('the case as the handoff lays it out (issue #154)', () => {
+  const hold = (reviewer: string) => ({
+    reviewer, takenAt: new Date(Date.now() - 60_000), lapsesAt: new Date(Date.now() + 20 * 60_000),
+  });
+  const waiting = (runId: string, over: Record<string, unknown>) => ({
+    runId, ticketId: `SYN-${runId.slice(0, 2)}`, state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+    riskTier: 'medium', reason: null, stepsUsed: 4, draftExternalId: 'D-1', coverage: null,
+    agreement: 0.91, agreementThreshold: 0.8, gateCoverage: 0.86, coverageReviewThreshold: 0.8,
+    gateReason: 'irreversible', ...over,
+  });
+  const OLDER = '11111111-1111-4111-8111-111111111111';
+  const HELD = '22222222-2222-4222-8222-222222222222';
+  const queue = () => [
+    waiting(OLDER, { product: 'ledger', createdAt: new Date('2026-09-14T05:00:00Z') }),
+    waiting(HELD, { product: 'aurora', createdAt: new Date('2026-09-14T06:00:00Z') }),
+    waiting(RUN, { product: 'aurora', createdAt: new Date('2026-09-14T07:00:00Z') }),
+  ];
+  const casePage = async (path: string, over: Partial<ConsoleDeps> = {}): Promise<string> => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => queue(),
+      readHolds: async () => new Map([[HELD, hold('anna@example.test')]]),
+      readHold: async () => hold(REVIEWER),
+      ...over,
+    }));
+    return (await fetch(base + path)).text();
+  };
+  const header = (html: string): string =>
+    html.slice(html.indexOf('<div class="casehd">'), html.indexOf('<div class="case">'));
+  const bar = (html: string): string => html.slice(html.indexOf('<div class="actionbar">'));
+
+  it('shows the hold in the header, with its release beside it', async () => {
+    const top = header(await casePage(CASE));
+    expect(top).toContain('<span class="chip"><span class="dot" style="color:var(--ok)"></span>Held by you · 20 minutes left</span>');
+    expect(top).toContain('name="release"');
+  });
+
+  it('names another holder in the header, and keeps the takeover a second press', async () => {
+    const top = header(await casePage(CASE, { readHold: async () => hold('anna@example.test') }));
+    expect(top).toContain('Held by anna@example.test · 20 minutes left');
+    expect(top).toContain('name="over"');
+  });
+
+  // The held case is not work this reviewer can start, so it is not counted,
+  // and the ledger case is outside the product filter.
+  it('says where the case sits in the queue it was opened from', async () => {
+    expect(header(await casePage(CASE))).toContain('<span class="chip m">2 of 2</span>');
+    expect(header(await casePage(`${CASE}?product=aurora`))).toContain('<span class="chip m">1 of 1</span>');
+  });
+
+  // ERR-2, ERR-5: a position counted without the holds or the reviewer's
+  // products is a number in another order, so none is drawn.
+  it('draws no position when the holds or the products were not read', async () => {
+    const noHolds = header(await casePage(CASE, { readHolds: async () => { throw new Error('down'); } }));
+    expect(noHolds).not.toMatch(/<span class="chip m">\d+ of \d+<\/span>/);
+    const noProducts = header(await casePage(CASE, { readReviewerProducts: async () => { throw new Error('down'); } }));
+    expect(noProducts).not.toMatch(/<span class="chip m">\d+ of \d+<\/span>/);
+  });
+
+  // Under oldest the products decide nothing, so a position needs the holds
+  // alone.
+  it('draws the position under oldest even when the products were not read', async () => {
+    const base = await startGuarded(deps({
+      listApprovals: async () => queue(),
+      readHolds: async () => new Map([[HELD, hold('anna@example.test')]]),
+      readHold: async () => hold(REVIEWER),
+      readReviewerProducts: async () => { throw new Error('down'); },
+    }));
+    const html = await (await fetch(base + CASE, { headers: { cookie: 'sort=oldest' } })).text();
+    expect(header(html)).toContain('<span class="chip m">2 of 2</span>');
+  });
+
+  it('draws one row of controls, and no field, in the bar', async () => {
+    const foot = bar(await casePage(CASE));
+    expect(foot).toContain('data-primary');
+    expect(foot).toContain('<span class="kbd">⌘↵</span>');
+    for (const step of ['close', 'snooze', 'handover']) {
+      expect(foot, step).toContain(`href="/case/${RUN}?${step}=1#step"`);
+    }
+    expect(foot).not.toMatch(/<input class="identity"|<textarea/);
+    // The warning stays beside the control it warns about.
+    expect(foot).toContain('a sent reply cannot be recalled');
+    expect(foot).not.toContain('class="readback"');
+  });
+
+  it('opens a step in the case, with its field, its note and a way back', async () => {
+    const html = await casePage(`${CASE}?close=1&product=aurora`);
+    const step = html.slice(html.indexOf('<div class="card stepcard" id="step">'), html.indexOf('<div class="actionbar">'));
+    expect(step).toContain('Closing finishes this case with no reply.');
+    expect(step).toContain('name="reason"');
+    expect(step).toContain('action="/close?product=aurora"');
+    expect(step).toContain(`<a class="btn" href="/case/${RUN}?product=aurora">Cancel</a>`);
+    // The bar says which step is open.
+    expect(bar(html)).toContain(`<a class="btn on" href="/case/${RUN}?product=aurora&amp;close=1#step">`);
+  });
+
+  // The sentence a blocked send shows while a field on the case holds typed
+  // text: a close reason, a missing answer, a document's title. On every
+  // case with a send, because those fields are not only in an open step.
+  it('draws the note a send shows when typed text would be dropped', async () => {
+    const note = '<p class="barsays refused" data-typed-unsent hidden>Post or clear the text you typed first.'
+      + ' A send would drop it.</p>';
+    expect(bar(await casePage(`${CASE}?close=1`))).toContain(note);
+    expect(bar(await casePage(CASE))).toContain(note);
+  });
+
+  // SEC-2: the chord presses a send only on a case the reviewer may work
+  // without a takeover. Someone else's case, or one whose hold was not read,
+  // keeps its button for a deliberate click and names no chord.
+  it('binds the chord only to a case nobody else holds', async () => {
+    expect(bar(await casePage(CASE))).toContain('data-primary>');
+    expect(bar(await casePage(CASE, { readHold: async () => null }))).toContain('data-primary>');
+    for (const over of [
+      { readHold: async () => hold('anna@example.test') },
+      { readHold: async () => { throw new Error('down'); } },
+    ]) {
+      const foot = bar(await casePage(CASE, over));
+      expect(foot).toContain('Approve and send</button>');
+      expect(foot).not.toContain(' data-primary');
+      // The guards still read it: every send carries data-send.
+      expect(foot).toContain('data-send>Approve and send</button>');
+      expect(foot).not.toContain('<span class="kbd">');
+    }
+  });
+
+  it('opens the snooze and the handover the same way', async () => {
+    const snooze = await casePage(`${CASE}?snooze=1`);
+    expect(snooze.slice(snooze.indexOf('id="step"'), snooze.indexOf('<div class="actionbar">'))).toContain('name="minutes"');
+    const handover = await casePage(`${CASE}?handover=1`);
+    const step = handover.slice(handover.indexOf('id="step"'), handover.indexOf('<div class="actionbar">'));
+    expect(step).toContain('name="handover"');
+    expect(step).toContain('name="to"');
+  });
+
+  // A refused handover returns with the name typed, so the step is open
+  // again with it in the field.
+  it('reopens the handover with the name a refusal kept', async () => {
+    const html = await casePage(`${CASE}?taken=not_a_reviewer&to=nobody%40example.test`);
+    const step = html.slice(html.indexOf('id="step"'), html.indexOf('<div class="actionbar">'));
+    expect(step).toContain('value="nobody@example.test"');
+  });
+});
+
+// Issue #154: the rail's knowledge badge, as the handoff draws it: the number
+// of gaps, in plain dim mono. On the pages that counted it, the queue and the
+// knowledge screen, and nowhere a count was not read.
+describe('the knowledge badge in the rail (issue #154)', () => {
+  const report = (gaps: number): KnowledgeReport => ({
+    from: '2026-09-06T12:00:00.000Z', to: '2026-09-20T12:00:00.000Z',
+    blockedCases: 5, unreadCases: 0, pastReview: 0, teamDocuments: 0, answeredByTeam: 0,
+    gaps: Array.from({ length: gaps }, (_, i) => ({
+      intentId: `intent-${String(i)}`, product: null, cases: 1, abstained: 1, refused: [], runIds: [RUN],
+    })),
+    documents: [],
+    documentsNeedingAPerson: 0,
+  });
+  const badge = '<a href="/knowledge"><span class="navlabel">Knowledge base</span><span class="badge plain">3</span></a>';
+
+  it('counts the gaps on the queue and on the knowledge screen', async () => {
+    const base = await startGuarded(deps({ readKnowledge: async () => report(3) }));
+    expect(await (await fetch(base + '/')).text()).toContain(badge);
+    expect(await (await fetch(base + '/knowledge')).text()).toContain(
+      '<a href="/knowledge" class="on"><span class="navlabel">Knowledge base</span><span class="badge plain">3</span></a>',
+    );
+  });
+
+  // F3: the badge is a count beside the work, so a slow knowledge read never
+  // holds the queue back. The queue draws without it.
+  it('draws the queue without the badge when the count is slow to come', async () => {
+    const base = await startGuarded(deps({ readKnowledge: () => new Promise<KnowledgeReport>(() => undefined) }));
+    const started = Date.now();
+    const queue = await (await fetch(base + '/')).text();
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(queue).toContain('Needs a person');
+    expect(queue).not.toContain('class="badge plain"');
+  });
+
+  // A queue that failed starts no count for a rail it will never draw.
+  it('reads no count when the queue itself was not read', async () => {
+    let asked = 0;
+    const base = await startGuarded(deps({
+      listApprovals: async () => { throw new Error('ledger down'); },
+      readKnowledge: async () => { asked += 1; return report(3); },
+    }));
+    await fetch(base + '/');
+    expect(asked).toBe(0);
+  });
+
+  it('draws no badge where the count was not read, and the queue still draws', async () => {
+    const base = await startGuarded(deps({ readKnowledge: async () => { throw new Error('ledger down'); } }));
+    const queue = await (await fetch(base + '/')).text();
+    expect(queue).toContain('Needs a person');
+    expect(queue).not.toContain('class="badge plain"');
+    const team = await (await startGuarded(deps({ readKnowledge: async () => report(3) }))) + '/team';
+    expect(await (await fetch(team)).text()).not.toContain('class="badge plain"');
+  });
+});
+
+// Issue #154: the conversation links back to the case it was opened from, as
+// the handoff's "← case" does, and keeps that case's queue filters. Its
+// failures, written first:
+//   - the back link appears with no case named, or for a run that answered
+//     no turn of this conversation;
+//   - the filters fall off on the way back;
+//   - the case's links to the thread carry nothing to come back to.
+describe('the way back from a conversation (issue #154)', () => {
+  const OTHER = '99999999-9999-4999-8999-999999999999';
+
+  it('links each way into the thread with the case to come back to', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(`${base}${CASE}?product=aurora`)).text();
+    const back = `/conversation/${CONVERSATION}?from=${RUN}&amp;product=aurora`;
+    expect(html).toContain(`<a href="${back}">as a thread</a>`);
+    expect(html).toContain(`<a href="${back}">the whole conversation</a>`);
+  });
+
+  it('links back to the case, with its filters, where Esc finds it', async () => {
+    const base = await startGuarded(deps());
+    const html = await (await fetch(`${base}/conversation/${CONVERSATION}?from=${RUN}&product=aurora`)).text();
+    expect(html).toContain(`<div class="casehd"><div class="backrow"><a class="back" href="/case/${RUN}?product=aurora">← case</a>`);
+  });
+
+  // ERR-7: a turn names its newest run, so an older run of the same
+  // conversation is found by the run's own conversation, not by the turns.
+  it('links back to an older run of the conversation that no turn names now', async () => {
+    const base = await startGuarded(deps({
+      readRun: async (runId: string) => (runId === OTHER ? { ...WAITING, runId: OTHER, conversationId: CONVERSATION } : WAITING),
+    }));
+    const html = await (await fetch(`${base}/conversation/${CONVERSATION}?from=${OTHER}`)).text();
+    expect(html).toContain(`<a class="back" href="/case/${OTHER}">← case</a>`);
+  });
+
+  it('offers no way back to a run that answered no turn of it, or to nothing', async () => {
+    const base = await startGuarded(deps());
+    for (const query of [`?from=${OTHER}`, '?from=not-a-run', '']) {
+      const html = await (await fetch(`${base}/conversation/${CONVERSATION}${query}`)).text();
+      expect(html, query).not.toContain('class="back"');
+    }
+  });
+});
+
+// Issue #154: the branches a review named as untested. Each case fails if
+// its branch is removed or turned the wrong way.
+describe('the branches a review named as untested (issue #154)', () => {
+  const hold = (reviewer: string) => ({
+    reviewer, takenAt: new Date(Date.now() - 60_000), lapsesAt: new Date(Date.now() + 600_000),
+  });
+  const waiting = (runId: string, over: Record<string, unknown>) => ({
+    runId, ticketId: `SYN-${runId.slice(0, 2)}`, state: 'awaiting_approval', promptVer: 'p1', ...ROW,
+    riskTier: 'medium', reason: null, stepsUsed: 4, draftExternalId: 'D-1', coverage: null,
+    agreement: 0.91, agreementThreshold: 0.8, gateCoverage: 0.86, coverageReviewThreshold: 0.8,
+    gateReason: 'irreversible', ...over,
+  });
+  const id = (n: number): string => `${String(n).padStart(8, '0')}-1111-4111-8111-111111111111`;
+  const post = (base: string, path: string, body: string, cookie = '') => fetch(base + path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin', cookie },
+    body, redirect: 'manual',
+  });
+  const position = (html: string): string | null =>
+    /<span class="chip m">(\d+ of \d+)<\/span>/.exec(html)?.[1] ?? null;
+
+  describe('take next', () => {
+    it('reads the rule filter as it reads the product', async () => {
+      const tried: string[] = [];
+      const base = await startGuarded(deps({
+        listApprovals: async () => [
+          waiting(id(1), { gateReason: 'high_risk', createdAt: new Date('2026-09-14T05:00:00Z') }),
+          waiting(id(2), { gateReason: 'irreversible', createdAt: new Date('2026-09-14T06:00:00Z') }),
+        ],
+        takeHold: async (runId: string) => { tried.push(runId); return { outcome: 'taken' as const }; },
+      }));
+      await post(base, '/take?rule=irreversible', 'next=1');
+      expect(tried).toEqual([id(2)]);
+    });
+
+    it('takes the reviewer\'s products first under my products', async () => {
+      const tried: string[] = [];
+      const base = await startGuarded(deps({
+        listApprovals: async () => [
+          waiting(id(1), { product: 'aurora', createdAt: new Date('2026-09-14T05:00:00Z') }),
+          waiting(id(2), { product: 'ledger', createdAt: new Date('2026-09-14T06:00:00Z') }),
+        ],
+        readReviewerProducts: async () => ['ledger'],
+        takeHold: async (runId: string) => { tried.push(runId); return { outcome: 'taken' as const }; },
+      }));
+      await post(base, '/take', 'next=1', 'sort=mine');
+      expect(tried).toEqual([id(2)]);
+    });
+
+    it('stops after ten tries, and calls the queue raced only with cases left', async () => {
+      const queueOf = (n: number) => Array.from({ length: n }, (_, i) => waiting(id(i + 1), {
+        createdAt: new Date(Date.UTC(2026, 8, 14, i)),
+      }));
+      let tried = 0;
+      const refuse = async () => {
+        tried += 1;
+        return { outcome: 'held_by_other' as const, holder: hold('ben@example.test') };
+      };
+      const twelve = await startGuarded(deps({ listApprovals: async () => queueOf(12), takeHold: refuse }));
+      expect((await post(twelve, '/take', 'next=1')).headers.get('location')).toBe('/?taken=all_raced');
+      expect(tried).toBe(10);
+      const ten = await startGuarded(deps({ listApprovals: async () => queueOf(10), takeHold: refuse }));
+      expect((await post(ten, '/take', 'next=1')).headers.get('location')).toBe('/?taken=none_free');
+    });
+
+    it('passes over a case that just left the queue, or that the ledger does not hold', async () => {
+      const outcomes = [{ outcome: 'not_waiting' as const, state: 'resolved' }, { outcome: 'unknown_run' as const }];
+      const tried: string[] = [];
+      const base = await startGuarded(deps({
+        listApprovals: async () => [1, 2, 3].map((n) => waiting(id(n), { createdAt: new Date(Date.UTC(2026, 8, 14, n)) })),
+        takeHold: async (runId: string) => {
+          tried.push(runId);
+          return outcomes[tried.length - 1] ?? { outcome: 'taken' as const };
+        },
+      }));
+      const res = await post(base, '/take', 'next=1');
+      expect(res.headers.get('location')).toBe(`/case/${id(3)}?taken=taken`);
+    });
+  });
+
+  describe('the case position', () => {
+    const OLD = id(1);
+    const queue = () => [
+      waiting(OLD, { gateCoverage: 0.5, gateReason: 'customer_visible', createdAt: new Date('2026-09-14T04:00:00Z') }),
+      waiting(RUN, { createdAt: new Date('2026-09-14T07:00:00Z') }),
+    ];
+    const at = async (over: Partial<ConsoleDeps>, cookie = '', path = CASE): Promise<string> => {
+      const base = await startGuarded(deps({
+        listApprovals: async () => queue(), readHold: async () => hold(REVIEWER), ...over,
+      }));
+      return (await fetch(base + path, { headers: { cookie } })).text();
+    };
+
+    it('follows the sort the reviewer chose', async () => {
+      // Risk first puts the risk case first; oldest puts the older rest case first.
+      expect(position(await at({}))).toBe('1 of 2');
+      expect(position(await at({}, 'sort=oldest'))).toBe('2 of 2');
+    });
+
+    it('draws none for a case the queue would not offer', async () => {
+      expect(position(await at({ readHolds: async () => new Map([[RUN, hold('anna@example.test')]]) }))).toBeNull();
+      expect(position(await at({}, '', `${CASE}?rule=customer_visible`))).toBeNull();
+    });
+
+    it('draws none when the queue was not read, and the case still draws', async () => {
+      const html = await at({ listApprovals: async () => { throw new Error('ledger down'); } });
+      expect(html).toContain('<div class="casehd">');
+      expect(position(html)).toBeNull();
+    });
+  });
+
+  describe('the way back from a conversation', () => {
+    const OTHER = id(9);
+    it('offers none to a run of another conversation that shares nothing but its shape', async () => {
+      const base = await startGuarded(deps({
+        readRun: async (runId: string) => ({ ...WAITING, runId, request: null, conversationId: '00000000-0000-4000-8000-000000000000' }),
+      }));
+      const html = await (await fetch(`${base}/conversation/${CONVERSATION}?from=${OTHER}`)).text();
+      expect(html).not.toContain('class="back"');
+    });
+
+    it('reads the run\'s own conversation when it answered no turn', async () => {
+      const base = await startGuarded(deps({
+        readRun: async (runId: string) => ({ ...WAITING, runId, request: null, conversationId: CONVERSATION }),
+      }));
+      const html = await (await fetch(`${base}/conversation/${CONVERSATION}?from=${OTHER}&rule=irreversible`)).text();
+      expect(html).toContain(`<a class="back" href="/case/${OTHER}?rule=irreversible">← case</a>`);
+    });
+
+    it('draws the conversation with no way back when the run was not read', async () => {
+      const base = await startGuarded(deps({ readRun: async () => { throw new Error('ledger down'); } }));
+      const res = await fetch(`${base}/conversation/${CONVERSATION}?from=${OTHER}`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).not.toContain('class="back"');
+    });
+  });
+
+  it('draws no knowledge badge on the knowledge screen when its report failed', async () => {
+    const base = await startGuarded(deps({ readKnowledge: async () => { throw new Error('ledger down'); } }));
+    expect(await (await fetch(base + '/knowledge')).text()).not.toContain('class="badge plain"');
+  });
+
+  it('sets no sort on a POST', async () => {
+    const base = await startGuarded(deps());
+    const res = await post(base, '/sort?to=oldest', '');
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+});
+
+// Issue #154, SEC-3: the approval refuses to drop text the editor holds and
+// nobody saved, on the server, so a page whose script did not run cannot
+// send the old reply. The send button posts the editor's form, so its text
+// arrives with the approval. Its failures, written first:
+//   - an approval carrying changed text sends the saved reply anyway;
+//   - a reply nobody touched is refused because the browser sent CRLF;
+//   - an approval with no editor on its page is refused.
+describe('an approval that would drop the editor\'s unsaved text (issue #154)', () => {
+  const SAVED = 'Thanks for writing in.\nWe refunded the duplicate charge.';
+  const run = { ...WAITING, request: { ...REQUEST, savedReplyText: SAVED } };
+  const digest = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
+  const approveWith = async (body: Record<string, string>) => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(deps({ approve, readRun: async () => run }), undefined, undefined, true);
+    const res = await fetch(base + '/approve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
+      body: new URLSearchParams(body).toString(),
+      redirect: 'manual',
+    });
+    return { res, approve };
+  };
+  const fields = { runId: RUN, shown: digest(SAVED), edit: 'text', drawn: digest(SAVED) };
+
+  it('posts the editor\'s form from the send button', async () => {
+    const base = await startGuarded(deps({ readRun: async () => run }), undefined, undefined, true);
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).toContain('<form class="editor" data-editor id="reply-editor" method="post"');
+    expect(html).toContain(`<input type="hidden" name="drawn" value="${digest(SAVED)}">`);
+    expect(html).toContain('<button class="btn primary" type="submit" form="reply-editor"'
+      + ' formaction="/approve" formmethod="post" data-send data-primary>');
+  });
+
+  it('refuses an approval whose editor text was changed and not saved, and sends nothing', async () => {
+    const { res, approve } = await approveWith({ ...fields, text: `${SAVED} And it will not happen again.` });
+    expect(res.status).toBe(409);
+    expect(await res.text()).toContain('The reply in the editor holds changes that were not saved,'
+      + ' so nothing was approved.');
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  it('approves a reply nobody touched, though the browser sent its line breaks as CRLF', async () => {
+    const { res, approve } = await approveWith({ ...fields, text: `${SAVED.replace('\n', '\r\n')}\r\n` });
+    expect(res.status).toBe(303);
+    expect(approve).toHaveBeenCalledWith(RUN, REVIEWER, digest(SAVED));
+  });
+
+  // ERR-1: the copy choice's send posts the same form, so its acknowledgement
+  // does not carry a changed text past the refusal.
+  it('refuses a changed text that arrives with an answer about the copy', async () => {
+    const { res, approve } = await approveWith({ ...fields, ack: digest('the helpdesk copy'), text: `${SAVED} Changed.` });
+    expect(res.status).toBe(409);
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  it('refuses an editor text with no digest of what was drawn', async () => {
+    const { res, approve } = await approveWith({ runId: RUN, shown: digest(SAVED), text: SAVED });
+    expect(res.status).toBe(400);
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  // A case holding no reply text draws no editor, so the send keeps a form of
+  // its own rather than naming one that is not on the page.
+  it('keeps a form of its own for the send where no editor is drawn', async () => {
+    const wordless = { ...WAITING, request: { ...REQUEST, savedReplyText: null }, evidence: { ...EVIDENCE, draftBody: null } };
+    const base = await startGuarded(deps({ readRun: async () => wordless }), undefined, undefined, true);
+    const html = await (await fetch(base + CASE)).text();
+    expect(html).not.toContain('id="reply-editor"');
+    expect(html).not.toContain('form="reply-editor"');
+    expect(html).toContain('<form method="post" action="/approve">');
+  });
+
+  // ERR-4: a stale page for a case that left the queue is not told to save.
+  it('leaves a case that is not waiting to the approval\'s own answer', async () => {
+    const approve = vi.fn().mockResolvedValue('not_awaiting_approval');
+    const base = await startGuarded(deps({ approve, readRun: async () => ({ ...run, state: 'resolved' }) }), undefined, undefined, true);
+    const res = await fetch(base + '/approve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
+      body: new URLSearchParams({ ...fields, text: `${SAVED} Changed.` }).toString(),
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(303);
+    expect(approve).toHaveBeenCalled();
+  });
+
+  // ERR-5: reloading the case would discard the text the refusal protects.
+  it('tells the reviewer how to keep the changes', async () => {
+    const { res } = await approveWith({ ...fields, text: `${SAVED} Changed.` });
+    const page = await res.text();
+    expect(page).toContain('Go back in the browser to keep the changes, then save the reply and approve it.');
+    expect(page).toContain('Open the case without the changes');
+  });
+
+  // F3: the send carries the queue's filters on the route it posts to.
+  it('carries the queue\'s filters on the editor send', async () => {
+    const base = await startGuarded(deps({ readRun: async () => run }), undefined, undefined, true);
+    const html = await (await fetch(`${base}${CASE}?rule=customer_visible&product=aurora`)).text();
+    expect(html).toContain('form="reply-editor" formaction="/approve?rule=customer_visible&amp;product=aurora"');
+  });
+
+  // F5: an untouched draft too long for the 64 KiB form limit still approves.
+  it('approves an untouched draft longer than the form limit of a save', async () => {
+    const long = 'これは長い返信です。'.repeat(1200);
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(deps({
+      approve, readRun: async () => ({ ...run, request: { ...REQUEST, savedReplyText: long } }),
+    }), undefined, undefined, true);
+    const body = new URLSearchParams({ runId: RUN, shown: digest(long), edit: 'text', drawn: digest(long), text: long }).toString();
+    expect(body.length).toBeGreaterThan(64 * 1024);
+    const res = await fetch(base + '/approve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
+      body, redirect: 'manual',
+    });
+    expect(res.status).toBe(303);
+    expect(approve).toHaveBeenCalled();
+  });
+
+  // The digest the editor carries is of the text as a typed copy reads, so a
+  // reply saved with CRLF or a trailing space approves untouched.
+  it('approves an untouched reply saved with CRLF and a trailing space', async () => {
+    const odd = 'Thanks for writing in.\r\nWe refunded it. ';
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(deps({
+      approve, readRun: async () => ({ ...run, request: { ...REQUEST, savedReplyText: odd } }),
+    }), undefined, undefined, true);
+    const html = await (await fetch(base + CASE)).text();
+    const drawn = /name="drawn" value="([0-9a-f]{64})"/.exec(html)?.[1];
+    const res = await fetch(base + '/approve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
+      body: new URLSearchParams({ runId: RUN, shown: digest(odd), drawn: drawn ?? '', text: odd }).toString(),
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(303);
+    expect(approve).toHaveBeenCalled();
+  });
+
+  it('reads a lone CR as a line break', async () => {
+    const { res, approve } = await approveWith({ ...fields, text: SAVED.replace('\n', '\r') });
+    expect(res.status).toBe(303);
+    expect(approve).toHaveBeenCalled();
+  });
+
+  it('refuses a drawn digest of the wrong shape', async () => {
+    const { res, approve } = await approveWith({ ...fields, drawn: 'not-a-digest', text: SAVED });
+    expect(res.status).toBe(400);
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  it('keeps the queue\'s filters on the refusal\'s way back', async () => {
+    const approve = vi.fn().mockResolvedValue('approved');
+    const base = await startGuarded(deps({ approve, readRun: async () => run }), undefined, undefined, true);
+    const res = await fetch(base + '/approve?rule=customer_visible&product=aurora', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
+      body: new URLSearchParams({ ...fields, text: `${SAVED} Changed.` }).toString(),
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(409);
+    expect(await res.text()).toContain(`href="/case/${RUN}?rule=customer_visible&amp;product=aurora"`);
+  });
+
+  it('binds no chord to someone else\'s case on the edited-reply path', async () => {
+    const base = await startGuarded(deps({
+      readRun: async () => run,
+      readHold: async () => ({ reviewer: 'anna@example.test', takenAt: new Date(), lapsesAt: new Date(Date.now() + 600_000) }),
+    }), undefined, undefined, true);
+    const html = await (await fetch(base + CASE)).text();
+    const send = /<button class="btn primary"[^>]*>/.exec(html.slice(html.indexOf('<div class="actionbar">')))?.[0] ?? '';
+    expect(send).toContain('form="reply-editor"');
+    expect(send).toContain('data-send');
+    expect(send).not.toContain('data-primary');
+  });
+
+  it('approves as before where the page drew no editor', async () => {
+    const { res, approve } = await approveWith({ runId: RUN, shown: digest(SAVED) });
+    expect(res.status).toBe(303);
+    expect(approve).toHaveBeenCalled();
   });
 });

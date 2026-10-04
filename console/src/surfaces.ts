@@ -57,7 +57,7 @@ import type {
 } from 'auracle/ledger-read';
 import { CONSOLE_SCRIPT } from './script.js';
 import { groupQueue } from './queue.js';
-import type { QueueGroup } from './queue.js';
+import type { QueueGroup, QueueSort } from './queue.js';
 import type { MetricValue } from './render.js';
 
 export interface RunRow {
@@ -156,6 +156,11 @@ export interface Shell {
    * that never asked cannot say that.
    */
   readonly approvals: number | null;
+  /**
+   * Issue #154: the knowledge gaps, or null when this page did not count
+   * them. Null rather than zero, for the reason `approvals` gives.
+   */
+  readonly gaps?: number | null;
   /** Which ledger this console is bound to, without its credentials. */
   readonly ledger: string;
   /**
@@ -259,7 +264,10 @@ function rail(shell: Shell): string {
       // The badge counts only what this page actually counted.
       const badge = surface.href === '/' && shell.approvals !== null
         ? `<span class="badge">${escapeHtml(String(shell.approvals))}</span>`
-        : '';
+        : surface.href === '/knowledge' && shell.gaps !== undefined && shell.gaps !== null
+          // The handoff's plain badge: a count to read, not a call to act.
+          ? `<span class="badge plain">${escapeHtml(String(shell.gaps))}</span>`
+          : '';
       // The label and the badge are siblings. The label may shrink and
       // ellipsise; the badge never does, so a long title cannot push a count
       // onto a second line.
@@ -437,9 +445,11 @@ export function renderRuns(view: RunsPage): string {
   }
   const rows = view.runs.map((run) => [
     '<tr>',
-    `<td class="m"><a href="/run/${encodeURIComponent(run.runId)}">`,
+    // Issue #154: an id stays whole. The text columns break instead, so the
+    // table fits 907px without splitting a token a person reads as one.
+    `<td class="m id"><a href="/run/${encodeURIComponent(run.runId)}">`,
     `${escapeHtml(run.runId.slice(0, 8))}</a></td>`,
-    `<td class="m">${isolated(run.ticketId)}</td>`,
+    `<td class="m id">${isolated(run.ticketId)}</td>`,
     // The column this table was ordered by and never showed. "Newest first"
     // is a claim about time, and nothing on the page said what time.
     `<td class="m">${escapeHtml(whenSays(run.createdAt))}`
@@ -814,8 +824,9 @@ function evidenceBlock(
   // #123: what the composed text is. A customer reply is drafted; an
   // internal write parks its rationale beside the action (DEC-34).
   const noun = view.parkedAction ? 'rationale' : 'reply';
+  const from = edit === null ? '' : fromCase(edit.runId, edit.rule, edit.product);
   if (view.draftBody === null && view.sentences === null) {
-    return requestBlock(request) + nothing(`This run composed no ${noun}.`);
+    return requestBlock(request, from) + nothing(`This run composed no ${noun}.`);
   }
   // Null and empty are different answers, here as everywhere else on this
   // console. A run journalled no readable retrieval is not a run whose
@@ -893,7 +904,7 @@ function evidenceBlock(
     : null;
   const sent = sentText !== null;
   return [
-    requestBlock(request),
+    requestBlock(request, from),
     '<div class="card"><header>',
     `<span class="lbl">${view.replyRewritten
       ? (editable
@@ -957,6 +968,15 @@ function evidenceBlock(
 }
 
 /**
+ * Text a person typed, as two copies of it compare: line breaks as LF, and no
+ * space at either end. A browser posts a textarea's line breaks as CRLF, so
+ * an untouched reply drawn with LF would otherwise read as a changed one.
+ */
+export function typedText(text: string): string {
+  return text.replace(/\r\n?/g, '\n').trim();
+}
+
+/**
  * The editor the case screen shows where the ledger holds the reply (DEC-44).
  *
  * A form and nothing else: it works with no script, and the reply it saves is
@@ -966,12 +986,17 @@ function evidenceBlock(
  */
 function editorForm(edit: ReplyEdit): string {
   return [
-    `<form class="editor" method="post" action="/edit${escapeHtml(filtersQuery(edit.rule, edit.product))}">`,
+    `<form class="editor" data-editor id="reply-editor" method="post" action="/edit${escapeHtml(filtersQuery(edit.rule, edit.product))}">`,
     `<input type="hidden" name="runId" value="${escapeHtml(edit.runId)}">`,
     `<input type="hidden" name="shown" value="${escapeHtml(edit.shown)}">`,
+    // Issue #154: the text this editor drew, as a typed copy of it reads. The
+    // send posts this form, and the approval refuses text that differs from
+    // it: a change nobody saved is never dropped, with or without the script.
+    `<input type="hidden" name="drawn" value="${escapeHtml(replyDigest(typedText(edit.text ?? '')))}">`,
     '<input type="hidden" name="edit" value="text">',
     `<textarea name="text" rows="12" spellcheck="false">${escapeHtml(edit.text ?? '')}</textarea>`,
-    '<button class="btn primary" type="submit">Save the reply</button>',
+    // One filled control per page, and on the case it is the send (issue #154).
+    '<button class="btn" type="submit">Save the reply</button>',
     '<p class="discl">The disclosure and the provenance travel with it, exactly as the'
       + ' helpdesk copy would have carried them.</p>',
     '</form>',
@@ -1082,7 +1107,16 @@ interface ReplyEdit {
  * turn whose text nobody kept, which the absence names — so a run with no turn
  * draws nothing here rather than an absence about a turn that never existed.
  */
-function requestBlock(request: RequestView | null): string {
+/**
+ * The query a link into a conversation carries from a case (issue #154): the
+ * case, and the queue filters it was opened under, so the thread can link
+ * back to it as the handoff's "← case" does.
+ */
+function fromCase(runId: string, rule: string | null, product: string | null): string {
+  return `?from=${encodeURIComponent(runId)}${filtersQuery(rule, product).replace(/^\?/, '&')}`;
+}
+
+function requestBlock(request: RequestView | null, from = ''): string {
   if (request === null) return '';
   return [
     '<div class="card"><header>',
@@ -1098,8 +1132,8 @@ function requestBlock(request: RequestView | null): string {
       : `<div class="prose">${isolated(request.bodyText)}</div>`,
     // A later turn is context this does not show, so the whole thread is one
     // click away rather than assumed to be unnecessary.
-    `<p class="discl">Read the whole conversation <a href="/conversation/${
-      encodeURIComponent(request.conversationId)}">as a thread</a>.</p>`,
+    `<p class="discl">Read the whole conversation <a href="${escapeHtml(`/conversation/${
+      encodeURIComponent(request.conversationId)}${from}`)}">as a thread</a>.</p>`,
     '</div></div>',
   ].join('');
 }
@@ -1475,6 +1509,50 @@ function productChips(
   ].join('');
 }
 
+/** Why a take next took nothing, in the words the queue shows (issue #154). */
+const TOOK_NOTHING_SAYS: Readonly<Record<string, string>> = {
+  nothing_waiting: 'Nothing is waiting in this queue, so nothing was taken.',
+  all_yours: 'Every case left in this queue is one you hold already, so nothing was taken.',
+  none_free: 'Nothing in this queue was free to take. Every case on it is held, or has just finished.',
+  all_raced: 'The cases take next tried were taken or finished by someone else a moment ago.'
+    + ' Nothing was taken, so try again.',
+};
+
+/** The sentence for a take next that took nothing. A value the route never writes draws none. */
+function tookNothingSays(outcome: string | null): string {
+  if (outcome === null || !Object.hasOwn(TOOK_NOTHING_SAYS, outcome)) return '';
+  return `<p class="qaside">${escapeHtml(TOOK_NOTHING_SAYS[outcome]!)}</p>`;
+}
+
+/** What each sort is called on its segment (issue #154). */
+const SORT_LABELS: Readonly<Record<QueueSort, string>> = {
+  risk: 'risk first',
+  oldest: 'oldest',
+  mine: 'my products',
+};
+
+/**
+ * The sort control (issue #154).
+ *
+ * Each segment is a link to the route that sets the sort and comes back to
+ * `back`, the queue this page drew with its kept filters. The sort is a
+ * cookie, as the theme is, so it survives every link without riding on one.
+ */
+function sortChips(active: QueueSort, back: string): string {
+  const one = (sort: QueueSort): string => {
+    const href = `/sort?to=${sort}&back=${encodeURIComponent(back)}`;
+    return `<a href="${escapeHtml(href)}"${sort === active ? ' class="on"' : ''}>${escapeHtml(SORT_LABELS[sort])}</a>`;
+  };
+  return [
+    '<div class="filters">',
+    '<span class="lbl">sort</span>',
+    '<div class="seg">',
+    (['risk', 'oldest', 'mine'] as const).map(one).join(''),
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
 /** The runs a chosen product leaves, or all of them when none is chosen. */
 export function narrowToProduct(
   runs: readonly RunDetail[],
@@ -1656,6 +1734,10 @@ export interface QueueView {
    * rule rather than by a preference it could not read, and it says so.
    */
   readonly mineUnread: string | null;
+  /** The order the reviewer chose (issue #154). Risk first is the queue's own. */
+  readonly sort: QueueSort;
+  /** Issue #154: why a take next took nothing, as the route answered, or null. */
+  readonly tookNothing?: string | null;
 }
 
 /** The counts, or the tag of the fault that stopped the console reading them. */
@@ -1681,6 +1763,10 @@ const GROUP_LABELS: Readonly<Record<QueueGroup, { readonly label: string; readon
       + ' Neither gate decided these cases. Another rule sent each one to a person, and its row names the rule.',
   },
   rest: { label: 'Everything else waiting', note: null },
+  // Issue #154: the one list oldest first and my products set out, with the
+  // groups aside. The label names the order, since nothing else on the page
+  // does.
+  waiting: { label: 'Oldest first', note: null },
   // Always drawn: the group is the one thing that says a case on this page is
   // somebody's, and the note says how a case leaves it.
   held: {
@@ -1770,7 +1856,7 @@ export function renderApprovals(
   today: QueueTodayRead,
   holds: QueueHoldsRead,
 ): string {
-  const { rule, product, mine } = view;
+  const { rule, product, mine, sort } = view;
   // A filter the query string invented narrows to nothing, which is what it
   // asked for, and the list says so.
   //
@@ -1792,13 +1878,24 @@ export function renderApprovals(
     const hold = holds.holds.get(runId);
     return hold === undefined || hold.reviewer === holds.reviewer ? null : hold;
   };
+  const kept = escapeHtml(filtersQuery(keptRule, keptProduct));
+  // Issue #154: the take the server picks, from this queue as it is when the
+  // press arrives. Offered only while something here is waiting.
+  const takeNext = shownRuns.length === 0
+    ? []
+    : [`<form method="post" action="/take${kept}" class="takenext">`
+      + '<input type="hidden" name="next" value="1">'
+      + '<button class="btn primary" type="submit">Take next case ↵</button></form>'];
   const header = head(
     'Needs a person',
     `${todaySays(today)} This list is not capped, so the oldest is on it.`,
-    [chip(`${runs.length} waiting`)],
+    [chip(`${runs.length} waiting`), ...takeNext],
   ) + gateFilters(runs, keptRule, keptProduct)
     + productChips(runs, keptProduct, keptRule, view.labels)
-    + ESCALATED_ELSEWHERE + holdsUnreadSays(holds) + mineUnreadSays(view);
+    + sortChips(sort, queueHref(keptRule, keptProduct))
+    // Under oldest the products decide nothing, so their absence goes unsaid.
+    + ESCALATED_ELSEWHERE + holdsUnreadSays(holds) + (sort === 'oldest' ? '' : mineUnreadSays(view))
+    + tookNothingSays(view.tookNothing ?? null);
   if (shownRuns.length === 0) {
     // For approval, not for a person. An escalated run waits for a person as
     // well, and the line above says where it is.
@@ -1821,8 +1918,9 @@ export function renderApprovals(
     shownRuns,
     (run) => heldByAnother(run.runId) !== null,
     (run) => run.product !== null && covered.has(run.product),
+    sort,
   );
-  const keysLine = keyLegend();
+  const keysLine = keyLegend(sort);
   // Who holds it and for how long, on the row. The group says somebody does;
   // the row says who, because a queue of hundreds has more than one holder.
   const heldSays = (runId: string): string => {
@@ -1831,12 +1929,14 @@ export function renderApprovals(
       ? ''
       : `held by ${isolated(hold.reviewer)} · ${escapeHtml(ageSays(hold.takenAt))} · `;
   };
-  const row = (run: RunDetail, pickable = false): string => [
+  // Issue #154: the risk group's rows carry the risk colour down their edge.
+  const row = (run: RunDetail, pickable = false, risk = false): string => [
+    `<div class="qrow${risk ? ' risk' : ''}">`,
     // DEC-51: the batch picks cases from this group. The box rides beside the
     // anchor rather than inside it, because a checkbox inside a link is not a
     // checkbox a browser draws.
     pickable
-      ? `<div class="qrow"><input type="checkbox" name="runId" value="${escapeHtml(run.runId)}"`
+      ? `<input type="checkbox" name="runId" value="${escapeHtml(run.runId)}"`
         + ` id="pick-${escapeHtml(run.runId)}" checked>`
       : '',
     `<a class="item" href="${escapeHtml(caseHref(run.runId, keptRule, keptProduct))}">`,
@@ -1844,7 +1944,7 @@ export function renderApprovals(
     `<span class="m isubj">${isolated(run.ticketId)}</span>`,
     // How long it has waited, on the row. The header says the oldest is on
     // this list and nothing on it said how old anything was.
-    `<span class="age">${escapeHtml(ageSays(run.createdAt))}</span>`,
+    `<span class="age wait">${escapeHtml(ageSays(run.createdAt))}</span>`,
     '</div>',
     // Why this run is a person's, in the gate's own vocabulary. The
     // escalation reason sat here and is null for every waiting run by
@@ -1885,8 +1985,19 @@ export function renderApprovals(
       : coverageSays(run.gateCoverage, run.gateReason)}`,
     '</div>',
     '</a>',
-    pickable ? '</div>' : '',
+    // Issue #154: the row's own take. It names a form outside the list,
+    // because the clean group's rows sit inside the batch form and a form
+    // cannot hold another. A case somebody else holds offers none.
+    heldByAnother(run.runId) === null
+      ? `<button class="btn take" type="submit" form="take-${escapeHtml(run.runId)}">Take</button>`
+      : '',
+    '</div>',
   ].join('');
+  const takeForms = shownRuns
+    .filter((run) => heldByAnother(run.runId) === null)
+    .map((run) => `<form method="post" action="/take${kept}" id="take-${escapeHtml(run.runId)}">`
+      + `<input type="hidden" name="runId" value="${escapeHtml(run.runId)}"></form>`)
+    .join('');
   return [
     header,
     keysLine,
@@ -1899,7 +2010,12 @@ export function renderApprovals(
       + `${product === null || product === '' ? '' : escapeHtml(` · ${product === NO_PRODUCT ? 'no product' : productLabel(view.labels, product)}`)}`
       + '</span></div>',
     ...sections.map((section) => {
-      const { label, note } = GROUP_LABELS[section.group];
+      const { note } = GROUP_LABELS[section.group];
+      // Without the reviewer's products, "my products" is the oldest first,
+      // and the label names that order.
+      const label = section.group === 'waiting' && sort === 'mine' && view.mineUnread === null
+        ? 'Your products first, then the oldest'
+        : GROUP_LABELS[section.group].label;
       // DEC-51: the group a reviewer confirms together is the one whose cases
       // both gates cleared, and only that one. Its rows are checkboxes and
       // its header carries the button; every other group is a list.
@@ -1922,11 +2038,12 @@ export function renderApprovals(
             : '')
           + '</div>',
         note === null ? '' : `<p class="qnote">${escapeHtml(note)}</p>`,
-        section.runs.map((run) => row(run, pickable)).join(''),
+        section.runs.map((run) => row(run, pickable, section.group === 'first')).join(''),
         close,
       ].join('');
     }),
     '</div>',
+    takeForms,
   ].join('');
 }
 
@@ -1940,8 +2057,12 @@ export function renderApprovals(
  * under the list would sit under the fold of every queue that is the reason
  * the legend exists.
  */
-function keyLegend(): string {
-  return '<div class="keys">j / k move · enter opens · c takes the case · a confirms the clean cases</div>';
+function keyLegend(sort: QueueSort): string {
+  // Issue #154: `a` acts only where a clean group is drawn, which is risk
+  // first alone, and Enter with nothing focused takes the next case.
+  return '<div class="keys">j / k move · enter opens · c takes the case'
+    + (sort === 'risk' ? ' · a confirms the clean cases' : '')
+    + ' · enter on the page takes the next case</div>';
 }
 
 /**
@@ -2123,7 +2244,9 @@ export function renderConfirmResult(
   const undoable = [...sent, ...faulted];
   return [
     '<div class="wrap">',
-    `<div class="panel ok"><span class="big">${escapeHtml(headline)}</span>`,
+    // Issue #154: the success colour only when something was approved. A
+    // batch every case of which was refused sent nothing.
+    `<div class="panel ${count > 0 ? 'ok' : 'refused'}"><span class="big">${escapeHtml(headline)}</span>`,
     // What became of the send, in the ledger's own words: `pending` is a send
     // still to come, and only `sent` is one that happened.
     count === 0
@@ -2347,7 +2470,25 @@ function gapLine(read: CaseGapRead, runId: string, rewritten: boolean): string {
   return `<div class="casemeta" style="color:var(--hot)">Blocked by a gap: ${why}${other}${where}</div>`;
 }
 
+/**
+ * Issue #154: an outcome whose form opens in the case. Each one needs a field,
+ * so each opens on its own page state rather than in the bar.
+ */
+export type CaseStep = 'close' | 'snooze' | 'handover';
+
 export interface CaseOptions {
+  /**
+   * Issue #154: where the case sits among those its queue would offer, with
+   * that queue's filters and sort, or null when it is not among them.
+   */
+  readonly position?: { readonly at: number; readonly of: number } | null;
+  /** Issue #154: the outcome whose form is open in the case, or null. */
+  readonly step?: CaseStep | null;
+  /**
+   * Issue #154: take next chose this case without the reviewer's products,
+   * under this sort, or null.
+   */
+  readonly orderUnread?: QueueSort | null;
   /** DEC-50: whether a gap blocks the case, as the knowledge screen counts it. */
   readonly gap: CaseGapRead;
   /** DEC-50: the documents published from this case, and what became of each re-run. */
@@ -2675,6 +2816,7 @@ function copyChoice(
   options: CaseOptions,
   runId: string,
   shown: string,
+  postsEditor = false,
 ): string {
   if (copy.kind === 'none') return '';
   if (copy.kind === 'gone') {
@@ -2706,19 +2848,29 @@ function copyChoice(
     `<input type="hidden" name="shown" value="${escapeHtml(shown)}">`,
     '<input type="hidden" name="edit" value="text">',
     `<input type="hidden" name="text" value="${escapeHtml(copy.text)}">`,
-    '<button class="btn" type="submit">Send the helpdesk copy</button>',
+    // A save, and it replaces whatever the editor holds, so the script guards
+    // it as it guards a send.
+    '<button class="btn" type="submit" data-send>Send the helpdesk copy</button>',
     '</form>',
     // The other half of the choice, and it needs a control of its own: the
     // copy is in a helpdesk this system cannot write into, so nothing a
     // reviewer could do here would make the two texts agree. The digest is of
     // the copy drawn above, which is what makes this a decision about text
     // somebody read rather than a flag that discards whatever is there.
-    `<form method="post" action="/approve${filters}">`,
-    `<input type="hidden" name="runId" value="${escapeHtml(runId)}">`,
-    `<input type="hidden" name="shown" value="${escapeHtml(shown)}">`,
-    `<input type="hidden" name="ack" value="${escapeHtml(replyDigest(copy.text))}">`,
-    '<button class="btn" type="submit">Send the reply above</button>',
-    '</form>',
+    // Issue #154: where the editor is drawn, this send posts the editor's form
+    // as the bar's does, carrying its own answer as the button's value, so the
+    // approval refuses a change nobody saved.
+    postsEditor
+      ? `<button class="btn" type="submit" form="reply-editor" formaction="/approve${filters}" formmethod="post"`
+        + ` name="ack" value="${escapeHtml(replyDigest(copy.text))}" data-send>Send the reply above</button>`
+      : [
+        `<form method="post" action="/approve${filters}">`,
+        `<input type="hidden" name="runId" value="${escapeHtml(runId)}">`,
+        `<input type="hidden" name="shown" value="${escapeHtml(shown)}">`,
+        `<input type="hidden" name="ack" value="${escapeHtml(replyDigest(copy.text))}">`,
+        '<button class="btn" type="submit" data-send>Send the reply above</button>',
+        '</form>',
+      ].join(''),
     '<p class="discl">Sending the copy saves it as the reply first. Sending the reply above'
       + ' leaves the copy in the helpdesk, and the person who wrote it is not told.</p>',
     '</div></div>',
@@ -3046,6 +3198,12 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
     ` · run <a href="/run/${encodeURIComponent(view.runId)}">${escapeHtml(view.runId)}</a>`,
     '</div>',
     gapLine(options.gap, view.runId, view.replyRewritten),
+    holdLine(view, options),
+    options.orderUnread === 'mine'
+      ? '<p class="discl">The products you cover were not read, so take next took the oldest case first.</p>'
+      : options.orderUnread === 'risk'
+        ? '<p class="discl">The products you cover were not read, so take next used the queue\'s own order.</p>'
+        : '',
     '</div>',
     options.outcome === '' ? '' : renderOutcome(options.outcome, {
       state: view.state,
@@ -3068,6 +3226,7 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
         options,
         view.runId,
         replyDigest(replyTextOf(view, options.ledgerReply) ?? ''),
+        drawsEditor(view, options),
       )
       : '',
     options.edit === '' ? '' : renderEditOutcome(options.edit, {
@@ -3137,6 +3296,7 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
     }),
     '<div class="case">',
     '<div class="casemain">',
+    stepCard(view, options),
     evidenceBlock(view.evidence, view.draftExternalId, view.request, {
       ledgerReply: options.ledgerReply,
       runId: view.runId,
@@ -3150,6 +3310,11 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       writing: options.writing,
     }),
     act.kind === 'action' ? payloadBlock(view.payload) : '',
+    // What an approval records about the edit, beside the reply it is about.
+    // It sat in the bar, where it made the bar a line taller.
+    act.kind === 'reply' && view.state === 'awaiting_approval'
+      ? `<p class="readback">${escapeHtml(readBackSays(options.readBack, options.ledgerReply))}</p>`
+      : '',
     '</div>',
     '<div class="caseside">',
     whyBlock(view, act),
@@ -3174,7 +3339,7 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
     }),
     gatesNotReadSays(rule),
     '</div></div>',
-    customerBlock(view),
+    customerBlock(view, options),
     '<div class="card"><header>',
     '<span class="lbl">How the run walked</span>',
     chip('no durations · none is stored'),
@@ -3183,7 +3348,6 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
     '</div></div>',
     '</div>',
     '</div>',
-    holdBar(view, options),
     actionBar(view, act, options),
   ].join('');
 }
@@ -3258,7 +3422,7 @@ function whyBlock(view: CaseView, act: Act): string {
  * not. The ledger records a conversation, its turns and whether a participant
  * is bound to it. It records no name, plan or history, so none is drawn.
  */
-function customerBlock(view: CaseView): string {
+function customerBlock(view: CaseView, options: CaseOptions): string {
   const open = ['<div class="card"><header>', '<span class="lbl">This customer</span>', '</header><div class="body">'];
   const close = '</div></div>';
   const customer = view.customer;
@@ -3285,7 +3449,8 @@ function customerBlock(view: CaseView): string {
     `<dt>participant</dt><dd>${thread.participantNamed ? 'a participant is named' : 'no participant is named'}</dd>`,
     '</dl>',
     '<p class="absent">The ledger holds no name, plan, tenure or account history for this customer.</p>',
-    `<p class="discl">Read <a href="/conversation/${encodeURIComponent(thread.conversationId)}">the whole conversation</a>.</p>`,
+    `<p class="discl">Read <a href="${escapeHtml(`/conversation/${encodeURIComponent(thread.conversationId)}${
+      fromCase(view.runId, options.rule, options.product)}`)}">the whole conversation</a>.</p>`,
     close,
   ].join('');
 }
@@ -3341,7 +3506,7 @@ function sendHoldBar(read: CaseSendHoldRead, runId: string, options: CaseOptions
  * draws no claim and no control, because every sentence it could draw would
  * be a fact this page does not have.
  */
-function holdBar(view: CaseView, options: CaseOptions): string {
+function holdLine(view: CaseView, options: CaseOptions): string {
   // A hold this page could not read is a hold no sentence about a hold can be
   // checked against, so those answers are dropped with it. The one exception
   // is an outcome whose fit is the run's own state: `not_waiting` says the
@@ -3358,48 +3523,65 @@ function holdBar(view: CaseView, options: CaseOptions): string {
   // the reviewer the answer to the take they just posted. `not_waiting` and
   // `unknown_run` are exactly the outcomes a case that left the queue
   // produces, so the sentence is drawn whatever the state.
-  if (view.state !== 'awaiting_approval') {
-    return answered === '' ? '' : `<div class="holdbar">${answered}</div>`;
-  }
+  if (view.state !== 'awaiting_approval') return answered;
   const read = options.hold;
   if (read.kind === 'unread') {
     // No claim, and no control that would rest on one. The approval bar is
     // still drawn: a fault reading the hold says nothing about the approval.
-    return '<div class="holdbar"><p class="discl">The hold on this case was not read,'
+    return '<p class="discl">The hold on this case was not read,'
       + ' so this page does not say who has it.'
-      + ` The console log names the fault ${escapeHtml(read.tag)}.</p></div>`;
+      + ` The console log names the fault ${escapeHtml(read.tag)}.</p>`;
   }
   const hold = read.hold;
-  const said = answered;
   const field = `<input type="hidden" name="runId" value="${escapeHtml(view.runId)}">`;
   // DEC-47: the queue filters ride on every form that returns to the case,
   // so a take, a release or a handover does not drop the queue the reviewer
   // was reading. They travel on the action's query string, as the approval's
   // do, and never as a field.
   const filters = escapeHtml(filtersQuery(options.rule, options.product));
-
+  // Issue #154: the case's place among those its queue offers, beside the
+  // hold, as the handoff draws it. Not drawn for a case the queue would not
+  // offer, because a position in a list it is not on is no position.
+  const position = options.position === undefined || options.position === null
+    ? ''
+    : `<span class="chip m">${escapeHtml(String(options.position.at))} of ${escapeHtml(String(options.position.of))}</span>`;
+  const line = (says: string, token: Token, form: string): string =>
+    `<div class="caseops"><span class="chip"><span class="dot" style="color:var(--${token})"></span>${says}</span>`
+      + `${form}${position}</div>${answered}`;
   if (hold === null) {
-    return `<div class="holdbar"><p class="discl">Nobody holds this case.</p>`
-      + `<form method="post" action="/take${filters}">${field}`
-      + `<button class="btn" type="submit">Take this case</button></form>${said}</div>`;
+    return line('Nobody holds this case', 'dim',
+      `<form method="post" action="/take${filters}">${field}`
+        + `<button class="btn" type="submit">Take this case</button></form>`);
   }
   if (hold.mine) {
-    return `<div class="holdbar"><p class="discl">Held by you · ${escapeHtml(remainingSays(hold.remainingMs))}.</p>`
-      + `<form method="post" action="/take${filters}">${field}<input type="hidden" name="release" value="1">`
-      + `<button class="btn" type="submit">Release it</button></form>`
-      // The handover names a teammate. The identity is text rather than a
-      // list of the team: the console shows no roster, and the core refuses
-      // a name that is not on it.
-      + `<form method="post" action="/take${filters}">${field}<input type="hidden" name="handover" value="1">`
-      + `<input class="identity" name="to" type="text" size="18" placeholder="teammate identity"`
-      + ` value="${escapeHtml(options.handoverTo)}">`
-      + `<button class="btn" type="submit">Hand it over</button></form>${said}</div>`;
+    return line(`Held by you · ${escapeHtml(remainingSays(hold.remainingMs))}`, 'ok',
+      `<form method="post" action="/take${filters}">${field}<input type="hidden" name="release" value="1">`
+        + `<button class="btn" type="submit">Release it</button></form>`);
   }
-  return `<div class="holdbar"><p class="discl">Held by ${isolated(hold.reviewer)}`
-    + ` · ${escapeHtml(remainingSays(hold.remainingMs))}.</p>`
-    + `<form method="post" action="/take${filters}">${field}`
-    + '<input type="hidden" name="over" value="1">'
-    + `<button class="btn" type="submit">Take it over</button></form>${said}</div>`;
+  // The takeover is a second form on purpose: one press never moves another
+  // person's hold.
+  return line(`Held by ${isolated(hold.reviewer)} · ${escapeHtml(remainingSays(hold.remainingMs))}`, 'warn',
+    `<form method="post" action="/take${filters}">${field}`
+      + '<input type="hidden" name="over" value="1">'
+      + `<button class="btn" type="submit">Take it over</button></form>`);
+}
+
+/**
+ * The handover, opened from the bar (DEC-46, issue #154).
+ *
+ * The identity is text rather than a list of the team: the console shows no
+ * roster, and the core refuses a name that is not on it. A refused handover
+ * returns with the name in the field, so a typo is fixed rather than retyped.
+ */
+function handoverForm(view: CaseView, options: CaseOptions): string {
+  return [
+    `<form method="post" action="/take${escapeHtml(filtersQuery(options.rule, options.product))}">`,
+    `<input type="hidden" name="runId" value="${escapeHtml(view.runId)}">`,
+    '<input type="hidden" name="handover" value="1">',
+    `<input class="identity" name="to" type="text" size="24" placeholder="teammate identity"`
+      + ` value="${escapeHtml(options.handoverTo)}">`,
+    '<button class="btn" type="submit">Hand it over</button></form>',
+  ].join('');
 }
 
 /**
@@ -3956,31 +4138,36 @@ export function renderRewriteOutcome(outcome: string, run: OutcomeRun | null): s
  * Behind a link rather than always open. It is a textarea, and a reviewer who
  * came to approve should not have to scroll past one.
  */
-function rewriteBar(view: CaseView, options: CaseOptions): string {
-  const offered = view.state === 'awaiting_approval'
+/**
+ * Whether the case draws the reply editor, as `evidenceBlock` decides it: the
+ * rewrite's conditions, a reply text to edit, and a composed reply at all.
+ * The send posts the editor's form only where that form is on the page.
+ */
+function drawsEditor(view: CaseView, options: CaseOptions): boolean {
+  return rewriteOffered(view, options)
+    && replyTextOf(view, options.ledgerReply) !== null
+    && !(view.evidence.draftBody === null && view.evidence.sentences === null);
+}
+
+function rewriteOffered(view: CaseView, options: CaseOptions): boolean {
+  return view.state === 'awaiting_approval'
     && options.ledgerReply
     && view.draftExternalId !== null
     && view.request !== null;
-  if (!offered) return '';
+}
+
+function rewriteForm(view: CaseView, options: CaseOptions): string {
   return [
-    '<div class="rewritebar">',
     '<p class="discl">Rewriting replaces the draft with your own words. The customer'
       + ' receives them, and the citations the draft used stay on this page.</p>',
-    options.rewriting
-      ? [
-        `<form method="post" action="/rewrite${escapeHtml(filtersQuery(options.rule, options.product))}">`,
-        `<input type="hidden" name="runId" value="${escapeHtml(view.runId)}">`,
-        `<input type="hidden" name="shown" value="${
-          escapeHtml(replyDigest(replyTextOf(view, options.ledgerReply) ?? ''))}">`,
-        '<label class="lbl" for="rewrite">Your reply, in your words</label>',
-        '<textarea id="rewrite" name="text" rows="8" required></textarea>',
-        '<button class="btn" type="submit">Rewrite from scratch</button>',
-        '</form>',
-      ].join('')
-      : `<a class="btn" href="${
-        escapeHtml(withQuery(caseHref(view.runId, options.rule, options.product), 'rewrite', '1'))
-      }">Rewrite from scratch →</a>`,
-    '</div>',
+    `<form method="post" action="/rewrite${escapeHtml(filtersQuery(options.rule, options.product))}">`,
+    `<input type="hidden" name="runId" value="${escapeHtml(view.runId)}">`,
+    `<input type="hidden" name="shown" value="${
+      escapeHtml(replyDigest(replyTextOf(view, options.ledgerReply) ?? ''))}">`,
+    '<label class="lbl" for="rewrite">Your reply, in your words</label>',
+    '<textarea id="rewrite" name="text" rows="8" required></textarea>',
+    '<button class="btn" type="submit">Rewrite from scratch</button>',
+    '</form>',
   ].join('');
 }
 
@@ -4004,34 +4191,28 @@ function rewriteBar(view: CaseView, options: CaseOptions): string {
  * note is bounded in the form as well as in the ledger, so a reviewer learns
  * the length before a round trip.
  */
-function sendBackBar(view: CaseView, options: CaseOptions): string {
-  const offered = view.state === 'awaiting_approval'
+function sendBackOffered(view: CaseView, options: CaseOptions): boolean {
+  return view.state === 'awaiting_approval'
     && view.request !== null
     && (options.ledgerReply || view.draftExternalId === null);
-  if (!offered) return '';
+}
+
+function sendBackForm(view: CaseView, options: CaseOptions): string {
   return [
-    '<div class="sendbackbar">',
     // #123: the new attempt produces what this one did, a reply or an
     // internal write (DEC-34), so the note names neither.
     '<p class="discl">Sending this case back asks for a new attempt on the same turn.'
       + ' Your note is what it is asked to do differently, and nothing is sent or performed'
       + ' until a person approves what it produces.</p>',
-    options.sendingBack
-      ? [
-        `<form method="post" action="/send-back${escapeHtml(filtersQuery(options.rule, options.product))}">`,
-        `<input type="hidden" name="runId" value="${escapeHtml(view.runId)}">`,
-        `<input type="hidden" name="shown" value="${
-          escapeHtml(replyDigest(replyTextOf(view, options.ledgerReply) ?? ''))}">`,
-        '<label class="lbl" for="note">What should the new attempt do differently?</label>',
-        `<textarea id="note" name="note" rows="4" required maxlength="${
-          String(MAX_SEND_BACK_NOTE_CHARS)}"></textarea>`,
-        '<button class="btn" type="submit">Send back for a new attempt</button>',
-        '</form>',
-      ].join('')
-      : `<a class="btn" href="${
-        escapeHtml(withQuery(caseHref(view.runId, options.rule, options.product), 'sendback', '1'))
-      }">Send back with a hint →</a>`,
-    '</div>',
+    `<form method="post" action="/send-back${escapeHtml(filtersQuery(options.rule, options.product))}">`,
+    `<input type="hidden" name="runId" value="${escapeHtml(view.runId)}">`,
+    `<input type="hidden" name="shown" value="${
+      escapeHtml(replyDigest(replyTextOf(view, options.ledgerReply) ?? ''))}">`,
+    '<label class="lbl" for="note">What should the new attempt do differently?</label>',
+    `<textarea id="note" name="note" rows="4" required maxlength="${
+      String(MAX_SEND_BACK_NOTE_CHARS)}"></textarea>`,
+    '<button class="btn" type="submit">Send back for a new attempt</button>',
+    '</form>',
   ].join('');
 }
 
@@ -4058,36 +4239,124 @@ const TAKE_SAYS = {
  * The warnings are worded by `actOf`, and say whether the act can be undone.
  */
 function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
-  // DEC-48: the other way out of the queue, on every waiting case. That
-  // includes a run whose park holds nothing to approve: a case nobody can
-  // approve is exactly the dead end this outcome exists to end, and a close
-  // needs nothing from the park but the text the page drew.
-  const close = view.state === 'awaiting_approval' ? closeForm(view, options) : '';
-  const snooze = view.state === 'awaiting_approval' ? snoozeForm(view, options) : '';
-  const rewrite = rewriteBar(view, options);
+  const waiting = view.state === 'awaiting_approval';
   // A snoozed case says when it comes back. Without that a reviewer reading
   // the case cannot tell it from one nobody has picked up.
   const aside = view.state === 'snoozed' && view.snoozedUntil !== null
     ? ` It returns to the queue at ${escapeHtml(whenSays(view.snoozedUntil))}.`
     : '';
-  const approval = view.state !== 'awaiting_approval'
-    ? `<p class="discl">This run is ${escapeHtml(view.state)}, so there is nothing here to approve.${aside}</p>`
-    : act.kind === 'none'
-      ? `<p class="discl">${escapeHtml(act.says)}</p>`
-      // The digest is of the reply this page drew, which is the text the
-      // ledger would send and the text the approval compares against
-      // (DEC-44: the saved reply on the adapter whose ledger holds it, the
-      // parked body everywhere else).
-      : approveForm(
-        view.runId,
-        act.label,
-        act.says,
-        { rule: options.rule, product: options.product },
-        replyDigest(replyTextOf(view, options.ledgerReply) ?? ''),
-      )
-        + (act.kind === 'reply' ? `<p class="readback">${escapeHtml(readBackSays(options.readBack, options.ledgerReply))}</p>` : '');
-  const sendBack = sendBackBar(view, options);
-  return `<div class="actionbar">${approval}${close}${snooze}${rewrite}${sendBack}</div>`;
+  const approval = waiting && act.kind !== 'none'
+    // The digest is of the reply this page drew, which is the text the
+    // ledger would send and the text the approval compares against
+    // (DEC-44: the saved reply on the adapter whose ledger holds it, the
+    // parked body everywhere else).
+    ? approveForm(
+      view.runId,
+      act.label,
+      { rule: options.rule, product: options.product },
+      replyDigest(replyTextOf(view, options.ledgerReply) ?? ''),
+      // The chord presses a send only on a case nobody else holds. Someone
+      // else's case, or one whose hold was not read, keeps a deliberate click.
+      options.hold.kind === 'read' && (options.hold.hold === null || options.hold.hold.mine),
+      // Where the editor is drawn, the send posts the editor's form, so its
+      // text reaches the approval (issue #154).
+      drawsEditor(view, options),
+    )
+    : '';
+  // Issue #154: the other outcomes are links that open their form in the
+  // case, in the handoff's order. A field in the bar for each of them made
+  // the bar taller than a 540px window.
+  const open = openStep(view, options);
+  const steps = offeredSteps(view, options).map(({ step, label }) => {
+    const href = withQuery(caseHref(view.runId, options.rule, options.product), step, '1') + '#step';
+    return `<a class="btn${open === step ? ' on' : ''}" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
+  }).join('');
+  // The warning stays under the control it warns about, worded by `actOf`.
+  const says = !waiting
+    ? `This run is ${escapeHtml(view.state)}, so there is nothing here to approve.${aside}`
+    : escapeHtml(act.says);
+  // Drawn only where the editor is, and shown by the script when a send
+  // would drop changes the reviewer has not saved (issue #154).
+  const unsavedSays = approval !== '' && drawsEditor(view, options)
+    ? '<p class="barsays refused" data-unsaved hidden>Save the reply first.'
+      + ' A send carries the saved reply, and the changes above are not saved.</p>'
+    : '';
+  // Shown by the script when a send would drop text typed in another field
+  // on the case: a close reason, a missing answer, a document's title.
+  const typedSays = approval !== ''
+    ? '<p class="barsays refused" data-typed-unsent hidden>Post or clear the text you typed first.'
+      + ' A send would drop it.</p>'
+    : '';
+  return `<div class="actionbar"><div class="acts">${approval}${steps}</div>`
+    + `<p class="barsays">${says}</p>${unsavedSays}${typedSays}</div>`;
+}
+
+/** Every outcome that opens in the case, by its query name. */
+type OpenStep = CaseStep | 'rewrite' | 'sendback';
+
+/**
+ * The outcomes this case offers beyond the approval, in the handoff's order.
+ *
+ * DEC-48: the close and the snooze on every waiting case. That includes a run
+ * whose park holds nothing to approve: a case nobody can approve is exactly
+ * the dead end those outcomes exist to end. The handover is the holder's.
+ */
+function offeredSteps(view: CaseView, options: CaseOptions): { step: OpenStep; label: string }[] {
+  if (view.state !== 'awaiting_approval') return [];
+  const action = parksAnAction(view.payloadRecorded === true, view.actionClass ?? null, view.draftExternalId ?? null);
+  const mine = options.hold.kind === 'read' && options.hold.hold !== null && options.hold.hold.mine;
+  return [
+    ...(rewriteOffered(view, options) ? [{ step: 'rewrite' as const, label: 'Rewrite from scratch →' }] : []),
+    ...(sendBackOffered(view, options) ? [{ step: 'sendback' as const, label: 'Send back with a hint →' }] : []),
+    ...(mine ? [{ step: 'handover' as const, label: 'Hand to…' }] : []),
+    { step: 'snooze' as const, label: 'Snooze' },
+    { step: 'close' as const, label: action ? 'Close, not performed' : 'Close, no reply' },
+  ];
+}
+
+/**
+ * The outcome whose form is open, when this case offers it.
+ *
+ * A refused handover returns with the name it was given, and reopens the
+ * handover with it, so the reviewer fixes a typo rather than retyping.
+ */
+function openStep(view: CaseView, options: CaseOptions): OpenStep | null {
+  const asked: OpenStep | null = options.rewriting
+    ? 'rewrite'
+    : options.sendingBack
+      ? 'sendback'
+      : options.step ?? (options.handoverTo !== '' ? 'handover' : null);
+  if (asked === null) return null;
+  return offeredSteps(view, options).some((offered) => offered.step === asked) ? asked : null;
+}
+
+/**
+ * The open outcome's form, at the head of the case (issue #154).
+ *
+ * In the case and not in the bar, so the bar stays one row and the form has
+ * the width of the column. Cancel returns to the case with nothing open.
+ */
+function stepCard(view: CaseView, options: CaseOptions): string {
+  const open = openStep(view, options);
+  if (open === null) return '';
+  const label = offeredSteps(view, options).find((offered) => offered.step === open)!.label.replace(/ →$/, '');
+  const body = open === 'close'
+    ? closeForm(view, options)
+    : open === 'snooze'
+      ? snoozeForm(view, options)
+      : open === 'handover'
+        ? handoverForm(view, options)
+        : open === 'rewrite'
+          ? rewriteForm(view, options)
+          : sendBackForm(view, options);
+  return [
+    '<div class="card stepcard" id="step"><header>',
+    `<span class="lbl">${escapeHtml(label)}</span>`,
+    '</header><div class="body">',
+    body,
+    `<a class="btn" href="${escapeHtml(caseHref(view.runId, options.rule, options.product))}">Cancel</a>`,
+    '</div></div>',
+  ].join('');
 }
 
 /**
@@ -4262,22 +4531,36 @@ function payloadBlock(payload: Readonly<Record<string, unknown>> | null): string
 /**
  * The warning and the one button, which every approval path shares.
  *
- * Two fields, and neither carries text: the run, and a digest of the reply
- * this page drew (DEC-46). The approval recomputes the digest under the run's
- * lock, so a reply rewritten after this page was built is refused rather than
- * approved as shown. The digest is why no body is posted, and the relay sends
- * the parked draft verbatim in any case.
+ * Where the page draws no editor, two fields: the run, and a digest of the
+ * reply this page drew (DEC-46). The approval recomputes the digest under the
+ * run's lock, so a reply rewritten after this page was built is refused
+ * rather than approved as shown.
+ *
+ * Where the page draws the editor, the send posts the editor's form instead,
+ * which carries the same two fields and the editor's text (issue #154). The
+ * approval reads that text only to refuse a change nobody saved. It never
+ * records or sends it: the relay sends the reply the ledger holds.
  */
 function approveForm(
   runId: string,
   label: string,
-  says: string,
   filters: { readonly rule: string | null; readonly product: string | null },
   shown: string | null = null,
+  chord = true,
+  postsEditor = false,
 ): string {
+  const action = `/approve${filtersQuery(filters.rule, filters.product)}`;
+  const label_ = `${escapeHtml(label)}${chord ? ' <span class="kbd">⌘↵</span>' : ''}`;
+  // Every send carries `data-send`, which the script's guards read; the chord
+  // marker only where the chord binds.
+  const marks = chord ? ' data-send data-primary' : ' data-send';
+  if (postsEditor) {
+    // The editor's form already carries the run, the digest of the reply it
+    // drew and the text, so the button needs no form of its own.
+    return `<button class="btn primary" type="submit" form="reply-editor" formaction="${escapeHtml(action)}"`
+      + ` formmethod="post"${marks}>${label_}</button>`;
+  }
   return [
-    '<div class="warnbar"><span class="dot" style="color:var(--accent); margin-top:5px"></span>',
-    `<div>${escapeHtml(says)}</div></div>`,
     // The filters ride on the action, not in a field, and both of them: an
     // approval that came from a narrowed queue returns to that queue
     // (DEC-47). The POST reads them off the URL, so a body cannot set one.
@@ -4287,7 +4570,8 @@ function approveForm(
     `<form method="post" action="/approve${escapeHtml(filtersQuery(filters.rule, filters.product))}">`,
     `<input type="hidden" name="runId" value="${escapeHtml(runId)}">`,
     shown === null ? '' : `<input type="hidden" name="shown" value="${escapeHtml(shown)}">`,
-    `<button class="btn primary" type="submit">${escapeHtml(label)}</button>`,
+    // Issue #154: the one control a chord presses, named on the button.
+    `<button class="btn primary" type="submit"${marks}>${label_}</button>`,
     '</form>',
   ].join('');
 }
@@ -4390,9 +4674,15 @@ function replyAbsenceSays(turn: TurnView): string {
 }
 
 /** Surface 6: one conversation, read the way a responder reads it. */
-export function renderConversation(thread: ThreadView): string {
+export function renderConversation(thread: ThreadView, back: string | null = null): string {
   return [
     '<div class="casehd">',
+    // Issue #154: the case this thread was opened from. In the case header's
+    // own place, so Esc follows it as it does on a case.
+    back === null
+      ? ''
+      : `<div class="backrow"><a class="back" href="${escapeHtml(back)}">← case</a>`
+        + '<span class="backkey">esc returns to the case</span></div>',
     '<div class="casetitle">',
     `<span class="m casesubj">${isolated(thread.primaryTicketId)}</span>`,
     chip(thread.state, thread.state === 'open' ? 'accent' : 'dim'),
@@ -4645,8 +4935,14 @@ function casesSays(n: number): string {
   return n === 1 ? '1 case' : `${n} cases`;
 }
 
-/** One stat card: a label, the ledger's figure, and what it counts. */
-function statCard(label: string, figure: number | null, says: string): string {
+/**
+ * One stat card: a label, the ledger's figure, and what it counts.
+ *
+ * The figure is coloured by the verdict the label names, as the handoff
+ * colours it (issue #154). The label says it in words, so the colour is never
+ * the only carrier.
+ */
+function statCard(label: string, figure: number | null, says: string, token: Token = 'mut'): string {
   return [
     '<div class="card stack"><header>',
     `<span class="lbl">${escapeHtml(label)}</span>`,
@@ -4654,8 +4950,8 @@ function statCard(label: string, figure: number | null, says: string): string {
     // Null is a figure the console did not read. It is drawn as words, never
     // as a zero: a zero is a count, and an unread count is not one.
     figure === null
-      ? '<span class="big" style="color:var(--dim)">not read</span>'
-      : `<span class="big">${escapeHtml(String(figure))}</span>`,
+      ? '<span class="metric" style="color:var(--dim)">not read</span>'
+      : `<span class="metric" style="color:var(--${token})">${escapeHtml(String(figure))}</span>`,
     `<div style="font-size:11.5px; color:var(--mut)">${escapeHtml(says)}</div>`,
     '</div></div>',
   ].join('');
@@ -4780,16 +5076,19 @@ export function renderKnowledge(read: KnowledgeRead, labels: ReadonlyMap<string,
           ? ''
           : ` The journal of ${casesSays(report.unreadCases)} could not be read,`
             + ` so the figure leaves ${report.unreadCases === 1 ? 'it' : 'them'} out.`),
+      'warn',
     ),
     statCard(
       'Documents past review',
       report.pastReview,
       'Counted today. Retrieval no longer reads a document past its review date.',
+      'hot',
     ),
     statCard(
       'Documents written by the team',
       report.teamDocuments,
       'Documents a reviewer published from a case in the window.',
+      'ok',
     ),
     statCard(
       'Cases those documents now answer',
@@ -4797,6 +5096,7 @@ export function renderKnowledge(read: KnowledgeRead, labels: ReadonlyMap<string,
       report.teamDocuments === 0
         ? 'No team document was published in the window, so none answers a case yet.'
         : 'Cases a supported claim on one of them answers, whose journal is read, and that no gap blocks.',
+      'ok',
     ),
     '</div>',
     '<div class="list card">',
@@ -4854,14 +5154,20 @@ function minutesSays(ms: number): string {
  * drawn where the figure goes, never a zero. `saysHtml` is markup: a value
  * from outside in it is already isolated.
  */
-function teamCard(label: string, figure: string | null, absence: string, saysHtml: string): string {
+function teamCard(
+  label: string,
+  figure: string | null,
+  absence: string,
+  saysHtml: string,
+  token: Token = 'mut',
+): string {
   return [
     '<div class="card stack"><header>',
     `<span class="lbl">${escapeHtml(label)}</span>`,
     '</header><div class="body">',
     figure === null
       ? `<span class="nofig">${escapeHtml(absence)}</span>`
-      : `<span class="big">${escapeHtml(figure)}</span>`,
+      : `<span class="metric" style="color:var(--${token})">${escapeHtml(figure)}</span>`,
     saysHtml === '' ? '' : `<div style="font-size:11.5px; color:var(--mut)">${saysHtml}</div>`,
     '</div></div>',
   ].join('');
@@ -4949,6 +5255,7 @@ export function renderTeam(read: TeamRead, labels: ReadonlyMap<string, string>):
       escapeHtml((ended === 0 ? '' : `${ofCasesSays(reached, ended)} today that ended or wait for a person,`
         + ' from the ledger. This is not the published containment figure.')
         + (open === '' ? '' : `${ended === 0 ? '' : ' '}${open.charAt(0).toUpperCase()}${open.slice(1)}.`)),
+      'ok',
     ),
     teamCard(
       'team time on support',
@@ -4958,6 +5265,7 @@ export function renderTeam(read: TeamRead, labels: ReadonlyMap<string, string>):
         ? ''
         : escapeHtml(`This week, across ${peopleSays(report.supportPeople)}`
           + ` · ${trendSays(report.supportMs, report.previousSupportMs)}.`),
+      'accent',
     ),
     teamCard(
       'median case',
@@ -4966,6 +5274,7 @@ export function renderTeam(read: TeamRead, labels: ReadonlyMap<string, string>):
       report.medianCaseMs === null
         ? ''
         : escapeHtml(`From taking it to sending, over ${casesSays(report.sentCases)} sent this week.`),
+      'ok',
     ),
     teamCard(
       'oldest waiting',
@@ -4975,6 +5284,7 @@ export function renderTeam(read: TeamRead, labels: ReadonlyMap<string, string>):
         ? ''
         : `${isolated(productSays(oldest.product, labels))} · `
           + `${oldest.heldBy === null ? 'nobody holds it' : `held by ${isolated(oldest.heldBy)}`}.`,
+      'warn',
     ),
     '</div>',
     '<div class="list card">',

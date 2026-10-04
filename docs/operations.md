@@ -1736,17 +1736,39 @@ A second reviewer takes it over from the case page, after confirming. A holder
 may hand the case to a teammate on the roster, or release it. Taking another
 case releases the first.
 
+The case header shows the hold and the case's place in its queue. That place
+counts the cases the queue offers with its filters and its sort. It leaves out
+a case somebody else holds.
+
+"Take next case" on the queue takes the first free case in that order. It
+passes over a case somebody holds and a case you hold already. It never takes
+a case over. A row's Take holds that one case.
+
+The case's bar holds one row of controls and the send warning. Close, snooze,
+hand over, rewrite and send back each open their form at the head of the case.
+
 A case opens from its row on the queue. A conversation and a document open from
 the run that names them. The ledger orders conversations by when a problem
 opened. That is not when one last needed attention, so a listing would sort by
 the wrong thing.
 
 The console ships one script, and no more. It lights the document a claim
-cites. On the queue it moves on j and k, and c takes the focused case. Esc
-leaves a case by its back link. Every surface works without it: a claim carries
-an anchor to its source, and a queue row is a link. The queue legend
-names only the keys that act, above the rows, where a long queue cannot
-hide it.
+cites. On the queue it moves on j and k, and c takes the focused case. Enter
+with nothing focused takes the next case. Esc leaves a case by its back link.
+Every surface works without it: a claim carries an anchor to its source, and a
+queue row is a link.
+
+The queue legend names only the keys that act, above the rows, where a long
+queue cannot hide it.
+
+On a case, Cmd+Enter or Ctrl+Enter presses the case's send button. A send
+carries the reply the ledger holds. So in an editor with unsaved changes, the
+chord saves them and sends nothing. The page also stops a send that would drop
+them, or text typed in any other field on the case.
+
+Without the script, the approval still refuses a change nobody saved. The send
+posts the editor's text. The approval refuses a text that differs from the
+one the editor drew, says why, and sends nothing.
 
 The script is pinned by a hash of its own text. So a script the page did not
 ship cannot run, and neither does one injected into a page.
@@ -1765,6 +1787,14 @@ such thing as answers 404.
 The rail carries a theme toggle. It sets a cookie and returns to the surface
 you were reading, with the queue filter you chose. The console answers dark
 until the cookie says otherwise.
+
+The queue sorts by risk first, by age, or by your products first. The sort is
+a cookie too, so a take, a filter and the theme keep it. Risk first keeps the
+groups. The other two list every case nobody else holds in one order, with
+held cases last.
+
+Only risk first draws the clean group. So the batch confirm and its `a` key
+exist under risk first alone. The queue legend names `a` only there.
 
 The queue lists every run that waits for approval, and each row opens its case.
 The list holds every one, because a cap drops the oldest waiting replies off

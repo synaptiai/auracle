@@ -30,6 +30,7 @@ import {
   filtersQuery,
   narrowToProduct,
   narrowToRule,
+  typedText,
   queueHref,
   page,
   renderApprovals,
@@ -57,6 +58,8 @@ import {
 } from './surfaces.js';
 import type { ConsoleApproveOutcome, ConsoleSaveOutcome } from './approve.js';
 import { confirmBatch, isFault, undoBatch, MAX_BATCH } from './confirm.js';
+import { QUEUE_SORTS, groupQueue, workOrder } from './queue.js';
+import type { QueueSort } from './queue.js';
 import type { BatchOutcome } from './confirm.js';
 import type { ConfirmCase, OutcomeRun } from './surfaces.js';
 import type {
@@ -363,6 +366,109 @@ function queueBack(
   const keepProduct = filters.product !== null
     && narrowToProduct(waiting, filters.product).length > 0;
   return queueHref(keepRule ? filters.rule : null, keepProduct ? filters.product : null);
+}
+
+/**
+ * The cases a reviewer could start, in the order their queue draws them
+ * (issue #154).
+ *
+ * The queue page's own reads, narrowed by the same filters and ordered by the
+ * same sort, so "Take next case" and a case's position agree with the list
+ * the reviewer was reading. The holds and the products it reads may fail as
+ * the queue's may. Without the holds no case is set aside as somebody's, and
+ * the take itself still refuses one that is held. Without the products the
+ * order is the ledger's own.
+ *
+ * `own` names the cases this reviewer holds, which take next passes over.
+ */
+async function readWorkOrder(
+  deps: ConsoleDeps,
+  reviewer: string,
+  filters: { rule: string | null; product: string | null },
+  sort: QueueSort,
+): Promise<{
+  order: RunDetail[];
+  own: ReadonlySet<string>;
+  /** How many cases the filters showed, held or not. */
+  shown: number;
+  /** How many of those this reviewer holds. */
+  ownShown: number;
+  holdsUnread: string | null;
+  productsUnread: string | null;
+}> {
+  const waiting = await deps.listApprovals();
+  let holds = new Map<string, Hold>();
+  let holdsUnread: string | null = null;
+  try {
+    holds = await deps.readHolds(waiting.map((run) => run.runId));
+  } catch (error) {
+    holdsUnread = randomUUID().slice(0, 8);
+    console.error(logLine({ event: 'console_holds_unread', tag: holdsUnread, error: describeFault(error) }));
+  }
+  let mine: readonly string[] = [];
+  let productsUnread: string | null = null;
+  try {
+    mine = await deps.readReviewerProducts(reviewer);
+  } catch (error) {
+    productsUnread = randomUUID().slice(0, 8);
+    console.error(logLine({ event: 'console_products_unread', tag: productsUnread, error: describeFault(error) }));
+  }
+  const covered = new Set(mine);
+  const shown = narrowToProduct(narrowToRule(waiting, filters.rule), filters.product);
+  const sections = groupQueue(
+    shown,
+    (run) => { const hold = holds.get(run.runId); return hold !== undefined && hold.reviewer !== reviewer; },
+    (run) => run.product !== null && covered.has(run.product),
+    sort,
+  );
+  const own = new Set([...holds].filter(([, hold]) => hold.reviewer === reviewer).map(([runId]) => runId));
+  return {
+    order: workOrder(sections),
+    own,
+    shown: shown.length,
+    ownShown: shown.filter((run) => own.has(run.runId)).length,
+    holdsUnread,
+    productsUnread,
+  };
+}
+
+/**
+ * How many free cases take next tries before it says none was free.
+ *
+ * A bound, so a queue whose every case a teammate takes between the read and
+ * the press costs a bounded number of transactions. Each refusal is a case
+ * somebody took a moment ago, so a press that loses this many races in a row
+ * is told the truth: nothing it tried was free.
+ */
+const TAKE_NEXT_TRIES = 10;
+
+/**
+ * How long the queue waits for the knowledge badge (issue #154).
+ *
+ * The badge is a count beside the work, and the queue is the work. So the
+ * count is read alongside the queue's own reads, and a count that has not
+ * come by then is left out rather than holding the page back.
+ */
+const BADGE_WAIT_MS = 500;
+
+/** The gap count, or null when it failed or did not come within the wait. */
+function gapCountWithin(deps: ConsoleDeps, ms: number): Promise<number | null> {
+  const tag = randomUUID().slice(0, 8);
+  const counted = deps.readKnowledge().then(
+    (report) => report.gaps.length,
+    (error: unknown) => {
+      console.error(logLine({ event: 'console_gaps_unread', tag, error: describeFault(error) }));
+      return null;
+    },
+  );
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      console.error(logLine({ event: 'console_gaps_late', tag, waitedMs: ms }));
+      resolve(null);
+    }, ms);
+  });
+  return Promise.race([counted, late]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -823,7 +929,18 @@ class OversizedForm extends Error {
   }
 }
 
-async function readForm(req: IncomingMessage): Promise<URLSearchParams> {
+/** The bound on a posted form, which every route but the approval keeps. */
+const FORM_LIMIT = 64 * 1024;
+
+/**
+ * The approval's bound (issue #154). Where the editor is drawn, the send posts
+ * the editor's text, and an untouched parked draft may be longer than a save
+ * allows: non-ASCII text grows about nine times when a form encodes it. Still
+ * a bound, for the reason `readForm` gives.
+ */
+const APPROVE_FORM_LIMIT = 1024 * 1024;
+
+async function readForm(req: IncomingMessage, limit = FORM_LIMIT): Promise<URLSearchParams> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
@@ -831,7 +948,7 @@ async function readForm(req: IncomingMessage): Promise<URLSearchParams> {
     size += buf.length;
     // A bound, because an operator console on an internal network is still a
     // socket anyone on it can post to.
-    if (size > 64 * 1024) throw new OversizedForm();
+    if (size > limit) throw new OversizedForm();
     chunks.push(buf);
   }
   return new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
@@ -850,16 +967,40 @@ const THEME_MAX_AGE = 31_536_000;
  * cookie named `highlight` that some proxy set on the same host.
  */
 export function readTheme(cookieHeader: string | undefined): Theme {
+  const value = cookieOf(cookieHeader, THEME_COOKIE, THEMES);
+  // Dark is the console's own default, and an unreadable cookie is not a
+  // reason to answer differently than a first visit does.
+  return value ?? 'dark';
+}
+
+/** The value of one cookie, when it is one of the values allowed, or null. */
+function cookieOf<T extends string>(
+  cookieHeader: string | undefined,
+  name: string,
+  allowed: readonly T[],
+): T | null {
   for (const pair of (cookieHeader ?? '').split(';')) {
     const at = pair.indexOf('=');
     if (at === -1) continue;
-    if (pair.slice(0, at).trim() !== THEME_COOKIE) continue;
+    if (pair.slice(0, at).trim() !== name) continue;
     const value = pair.slice(at + 1).trim().replace(/^"|"$/g, '');
-    if ((THEMES as readonly string[]).includes(value)) return value as Theme;
+    if ((allowed as readonly string[]).includes(value)) return value as T;
   }
-  // Dark is the console's own default, and an unreadable cookie is not a
-  // reason to answer differently than a first visit does.
-  return 'dark';
+  return null;
+}
+
+const SORT_COOKIE = 'sort';
+
+/**
+ * The queue order the reviewer chose (issue #154), or the queue's own.
+ *
+ * A preference, kept as the theme is: a cookie a GET sets on its way back. So
+ * a take, a filter and the theme toggle keep it, and no link has to carry it.
+ * A value this console does not offer reads as the default and is never
+ * written back.
+ */
+export function readSort(cookieHeader: string | undefined): QueueSort {
+  return cookieOf(cookieHeader, SORT_COOKIE, QUEUE_SORTS) ?? 'risk';
 }
 
 /**
@@ -1107,6 +1248,25 @@ async function route(
     return;
   }
 
+  // Issue #154: the queue's sort, set the way the theme is. GET alone, because
+  // it writes a cookie, and the return is the queue it came from, rebuilt by
+  // the theme's own allowlist.
+  if (req.method === 'GET' && path === '/sort') {
+    const to = url.searchParams.get('to');
+    if (to === null || !(QUEUE_SORTS as readonly string[]).includes(to)) {
+      send(res, 404, page('Not found', nothingFound(), shell(path)));
+      return;
+    }
+    res.writeHead(303, {
+      ...SAFETY_HEADERS,
+      'set-cookie':
+        `${SORT_COOKIE}=${to}; Path=/; Max-Age=${THEME_MAX_AGE}; SameSite=Strict; HttpOnly`,
+      location: safeReturn(url.searchParams.get('back'), surfaces),
+    });
+    res.end();
+    return;
+  }
+
   if (req.method === 'GET' && path === '/theme') {
     const to = url.searchParams.get('to');
     if (to === null || !(THEMES as readonly string[]).includes(to)) {
@@ -1196,6 +1356,10 @@ async function route(
       return;
     }
     const waiting = await deps.listApprovals();
+    // Issue #154: started once the queue is read, so a page that failed starts
+    // no count, and it runs alongside the queue's other reads. The read is
+    // the knowledge screen's, which pages share while it runs.
+    const gapsRead = gapCountWithin(deps, BADGE_WAIT_MS);
     // DEC-46: who holds what, for the whole page in one read. A fault does
     // not take the queue away — the queue is the work — so it draws without
     // the holders and says which log line names the fault.
@@ -1241,11 +1405,15 @@ async function route(
       console.error(logLine({ event: 'console_counts_unread', tag, error: describeFault(error) }));
       today = { unreadTag: tag };
     }
+    // Issue #154: the rail's knowledge badge. A fault or a slow read draws
+    // the rail without it, because the queue is the work and a count is not.
+    const gaps = await gapsRead;
     send(res, 200, page(
       'Needs a person',
       renderApprovals(
         waiting,
-        { rule, product, mine, labels: deps.productLabels, mineUnread },
+        { rule, product, mine, labels: deps.productLabels, mineUnread, sort: readSort(req.headers.cookie),
+          tookNothing: url.searchParams.get('taken') },
         today,
         holds,
       ),
@@ -1255,6 +1423,7 @@ async function route(
       // it. A rule the query string invented is never written back out.
       {
         ...shell('/', waiting.length),
+        gaps,
         // The theme returns with the filters only when something waiting
         // carries them. A value the query string invented is never written
         // back out.
@@ -1425,9 +1594,39 @@ async function route(
       console.error(logLine({ event: 'console_reruns_unread', tag, runId, error: describeFault(error) }));
       reruns = { unreadTag: tag };
     }
+    // Issue #154: where this case sits in the queue it was opened from, with
+    // that queue's filters and the reviewer's sort. A fault does not take the
+    // case away: the page draws without a position.
+    const caseSort = readSort(req.headers.cookie);
+    let position: { at: number; of: number } | null = null;
+    let productsUnreadHere = false;
+    if (run.state === 'awaiting_approval') {
+      try {
+        const read = await readWorkOrder(deps, reviewer, { rule, product }, caseSort);
+        // A position counted without the holds or the reviewer's products is
+        // a place in another order than the queue draws, so none is drawn.
+        productsUnreadHere = read.productsUnread !== null;
+        const at = read.order.findIndex((candidate) => candidate.runId === runId);
+        // Under oldest the products decide nothing, so only the holds count.
+        position = at === -1 || read.holdsUnread !== null || (read.productsUnread !== null && caseSort !== 'oldest')
+          ? null
+          : { at: at + 1, of: read.order.length };
+      } catch (error) {
+        const tag = randomUUID().slice(0, 8);
+        console.error(logLine({ event: 'console_position_unread', tag, runId, error: describeFault(error) }));
+      }
+    }
+    // Issue #154: the outcome whose form is open in the case, if one is asked.
+    const step = (['close', 'snooze', 'handover'] as const)
+      .find((name) => url.searchParams.get(name) === '1') ?? null;
     send(res, 200, page(
       `Case ${run.ticketId}`,
       renderCase({ ...run, customer }, {
+        position,
+        step,
+        // The note needs the page's own read to find the products unread, so
+        // a link alone cannot make the page say it.
+        orderUnread: url.searchParams.get('mine') === 'unread' && productsUnreadHere ? caseSort : null,
         gap,
         reruns,
         composing: url.searchParams.get('compose') === '1',
@@ -1457,9 +1656,26 @@ async function route(
       send(res, 404, page('Conversation', nothingFound(), shell(path)));
       return;
     }
+    // Issue #154: the case this thread was opened from, when it is a run that
+    // answered a turn of it. Any other value names no case to go back to, and
+    // is never written back out.
+    const from = url.searchParams.get('from');
+    const { rule, product } = queueFilters(url);
+    // Read from the run itself: a turn names only its newest run, and an
+    // older run of the same conversation is still a case to go back to.
+    let back: string | null = null;
+    if (from !== null && isRunId(from)) {
+      try {
+        const opened = await deps.readRun(from);
+        const of = opened === null ? null : (opened.request?.conversationId ?? opened.conversationId);
+        if (opened !== null && opened.runId === from && of === id) back = caseHref(from, rule, product);
+      } catch (error) {
+        console.error(logLine({ event: 'console_back_unread', tag: randomUUID().slice(0, 8), runId: from, error: describeFault(error) }));
+      }
+    }
     send(res, 200, page(
       'Conversation',
-      renderConversation(thread),
+      renderConversation(thread, back),
       shell(`/conversation/${id}`),
     ));
     return;
@@ -1516,7 +1732,7 @@ async function route(
     send(res, 200, page(
       'Knowledge base',
       renderKnowledge(knowledge, deps.productLabels),
-      shell('/knowledge'),
+      { ...shell('/knowledge'), gaps: 'report' in knowledge ? knowledge.report.gaps.length : null },
     ));
     return;
   }
@@ -1584,6 +1800,104 @@ async function route(
         theme,
         backToQueue(url),
       ));
+      return;
+    }
+    // Issue #154: take next. The server picks the case, from the queue the
+    // reviewer was reading, so the page never decides for a moment it no
+    // longer describes. A form that names a case as well asks for two things,
+    // and is refused rather than read as either.
+    if (form.has('next')) {
+      if (form.has('runId')) {
+        send(res, 400, bare('Refused', 'A take names one case or asks for the next one, not both. Nothing was taken.', theme));
+        return;
+      }
+      const filters = queueFilters(url);
+      let read;
+      try {
+        read = await readWorkOrder(deps, reviewer, filters, readSort(req.headers.cookie));
+      } catch (error) {
+        const tag = randomUUID().slice(0, 8);
+        console.error(logLine({ event: 'console_queue_unread', tag, error: describeFault(error) }));
+        send(res, 503, bare(
+          'Refused',
+          `The queue was not read, so nothing was taken. The console log names the fault ${tag}.`,
+          theme,
+          backToQueue(url),
+        ));
+        return;
+      }
+      const { order, own, holdsUnread } = read;
+      const sort = readSort(req.headers.cookie);
+      // The order fell back to the ledger's own, and the case says so.
+      const mineUnread = read.productsUnread !== null && sort !== 'oldest' ? '&mine=unread' : '';
+      // Without the holds the console cannot tell a free case from a held
+      // one, so it takes nothing rather than walk the queue on refusals.
+      if (holdsUnread !== null) {
+        send(res, 503, bare(
+          'Refused',
+          'The holds were not read, so the console cannot tell which case is free. Nothing was taken.'
+            + ` The console log names the fault ${holdsUnread}.`,
+          theme,
+          backToQueue(url),
+        ));
+        return;
+      }
+      const kept = filtersQuery(filters.rule, filters.product);
+      const candidates = order.filter((candidate) => !own.has(candidate.runId));
+      for (const run of candidates.slice(0, TAKE_NEXT_TRIES)) {
+        let outcome: string;
+        try {
+          // Never `over`: a case somebody holds is theirs, and take next moves
+          // on to the next one rather than asking.
+          outcome = (await deps.takeHold(run.runId, reviewer, false)).outcome;
+        } catch (error) {
+          const tag = randomUUID().slice(0, 8);
+          console.error(logLine({
+            event: 'console_take_failed', tag, runId: run.runId, action: 'next',
+            reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+            host: req.headers.host ?? null, from, error: describeFault(error),
+          }));
+          // The case page's own hedge: a fault can arrive after the take
+          // committed and before this process read the answer.
+          send(res, 500, bare(
+            'Error',
+            `The take may or may not have committed, and the console log names the fault ${tag}.`,
+            theme,
+            { href: caseHref(run.runId, filters.rule, filters.product), text: 'Open the case to see its state.' },
+          ));
+          return;
+        }
+        console.error(logLine({
+          event: 'console_took', runId: run.runId, action: 'next', outcome,
+          reviewer: logged(reviewer), reviewerLength: loggedLength(reviewer),
+          host: req.headers.host ?? null, from,
+        }));
+        if (outcome === 'taken') {
+          res.writeHead(303, {
+            ...SAFETY_HEADERS,
+            location: `/case/${encodeURIComponent(run.runId)}?taken=taken${mineUnread}${kept.replace(/^\?/, '&')}`,
+          });
+          res.end();
+          return;
+        }
+      }
+      // Nothing was taken, and the queue says why from what happened: no case
+      // waits, every case left is the reviewer's own, every case tried was
+      // somebody else's or had just left the queue, or the bound stopped the
+      // walk with cases left untried.
+      // `order` leaves out the cases a teammate holds, so the queue is empty
+      // only when the filters showed nothing, and every case is yours only
+      // when you hold each one shown.
+      const said = read.shown === 0
+        ? 'nothing_waiting'
+        : read.ownShown === read.shown
+          ? 'all_yours'
+          : candidates.length > TAKE_NEXT_TRIES ? 'all_raced' : 'none_free';
+      res.writeHead(303, {
+        ...SAFETY_HEADERS,
+        location: `/${kept}${kept === '' ? '?' : '&'}taken=${said}`,
+      });
+      res.end();
       return;
     }
     const runId = (form.get('runId') ?? '').trim();
@@ -1726,7 +2040,7 @@ async function route(
     const from = req.socket.remoteAddress ?? null;
     let form;
     try {
-      form = await readForm(req);
+      form = await readForm(req, APPROVE_FORM_LIMIT);
     } catch (error) {
       // Checked first: leaving the read loop past the bound destroys the stream
       // too, and that is a refusal of the sender, not a hang-up.
@@ -1818,7 +2132,8 @@ async function route(
       ));
       return;
     }
-    // The run id and the digests are the whole request. Any other field is
+    // The run id and the digests are the whole request, with the editor's
+    // text read above only to refuse a change nobody saved. Any other field is
     // ignored, because the relay sends the parked draft verbatim and a body
     // posted here would be recorded as the approved reply without ever
     // reaching the customer.
@@ -1830,10 +2145,13 @@ async function route(
     // approval for it, and a request built by hand gets none either. A read
     // that fails here refuses nothing: the approval reads the run itself.
     let ledgerOnlyReply = false;
+    // Unread counts as waiting, so a fault here never skips the refusal below.
+    let waitingRun = true;
     try {
       const run = await deps.readRun(runId);
       ledgerOnlyReply = run !== null && run.draftExternalId === null
         && run.actionClass === CUSTOMER_REPLY_ACTION_CLASS;
+      waitingRun = run === null || run.state === 'awaiting_approval';
     } catch (error) {
       console.error(logLine({
         event: 'console_approve_unread', tag: randomUUID().slice(0, 8), runId,
@@ -1853,6 +2171,47 @@ async function route(
         theme,
       ));
       return;
+    }
+    // Issue #154: the send posts the editor's form where the page drew one, so
+    // (checked once the run is read: a case that left the queue gets the
+    // approval's own answer, not advice to save)
+    // the editor's text arrives with it. Text that differs from what the
+    // editor drew is a change nobody saved, and an approval would send the
+    // saved reply and drop it. Refused here, so no page whose script did not
+    // run can drop it either. Compared as typed text, because a browser posts
+    // a textarea's line breaks as CRLF.
+    if (form.has('text') && waitingRun) {
+      const drawn = (form.get('drawn') ?? '').trim();
+      if (!SHOWN_DIGEST.test(drawn)) {
+        console.error(logLine({
+          event: 'console_refused', reason: 'not_a_drawn_digest', runId,
+          drawnLength: loggedLength(drawn), host: req.headers.host ?? null, from,
+        }));
+        send(res, 400, bare(
+          'Refused',
+          'That request carries editor text with no digest of what the editor drew, so nothing was approved.'
+            + ' Open the case and approve it from there.',
+          theme,
+        ));
+        return;
+      }
+      if (replyDigest(typedText(form.get('text') ?? '')) !== drawn) {
+        console.error(logLine({
+          event: 'console_refused', reason: 'unsaved_edit', runId,
+          host: req.headers.host ?? null, from,
+        }));
+        send(res, 409, bare(
+          'Refused',
+          'The reply in the editor holds changes that were not saved, so nothing was approved.'
+            + ' Go back in the browser to keep the changes, then save the reply and approve it.',
+          theme,
+          {
+            href: caseHref(runId, url.searchParams.get('rule'), url.searchParams.get('product')),
+            text: 'Open the case without the changes',
+          },
+        ));
+        return;
+      }
     }
     let outcome;
     try {
