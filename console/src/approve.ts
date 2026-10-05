@@ -177,6 +177,8 @@ export interface SaveRequest {
   readonly text: string;
   /** DEC-46: the digest of the reply the page that posted this drew. */
   readonly shown: string;
+  /** DEC-45: the reviewer who saved, as the console resolved it against the roster. */
+  readonly reviewer: string;
 }
 
 /** What the console's save answered: the ledger's outcome, or nothing. */
@@ -192,7 +194,11 @@ export async function saveFromConsole(
   }
   // The digest always travels: every save this console makes is a save of a
   // page it rendered, so a request without one never reaches the ledger.
-  return deps.saveReply(deps.pool, runId, request.text, { shown: request.shown });
+  return deps.saveReply(deps.pool, runId, request.text, {
+    shown: request.shown,
+    savedBy: request.reviewer,
+    savedBySource: 'roster',
+  });
 }
 
 export async function approveFromConsole(
@@ -299,10 +305,12 @@ export function undoFor(deps: {
   readonly undoApproval: (
     pool: Pool,
     runId: string,
-    options: { readonly reviewer: string },
+    options: { readonly reviewer: string; readonly reviewerSource: 'roster' },
   ) => Promise<UndoOutcome>;
 }): (runId: string, reviewer: string) => Promise<UndoOutcome> {
-  return async (runId, reviewer) => deps.undoApproval(deps.pool, runId, { reviewer });
+  // The reviewer the roster resolved, so the record says so (DEC-45).
+  return async (runId, reviewer) =>
+    deps.undoApproval(deps.pool, runId, { reviewer, reviewerSource: 'roster' });
 }
 
 /**
@@ -315,11 +323,16 @@ export function undoFor(deps: {
 export function saveFor(deps: {
   readonly pool: Pool;
   readonly saveReply: SaveDeps['saveReply'];
-}): (runId: string, text: string, shown: string) => Promise<ConsoleSaveOutcome['outcome']> {
-  return async (runId, text, shown) =>
+}): (
+  runId: string,
+  text: string,
+  shown: string,
+  reviewer: string,
+) => Promise<ConsoleSaveOutcome['outcome']> {
+  return async (runId, text, shown, reviewer) =>
     (await saveFromConsole(
       { pool: deps.pool, saveReply: deps.saveReply },
-      { runId, text, shown },
+      { runId, text, shown, reviewer },
     )).outcome;
 }
 

@@ -100,6 +100,21 @@ statement is an implementation detail. You can change it.
 | DEC-50 | A reviewer may write a document from a case with a mapped product. It declares an owner, a review date and at least one product, and it carries no identifier of the case. Retrieval ignores it until it is embedded | The console calls the embedding model; a separate authoring tool; a document with no owner or review date |
 | DEC-51 | A console send of a reply the ledger holds waits for a hold period. An undo inside the hold returns the run to approval and removes every effect of the approval | An undo after the send; a delay in the browser; an undo that keeps the outbox row |
 
+### Rows replaced in part
+
+A later decision can replace part of an earlier row. The earlier row keeps its
+text, which keeps the record of its decision. This table says what the later
+row replaces, and the earlier row governs the rest.
+
+| What the later row replaces | Earlier row | Later row |
+|---|---|---|
+| Where a person reviews, and the rejection of "a new web queue" | DEC-11 | DEC-44 |
+| "Read-only", for every adapter | DEC-40 | DEC-44 |
+| The draft state, where a helpdesk cannot send its parked copy | DEC-40 | DEC-44 |
+| The rejection of "a console that parks its own drafts", for those helpdesks | DEC-40 | DEC-44 |
+| The approval from the console. The command-line approval keeps DEC-42 | DEC-42 | DEC-45 |
+| The key, which now also carries the attempt a person requested | DEC-38 | DEC-49 |
+
 ---
 
 ## 3. What the evidence showed
@@ -186,6 +201,7 @@ interface AdapterCapabilities {
   supportsDraftState:     boolean;   // necessary for DEC-11
   supportsStructuredFields: boolean; // necessary for bug records
   supportsThreading:      boolean;
+  supportsLedgerReply:    boolean;   // DEC-44: the ledger holds the reply
 }
 ```
 
@@ -310,11 +326,15 @@ in operations. It does not become a surprise in the invoice.
 
 ### 4.4 Outbox relay
 
-**`relay`**. Obeys DEC-04, DEC-06, DEC-28, DEC-29, DEC-30.
+**`relay`**. Obeys DEC-04, DEC-06, DEC-28, DEC-29, DEC-30, DEC-44.
 
 The relay is a different process. It reads the records in the outbox that have
 the `pending` status. It calls the adapter with the `idem_key` and the `epoch`.
 Then it sets the status to `sent`.
+
+An adapter that declares `supportsLedgerReply` receives the reply the ledger
+holds, with its disclosure and provenance (DEC-44). Every other adapter sends
+the draft it parked.
 
 A record may name a moment before which it is not sent (DEC-51). The relay
 skips such a record while that moment is ahead. It holds the run's row lock
@@ -437,11 +457,13 @@ The draft is those sentences in order. So the text the composer drafts is the
 text the gate scored. A second model call rewriting the claims into prose breaks
 that identity. It also restores the failure this section removed.
 
-Today a person may edit the draft in the helpdesk before the relay sends it
-(DEC-40). DEC-44 and DEC-48 also let a person rewrite a reply the ledger
-holds. A rewritten reply reports no coverage. The gate judged the draft, so
-every surface withholds the number. Each one says whose reply it was. The
-gate row keeps the verdict.
+On the draft path the parked draft is the copy that sends. A person may edit
+it in the helpdesk before the relay sends it (DEC-40). DEC-44 and DEC-48 let a
+person edit or rewrite a reply the ledger holds.
+
+A rewritten reply reports no coverage. The gate judged the draft, so every
+surface withholds the number. Each one says whose reply it was. The gate row
+keeps the verdict.
 
 The shape is one optional courtesy sentence, then the claims, then one optional
 courtesy sentence. The parser refuses anything else. A draft that cites nothing
@@ -538,17 +560,19 @@ It does not measure the cost of an error. These are different quantities.
 
 ### 4.9 Approval bridge
 
-**`approval`**. Obeys DEC-11, DEC-14, DEC-24, DEC-33, DEC-40.
+**`approval`**. Obeys DEC-11, DEC-14, DEC-24, DEC-33, DEC-40, DEC-44.
 
-The bridge writes each gated customer reply into the draft state of the adapter.
+The bridge parks each gated customer reply in the adapter. The copy is a draft,
+or under DEC-44 an internal note while the ledger holds the text that sends.
 A gated write with no customer draft parks in the ledger alone (DEC-34).
 It makes no adapter call, so no unsent draft is left behind after approval.
 
-Today a draft parks in the helpdesk and nowhere else, and an operator console
-may approve one (DEC-40). DEC-44 makes that console the primary place a
-person reviews. It lets the ledger hold the reply for an adapter whose helpdesk
-cannot send its parked copy. No adapter declares that capability yet, so every
-customer reply still parks as a helpdesk draft.
+An operator console may approve a parked draft (DEC-40). DEC-44 makes that
+console the primary place a person reviews. It lets the ledger hold the reply
+for an adapter whose helpdesk cannot send its parked copy. The FreeScout adapter
+declares that capability when its operator sets `FREESCOUT_INTERNAL_NOTE`. Its
+park then posts an internal note, and the approval sends the ledger's text.
+Every other customer reply parks as a helpdesk draft.
 
 Each customer reply must have three items:
 

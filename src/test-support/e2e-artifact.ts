@@ -47,6 +47,12 @@ const MAX_INLINE_NUMBERS = 16;
  * It matches a whole string only, so registering the UID `3` leaves the
  * number 3 and the text "step 3" alone. A short value such as a UID must name
  * the `keys` it sits under. Without them the UID "1" also claims an epoch "1".
+ *
+ * A value with `keys` also matches a number whose digits it is, under those
+ * keys only: a run's partition varies with the conversation id it hashes, and
+ * the ledger hands it back as a number. A long array of numbers is replaced by
+ * its digest before its elements are read, so a varying number inside one is
+ * not matched.
  */
 export interface Volatile {
   readonly value: string;
@@ -76,6 +82,10 @@ export function renderArtifact(value: unknown, volatile: readonly Volatile[] = [
   // to its elements, so a list of UIDs under `uids` still counts as `uids`.
   const walk = (node: unknown, key?: string): unknown => {
     if (typeof node === 'bigint') return node.toString();
+    if (typeof node === 'number' && key !== undefined) {
+      const match = volatile.find((v) => v.keys?.includes(key) === true && v.value === String(node));
+      if (match !== undefined) return token(match.kind, String(node));
+    }
     if (node instanceof Date) return '<time>';
     if (typeof node === 'string') {
       const match = registered(node, key);

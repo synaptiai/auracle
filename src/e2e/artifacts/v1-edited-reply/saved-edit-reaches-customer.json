@@ -1,0 +1,295 @@
+{
+  "artifact": "v1-edited-reply/saved-edit-reaches-customer",
+  "inputs": {
+    "approver": "synthetic-approver@example.test",
+    "capabilities": {
+      "supportsDraftState": true,
+      "supportsIdempotencyKey": false,
+      "supportsLedgerReply": true,
+      "supportsReadBack": false,
+      "supportsStructuredFields": false,
+      "supportsThreading": true
+    },
+    "document": {
+      "body": "A duplicate charge is refunded to the original card. Banks post refunds in five business days.",
+      "docId": "d1",
+      "kind": "document",
+      "owner": "synthetic-owner",
+      "reviewBy": "2999-01-01",
+      "title": "Refund a duplicate charge"
+    },
+    "edited": "We refunded the duplicate charge today. Your bank posts refunds in five business days.",
+    "pins": {
+      "modelVer": "e2e-edited-model",
+      "promptVer": "e2e-edited-prompt"
+    },
+    "reviewer": "synthetic-reviewer@example.test",
+    "script": [
+      {
+        "text": "billing_question"
+      },
+      {
+        "text": "billing_question"
+      },
+      {
+        "text": "billing_question"
+      },
+      {
+        "text": "billing_question"
+      },
+      {
+        "text": "billing_question"
+      },
+      {
+        "text": "billing_question"
+      },
+      {
+        "text": "billing_question"
+      },
+      {
+        "text": "billing_question"
+      },
+      {
+        "text": "billing_question"
+      },
+      {
+        "vectors": [
+          {
+            "numbers": 1536,
+            "sha256": "0e0b1216f8f902bf1117a2c79646a645c8325ee448334f5796cd04f12bf418cd"
+          }
+        ]
+      },
+      {
+        "text": "[doc:d1] We will refund the duplicate charge to your card."
+      },
+      {
+        "text": "VERDICT: SUPPORTED"
+      }
+    ],
+    "taxonomy": {
+      "intents": [
+        {
+          "id": "billing_question",
+          "label": "Billing question",
+          "risk_tier": "low"
+        }
+      ]
+    },
+    "ticket": {
+      "actionClass": "customer_reply",
+      "actionPayload": {
+        "summary": "duplicate charge refund"
+      },
+      "conversationId": "<conversation:1>",
+      "delivery": "at_least_once",
+      "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+      "epoch": "1",
+      "isCustomerVisible": true,
+      "ticketId": "4101",
+      "ticketText": "I was charged twice for one order. Can you refund the duplicate?",
+      "turnNumber": 1
+    }
+  },
+  "observed": {
+    "approval": {
+      "idemKey": "<idem-key:1>",
+      "outcome": "approved"
+    },
+    "helpdesk": [
+      {
+        "body": "We will refund the duplicate charge to your card.\n\n-- \nThis reply was drafted by an automated assistant and approved by a person.\n\ngenerated-by: auracle\nmodel: e2e-edited-model\nprompt-version: e2e-edited-prompt\ngenerated-at: <time>\n",
+        "state": "published",
+        "type": "note"
+      },
+      {
+        "body": "We refunded the duplicate charge today. Your bank posts refunds in five business days.\n\n-- \nThis reply was drafted by an automated assistant and approved by a person.\n\ngenerated-by: auracle\nmodel: e2e-edited-model\nprompt-version: e2e-edited-prompt\ngenerated-at: <time>\n",
+        "state": "published",
+        "type": "message"
+      }
+    ],
+    "ledger": {
+      "gateRecord": {
+        "gate_at": "<time>",
+        "intent_id": "billing_question",
+        "product": null,
+        "reason": "no_idempotency",
+        "run_created_at": "<time>",
+        "run_id": "<uuid:1>",
+        "thresholds": {
+          "agreement": 0.6,
+          "groundednessBlock": 0.7,
+          "groundednessReview": 0.8
+        },
+        "unreadable": 0
+      },
+      "journal": [
+        {
+          "cost_micros": 90000,
+          "model_ver": "e2e-edited-model",
+          "prompt_ver": "e2e-edited-prompt",
+          "result": {
+            "agreement": 1,
+            "intentId": "billing_question"
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "classify"
+        },
+        {
+          "cost_micros": 100000,
+          "model_ver": "e2e-edited-model",
+          "prompt_ver": "e2e-edited-prompt",
+          "result": {
+            "abstained": false,
+            "citedBodies": {
+              "d1": "A duplicate charge is refunded to the original card. Banks post refunds in five business days."
+            },
+            "claimCount": 1,
+            "provider": "stub",
+            "sentences": [
+              {
+                "docId": "d1",
+                "text": "We will refund the duplicate charge to your card."
+              }
+            ],
+            "staleDocumentIds": []
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "compose"
+        },
+        {
+          "cost_micros": 110000,
+          "model_ver": "e2e-edited-model",
+          "prompt_ver": "e2e-edited-prompt",
+          "result": {
+            "claimVerdicts": [
+              {
+                "claimIndex": 0,
+                "supported": true
+              }
+            ],
+            "decision": "gated",
+            "groundedness": 1,
+            "reason": "no_idempotency",
+            "riskTier": "low",
+            "thresholds": {
+              "agreement": 0.6,
+              "groundednessBlock": 0.7,
+              "groundednessReview": 0.8
+            }
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "gate"
+        },
+        {
+          "cost_micros": 110000,
+          "model_ver": "e2e-edited-model",
+          "prompt_ver": "e2e-edited-prompt",
+          "result": {
+            "actionClass": "customer_reply",
+            "body": "We will refund the duplicate charge to your card.",
+            "delivery": "at_least_once",
+            "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+            "draftExternalId": "4101:101",
+            "provenance": {
+              "generatedAt": "<parked-at:1>",
+              "generatedBy": "auracle",
+              "modelId": "e2e-edited-model",
+              "promptVer": "e2e-edited-prompt"
+            },
+            "turnNumber": 1
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "park"
+        },
+        {
+          "cost_micros": 90000,
+          "model_ver": "e2e-edited-model",
+          "prompt_ver": "e2e-edited-prompt",
+          "result": {
+            "docIds": [
+              "d1"
+            ],
+            "documents": [
+              {
+                "bodyHash": "90aeadd714195fcb9eeb0890bf9900af1cf8bb60f3664b451fe657723680db12",
+                "docId": "d1",
+                "owner": "synthetic-owner",
+                "reviewBy": "2999-01-01",
+                "title": "Refund a duplicate charge"
+              }
+            ],
+            "embed_model_ver": "e2e-edited-model"
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "retrieve"
+        }
+      ],
+      "outbox": [
+        {
+          "action_class": "customer_reply",
+          "delivery": "at_least_once",
+          "epoch": "1",
+          "idem_key": "<idem-key:1>",
+          "not_before": null,
+          "payload": {
+            "draftExternalId": "4101:101"
+          },
+          "reply": {
+            "bodyText": "We refunded the duplicate charge today. Your bank posts refunds in five business days.",
+            "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+            "provenance": {
+              "generatedAt": "<parked-at:1>",
+              "generatedBy": "auracle",
+              "modelId": "e2e-edited-model",
+              "promptVer": "e2e-edited-prompt"
+            }
+          },
+          "run_id": "<uuid:1>",
+          "status": "sent",
+          "step_id": "approve"
+        }
+      ],
+      "run": {
+        "approval_edit_distance": 0.7142857142857143,
+        "approved_by": "synthetic-approver@example.test",
+        "approved_by_source": "roster",
+        "attempt": 1,
+        "conversation_id": "<conversation:1>",
+        "cost_micros": 110000,
+        "created_at": "<time>",
+        "deadline_at": "<time>",
+        "enqueued_at": null,
+        "epoch": "1",
+        "finished_at": "<time>",
+        "model_ver": "e2e-edited-model",
+        "partition": "<partition:1>",
+        "product": null,
+        "prompt_ver": "e2e-edited-prompt",
+        "run_id": "<uuid:1>",
+        "send_back_note": null,
+        "sent_back_at": null,
+        "snoozed_until": null,
+        "state": "resolved",
+        "steps_used": 5,
+        "ticket_id": "4101",
+        "turn_number": 1
+      }
+    },
+    "relay": [
+      "sent"
+    ],
+    "turn": {
+      "approved": "We refunded the duplicate charge today. Your bank posts refunds in five business days.",
+      "saved": "We refunded the duplicate charge today. Your bank posts refunds in five business days.",
+      "saved_by": "synthetic-reviewer@example.test",
+      "saved_by_source": "roster"
+    }
+  },
+  "seed": null
+}

@@ -196,6 +196,7 @@ export interface ConsoleDeps {
     runId: string,
     text: string,
     shown: string,
+    reviewer: string,
   ) => Promise<ConsoleSaveOutcome['outcome']>;
   /**
    * DEC-48: the case a reviewer finishes with no reply.
@@ -2755,10 +2756,11 @@ async function editRoute(
       outcome = 'not_an_edit';
     } else {
       saving = true;
-      outcome = await deps.saveReply(runId, text ?? '', shown);
+      outcome = await deps.saveReply(runId, text ?? '', shown, reviewer);
     }
-    // The write this console makes. The ledger records the text; this line is
-    // the console-side evidence naming who saved it and what they asked for.
+    // The write this console makes. The ledger records the text and who saved
+    // it (DEC-45); this line records the request: what was asked for, from
+    // where, and how it ended.
     console.error(logLine({
       event: 'console_reply_saved',
       runId, edit, outcome, why: refusal,

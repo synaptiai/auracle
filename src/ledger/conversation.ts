@@ -8,6 +8,7 @@
  * already recorded.
  */
 import type { PersonProvenance } from '../adapters/types.js';
+import { approverFrom, sourceOf, type NameSource } from '../approval/approver.js';
 import type { Pool, PoolClient } from 'pg';
 
 import { IN_FLIGHT_RUN_STATES } from './run-state.js';
@@ -83,6 +84,13 @@ export interface SavedReply {
    * the first rewrite on, and the trailer says when they last wrote it.
    */
   provenance?: PersonProvenance;
+  /**
+   * DEC-45: who saved this text, written with it, so the turn names the
+   * latest saver. `unattributed` when nobody was named.
+   */
+  savedBy: string;
+  /** How `savedBy` was established; `none` exactly when it is `unattributed`. */
+  savedBySource: NameSource;
 }
 
 /**
@@ -345,11 +353,17 @@ export async function recordSavedReply(
   client: ConversationDb,
   reply: SavedReply,
 ): Promise<void> {
-  // The author travels with the text, in one statement (DEC-48). A write that
-  // declares a person writes its provenance; a write that declares nobody
-  // keeps the author the column holds and refreshes the moment, because an
-  // edit of a person's reply is the person's reply, written later. The moment
-  // is the same kind of value the park puts in its own provenance.
+  // The author travels with the text, in one statement (DEC-48), and so does
+  // the saver (DEC-45). A write that declares a person writes its provenance;
+  // a write that declares nobody keeps the author the column holds and
+  // refreshes the moment, because an edit of a person's reply is the person's
+  // reply, written later. The moment is the same kind of value the park puts
+  // in its own provenance.
+  //
+  // The name is checked here, in the lowest writer, so no caller can store one
+  // the other writers would refuse (DEC-42, DEC-45).
+  const savedBy = approverFrom(reply.savedBy);
+  const savedBySource = sourceOf(savedBy, reply.savedBySource);
   const updated = await client.query(
     `UPDATE turn
         SET saved_reply_text = $3,
@@ -358,7 +372,9 @@ export async function recordSavedReply(
               WHEN saved_reply_provenance IS NOT NULL
                 THEN jsonb_set(saved_reply_provenance, '{generatedAt}', to_jsonb($5::text))
               ELSE NULL
-            END
+            END,
+            saved_reply_by = $6,
+            saved_reply_by_source = $7
       WHERE conversation_id = $1 AND turn_number = $2`,
     [
       reply.conversationId,
@@ -366,6 +382,8 @@ export async function recordSavedReply(
       reply.bodyText,
       reply.provenance === undefined ? null : JSON.stringify(reply.provenance),
       new Date().toISOString(),
+      savedBy,
+      savedBySource,
     ],
   );
   if (updated.rowCount === 0) {

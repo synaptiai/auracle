@@ -25,6 +25,10 @@
 //       accept may write a golden.
 //   F11 A timestamp in Postgres text form ("2026-09-26 15:49:20.12+00")
 //       stays raw, so the artifact differs on every run.
+//   F12 A number that varies by design stays raw, so the artifact differs on
+//       every run. A run's partition is the hash of a conversation id the
+//       intake mints, and a column of type integer reaches the artifact as a
+//       number. Scoping it to its keys keeps an unrelated equal number raw.
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -88,6 +92,16 @@ describe('renderArtifact', () => {
       drafts: [{ uid: '<uid:1>' }],
       outbox: { epoch: '1', payload: { draftExternalId: '<uid:1>' } },
     });
+  });
+
+  it('replaces a scoped number under its own keys, and leaves the same number elsewhere (F12)', () => {
+    const parsed = JSON.parse(
+      renderArtifact(
+        { run: { partition: 7, attempt: 7 }, steps: 7 },
+        [{ value: '7', kind: 'partition', keys: ['partition'] }],
+      ),
+    );
+    expect(parsed).toEqual({ run: { attempt: 7, partition: '<partition:1>' }, steps: 7 });
   });
 
   it('replaces a uuid and a timestamp inside a longer string', () => {

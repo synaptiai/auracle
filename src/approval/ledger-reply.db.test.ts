@@ -159,7 +159,13 @@ async function sentText(conversationId: string, turnNumber: number): Promise<str
 async function saveReply(conversationId: string, turnNumber: number, bodyText: string): Promise<void> {
   const client = await pool.connect();
   try {
-    await recordSavedReply(client, { conversationId, turnNumber, bodyText });
+    await recordSavedReply(client, {
+      conversationId,
+      turnNumber,
+      bodyText,
+      savedBy: 'reviewer-a@example.test',
+      savedBySource: 'roster',
+    });
   } finally {
     client.release();
   }

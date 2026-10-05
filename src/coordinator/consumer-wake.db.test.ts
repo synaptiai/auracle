@@ -264,7 +264,10 @@ describe('the consumer loop', () => {
     try {
       await new Promise((resolve) => setTimeout(resolve, 300));
       await enqueueOne();
-      expect(await awaitRun(slowPoll * 2)).toBe(true);
+      // Generous, for a loaded host where coordinating the run takes longer.
+      // The ceiling is the stored wait below, stamped at pickup, which bounds
+      // the wait from both sides.
+      expect(await awaitRun(15_000)).toBe(true);
     } finally {
       await consumer.stop();
     }
@@ -273,6 +276,9 @@ describe('the consumer loop', () => {
     // left. Half the interval is the floor that separates a wait from a
     // pickup without one.
     expect(waited).toBeGreaterThan(slowPoll / 2);
+    // And within the next tick, so a loop that waited longer than its
+    // interval fails here and not only against a wall-clock budget.
+    expect(waited).toBeLessThan(slowPoll * 2);
   });
 
   // A lost signal must cost latency and nothing else. The ceiling is the
@@ -295,14 +301,20 @@ describe('the consumer loop', () => {
     try {
       await new Promise((resolve) => setTimeout(resolve, settleMs));
       await enqueueOne();
-      expect(await awaitRun(slowPoll * 2)).toBe(true);
+      // Generous, for a loaded host where coordinating the run takes longer.
+      // The ceiling is the stored wait below, stamped at pickup, which bounds
+      // the wait from both sides.
+      expect(await awaitRun(15_000)).toBe(true);
     } finally {
       await consumer.stop();
     }
     // Above half a poll period, so the ceiling is what picked it up rather
     // than some other wake. `created_at - enqueued_at` is never exactly
     // zero, so a `toBeGreaterThan(0)` here asserted nothing at all.
-    expect(await storedWaitMs()).toBeGreaterThan(slowPoll / 2);
+    const waited = await storedWaitMs();
+    expect(waited).toBeGreaterThan(slowPoll / 2);
+    // And within the next tick: the ceiling holds from above as well.
+    expect(waited).toBeLessThan(slowPoll * 2);
   });
 
   // A signal landing while a scan runs must not be dropped. Dropping it
@@ -363,11 +375,17 @@ describe('the consumer loop', () => {
       },
       stop: async (): Promise<void> => undefined,
     };
-    const consumer = startConsumer(deps(), options({ signal: refuses }));
+    const counted = countingPool();
+    const consumer = startConsumer({ ...deps(), pool: counted.pool }, options({ signal: refuses }));
     try {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      // After the first scan has polled, so it cannot read the message itself.
+      // The signal never started, so only a later poll can find the ticket,
+      // and a loop that stopped polling produces no run however long this
+      // waits. So the budget can allow for a loaded host, where coordinating
+      // the run the poll found takes longer than two polls.
+      await awaitPolls(counted.polls, 1);
       await enqueueOne();
-      expect(await awaitRun(POLL_MS * 2)).toBe(true);
+      expect(await awaitRun(15_000)).toBe(true);
     } finally {
       await consumer.stop();
     }

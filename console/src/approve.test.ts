@@ -28,7 +28,7 @@ const SHOWN = 'a'.repeat(64);
 import type { DraftReadBack } from 'auracle/ledger-read';
 
 import {
-  approvalFor, approveFromConsole, closeFor, rewriteFor, saveFor, saveFromConsole, snoozeFor,
+  approvalFor, approveFromConsole, closeFor, rewriteFor, saveFor, saveFromConsole, snoozeFor, undoFor,
 } from './approve.js';
 import { ReadBackFailed } from './read-back.js';
 
@@ -284,11 +284,17 @@ describe('saving from the console', () => {
 
     const result = await saveFromConsole(
       { pool: pool as never, saveReply },
-      { runId: RUN_A, text: 'A reply a person wrote.', shown: SHOWN },
+      { runId: RUN_A, text: 'A reply a person wrote.', shown: SHOWN, reviewer: REVIEWER },
     );
 
     expect(result.outcome).toBe('saved');
-    expect(saveReply).toHaveBeenCalledWith(pool, RUN_A, 'A reply a person wrote.', { shown: SHOWN });
+    // The reviewer the console resolved against the roster is the saver
+    // (DEC-45), as it is the approver of an approval.
+    expect(saveReply).toHaveBeenCalledWith(pool, RUN_A, 'A reply a person wrote.', {
+      shown: SHOWN,
+      savedBy: REVIEWER,
+      savedBySource: 'roster',
+    });
     // The digest is the whole of DEC-46 on this path: a save without one is a
     // save of text the reviewer may never have read.
     expect(Object.hasOwn(saveReply.mock.calls[0]![3] as object, 'shown')).toBe(true);
@@ -298,7 +304,10 @@ describe('saving from the console', () => {
   it('refuses a run id that is not a run id, and saves nothing', async () => {
     const saveReply = vi.fn();
     await expect(
-      saveFromConsole({ pool: {} as never, saveReply }, { runId: 'not-a-run', text: 'x', shown: SHOWN }),
+      saveFromConsole(
+        { pool: {} as never, saveReply },
+        { runId: 'not-a-run', text: 'x', shown: SHOWN, reviewer: REVIEWER },
+      ),
     ).rejects.toThrow(/run id/);
     expect(saveReply).not.toHaveBeenCalled();
   });
@@ -307,8 +316,22 @@ describe('saving from the console', () => {
     const saveReply = vi.fn().mockResolvedValue({ outcome: 'shown_changed' });
     const save = saveFor({ pool: {} as never, saveReply });
 
-    await expect(save(RUN_B, 'A reply.', SHOWN)).resolves.toBe('shown_changed');
-    expect(saveReply).toHaveBeenCalledWith({}, RUN_B, 'A reply.', { shown: SHOWN });
+    await expect(save(RUN_B, 'A reply.', SHOWN, REVIEWER)).resolves.toBe('shown_changed');
+    expect(saveReply).toHaveBeenCalledWith({}, RUN_B, 'A reply.', {
+      shown: SHOWN,
+      savedBy: REVIEWER,
+      savedBySource: 'roster',
+    });
+  });
+});
+
+describe('undoing from the console', () => {
+  it('records the reviewer as one the roster resolved (DEC-45)', async () => {
+    const undoApproval = vi.fn().mockResolvedValue({ outcome: 'undone' });
+    const undo = undoFor({ pool: {} as never, undoApproval });
+
+    await expect(undo(RUN_A, REVIEWER)).resolves.toEqual({ outcome: 'undone' });
+    expect(undoApproval).toHaveBeenCalledWith({}, RUN_A, { reviewer: REVIEWER, reviewerSource: 'roster' });
   });
 });
 

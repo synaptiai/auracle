@@ -26,7 +26,7 @@
  */
 import type { Pool } from 'pg';
 
-import { UNATTRIBUTED, approverFrom } from '../approval/approver.js';
+import { approverFrom, type NameSource, sourceOf } from '../approval/approver.js';
 import { errorMessage } from '../errors.js';
 import { lockTurnAttempt, readSavedReply, recordSavedReply } from '../ledger/conversation.js';
 import { journalStep } from '../ledger/journal-write.js';
@@ -82,7 +82,7 @@ export interface RewriteOptions {
   /** DEC-42, DEC-45: who wrote it, recorded in the run's journal. */
   readonly rewrittenBy?: string;
   /** DEC-45: how the name was established. `header` is DEC-42's default. */
-  readonly rewrittenBySource?: 'roster' | 'header' | 'none';
+  readonly rewrittenBySource?: NameSource;
   /**
    * DEC-44: whether this adapter's ledger holds the reply, so a person's
    * text is the text the customer receives. False is the draft path, where
@@ -116,6 +116,7 @@ export async function rewriteReply(
   }
 
   const client = await pool.connect();
+  let broken: Error | undefined;
   try {
     await client.query('BEGIN');
     // DEC-28: a parked run is outside the fence, and the row lock is what
@@ -181,8 +182,7 @@ export async function rewriteReply(
     }
 
     const rewrittenBy = approverFrom(options.rewrittenBy);
-    const rewrittenBySource =
-      rewrittenBy === UNATTRIBUTED ? 'none' : (options.rewrittenBySource ?? 'header');
+    const rewrittenBySource = sourceOf(rewrittenBy, options.rewrittenBySource);
 
     // When the person wrote it, stated once and written twice: onto the turn
     // with the text, which is what the send reports, and onto the journal row
@@ -194,6 +194,8 @@ export async function rewriteReply(
       turnNumber: turn,
       bodyText,
       provenance: { generatedBy: 'person', generatedAt: at },
+      savedBy: rewrittenBy,
+      savedBySource: rewrittenBySource,
     });
     // The record of the act, and the digest of the reply it replaced. The
     // digest is what lets a reader tell whether the draft it is showing is
@@ -216,6 +218,7 @@ export async function rewriteReply(
     return { outcome: 'rewritten' };
   } catch (error) {
     await client.query('ROLLBACK').catch((rollbackError: unknown) => {
+      broken = rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError));
       console.error(
         logLine({
           event: 'rollback_failed',
@@ -227,6 +230,8 @@ export async function rewriteReply(
     });
     throw error;
   } finally {
-    client.release();
+    // A connection whose rollback failed is in a state nobody read, so it goes
+    // back to the pool as broken rather than to the next caller.
+    client.release(broken);
   }
 }

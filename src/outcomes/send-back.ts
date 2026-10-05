@@ -64,7 +64,7 @@
  */
 import type { Pool, PoolClient } from 'pg';
 
-import { UNATTRIBUTED, approverFrom } from '../approval/approver.js';
+import { approverFrom, type NameSource, sourceOf } from '../approval/approver.js';
 import { replyDigest } from '../approval/shown.js';
 import { releaseHoldIn } from '../holds/hold.js';
 import { lockTurnAttempt, readSavedReply, turnIsClosed } from '../ledger/conversation.js';
@@ -141,7 +141,7 @@ export interface SendBackOptions {
   readonly note: string;
   /** DEC-42, DEC-45: who asked, and how the name was established. */
   readonly sentBackBy?: string;
-  readonly sentBackBySource?: 'roster' | 'header' | 'none';
+  readonly sentBackBySource?: NameSource;
   /** DEC-46: the digest of the reply the page drew, when a page drew one. */
   readonly shown?: string;
   /**
@@ -246,8 +246,7 @@ export async function sendBackRun(
   const runAttempt = Number.isInteger(row.attempt) ? Number(row.attempt) : 1;
 
   const sentBackBy = approverFrom(options.sentBackBy);
-  const sentBackBySource =
-    sentBackBy === UNATTRIBUTED ? 'none' : (options.sentBackBySource ?? 'header');
+  const sentBackBySource = sourceOf(sentBackBy, options.sentBackBySource);
 
   const shown = options.shown;
   // Typed from the ledger's own union rather than through a `typeof` of the
@@ -350,7 +349,7 @@ export interface SendBackRecordInput {
    */
   readonly note: string | null;
   readonly reviewer: string;
-  readonly reviewerSource: 'roster' | 'header' | 'none';
+  readonly reviewerSource: NameSource;
   /** The document whose publishing asked for the attempt, when one did. */
   readonly document?: { readonly docId: string; readonly title: string };
   /**
@@ -374,6 +373,10 @@ export interface SendBackRecordInput {
  */
 export async function recordSendBackIn(client: PoolClient, input: SendBackRecordInput): Promise<void> {
   const { runId, conversationId, turnNumber, runAttempt, note } = input;
+  // The same chokepoint as every other writer of a name (DEC-42, DEC-45),
+  // because a document's author reaches this record too.
+  const reviewer = approverFrom(input.reviewer);
+  const reviewerSource = sourceOf(reviewer, input.reviewerSource);
   // DEC-49: the durable marker the consumer's scan reads, and the note it
   // hands the next attempt. One statement, so neither can be recorded without
   // the other. An escalated run is not stamped: its request is the
@@ -392,19 +395,31 @@ export async function recordSendBackIn(client: PoolClient, input: SendBackRecord
   // one. Cleared here, in the transaction that ends the attempt, and what was
   // cleared is journalled — a person's words do not disappear without a
   // record of them.
-  const cleared = await client.query<{ text: string | null }>(
+  // Who saved the words is cleared with them, so the journal keeps that too
+  // (DEC-45): the record of what this removed names whose words they were.
+  const cleared = await client.query<{
+    text: string | null;
+    by: string | null;
+    source: string | null;
+  }>(
     `WITH cleared AS (
-       SELECT saved_reply_text AS text FROM turn
+       SELECT saved_reply_text AS text, saved_reply_by AS by, saved_reply_by_source AS source
+         FROM turn
         WHERE conversation_id = $1 AND turn_number = $2
           AND saved_reply_text IS NOT NULL)
      UPDATE turn
-        SET saved_reply_text = NULL, saved_reply_provenance = NULL
+        SET saved_reply_text = NULL, saved_reply_provenance = NULL,
+            saved_reply_by = NULL, saved_reply_by_source = NULL
       WHERE conversation_id = $1 AND turn_number = $2
         AND saved_reply_text IS NOT NULL
-    RETURNING (SELECT text FROM cleared) AS text`,
+    RETURNING (SELECT text FROM cleared) AS text,
+              (SELECT by FROM cleared) AS by,
+              (SELECT source FROM cleared) AS source`,
     [conversationId, turnNumber],
   );
   const clearedReply = cleared.rows[0]?.text ?? null;
+  const clearedBy = cleared.rows[0]?.by ?? null;
+  const clearedBySource = cleared.rows[0]?.source ?? null;
   // DEC-49: the turn is on the next attempt from this commit on. The queue
   // files a redelivered message at it, the scan starts it, and an approval, a
   // save or a rewrite of the attempt this ended is refused.
@@ -418,11 +433,14 @@ export async function recordSendBackIn(client: PoolClient, input: SendBackRecord
     status: 'done',
     result: {
       note,
-      reviewer: input.reviewer,
-      reviewerSource: input.reviewerSource,
+      reviewer,
+      reviewerSource,
       // The reply the rejected attempt held, when it held a person's. With
       // the note, the whole of what this write removed.
       ...(clearedReply === null ? {} : { clearedReply }),
+      // A reply saved before migration 039 has no recorded saver, and the row
+      // then says nothing rather than naming somebody.
+      ...(clearedBy === null ? {} : { clearedBy, clearedBySource }),
       // The attempt this ended, so the record reads as the history of a turn
       // rather than as one event on one run.
       attempt: runAttempt,
@@ -438,5 +456,5 @@ export async function recordSendBackIn(client: PoolClient, input: SendBackRecord
   // — so the reservation ends here, in the transaction that ends it. Its own
   // kind, because the team's history is what a reader uses to tell a case
   // that was closed from one that was sent back.
-  await releaseHoldIn(client, { runId, reviewer: input.reviewer, kind: 'send_back' });
+  await releaseHoldIn(client, { runId, reviewer, kind: 'send_back' });
 }

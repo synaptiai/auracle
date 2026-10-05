@@ -373,7 +373,10 @@ describe('DEC-51: the undo', () => {
     expect((await runRow(runId)).state).toBe('resolved');
     expect(await approvedReplyText(conversationId, 1)).not.toBeNull();
 
-    const undone = await undoApproval(pool, runId, { reviewer: 'synthetic-reviewer@example.test' });
+    const undone = await undoApproval(pool, runId, {
+      reviewer: 'synthetic-reviewer@example.test',
+      reviewerSource: 'roster',
+    });
 
     expect(undone.outcome).toBe('undone');
     const run = await runRow(runId);
@@ -385,7 +388,8 @@ describe('DEC-51: the undo', () => {
     expect(await approvedReplyText(conversationId, 1)).toBeNull();
     // The row is gone, so its key is free: nothing of the approval remains.
     expect(await outboxRow(runId)).toBeUndefined();
-    // The journal names the person. The case page draws its timeline from
+    // The journal names the person and where that name came from, as every
+    // other outcome's row does (DEC-45). The case page draws its timeline from
     // that table, and an undo with no row would leave a case that came back
     // to the queue with nothing saying who brought it back.
     const journal = await pool.query(
@@ -393,8 +397,47 @@ describe('DEC-51: the undo', () => {
       [runId],
     );
     expect(journal.rows).toEqual([
-      { status: 'done', result: { reviewer: 'synthetic-reviewer@example.test' } },
+      {
+        status: 'done',
+        result: { reviewer: 'synthetic-reviewer@example.test', reviewerSource: 'roster' },
+      },
     ]);
+  });
+
+  // The same chokepoint every other writer of a name passes through (DEC-42,
+  // DEC-45). The function is public through the ledger-read barrel, so a
+  // caller off the console can hand it any string.
+  it('records the reviewer as every other outcome does: trimmed, or unattributed', async () => {
+    const { runId, helpdesk } = await parkOnTurnOne('T-' + randomUUID().slice(0, 8));
+    await approveRun(pool, runId, { ledgerReply: true, readDraft: helpdesk, sendHoldMs: HOLD_MS });
+
+    await undoApproval(pool, runId, { reviewer: '  synthetic-reviewer@example.test  ', reviewerSource: 'header' });
+    const first = await pool.query(
+      "SELECT result FROM step_journal WHERE run_id = $1 AND step_id = 'undo'",
+      [runId],
+    );
+    expect(first.rows).toEqual([
+      { result: { reviewer: 'synthetic-reviewer@example.test', reviewerSource: 'header' } },
+    ]);
+
+    await approveRun(pool, runId, { ledgerReply: true, readDraft: helpdesk, sendHoldMs: HOLD_MS });
+    // A name with no source reads as a caller's claim.
+    await undoApproval(pool, runId, { reviewer: 'synthetic-reviewer@example.test' });
+    const claimed = await pool.query(
+      "SELECT result FROM step_journal WHERE run_id = $1 AND step_id = 'undo'",
+      [runId],
+    );
+    expect(claimed.rows).toEqual([
+      { result: { reviewer: 'synthetic-reviewer@example.test', reviewerSource: 'header' } },
+    ]);
+
+    await approveRun(pool, runId, { ledgerReply: true, readDraft: helpdesk, sendHoldMs: HOLD_MS });
+    await undoApproval(pool, runId, { reviewer: '   ', reviewerSource: 'roster' });
+    const second = await pool.query(
+      "SELECT result FROM step_journal WHERE run_id = $1 AND step_id = 'undo'",
+      [runId],
+    );
+    expect(second.rows).toEqual([{ result: { reviewer: 'unattributed', reviewerSource: 'none' } }]);
   });
 
   // The reviewer who changes their mind twice. The journal has one row per
@@ -411,13 +454,14 @@ describe('DEC-51: the undo', () => {
     expect(await undoApproval(pool, runId, { reviewer: first })).toEqual({ outcome: 'undone' });
     await approveRun(pool, runId, { ledgerReply: true, readDraft: helpdesk, sendHoldMs: HOLD_MS });
 
-    expect(await undoApproval(pool, runId, { reviewer: second })).toEqual({ outcome: 'undone' });
+    expect(await undoApproval(pool, runId, { reviewer: second, reviewerSource: 'header' }))
+      .toEqual({ outcome: 'undone' });
     const journal = await pool.query(
       "SELECT result FROM step_journal WHERE run_id = $1 AND step_id = 'undo'",
       [runId],
     );
     // One row, and it names the person who undid it last.
-    expect(journal.rows).toEqual([{ result: { reviewer: second } }]);
+    expect(journal.rows).toEqual([{ result: { reviewer: second, reviewerSource: 'header' } }]);
     expect((await runRow(runId)).state).toBe('awaiting_approval');
   });
 

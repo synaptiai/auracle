@@ -28,6 +28,7 @@ import { errorMessage } from '../errors.js';
 import { lockTurnAttempt } from '../ledger/conversation.js';
 import { journalStep } from '../ledger/journal-write.js';
 import { logLine } from '../log/line.js';
+import { approverFrom, type NameSource, sourceOf } from './approver.js';
 
 /**
  * The step id the approval writes its outbox record under. The undo names it
@@ -140,6 +141,12 @@ export interface UndoOptions {
    * passes the identity its roster resolved.
    */
   readonly reviewer: string;
+  /**
+   * DEC-45: how `reviewer` was established, recorded beside it as every other
+   * outcome records it. The console says `roster`. Absent reads as a caller's
+   * claim, `header`, and a reviewer recorded as `unattributed` reads `none`.
+   */
+  readonly reviewerSource?: NameSource;
 }
 
 /**
@@ -153,6 +160,9 @@ export async function undoApproval(
   runId: string,
   options: UndoOptions,
 ): Promise<UndoOutcome> {
+  // The same chokepoint every other writer of a reviewer's name passes through
+  // (DEC-42, DEC-45): trimmed, bounded and readable, or `unattributed`.
+  const reviewer = approverFrom(options.reviewer);
   const client = await pool.connect();
   // Tracked here rather than by the client: a connection released with an
   // error is destroyed by pg, and releasing it twice throws.
@@ -276,7 +286,7 @@ export async function undoApproval(
       runId,
       stepId: 'undo',
       status: 'done',
-      result: { reviewer: options.reviewer },
+      result: { reviewer, reviewerSource: sourceOf(reviewer, options.reviewerSource) },
       promptVer: 'console',
       modelVer: 'console',
       costMicros: 0,

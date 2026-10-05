@@ -64,8 +64,10 @@ async function seedOldConversation(): Promise<{
     [conversationId],
   );
   await pool.query(
-    `INSERT INTO turn (conversation_id, turn_number, ticket_id, body_text, approved_reply_text, created_at)
-     VALUES ($1, 1, 'SYN-1', 'the customer wrote this', 'and we answered that', ${OLD})`,
+    `INSERT INTO turn (conversation_id, turn_number, ticket_id, body_text, approved_reply_text,
+                       saved_reply_text, saved_reply_by, saved_reply_by_source, created_at)
+     VALUES ($1, 1, 'SYN-1', 'the customer wrote this', 'and we answered that',
+             'a saved edit for the customer', 'reviewer@example.test', 'roster', ${OLD})`,
     [conversationId],
   );
   await pool.query(
@@ -193,9 +195,16 @@ describe('the erasure path the runbook publishes', () => {
       `SELECT coalesce(string_agg(result::text, ' '), '') AS journal FROM step_journal`,
     );
     const columns = await pool.query(
-      `SELECT coalesce(string_agg(concat_ws(' ', body_text, approved_reply_text), ' '), '') AS turns
+      `SELECT coalesce(string_agg(concat_ws(' ', body_text, approved_reply_text, saved_reply_text), ' '), '') AS turns
          FROM turn`,
     );
+    // The saved reply goes with the name of who saved it (DEC-45): the
+    // statement clears both, and the ledger accepts the pair cleared.
+    const saver = await pool.query(
+      'SELECT saved_reply_by AS by, saved_reply_by_source AS source FROM turn WHERE conversation_id = $1',
+      [conversationId],
+    );
+    expect(saver.rows).toEqual([{ by: null, source: null }]);
     const addresses = await pool.query(
       `SELECT coalesce(string_agg(customer_address, ' '), '') AS named FROM conversation`,
     );
@@ -207,7 +216,8 @@ describe('the erasure path the runbook publishes', () => {
     for (const cleared of [
       'asked twice, so answer both',
       'a reply a person saved, quoting ada@customer.example',
-      'the customer wrote this', 'and we answered that', 'the drafted reply',
+      'the customer wrote this', 'and we answered that', 'a saved edit for the customer',
+      'the drafted reply',
       'the first claim', 'the courtesy opening', 'the first sentence of the reply',
       'the document body', 'ada@customer.example',
       'bob@customer.example', '550 no such user',

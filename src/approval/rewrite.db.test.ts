@@ -215,6 +215,13 @@ describe('DEC-48: a reply a person rewrote from scratch', () => {
         turnNumber: parked.turnNumber,
       }),
     ).toBe(PERSON_TEXT);
+    // The text names its writer beside it, as a save does (DEC-45).
+    const saver = await pool.query<{ by: string; source: string }>(
+      'SELECT saved_reply_by AS by, saved_reply_by_source AS source FROM turn'
+        + ' WHERE conversation_id = $1 AND turn_number = $2',
+      [parked.conversationId, parked.turnNumber],
+    );
+    expect(saver.rows[0]).toEqual({ by: 'anna@example.test', source: 'roster' });
 
     // No state moves: a rewrite is not an outcome until something sends it.
     expect(await runState(parked.runId)).toBe('awaiting_approval');

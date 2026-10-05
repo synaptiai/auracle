@@ -1058,6 +1058,40 @@ describe('migrate', () => {
     }
   });
 
+  it('adds the saver to a reply saved before db/039 as unknown, and applies twice', async () => {
+    // Every migration but 039, as an adopter's ledger would be, holding a
+    // reply a reviewer saved before the column existed.
+    const before = await copyMigrationsExcept(39);
+    try {
+      await migrate(client, before);
+      await client.query(
+        `INSERT INTO conversation (conversation_id, primary_ticket_id, state)
+         VALUES ('00000000-0000-4000-8000-000000000039', 'SYN-39', 'open')`,
+      );
+      await client.query(
+        `INSERT INTO turn (conversation_id, turn_number, ticket_id, body_text, saved_reply_text)
+         VALUES ('00000000-0000-4000-8000-000000000039', 1, 'SYN-39', 'a message', 'a saved edit')`,
+      );
+
+      await migrate(client);
+      // No record of the name was kept, so none is invented.
+      const { rows } = await client.query(
+        'SELECT saved_reply_text, saved_reply_by, saved_reply_by_source FROM turn',
+      );
+      expect(rows).toEqual([
+        { saved_reply_text: 'a saved edit', saved_reply_by: null, saved_reply_by_source: null },
+      ]);
+
+      // Safe to re-apply, as db/README.md asks of every file.
+      const db = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'db');
+      const file = await readFile(path.join(db, '039_saved_reply_by.sql'), 'utf8');
+      await client.query(file);
+      await client.query(file);
+    } finally {
+      await rm(before, { recursive: true, force: true });
+    }
+  });
+
   it('installs the conversation ledger entities (db/008, DEC-35)', async () => {
     await migrate(client);
 

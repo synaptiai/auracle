@@ -43,7 +43,7 @@ import { indexDocument } from '../retriever/retriever.js';
 import { asIfRacing } from '../test-support/race-twin.js';
 import { truncateLedger } from '../test-support/schema.js';
 
-import { MAX_SEND_BACK_NOTE_CHARS, sendBackRun } from './send-back.js';
+import { MAX_SEND_BACK_NOTE_CHARS, recordSendBackIn, sendBackRun } from './send-back.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 8 });
 
@@ -597,6 +597,51 @@ describe('DEC-49: the next attempt', () => {
     });
   });
 
+  // The record is shared with the attempt a published document asks for,
+  // which passes the document's author. It records a name the way every other
+  // writer does (DEC-42, DEC-45), whichever caller hands it one.
+  it('records the reviewer as every other writer does: trimmed, with a source that fits it', async () => {
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkOnTurnOne(ticketId);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await recordSendBackIn(client, {
+        runId: parked.runId,
+        conversationId: parked.conversationId,
+        turnNumber: parked.turnNumber,
+        runAttempt: 1,
+        note: NOTE,
+        reviewer: '  anna@example.test  ',
+        reviewerSource: 'none',
+      });
+      await client.query('COMMIT');
+    } finally {
+      client.release();
+    }
+    const journal = await journalRow(parked.runId, 'send_back');
+    expect(journal?.result?.['reviewer']).toBe('anna@example.test');
+    expect(journal?.result?.['reviewerSource']).toBe('header');
+  });
+
+  it('names nobody for a cleared reply saved before the saver was recorded', async () => {
+    // Migration 039 added the saver. A reply saved before it has none, and the
+    // record says nothing rather than naming somebody.
+    const ticketId = `T-${randomUUID().slice(0, 8)}`;
+    const parked = await parkOnTurnOne(ticketId);
+    await pool.query(
+      'UPDATE turn SET saved_reply_text = $3 WHERE conversation_id = $1 AND turn_number = $2',
+      [parked.conversationId, parked.turnNumber, 'A reply saved before the saver was kept.'],
+    );
+
+    await sendBackRun(pool, parked.runId, { note: NOTE, ledgerReply: true });
+
+    const journal = await journalRow(parked.runId, 'send_back');
+    expect(journal?.result?.['clearedReply']).toBe('A reply saved before the saver was kept.');
+    expect(journal?.result).not.toHaveProperty('clearedBy');
+    expect(journal?.result).not.toHaveProperty('clearedBySource');
+  });
+
   it('clears the reply a person saved, so the new attempt is what sends', async () => {
     const ticketId = `T-${randomUUID().slice(0, 8)}`;
     const egress = helpdeskWith(ticketId);
@@ -606,21 +651,36 @@ describe('DEC-49: the next attempt', () => {
     // the park body (DEC-48), so a save left standing would make the new
     // attempt inert: its reviewer would approve the new reply and the
     // customer would receive the older, saved one.
-    await saveReply(pool, first.runId, 'A reply I wrote by hand.');
+    await saveReply(pool, first.runId, 'A reply I wrote by hand.', {
+      savedBy: 'anna@example.test',
+      savedBySource: 'roster',
+    });
 
     await sendBackRun(pool, first.runId, { note: NOTE, ledgerReply: true });
 
-    const held = await pool.query<{ text: string | null; provenance: unknown }>(
-      'SELECT saved_reply_text AS text, saved_reply_provenance AS provenance FROM turn'
+    const held = await pool.query<{
+      text: string | null;
+      provenance: unknown;
+      by: string | null;
+      source: string | null;
+    }>(
+      'SELECT saved_reply_text AS text, saved_reply_provenance AS provenance,'
+        + ' saved_reply_by AS by, saved_reply_by_source AS source FROM turn'
         + ' WHERE conversation_id = $1 AND turn_number = $2',
       [first.conversationId, first.turnNumber],
     );
     expect(held.rows[0]?.text).toBeNull();
     expect(held.rows[0]?.provenance).toBeNull();
+    // The saver goes with the words: a name beside no text names nothing.
+    expect(held.rows[0]?.by).toBeNull();
+    expect(held.rows[0]?.source).toBeNull();
     // And what was cleared is recorded: a person's words do not disappear
     // without a record of them.
     const journal = await journalRow(first.runId, 'send_back');
     expect(journal?.result?.['clearedReply']).toBe('A reply I wrote by hand.');
+    // And whose words they were, which the turn no longer says (DEC-45).
+    expect(journal?.result?.['clearedBy']).toBe('anna@example.test');
+    expect(journal?.result?.['clearedBySource']).toBe('roster');
 
     // The new attempt composes other words, and those are what an approval
     // sends.

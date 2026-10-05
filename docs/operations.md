@@ -2136,9 +2136,11 @@ records who asked. Clearing the column stops a later attempt from reading it.
 Clearing the journal row removes the copy a person reads.
 
 A send-back also clears the reply a person saved on that turn. It records
-what it cleared in `clearedReply`, on the same row. The approval prefers the
-saved text over the new attempt's reply, so the save cannot stand. The key is
-in the statement above for that reason.
+what it cleared in `clearedReply`, on the same row. `clearedBy` and
+`clearedBySource` name who saved it. They are an operator's identifier, kept
+as `run.approved_by` is, so the statement below leaves them. The approval
+prefers the saved text over the new attempt's reply, so the save cannot stand.
+The key is in the statement above for that reason.
 
 `intake.ticket_text` holds the inbound message as well, and is not listed. The
 consumer deletes that row on the ack and on the abandon, so it clears itself.
@@ -2153,6 +2155,10 @@ column beside it says what the name proves. `roster` is a name a console
 checked against the reviewer roster. `header` is a claim a caller supplied
 (DEC-42). `none` says nobody was named.
 
+`turn.saved_reply_by` holds the same kind of identifier, for the reviewer who
+saved the reply a turn holds. `turn.saved_reply_by_source` says what that name
+proves, in the same words. The purge below clears both with the saved reply.
+
 **This repository ships no retention job and no purge job.** You are the data
 controller, so you own the retention period and the erasure path. The
 statements below are what an adopter runs to clear each field by age. None of
@@ -2160,9 +2166,11 @@ them removes a run, so the control bands and the replay keep their history.
 
 ```sql
 -- The customer's message, the reply a person sent, and the reply a person
--- saved, past 90 days.
+-- saved with the name of who saved it, past 90 days. A statement that clears
+-- the text alone also runs, and leaves the name.
 UPDATE turn
-   SET body_text = NULL, approved_reply_text = NULL, saved_reply_text = NULL
+   SET body_text = NULL, approved_reply_text = NULL, saved_reply_text = NULL,
+       saved_reply_by = NULL, saved_reply_by_source = NULL
  WHERE created_at < now() - interval '90 days';
 
 -- The drafted reply, the cited document bodies, the adapter fault, the

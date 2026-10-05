@@ -25,7 +25,7 @@
  */
 import type { Pool, PoolClient } from 'pg';
 
-import { UNATTRIBUTED, approverFrom } from '../approval/approver.js';
+import { approverFrom, type NameSource, sourceOf } from '../approval/approver.js';
 import { replyDigest } from '../approval/shown.js';
 import { readSavedReply } from '../ledger/conversation.js';
 import { fencedTransition } from '../ledger/insert.js';
@@ -77,7 +77,7 @@ export interface SnoozeOptions {
   /** DEC-42, DEC-45: who set it, recorded in the run's journal. */
   readonly snoozedBy?: string;
   /** DEC-45: how the name was established. `header` is DEC-42's default. */
-  readonly snoozedBySource?: 'roster' | 'header' | 'none';
+  readonly snoozedBySource?: NameSource;
   /**
    * DEC-46: the digest of the reply the page drew, when a page drew one.
    *
@@ -127,8 +127,7 @@ export async function snoozeRun(
   const conversationId = row.conversation_id as string | null;
 
   const snoozedBy = approverFrom(options.snoozedBy);
-  const snoozedBySource =
-    snoozedBy === UNATTRIBUTED ? 'none' : (options.snoozedBySource ?? 'header');
+  const snoozedBySource = sourceOf(snoozedBy, options.snoozedBySource);
 
   const shown = options.shown;
   const moved = await fencedTransition(pool, {

@@ -28,7 +28,7 @@
  */
 import type { Pool, PoolClient } from 'pg';
 
-import { UNATTRIBUTED, approverFrom } from '../approval/approver.js';
+import { approverFrom, type NameSource, sourceOf } from '../approval/approver.js';
 import { replyDigest } from '../approval/shown.js';
 import { releaseHoldIn } from '../holds/hold.js';
 import { readSavedReply } from '../ledger/conversation.js';
@@ -103,7 +103,7 @@ export interface CloseOptions {
    * DEC-42's claim and the default. A caller that names nobody records
    * `none`, whatever it passes here.
    */
-  readonly closedBySource?: 'roster' | 'header' | 'none';
+  readonly closedBySource?: NameSource;
   /**
    * DEC-46: the digest of the reply the page drew, when a page drew one.
    *
@@ -164,8 +164,7 @@ export async function closeRun(
   // DEC-42, DEC-45: the two values commit together in the journal row, and a
   // name nobody holds has no source to record.
   const closedBy = approverFrom(options.closedBy);
-  const closedBySource =
-    closedBy === UNATTRIBUTED ? 'none' : (options.closedBySource ?? 'header');
+  const closedBySource = sourceOf(closedBy, options.closedBySource);
 
   const shown = options.shown;
   const moved = await fencedTransition(pool, {

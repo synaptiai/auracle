@@ -59,7 +59,7 @@ import {
 } from '../ledger/conversation.js';
 import { fencedTransition } from '../ledger/insert.js';
 import { deriveIdemKey } from '../ledger/keys.js';
-import { UNATTRIBUTED, approverFrom } from './approver.js';
+import { approverFrom, type NameSource, sourceOf } from './approver.js';
 import { releaseHoldIn } from '../holds/hold.js';
 import { recordApprovalEditDistance } from './measure.js';
 import { copyEditWouldBeLost, copyHoldsText } from './reply-copy.js';
@@ -196,7 +196,7 @@ export interface ApproveOptions {
    * caller that names one at all is claiming rather than proving. A caller
    * that names nobody records `none` whatever it passes here.
    */
-  readonly approvedBySource?: 'roster' | 'header' | 'none';
+  readonly approvedBySource?: NameSource;
   /**
    * DEC-44: this approval's target system cannot send the copy it parks, so
    * the ledger holds the reply and this approval sends it.
@@ -659,8 +659,7 @@ export async function approveRun(
   // DEC-45: the source travels with the name, and a name nobody holds has
   // no source to record. A refused name reads `none` beside `unattributed`,
   // which is what the migration gives every historical row of that shape.
-  const approverSource =
-    approver === UNATTRIBUTED ? 'none' : (options?.approvedBySource ?? 'header');
+  const approverSource = sourceOf(approver, options?.approvedBySource);
 
   const afterWrite = async (client: PoolClient): Promise<void> => {
     if (finalBody !== undefined) {

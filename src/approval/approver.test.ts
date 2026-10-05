@@ -6,7 +6,7 @@
 // cannot bypass them.
 import { describe, expect, it } from 'vitest';
 
-import { approverFrom, UNATTRIBUTED } from './approver.js';
+import { approverFrom, sourceOf, UNATTRIBUTED } from './approver.js';
 
 describe('the approver a reply records', () => {
   it('takes the name a trusted proxy supplied', () => {
@@ -168,5 +168,35 @@ describe('the approver a reply records', () => {
     for (const claimed of ['', '   ', 'a'.repeat(10_000), 'ok']) {
       expect(() => approverFrom(claimed)).not.toThrow();
     }
+  });
+});
+
+// The source a name records beside it (DEC-45). The ledger's CHECKs hold a
+// name and its source to one rule: `none` exactly when nobody was named. A
+// caller can pass any pair, so the pair is derived here, once, for every
+// writer, rather than refused as a database error after the write began.
+describe('the source a recorded name carries', () => {
+  it('says none for a name nobody gave, whatever the caller claimed', () => {
+    expect(sourceOf(UNATTRIBUTED, 'roster')).toBe('none');
+    expect(sourceOf(UNATTRIBUTED, undefined)).toBe('none');
+  });
+
+  it('keeps the source the caller gave a real name', () => {
+    expect(sourceOf('ops-oncall', 'roster')).toBe('roster');
+    expect(sourceOf('ops-oncall', 'header')).toBe('header');
+  });
+
+  it("reads a real name with no source as a caller's claim", () => {
+    expect(sourceOf('ops-oncall', undefined)).toBe('header');
+  });
+
+  it('never pairs a real name with none, which no record may hold', () => {
+    expect(sourceOf('ops-oncall', 'none')).toBe('header');
+  });
+
+  it("reads a source outside the vocabulary as a caller's claim", () => {
+    // The writers are public through the ledger-read barrel, so an untyped
+    // caller can pass anything. A journal row has no CHECK to refuse it.
+    expect(sourceOf('ops-oncall', 'guess' as never)).toBe('header');
   });
 });

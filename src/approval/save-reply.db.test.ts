@@ -16,7 +16,7 @@ import { coordinateTicket } from '../coordinator/coordinator.js';
 import type { CoordinatorDeps } from '../coordinator/coordinator.js';
 import { enqueueTicket } from '../coordinator/intake.js';
 import { dbUrl } from '../db/config.js';
-import { readSavedReply } from '../ledger/conversation.js';
+import { readSavedReply, recordSavedReply } from '../ledger/conversation.js';
 import { FakeProvider } from '../models/fake.js';
 import type { FakeStep } from '../models/fake.js';
 import type { AdapterCapabilities } from '../policy/policy.js';
@@ -115,6 +115,15 @@ async function saved(conversationId: string): Promise<string | null> {
   return readSavedReply(pool, { conversationId, turnNumber: 1 });
 }
 
+async function saver(conversationId: string): Promise<{ by: string | null; source: string | null }> {
+  const rows = await pool.query<{ by: string | null; source: string | null }>(
+    `SELECT saved_reply_by AS by, saved_reply_by_source AS source FROM turn
+      WHERE conversation_id = $1 AND turn_number = 1`,
+    [conversationId],
+  );
+  return rows.rows[0] ?? { by: null, source: null };
+}
+
 describe('DEC-44: the console saves the reply a reviewer edited', () => {
   beforeEach(async () => {
     await truncateLedger(pool);
@@ -145,6 +154,151 @@ describe('DEC-44: the console saves the reply a reviewer edited', () => {
     // Trimmed, so a stray newline from a textarea is not part of the reply a
     // later approval measures.
     expect(await saved(conversationId)).toBe('Open the account settings page and reset it.');
+  });
+
+  it('records who saved the reply and where that name came from (DEC-45)', async () => {
+    const { runId, conversationId } = await parkOnTurnOne();
+
+    await saveReply(pool, runId, 'A reply a person edited.', {
+      savedBy: 'reviewer-a@example.test',
+      savedBySource: 'roster',
+    });
+
+    expect(await saver(conversationId)).toEqual({ by: 'reviewer-a@example.test', source: 'roster' });
+  });
+
+  it('names the latest saver, because the latest text is theirs', async () => {
+    const { runId, conversationId } = await parkOnTurnOne();
+
+    await saveReply(pool, runId, 'The first text.', { savedBy: 'reviewer-a@example.test', savedBySource: 'roster' });
+    await saveReply(pool, runId, 'The second text.', { savedBy: 'reviewer-b@example.test', savedBySource: 'header' });
+
+    expect(await saved(conversationId)).toBe('The second text.');
+    expect(await saver(conversationId)).toEqual({ by: 'reviewer-b@example.test', source: 'header' });
+  });
+
+  it('records a save nobody named as unattributed, not as a person', async () => {
+    const { runId, conversationId } = await parkOnTurnOne();
+
+    await saveReply(pool, runId, 'A reply with no named author.');
+
+    expect(await saver(conversationId)).toEqual({ by: 'unattributed', source: 'none' });
+  });
+
+  it('refuses a saver with no source, and a source outside the vocabulary', async () => {
+    // The pair is the record. The database holds it to that, so a write from
+    // outside this code cannot leave a name with no account of where it came from.
+    const { conversationId } = await parkOnTurnOne();
+    await expect(
+      pool.query(
+        `UPDATE turn SET saved_reply_by = 'reviewer-a@example.test'
+          WHERE conversation_id = $1 AND turn_number = 1`,
+        [conversationId],
+      ),
+    ).rejects.toThrow(/saved_reply_by/);
+    await expect(
+      pool.query(
+        `UPDATE turn SET saved_reply_by = 'reviewer-a@example.test', saved_reply_by_source = 'guess'
+          WHERE conversation_id = $1 AND turn_number = 1`,
+        [conversationId],
+      ),
+    ).rejects.toThrow(/saved_reply_by_source/);
+  });
+
+  it('refuses a name paired with a source that contradicts it', async () => {
+    // `none` means nobody was named, and `unattributed` is how that is written.
+    const { runId, conversationId } = await parkOnTurnOne();
+    await saveReply(pool, runId, 'A reply a person edited.', { savedBy: 'reviewer-a@example.test' });
+    for (const [by, source] of [['unattributed', 'roster'], ['reviewer-a@example.test', 'none']]) {
+      await expect(
+        pool.query(
+          `UPDATE turn SET saved_reply_by = $2, saved_reply_by_source = $3
+            WHERE conversation_id = $1 AND turn_number = 1`,
+          [conversationId, by, source],
+        ),
+        `${by} with ${source}`,
+      ).rejects.toThrow(/saved_reply_by_source_check/);
+    }
+  });
+
+  it('records a saver the way every writer does, whichever caller writes the turn', async () => {
+    // The lowest writer checks the name itself, so a caller that skips the
+    // check cannot store a name the others would refuse (DEC-42, DEC-45).
+    const { conversationId } = await parkOnTurnOne();
+    const client = await pool.connect();
+    try {
+      await recordSavedReply(client, {
+        conversationId,
+        turnNumber: 1,
+        bodyText: 'A reply written by a caller off the console.',
+        savedBy: '  reviewer-a@example.test  ',
+        savedBySource: 'none',
+      });
+    } finally {
+      client.release();
+    }
+    expect(await saver(conversationId)).toEqual({ by: 'reviewer-a@example.test', source: 'header' });
+  });
+
+  it('refuses a saver with an empty name', async () => {
+    // An empty name names nobody, and `unattributed` is how that is written.
+    const { runId, conversationId } = await parkOnTurnOne();
+    await saveReply(pool, runId, 'A reply a person edited.', { savedBy: 'reviewer-a@example.test' });
+    await expect(
+      pool.query(
+        `UPDATE turn SET saved_reply_by = '', saved_reply_by_source = 'roster'
+          WHERE conversation_id = $1 AND turn_number = 1`,
+        [conversationId],
+      ),
+    ).rejects.toThrow(/saved_reply_by/);
+  });
+
+  it('records a named saver claimed as none as a claim, rather than failing the save', async () => {
+    // `none` means nobody was named, and a name was. The pairing rule the
+    // database holds would otherwise refuse the save as an error.
+    const { runId, conversationId } = await parkOnTurnOne();
+
+    expect(
+      await saveReply(pool, runId, 'A reply a person edited.', {
+        savedBy: 'reviewer-a@example.test',
+        savedBySource: 'none',
+      }),
+    ).toEqual({ outcome: 'saved' });
+    expect(await saver(conversationId)).toEqual({ by: 'reviewer-a@example.test', source: 'header' });
+  });
+
+  it('still runs the purge the runbook gave before this column existed', async () => {
+    // Adopters copied that statement, because the repository ships no purge
+    // job. It clears the text and not the saver. Refusing it would stop the
+    // erasure of every customer message it also clears.
+    const { runId, conversationId } = await parkOnTurnOne();
+    await saveReply(pool, runId, 'A reply a person edited.', { savedBy: 'reviewer-a@example.test' });
+
+    await pool.query(
+      `UPDATE turn
+          SET body_text = NULL, approved_reply_text = NULL, saved_reply_text = NULL
+        WHERE conversation_id = $1`,
+      [conversationId],
+    );
+
+    expect(await saved(conversationId)).toBeNull();
+  });
+
+  it('lets the retention purge clear the words and their saver together', async () => {
+    // The statement the runbook gives an adopter for clearing text by age.
+    const { runId, conversationId } = await parkOnTurnOne();
+    await saveReply(pool, runId, 'A reply a person edited.', { savedBy: 'reviewer-a@example.test' });
+
+    await pool.query(
+      `UPDATE turn
+          SET body_text = NULL, approved_reply_text = NULL, saved_reply_text = NULL,
+              saved_reply_by = NULL, saved_reply_by_source = NULL
+        WHERE conversation_id = $1`,
+      [conversationId],
+    );
+
+    expect(await saved(conversationId)).toBeNull();
+    expect(await saver(conversationId)).toEqual({ by: null, source: null });
   });
 
   it('overwrites, so a second save is the one that stands', async () => {

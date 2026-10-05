@@ -101,3 +101,20 @@ export function approverFrom(claimed: string | undefined): string {
   if (!isReadableName(named)) return UNATTRIBUTED;
   return named;
 }
+
+/** How a recorded name was established (DEC-45). */
+export type NameSource = 'roster' | 'header' | 'none';
+
+/**
+ * The source to record beside a name `approverFrom` returned.
+ *
+ * The ledger holds a name and its source to one rule: `none` exactly when the
+ * name is `unattributed`. A caller can claim any pair, so every writer derives
+ * the pair here instead of passing the claim on. A real name claimed as
+ * `none` reads as a caller's claim, `header`, because a name was given, and so
+ * does a claim outside the vocabulary.
+ */
+export function sourceOf(name: string, claimed: NameSource | undefined): NameSource {
+  if (name === UNATTRIBUTED) return 'none';
+  return claimed === 'roster' || claimed === 'header' ? claimed : 'header';
+}

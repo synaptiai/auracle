@@ -6104,7 +6104,8 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
 
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe(`${CASE}?edit=saved`);
-    expect(saveReply).toHaveBeenCalledWith(RUN, 'A reply a person wrote.', DRAWN);
+    // The reviewer behind the request is the saver the ledger records (DEC-45).
+    expect(saveReply).toHaveBeenCalledWith(RUN, 'A reply a person wrote.', DRAWN, REVIEWER);
   });
 
   /**
@@ -6156,7 +6157,7 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
 
       expect(res.status, label).toBe(303);
       expect(res.headers.get('location'), label).toBe(`${CASE}?edit=saved`);
-      expect(saveReply, label).toHaveBeenCalledWith(RUN, expected, DRAWN);
+      expect(saveReply, label).toHaveBeenCalledWith(RUN, expected, DRAWN, REVIEWER);
     }
   });
 
@@ -6239,6 +6240,7 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
       RUN,
       'We refunded the duplicate charge. Your bank posts refunds in five business days.',
       DRAWN,
+      REVIEWER,
     );
   });
 

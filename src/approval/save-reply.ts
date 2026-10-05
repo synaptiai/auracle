@@ -19,6 +19,7 @@ import type { Pool } from 'pg';
 
 import { errorMessage } from '../errors.js';
 import { lockTurnAttempt, readSavedReply, recordSavedReply } from '../ledger/conversation.js';
+import { approverFrom, type NameSource, sourceOf } from './approver.js';
 import { replyDigest } from './shown.js';
 import { isStorableText } from '../ledger/storable-text.js';
 import { logLine } from '../log/line.js';
@@ -57,6 +58,13 @@ export type SaveOutcome =
 
 export interface SaveReplyOptions {
   /**
+   * DEC-45: who is saving. The console passes the reviewer it resolved
+   * against the roster. Absent records the save as unattributed.
+   */
+  readonly savedBy?: string;
+  /** How `savedBy` was established. The console says `roster`. */
+  readonly savedBySource?: NameSource;
+  /**
    * DEC-46: the digest of the reply the page the reviewer read drew.
    *
    * Supplied by the console, which draws the case from the text the ledger
@@ -90,6 +98,7 @@ export async function saveReply(
   }
 
   const client = await pool.connect();
+  let broken: Error | undefined;
   try {
     await client.query('BEGIN');
     const run = await client.query(
@@ -141,7 +150,9 @@ export async function saveReply(
       return { outcome: 'shown_changed' };
     }
 
-    await recordSavedReply(client, { conversationId, turnNumber: turn, bodyText });
+    const savedBy = approverFrom(options?.savedBy);
+    const savedBySource = sourceOf(savedBy, options?.savedBySource);
+    await recordSavedReply(client, { conversationId, turnNumber: turn, bodyText, savedBy, savedBySource });
     await client.query('COMMIT');
     return { outcome: 'saved' };
   } catch (error) {
@@ -150,6 +161,7 @@ export async function saveReply(
     // under the run's row lock, so a rollback that failed leaves a connection
     // in a state nobody read — the line is what says so.
     await client.query('ROLLBACK').catch((rollbackError: unknown) => {
+      broken = rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError));
       console.error(
         logLine({
           event: 'rollback_failed',
@@ -161,6 +173,8 @@ export async function saveReply(
     });
     throw error;
   } finally {
-    client.release();
+    // A connection whose rollback failed is in a state nobody read, so it goes
+    // back to the pool as broken rather than to the next caller.
+    client.release(broken);
   }
 }
