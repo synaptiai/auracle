@@ -15,9 +15,7 @@ import { dropRunDatabases, newRunId, prepareTemplate } from './template-db.js';
 
 let runId = '';
 
-// Vitest 4 hands the global setup the project itself, where vitest 3 handed a
-// `GlobalSetupContext` holding a bare `provide`. The type is gone, so this is
-// a rename rather than a behaviour change: `project.provide` is the same call.
+// Vitest hands the global setup its project, and `provide` is read from it.
 export async function setup({ provide }: TestProject): Promise<void> {
   const adminUrl = await ensurePostgres();
   runId = newRunId();

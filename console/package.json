@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.check.json",
+    "build": "node node_modules/typescript-7/bin/tsc -p tsconfig.json",
+    "check": "node node_modules/typescript-7/bin/tsc -p tsconfig.check.json",
     "test": "vitest run",
     "start": "node dist/main.js"
   },
@@ -13,7 +13,8 @@
     "auracle": "workspace:*"
   },
   "devDependencies": {
-    "typescript": "^5",
-    "vitest": "^4.1.11"
+    "typescript": "^6.0.3",
+    "typescript-7": "npm:typescript@^7.0.2",
+    "vitest": "^5.0.3"
   }
 }

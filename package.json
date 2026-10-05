@@ -5,7 +5,7 @@
   "description": "Agentic support system with evidence gates (v1 reference architecture)",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13"
   },
   "packageManager": "pnpm@11.20.0",
   "exports": {
@@ -17,9 +17,9 @@
     "./cli": "./dist/public/cli.js"
   },
   "scripts": {
-    "build": "tsc -b tsconfig.build.json",
+    "build": "node node_modules/typescript-7/bin/tsc -b tsconfig.build.json",
     "bootstrap": "bash scripts/bootstrap.sh",
-    "check": "tsc -b tsconfig.build.json && tsc -p tsconfig.check.json && tsc -p console/tsconfig.check.json",
+    "check": "node node_modules/typescript-7/bin/tsc -b tsconfig.build.json && node node_modules/typescript-7/bin/tsc -p tsconfig.check.json && node node_modules/typescript-7/bin/tsc -p console/tsconfig.check.json",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:db": "vitest run --project db",
@@ -58,24 +58,24 @@
     "report-groundedness": "pnpm run build && node dist/groundedness/report.js",
     "seed-history": "pnpm run build && node dist/seed/run.js",
     "verify:db": "pnpm run test:db && pnpm run test:mail",
-    "check:watch": "tsc -b tsconfig.build.json --watch",
+    "check:watch": "node node_modules/typescript-7/bin/tsc -b tsconfig.build.json --watch",
     "test:watch": "vitest --project unit"
   },
   "devDependencies": {
-    "@testcontainers/postgresql": "^12.1.0",
-    "@types/node": "^24.3.0",
-    "@types/nodemailer": "^8.0.1",
+    "@testcontainers/postgresql": "^12.2.0",
+    "@types/node": "^26.6.4",
     "@types/pg": "^8.23.1",
-    "eslint": "^9.35.0",
-    "testcontainers": "^12.1.0",
-    "tsx": "^4.23.13",
-    "typescript": "^5.9.0",
-    "typescript-eslint": "^8.43.0",
-    "vitest": "^4.1.11"
+    "eslint": "^10.12.0",
+    "testcontainers": "^12.2.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-7": "npm:typescript@^7.0.2",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^5.0.3"
   },
   "dependencies": {
-    "imapflow": "^1.7.6",
-    "nodemailer": "^9.1.1",
-    "pg": "^8.23.0"
+    "imapflow": "^2.2.5",
+    "nodemailer": "^10.0.14",
+    "pg": "^8.23.1"
   }
 }

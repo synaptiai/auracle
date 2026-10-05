@@ -90,11 +90,11 @@ export default defineConfig({
           // Both suites drive the one GreenMail server and own mailboxes on
           // it; running them at once races for the same mail.
           //
-          // Top-level, not under `poolOptions`. Vitest 4 removed that block
-          // and reads these names directly; the old spelling was accepted in
-          // silence, with one deprecation line in a run nobody reads, and the
-          // two suites raced again.
-          singleFork: true,
+          // One worker, so one file at a time. Vitest 5 has no `singleFork`,
+          // and it accepted the old name in silence: the two suites started
+          // 51ms apart. `pnpm run check` now type-checks this file, so an
+          // unknown option fails it.
+          maxWorkers: 1,
           isolate: true,
           hookTimeout: 60_000,
           testTimeout: 30_000,

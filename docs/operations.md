@@ -11,7 +11,7 @@ It draws the processes, the jobs and the tables this runbook operates.
 
 ## 1. Local setup
 
-You need Node 22 or later and Docker.
+You need Node 22.13 or later and Docker.
 
 `pnpm run bootstrap` does the steps that need no choice from you. It installs
 from the frozen lockfile, installs the commit hook and copies `.env.example`.

@@ -68,7 +68,7 @@ The list below carries the decisions, and the map carries the picture.
 
 ## Run it
 
-You need Node 22 or later and Docker.
+You need Node 22.13 or later and Docker.
 
 ### Tests
 

@@ -74,9 +74,9 @@ describe('a CLI module does not run when it is imported', () => {
   it('does not start the latency report', async () => {
     // The observable must touch nothing another suite reads. An earlier
     // version pointed DATABASE_URL at a closed port. That is shared state:
-    // `fileParallelism` is false, so every suite in this worker builds its
-    // pool from the same variable, and a suite that ran after this one would
-    // have connected to a closed port through no fault of its own.
+    // a worker runs many suites in turn, and each builds its pool from the
+    // same variable. A suite that ran after this one would have connected to
+    // a closed port through no fault of its own.
     //
     // `--since` with no value is read by this CLI alone. An unguarded main()
     // reports it and returns before it constructs a pool, so the case is

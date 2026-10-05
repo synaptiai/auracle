@@ -8,7 +8,7 @@ A statement that does not trace to a DEC is an implementation detail.
 
 ## 1. Set up and verify your checkout
 
-You need Node 22 or later and Docker.
+You need Node 22.13 or later and Docker.
 
 ```sh
 pnpm run bootstrap
@@ -238,14 +238,16 @@ git checkout -b feature/issue-42-short-description origin/main
 Use `feature/` for new work and `fix/` for a defect. Branches named
 `creatumo/card-<id>` are historical. Do not add more.
 
-Write each commit subject as `type: subject`, in the present tense.
-The types in use are `feat`, `fix`, `docs`, `test` and `chore`.
-Keep the subject under 72 characters and explain the reason in the body.
+Write each commit subject as a sentence in the present tense that says what
+is now true. End it with the issue number in parentheses, as in
+`The queue takes the next free case (#154)`. Keep the subject short, and
+explain the reason in the body.
+
+A pull request merges as one squashed commit. Its title becomes that commit's
+subject, so the title follows the same rule.
 
 A commit that edits `docs/v1-architecture.md` must cite a DEC in its message.
 The commit hook blocks it otherwise, and CI runs the same check.
-A pull request merges as one squashed commit, and its subject is a sentence
-that names what changed.
 
 Include these items in the description:
 

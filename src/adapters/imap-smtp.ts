@@ -203,7 +203,8 @@ export const IMAP_MARK_SEEN_BUDGET_MS = 2_000;
  * another adapter would fetch a draft nobody parked for this run.
  */
 function requireUid(draftExternalId: string): string {
-  if (!/^[0-9]+$/.test(draftExternalId)) {
+  // No leading zero: `007` names UID 7, and no row would ever answer to it.
+  if (!/^[1-9][0-9]*$/.test(draftExternalId)) {
     throw new PermanentEgressError(
       `draft id '${draftExternalId}' is not a UID; this adapter parks drafts under a numeric UID`,
     );
@@ -377,15 +378,56 @@ interface ThreadOriginator {
  * skipped: a mis-addressed reply is the worst failure mode of an email
  * egress, so the lookup fails closed.
  */
-// The lookup needs three imapflow calls and ignores what mailboxOpen answers.
-// Naming them structurally keeps the fault behaviour of `search` and `fetchOne`
-// — both answer `false` rather than throwing — under the compiler's eye.
-export type ThreadLookupClient = Pick<ImapFlow, 'search' | 'fetchOne'> & {
+// The lookups need three imapflow calls and the selected mailbox, and ignore
+// what mailboxOpen answers. Naming them structurally keeps the fault
+// behaviour of `search` and `fetch` under the compiler's eye: both answer
+// short rather than throwing.
+export type ImapReadClient = Pick<ImapFlow, 'search' | 'fetch' | 'mailbox'> & {
   mailboxOpen(path: string): Promise<unknown>;
 };
 
+/**
+ * imapflow 2 resolves `undefined` from a SEARCH or a FETCH when no mailbox is
+ * selected. Each caller opened one just before, so the connection lost it in
+ * between. That is a fault of the connection, and not an empty answer.
+ */
+function noMailboxSelected(command: string, mailbox: string, consequence: string): Error {
+  return new Error(`IMAP ran the ${command} in ${mailbox} with no mailbox selected; ${consequence}`);
+}
+
+/**
+ * One message's body by UID, or null when the server holds no message under
+ * it. imapflow yields every untagged FETCH the server sent, and a flag update
+ * for another message can come among them, so the row is chosen by its UID.
+ * A row for this UID without its body, or a mailbox lost during the call,
+ * says nothing about the message, so both throw. `consequence` says what the
+ * caller cannot do, in the error.
+ */
+async function readBodyByUid(
+  client: ImapReadClient,
+  uid: string,
+  mailbox: string,
+  consequence: string,
+): Promise<Buffer | null> {
+  let bodiless = false;
+  for await (const row of client.fetch(uid, { uid: true, source: true }, { uid: true })) {
+    if (String(row.uid) !== uid) continue;
+    if (row.source !== undefined) return row.source;
+    bodiless = true;
+  }
+  // imapflow's fetch yields nothing when no mailbox is selected, and that
+  // would otherwise read as no such message.
+  if (client.mailbox === false) {
+    throw noMailboxSelected(`FETCH of uid ${uid}`, mailbox, consequence);
+  }
+  if (bodiless) {
+    throw new Error(`IMAP answered the FETCH of uid ${uid} in ${mailbox} without its body; ${consequence}`);
+  }
+  return null;
+}
+
 export async function findThreadOriginator(
-  client: ThreadLookupClient,
+  client: ImapReadClient,
   ticketId: string,
 ): Promise<ThreadOriginator> {
   if (ticketId.startsWith('no-id-')) {
@@ -410,19 +452,24 @@ export async function findThreadOriginator(
         + 'the reply cannot be addressed on this attempt and the ticket retries',
     );
   }
+  if (matches === undefined) {
+    throw noMailboxSelected(
+      'header SEARCH',
+      'INBOX',
+      'the reply cannot be addressed on this attempt and the ticket retries',
+    );
+  }
+  const retries = 'the reply cannot be addressed on this attempt and the ticket retries';
   for (const uid of matches) {
-    const fetched = await client.fetchOne(String(uid), { source: true }, { uid: true });
-    if (fetched === false) {
-      // Same rule as the SEARCH: the server answered nothing for a UID it had
-      // just listed. Skipping it would read a transient FETCH fault as a
-      // missing thread root and escalate a ticket that a retry addresses.
+    const source = await readBodyByUid(client, String(uid), 'INBOX', retries);
+    if (source === null) {
+      // The SEARCH had just listed this UID. Skipping it would read a
+      // transient answer as a missing thread root and escalate a ticket that
+      // a retry addresses.
       throw new Error(
-        `IMAP refused the FETCH of uid ${uid} while addressing '${ticketId}'; `
-          + 'the reply cannot be addressed on this attempt and the ticket retries',
+        `IMAP returned no row for uid ${uid} while addressing '${ticketId}'; ${retries}`,
       );
     }
-    const source = fetched.source;
-    if (!source) continue;
     const parsed = normalizeMime(source.toString());
     if (parsed.messageId !== ticketId) continue; // substring hit, not this thread
     if (parsed.fromAddress === null) {
@@ -473,8 +520,8 @@ async function ensureMailbox(client: ImapFlow, path: string): Promise<void> {
  * write, passes it untouched. This guard is the whole defence, so it fails
  * loudly and the park fails with it.
  */
-async function findDraftByIdemKey(
-  client: ImapFlow,
+export async function findDraftByIdemKey(
+  client: ImapReadClient,
   mailbox: string,
   idemKey: string,
 ): Promise<string | null> {
@@ -492,22 +539,64 @@ async function findDraftByIdemKey(
         + 'the repeat-park guard cannot run, so the park fails rather than risking a second draft',
     );
   }
+  if (uids === undefined) {
+    throw noMailboxSelected(
+      'header SEARCH for the park key',
+      mailbox,
+      'the repeat-park guard cannot run, so the park fails rather than risking a second draft',
+    );
+  }
   if (!Array.isArray(uids) || uids.length === 0) return null;
   // SEARCH HEADER matches substrings (RFC 3501), so a hit is a candidate and
   // not a match. findThreadOriginator re-verifies for the same reason: the
   // worst failure of an email egress is showing somebody the wrong message.
+  const cannotRun =
+    'the repeat-park guard cannot run, so the park fails rather than risking a second draft';
   const verified: number[] = [];
+  let rows = 0;
   for await (const message of client.fetch(
     { uid: uids.join(',') },
     { uid: true, headers: [IDEM_KEY_HEADER.toLowerCase()] },
     { uid: true },
   )) {
-    const header = message.headers?.toString() ?? '';
-    if (headerValue(header, IDEM_KEY_HEADER) === idemKey) verified.push(message.uid);
+    rows += 1;
+    // A row without the headers that were asked for cannot be ruled out.
+    if (message.headers === undefined) {
+      throw new Error(`IMAP answered a candidate draft in ${mailbox} without its headers; ${cannotRun}`);
+    }
+    if (headerValue(message.headers.toString(), IDEM_KEY_HEADER) !== idemKey) continue;
+    // imapflow drops a UID it cannot parse, and Math.min over it is NaN.
+    if (!Number.isSafeInteger(message.uid)) {
+      throw new Error(`IMAP answered a matching draft in ${mailbox} without a usable UID; ${cannotRun}`);
+    }
+    verified.push(message.uid);
+  }
+  if (client.mailbox === false) {
+    throw noMailboxSelected('FETCH of the candidate drafts', mailbox, cannotRun);
+  }
+  // The SEARCH listed candidates, so a FETCH with no row at all is a short
+  // answer, not an absence. Read as one, it would append a second draft.
+  if (rows === 0) {
+    throw new Error(`IMAP returned no row for the ${uids.length} candidate draft(s) in ${mailbox}; ${cannotRun}`);
   }
   if (verified.length === 0) return null;
   // Lowest UID is the first draft appended under this key.
   return String(Math.min(...verified));
+}
+
+/**
+ * The raw source of one parked draft, by UID, or null when the mailbox holds
+ * no such draft. Every short answer throws instead: see readBodyByUid.
+ */
+export async function readDraftSource(
+  client: ImapReadClient,
+  mailbox: string,
+  draftExternalId: string,
+  consequence = 'the draft cannot be read on this attempt',
+): Promise<Buffer | null> {
+  requireUid(draftExternalId);
+  await client.mailboxOpen(mailbox);
+  return readBodyByUid(client, draftExternalId, mailbox, consequence);
 }
 
 /** The exact value of one header in a raw header block, or null. */
@@ -642,14 +731,17 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
     // dropped while the draft was marked would otherwise report a send the
     // customer already received as failed, and SMTP has no read-back to
     // correct that, so the relay would escalate it as an unknown delivery.
-    const source = await this.withImap(async (client) => {
-      await client.mailboxOpen(this.config.draftsMailbox);
-      const fetched = await client.fetchOne(draftExternalId, { source: true }, { uid: true });
-      return fetched !== false ? fetched.source : undefined;
-    });
+    const source = await this.withImap((client) =>
+      readDraftSource(
+        client,
+        this.config.draftsMailbox,
+        draftExternalId,
+        'the draft could not be read, so no SMTP send was attempted',
+      ),
+    );
     // Permanent, as the FreeScout adapter says of a missing draft: a retry
     // finds the same absence.
-    if (source === undefined || source === null) {
+    if (source === null) {
       throw new PermanentEgressError(
         `no draft with UID '${draftExternalId}' in '${this.config.draftsMailbox}'`,
       );
@@ -688,10 +780,32 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
     // the customer the reply again. Not left unbounded either: its own budget
     // closes the connection it opens, so each send leaves at most one extra
     // connection open, for at most the budget and the logout grace.
+    //
+    // A mark that fails says so in one line, so a Drafts mailbox that shows
+    // no reply as sent has a cause somebody can read.
+    // A reset can do both: imapflow answers false, and the connection error
+    // then rejects the same call. One mark writes one line.
+    let reported = false;
+    const markFailed = (error: string): void => {
+      if (reported) return;
+      reported = true;
+      console.error(logLine({ event: 'draft_mark_seen_failed', draft: draftExternalId, error }));
+    };
     void this.withImap(async (client) => {
       await client.mailboxOpen(this.config.draftsMailbox);
-      await client.messageFlagsAdd(draftExternalId, ['\\Seen'], { uid: true });
-    }, AbortSignal.timeout(IMAP_MARK_SEEN_BUDGET_MS)).catch(() => undefined);
+      const marked = await client.messageFlagsAdd(draftExternalId, ['\\Seen'], { uid: true });
+      // imapflow answers false for a dropped connection as well, and then
+      // the mailbox is gone too.
+      if (!marked) {
+        markFailed(
+          client.mailbox === false
+            ? 'the connection lost its mailbox during the STORE'
+            : 'the server refused the STORE',
+        );
+      }
+    }, AbortSignal.timeout(IMAP_MARK_SEEN_BUDGET_MS)).catch((error: unknown) => {
+      markFailed(errorMessage(error));
+    });
 
     // Nodemailer generates no messageId for raw sends, so the external
     // id is the draft's own Message-ID (always set by buildDraftMessage);
@@ -716,10 +830,8 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
     requireUid(draftExternalId);
 
     return this.withImap(async (client) => {
-      await client.mailboxOpen(this.config.draftsMailbox);
-      const fetched = await client.fetchOne(draftExternalId, { source: true }, { uid: true });
-      const source = fetched !== false ? fetched.source : undefined;
-      if (source === undefined || source === null) {
+      const source = await readDraftSource(client, this.config.draftsMailbox, draftExternalId);
+      if (source === null) {
         return null;
       }
       return { body: normalizeMime(source.toString()).bodyText };

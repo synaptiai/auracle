@@ -2,9 +2,8 @@
 //
 // That is what lets the db project run its files in parallel. The suites
 // truncate tables between cases, so two files sharing a database corrupt each
-// other's results — which is why the project ran one file at a time, and why
-// removing `singleFork` without the clone would produce an order-dependent
-// flake rather than an honest failure.
+// other's results. Running the files at once without the clone would produce
+// an order-dependent flake rather than an honest failure.
 //
 // The flake is the thing worth guarding against, because it passes. A run
 // that happens to interleave harmlessly is indistinguishable from isolation

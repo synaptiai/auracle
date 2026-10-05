@@ -12,7 +12,12 @@ export default tseslint.config(
   // and a design artifact dropped in the tree would. The style checker already
   // draws this line: guardrails.yml notes that a document under docs/internal/
   // never gates a pull request. This makes the lint agree with it.
-  { ignores: ['dist/', 'node_modules/', '.claude/worktrees/', 'docs/internal/'] },
+  // A bare pattern matches at the root only, so 'dist/' left console/dist/ in
+  // the lint: 46 compiled files. '.decisions/' holds the decision journal and
+  // its scratch scripts, which git ignores as well.
+  {
+    ignores: ['**/dist/', 'node_modules/', '.claude/worktrees/', 'docs/internal/', '.decisions/'],
+  },
   ...tseslint.configs.recommended,
   {
     rules: {

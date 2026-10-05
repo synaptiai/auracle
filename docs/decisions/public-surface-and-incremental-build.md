@@ -46,8 +46,8 @@ a bare `RangeError`. The bands job no longer prefixes that message with
 DEC-11 stands. The console stays a separate package. This adds the direction
 the boundary was missing, and moves nothing back.
 
-`tsc -b --noEmit` is refused when one project references another, so `check`
-emits. The emit is incremental, so it costs the changed files only.
+`check` emits, because its first pass is the build itself. The emit is
+incremental, so it costs the changed files only.
 
 Node's own type stripping cannot run this tree. It resolves a NodeNext
 `./x.js` specifier literally, and no `.js` file exists under `src/`. It also

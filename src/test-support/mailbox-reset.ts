@@ -84,16 +84,30 @@ export async function resetMailboxes(
       let lock;
       try {
         lock = await client.getMailboxLock(mailbox);
-      } catch {
-        // No such mailbox yet, so nothing to remove.
-        continue;
+      } catch (error) {
+        // No such mailbox yet, so nothing to remove. imapflow says so only
+        // after a LIST finds none. Any other failure means the reset did not
+        // run, and the next case would find the drafts this one left.
+        if ((error as { mailboxMissing?: boolean }).mailboxMissing === true) continue;
+        throw error;
       }
       try {
         // `{ all: true }` is every message in the box: imapflow maps a lone
         // `all` key to the range `1:*`. `messageDelete` expunges, so the next
         // fetch sees none rather than seeing them flagged, and it acts on the
         // selected mailbox alone.
-        await client.messageDelete({ all: true }, { uid: false });
+        const deleted = await client.messageDelete({ all: true }, { uid: false });
+        // imapflow answers false for an empty mailbox too, so false alone
+        // proves nothing. With messages still there, or with the mailbox lost
+        // to a dropped connection, the delete did not happen.
+        if (!deleted && client.mailbox === false) {
+          throw new Error(`the connection lost ${mailbox} while emptying it`);
+        }
+        if (!deleted && client.mailbox !== false && client.mailbox.exists > 0) {
+          throw new Error(
+            `the mail server refused to empty ${mailbox}; ${client.mailbox.exists} message(s) remain`,
+          );
+        }
       } finally {
         lock.release();
       }

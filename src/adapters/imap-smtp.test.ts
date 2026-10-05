@@ -1,6 +1,6 @@
 import { createServer, type AddressInfo, type Server, type Socket } from 'node:net';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ALTERNATIVE_EMAIL,
   BASE64_EMAIL,
@@ -17,16 +17,21 @@ import {
 import {
   ImapSmtpAdapter,
   IMAP_LOGOUT_GRACE_MS,
+  IDEM_KEY_HEADER,
   IMAP_MARK_SEEN_BUDGET_MS,
   IMAP_OPERATION_TIMEOUT_MS,
   IMAP_SMTP_CAPABILITIES,
   SmtpEgressAdapter,
   buildDraftMessage,
   deriveTicketId,
+  findDraftByIdemKey,
   findThreadOriginator,
   imapSmtpConfigFromEnv,
+  readDraftSource,
 } from './imap-smtp.js';
-import type { ThreadLookupClient } from './imap-smtp.js';
+import type { FetchMessageObject, MailboxObject } from 'imapflow';
+
+import type { ImapReadClient } from './imap-smtp.js';
 import { AdapterCapabilityError, PermanentEgressError } from './types.js';
 
 const adapter = new ImapSmtpAdapter();
@@ -109,7 +114,7 @@ describe('SmtpEgressAdapter declares what it cannot do (DEC-06)', () => {
 const PARKED_SOURCE = 'From: support@example.invalid\r\nTo: customer@example.invalid\r\n'
   + 'Message-ID: <draft-7@example.invalid>\r\nSubject: Re: synthetic\r\n\r\nYour refund is on its way.\r\n';
 
-type Reaction = 'answer' | 'reset' | 'stall' | 'nothing';
+type Reaction = 'answer' | 'reset' | 'stall' | 'nothing' | 'refuse' | 'other-uid' | 'bodiless';
 
 /**
  * An IMAP server that speaks just enough of the protocol for ImapFlow, holds
@@ -155,6 +160,20 @@ async function fakeImap(reactions: Readonly<Record<string, Reaction>> = {}): Pro
         if (reaction === 'stall') continue;
         if (reaction === 'nothing') {
           sock.write(`${tag} OK\r\n`);
+          continue;
+        }
+        if (reaction === 'refuse') {
+          sock.write(`${tag} NO refused\r\n`);
+          continue;
+        }
+        if (reaction === 'other-uid') {
+          // An unsolicited flag update for another message, then the draft.
+          sock.write(`* 2 FETCH (UID 9 FLAGS (\\Seen))\r\n* 1 FETCH (UID 7 BODY[] {${Buffer.byteLength(PARKED_SOURCE)}}\r\n${PARKED_SOURCE})\r\n${tag} OK fetched\r\n`);
+          continue;
+        }
+        if (reaction === 'bodiless') {
+          // The draft's row, without the body that was asked for.
+          sock.write(`* 1 FETCH (UID 7 FLAGS ())\r\n${tag} OK fetched\r\n`);
           continue;
         }
         if (command === 'CAPABILITY') sock.write(`* CAPABILITY IMAP4rev1 AUTH=PLAIN UIDPLUS\r\n${tag} OK done\r\n`);
@@ -410,6 +429,89 @@ describe('the IMAP connection a draft read opens (issue #102)', () => {
       // The draft's own Message-ID, which the MIME reader strips of its brackets.
       expect(sent).toEqual({ externalId: 'draft-7@example.invalid' });
       expect(smtp.accepted()).toBe(1);
+    } finally {
+      imap.server.close();
+      smtp.server.close();
+    }
+  });
+
+  it('names a draft it could not mark seen, and still reports the send', async () => {
+    // Best effort, so it never fails the send. A refusal on every send would
+    // otherwise leave Drafts showing no reply as sent, with no line saying why.
+    const imap = await fakeImap({ 'UID STORE': 'refuse' });
+    const smtp = await fakeSmtp();
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    try {
+      const sent = await egressOn(imap.port, 10_000, smtp.port).sendDraft('7', 'refund:41:v1');
+      expect(sent).toEqual({ externalId: 'draft-7@example.invalid' });
+      for (let i = 0; i < 200 && lines.length === 0; i += 1) await new Promise((r) => setTimeout(r, 10));
+      expect(lines.map((line) => JSON.parse(line) as Record<string, unknown>)).toEqual([
+        expect.objectContaining({
+          event: 'draft_mark_seen_failed',
+          draft: '7',
+          error: 'the server refused the STORE',
+        }),
+      ]);
+    } finally {
+      spy.mockRestore();
+      imap.server.close();
+      smtp.server.close();
+    }
+  });
+
+  it('names a mark that failed on the wire, and still reports the send', async () => {
+    // A connection reset rejects rather than answering false, so this is the
+    // other branch of the same rule.
+    const imap = await fakeImap({ 'UID STORE': 'reset' });
+    const smtp = await fakeSmtp();
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    try {
+      const sent = await egressOn(imap.port, 10_000, smtp.port).sendDraft('7', 'refund:41:v1');
+      expect(sent).toEqual({ externalId: 'draft-7@example.invalid' });
+      for (let i = 0; i < 200 && lines.length === 0; i += 1) await new Promise((r) => setTimeout(r, 10));
+      const entries = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(entries).toEqual([
+        expect.objectContaining({ event: 'draft_mark_seen_failed', draft: '7' }),
+      ]);
+    } finally {
+      spy.mockRestore();
+      imap.server.close();
+      smtp.server.close();
+    }
+  });
+
+  it('sends the draft from its own row, past an unsolicited one', async () => {
+    const imap = await fakeImap({ 'UID FETCH': 'other-uid' });
+    const smtp = await fakeSmtp();
+    try {
+      const sent = await egressOn(imap.port, 10_000, smtp.port).sendDraft('7', 'refund:41:v1');
+      expect(sent).toEqual({ externalId: 'draft-7@example.invalid' });
+      expect(smtp.accepted()).toBe(1);
+    } finally {
+      imap.server.close();
+      smtp.server.close();
+    }
+  });
+
+  it('sends nothing when the draft row comes without its body, and says so', async () => {
+    // Read as a missing draft this escalates as gone. It is a short answer,
+    // and SMTP must not see a message.
+    const imap = await fakeImap({ 'UID FETCH': 'bodiless' });
+    const smtp = await fakeSmtp();
+    try {
+      const error = await egressOn(imap.port, 10_000, smtp.port)
+        .sendDraft('7', 'refund:41:v1')
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(PermanentEgressError);
+      expect((error as Error).message).toMatch(/without its body; the draft could not be read, so no SMTP send was attempted/);
+      expect(smtp.accepted()).toBe(0);
     } finally {
       imap.server.close();
       smtp.server.close();
@@ -800,67 +902,111 @@ describe('ticket identity from threading headers', () => {
   });
 });
 
+/** One untagged FETCH row the scripted reader yields. */
+interface ScriptedRow {
+  readonly uid?: number;
+  readonly source?: string;
+  readonly headers?: string;
+}
+
+/**
+ * A mailbox reader whose answers are scripted. `selected: false` is the
+ * mailbox imapflow 2 has lost: a SEARCH script may say `undefined`, and the
+ * fetch yields nothing while `mailbox` reads false. Synthetic (DEC-18).
+ */
+function reader(script: {
+  readonly search?: number[] | false | undefined;
+  readonly rows?: readonly ScriptedRow[];
+  readonly selected?: boolean;
+  readonly onFetch?: () => void;
+}): ImapReadClient {
+  const selected = script.selected ?? true;
+  const rows = script.rows ?? [];
+  return {
+    get mailbox() {
+      return selected ? ({ path: 'INBOX' } as unknown as MailboxObject) : false;
+    },
+    mailboxOpen: async () => ({}),
+    search: (async () => ('search' in script ? script.search : [])) as ImapReadClient['search'],
+    fetch: async function* () {
+      script.onFetch?.();
+      if (!selected) return;
+      for (const row of rows) {
+        yield {
+          seq: 1,
+          uid: row.uid as number,
+          ...(row.source === undefined ? {} : { source: Buffer.from(row.source) }),
+          ...(row.headers === undefined ? {} : { headers: Buffer.from(row.headers) }),
+        } as FetchMessageObject;
+      }
+    },
+  };
+}
+
 // findThreadOriginator resolves the recipient of every parked reply, so which
 // error it raises decides whether a ticket retries or escalates. imapflow
-// answers `false` — it does not throw — when a server refuses a command or the
-// connection drops mid-flight, and reading that as an empty result makes a
-// transient fault indistinguishable from a thread root that is really gone.
-describe('findThreadOriginator separates a refused search from an empty one', () => {
+// answers short — `false`, `undefined`, a row without a body — rather than
+// throwing, and reading that as an empty result makes a transient fault
+// indistinguishable from a thread root that is really gone.
+describe('findThreadOriginator separates a short answer from an empty one', () => {
   const TICKET_ID = 'thread-root@acme.example';
   const UID = 7;
 
-  /** The three imapflow calls the lookup makes, each independently faultable. */
-  function client(behaviour: {
-    search?: number[] | false;
-    fetchOne?: string | false;
-  }): ThreadLookupClient {
-    return {
-      mailboxOpen: async () => ({}),
-      search: async () => behaviour.search ?? [],
-      fetchOne: async () =>
-        behaviour.fetchOne === false
-          ? false
-          : { seq: UID, uid: UID, source: Buffer.from(behaviour.fetchOne ?? THREAD_ROOT_EMAIL) },
-    };
+  async function retryable(client: ImapReadClient, pattern: RegExp): Promise<void> {
+    const error = await findThreadOriginator(client, TICKET_ID).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(PermanentEgressError);
+    expect((error as Error).message).toMatch(pattern);
   }
+
+  it('addresses the reply from the row for its UID, past an unsolicited one', async () => {
+    // imapflow returns every untagged FETCH, and a flag update for another
+    // message can arrive first.
+    const found = await findThreadOriginator(
+      reader({ search: [UID], rows: [{ uid: 9 }, { uid: UID, source: THREAD_ROOT_EMAIL }] }),
+      TICKET_ID,
+    );
+    expect(found.messageId).toBe(TICKET_ID);
+  });
+
+  it('raises a retryable error when the FETCH answers the UID without its body', async () => {
+    // The SEARCH just listed this UID, so the root is there. Skipping it would
+    // escalate the ticket as unaddressable on one short answer.
+    await retryable(reader({ search: [UID], rows: [{ uid: UID }] }), /without its body/);
+  });
+
+  it('raises a retryable error when the FETCH returns no row for a listed UID', async () => {
+    await retryable(reader({ search: [UID], rows: [] }), new RegExp(`no row for uid ${UID}`));
+  });
+
+  it('raises a retryable error when no mailbox was selected for the SEARCH', async () => {
+    // A connection that closed after the SELECT leaves no mailbox, and the
+    // next attempt opens a fresh one. Nothing says the thread root is gone.
+    await retryable(reader({ search: undefined }), /no mailbox selected/);
+  });
+
+  it('raises a retryable error when the mailbox was lost during the FETCH', async () => {
+    await retryable(reader({ search: [UID], selected: false }), /no mailbox selected/);
+  });
 
   it('raises a retryable error when the server refuses the SEARCH', async () => {
     // A PermanentEgressError here escalates the ticket on the first fault and
     // skips the intake attempt ceiling, so one window of IMAP faults would
     // escalate every ticket parking during it.
-    const error = await findThreadOriginator(client({ search: false }), TICKET_ID).catch(
-      (caught: unknown) => caught,
-    );
-
-    expect(error).toBeInstanceOf(Error);
-    expect(error).not.toBeInstanceOf(PermanentEgressError);
-    expect((error as Error).message).toMatch(/refused the header SEARCH/);
-  });
-
-  it('raises a retryable error when the server refuses the FETCH', async () => {
-    // The UID came back from the SEARCH the server just answered, so nothing
-    // about this mailbox says the thread root is missing.
-    const error = await findThreadOriginator(
-      client({ search: [UID], fetchOne: false }),
-      TICKET_ID,
-    ).catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(Error);
-    expect(error).not.toBeInstanceOf(PermanentEgressError);
-    expect((error as Error).message).toMatch(new RegExp(`refused the FETCH of uid ${UID}`));
+    await retryable(reader({ search: false }), /refused the header SEARCH/);
   });
 
   it('escalates when the search genuinely finds nothing', async () => {
     // Archived, moved or deleted: a later scan does not find it either, so a
     // person has to reconcile it and a retry only spends the budget.
-    await expect(findThreadOriginator(client({ search: [] }), TICKET_ID)).rejects.toThrow(
+    await expect(findThreadOriginator(reader({ search: [] }), TICKET_ID)).rejects.toThrow(
       PermanentEgressError,
     );
   });
 
   it('escalates a ticket id that was never a message id', async () => {
     // A content digest never reverses into an addressable Message-ID.
-    await expect(findThreadOriginator(client({}), 'no-id-abc123')).rejects.toThrow(
+    await expect(findThreadOriginator(reader({}), 'no-id-abc123')).rejects.toThrow(
       PermanentEgressError,
     );
   });
@@ -868,10 +1014,139 @@ describe('findThreadOriginator separates a refused search from an empty one', ()
   it('escalates when the thread root carries no From address', async () => {
     await expect(
       findThreadOriginator(
-        client({ search: [UID], fetchOne: NO_FROM_THREAD_ROOT }),
+        reader({ search: [UID], rows: [{ uid: UID, source: NO_FROM_THREAD_ROOT }] }),
         TICKET_ID,
       ),
     ).rejects.toThrow(PermanentEgressError);
+  });
+});
+
+// The repeat-park guard is the whole defence against a second draft in front
+// of the customer. An answer that is not a list of UIDs is not "no draft".
+describe('findDraftByIdemKey refuses a lookup that did not run', () => {
+  const MAILBOX = 'Drafts';
+  const KEY = 'park-key-1';
+  const keyed = (key: string) => `${IDEM_KEY_HEADER}: ${key}\r\n\r\n`;
+  const noFetch = () => {
+    throw new Error('the guard fetched after a search that did not run');
+  };
+
+  it('fails the park when the server refuses the SEARCH', async () => {
+    await expect(
+      findDraftByIdemKey(reader({ search: false, onFetch: noFetch }), MAILBOX, KEY),
+    ).rejects.toThrow(/refused a header SEARCH/);
+  });
+
+  it('fails the park when no mailbox was selected for the SEARCH', async () => {
+    // Read as "no draft exists", this appends a second draft.
+    await expect(
+      findDraftByIdemKey(reader({ search: undefined, onFetch: noFetch }), MAILBOX, KEY),
+    ).rejects.toThrow(/no mailbox selected/);
+  });
+
+  it('fails the park when the mailbox was lost during the candidate FETCH', async () => {
+    // The fetch then yields nothing, which would read as no draft.
+    await expect(
+      findDraftByIdemKey(reader({ search: [4], selected: false }), MAILBOX, KEY),
+    ).rejects.toThrow(/no mailbox selected/);
+  });
+
+  it('fails the park when a matching draft comes back without a usable UID', async () => {
+    // imapflow drops a UID it cannot parse. Math.min over it is NaN, and the
+    // park would report a draft under "NaN" and append nothing.
+    await expect(
+      findDraftByIdemKey(reader({ search: [4], rows: [{ headers: keyed(KEY) }] }), MAILBOX, KEY),
+    ).rejects.toThrow(/without a usable UID/);
+  });
+
+  it('fails the park when a candidate comes back without its headers', async () => {
+    // That row could be the first draft. Skipping it appends a second.
+    await expect(
+      findDraftByIdemKey(reader({ search: [4], rows: [{ uid: 4 }] }), MAILBOX, KEY),
+    ).rejects.toThrow(/without its headers/);
+  });
+
+  it('fails the park when the candidate FETCH returns no row at all', async () => {
+    // The SEARCH just listed a candidate, so nothing is not an answer.
+    await expect(
+      findDraftByIdemKey(reader({ search: [4], rows: [] }), MAILBOX, KEY),
+    ).rejects.toThrow(/no row for the 1 candidate/);
+  });
+
+  it('finds the lowest verified draft among the candidates', async () => {
+    const candidates = reader({
+      search: [12, 5, 9],
+      rows: [
+        { uid: 12, headers: keyed(KEY) },
+        { uid: 5, headers: keyed(`${KEY}-longer`) },
+        { uid: 9, headers: keyed(KEY) },
+      ],
+    });
+    // 5 matched the substring SEARCH only, so 9 is the first real draft.
+    await expect(findDraftByIdemKey(candidates, MAILBOX, KEY)).resolves.toBe('9');
+  });
+
+  it('finds no draft when the search answers no UID', async () => {
+    await expect(
+      findDraftByIdemKey(reader({ search: [], onFetch: noFetch }), MAILBOX, KEY),
+    ).resolves.toBeNull();
+  });
+});
+
+// A send and an approval read the parked draft by UID. A draft that is gone
+// reads as missing. A short answer says nothing about it.
+describe('readDraftSource separates a missing draft from a short answer', () => {
+  const MAILBOX = 'Drafts';
+
+  async function fault(client: ImapReadClient, pattern: RegExp): Promise<void> {
+    const error = await readDraftSource(client, MAILBOX, '3').catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(PermanentEgressError);
+    expect((error as Error).message).toMatch(pattern);
+  }
+
+  it('returns the source of a draft that is there', async () => {
+    const source = await readDraftSource(
+      reader({ rows: [{ uid: 3, source: THREAD_ROOT_EMAIL }] }),
+      MAILBOX,
+      '3',
+    );
+    expect(source?.toString()).toBe(THREAD_ROOT_EMAIL);
+  });
+
+  it('reads the row for its own UID, past an unsolicited one', async () => {
+    // imapflow returns every untagged FETCH, and a flag update for another
+    // draft can arrive first.
+    const source = await readDraftSource(
+      reader({ rows: [{ uid: 9, source: 'another draft' }, { uid: 3, source: THREAD_ROOT_EMAIL }] }),
+      MAILBOX,
+      '3',
+    );
+    expect(source?.toString()).toBe(THREAD_ROOT_EMAIL);
+  });
+
+  it('refuses an id that is not one UID, before it fetches', async () => {
+    // A range or `*` would fetch a draft nobody parked, and `007` names the
+    // UID 7 by another spelling.
+    for (const id of ['42:1007', '*', '007']) {
+      let fetched = false;
+      const spy = reader({ onFetch: () => { fetched = true; } });
+      await expect(readDraftSource(spy, MAILBOX, id)).rejects.toThrow(/is not a UID/);
+      expect(fetched).toBe(false);
+    }
+  });
+
+  it('raises an error, not a missing draft, when the row for its UID has no body', async () => {
+    await fault(reader({ rows: [{ uid: 3 }] }), /without its body/);
+  });
+
+  it('raises an error, not a missing draft, when the mailbox was lost', async () => {
+    await fault(reader({ selected: false }), /no mailbox selected/);
+  });
+
+  it('returns null when the server holds no such draft', async () => {
+    // Another message's flag update is not this draft.
+    await expect(readDraftSource(reader({ rows: [{ uid: 9 }] }), MAILBOX, '3')).resolves.toBeNull();
   });
 });
 

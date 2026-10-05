@@ -32,7 +32,8 @@ import { logLine } from '../log/line.js';
 export type ImapFetcherLogEntry =
   | { readonly event: 'imap_client_error'; readonly at: string; readonly error: string }
   | { readonly event: 'imap_connection_closed'; readonly at: string }
-  | { readonly event: 'imap_reconnect_failed'; readonly at: string; readonly error: string };
+  | { readonly event: 'imap_reconnect_failed'; readonly at: string; readonly error: string }
+  | { readonly event: 'imap_message_without_source'; readonly at: string; readonly uid: number };
 
 /** One JSON line per entry on stderr, the stream the fetcher always used. */
 function defaultFetcherLog(entry: ImapFetcherLogEntry): void {
@@ -51,14 +52,19 @@ export interface ImapClientLike {
   /** Immediate teardown; imapflow emits `close` afterwards. */
   close(): void;
   getMailboxLock(path: string): Promise<{ release(): void }>;
-  search(query: { seen?: boolean }, options?: { uid?: boolean }): Promise<number[] | false>;
+  /** The selected mailbox, or false once the connection has lost it. */
+  readonly mailbox: object | false;
+  search(
+    query: { seen?: boolean },
+    options?: { uid?: boolean },
+  ): Promise<number[] | false | undefined>;
   fetchAll(
-    range: readonly number[],
+    range: number[],
     query: { uid?: boolean; source?: boolean },
     options?: { uid?: boolean },
-  ): Promise<readonly { uid: number; source: string | Uint8Array }[]>;
+  ): Promise<readonly { uid?: number | undefined; source?: string | Uint8Array | undefined }[]>;
   messageFlagsAdd(
-    range: readonly number[],
+    range: number[],
     flags: string[],
     options?: { uid?: boolean },
   ): Promise<boolean>;
@@ -91,7 +97,7 @@ export const imapFlowFactory =
       secure: config.secure ?? true,
       auth: { user: config.user, pass: config.pass },
       logger: false,
-    }) as unknown as ImapClientLike;
+    });
 
 export class ImapMailboxFetcher {
   private client: ImapClientLike | null = null;
@@ -125,13 +131,38 @@ export class ImapMailboxFetcher {
       const uids = await client.search({ seen: false }, { uid: true });
       // imapflow resolves false when the connection dropped mid-command.
       if (uids === false) throw new Error('imap search failed: connection lost');
+      // imapflow 2 resolves undefined when no mailbox is selected. The lock
+      // above selected INBOX, so the connection lost it in between.
+      if (uids === undefined) throw new Error('imap search failed: no mailbox selected');
       if (uids.length === 0) return [];
       const ordered = [...uids].sort((a, b) => a - b);
       const messages = await client.fetchAll(ordered, { uid: true, source: true }, { uid: true });
-      return messages.map((message) => ({
-        sourceId: String(message.uid),
-        rfc5322Text: decodeSource(message.source),
-      }));
+      // imapflow returns every untagged FETCH the server sent. A flag update
+      // for another message can come among them, and a row can lack its body
+      // or a usable UID. So each requested UID takes the first row that
+      // answers it with a body.
+      const bodies = new Map<number, string | Uint8Array>();
+      for (const message of messages) {
+        if (message.uid === undefined || message.source === undefined) continue;
+        if (!bodies.has(message.uid)) bodies.set(message.uid, message.source);
+      }
+      // imapflow's fetch returns nothing when no mailbox is selected, and
+      // that would read as every message lacking its body.
+      if (bodies.size === 0 && client.mailbox === false) {
+        throw new Error('imap fetch failed: no mailbox selected');
+      }
+      // A requested message with no body stays unseen, so the next poll
+      // reads it again if it is there.
+      const inbound: ImapInboundMessage[] = [];
+      for (const uid of ordered) {
+        const source = bodies.get(uid);
+        if (source === undefined) {
+          this.log({ event: 'imap_message_without_source', at: new Date().toISOString(), uid });
+          continue;
+        }
+        inbound.push({ sourceId: String(uid), rfc5322Text: decodeSource(source) });
+      }
+      return inbound;
     } catch (error) {
       // Connection state after a failed command is unknown; reconnect next time.
       this.dropClient(client);
@@ -158,11 +189,19 @@ export class ImapMailboxFetcher {
       throw error;
     }
     try {
-      await client.messageFlagsAdd(
+      const marked = await client.messageFlagsAdd(
         sourceIds.map((id) => Number(id)),
         ['\\Seen'],
         { uid: true },
       );
+      // imapflow answers false for a refused STORE and does not throw. Read
+      // as success, the messages stay unseen and every poll queues them again.
+      if (!marked) {
+        // imapflow answers false for a dropped connection as well, and then
+        // the mailbox is gone too. The error names which one happened.
+        const cause = client.mailbox === false ? 'lost its mailbox during' : 'refused';
+        throw new Error(`imap ${cause} the STORE \\Seen for uids ${sourceIds.join(',')}`);
+      }
     } catch (error) {
       this.dropClient(client);
       throw error;

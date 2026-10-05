@@ -54,15 +54,16 @@ else
   say "auracle bootstrap — $ROOT"
 fi
 
-# 1. Node. The engines field asks for 22 or later, and a lower one fails
-#    later and less clearly: tsx and the compiler both run on it.
+# 1. Node. The engines field asks for 22.13 or later, and a lower one fails
+#    later and less clearly: vitest needs 22.12 and eslint needs 22.13.
 if ! command -v node >/dev/null 2>&1; then
-  step "node" "MISSING — install Node 22 or later, then run this again"
+  step "node" "MISSING — install Node 22.13 or later, then run this again"
   exit 1
 fi
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
-if [ "$NODE_MAJOR" -lt 22 ]; then
-  step "node" "$(node -v) — too old, this repository needs 22 or later"
+NODE_MINOR="$(node -p 'process.versions.node.split(".")[1]')"
+if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 13 ]; }; then
+  step "node" "$(node -v) — too old, this repository needs 22.13 or later"
   exit 1
 fi
 step "node" "$(node -v)"

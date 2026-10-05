@@ -33,16 +33,23 @@ The individual targets still exist and are worth running alone while you work:
 `pnpm run check` is the fastest signal of all. Neither it nor
 `pnpm run verify:fast` is a substitute for `pnpm run verify`.
 
+The repository installs two TypeScript releases. TypeScript 7 builds and
+type-checks, and every script calls it as `node_modules/typescript-7/bin/tsc`.
+The `typescript` package is 6.0.3. typescript-eslint and the source guards
+load its compiler API, which TypeScript 7 does not ship. Both packages carry a
+`tsc` binary, so a script names the one it means by path. In this file, `tsc`
+names the TypeScript 7 compiler.
+
 `check` runs three passes. The first is `tsc -b tsconfig.build.json`, which
 builds the core and then the console. The second and third cover the test
 files, which both build configs exclude because tests must not reach `dist/`.
-So a type error in a test appears here and never in the build.
+They also cover both vitest configs. So a type error in a test appears here
+and never in the build.
 
-The first pass emits. `tsc -b --noEmit` is refused when one project
-references another, and the console references the core.
+The first pass emits, so it is the same build `pnpm run build` runs.
 
-The build is incremental, so a no-change `pnpm run build` takes about a third
-of a second. Each config writes its own `tsBuildInfoFile` under `dist/`,
+The build is incremental, so a no-change `pnpm run build` takes less than a
+tenth of a second. Each config writes its own `tsBuildInfoFile` under `dist/`,
 because two configs sharing one file poison each other's state.
 
 ## Working from source
@@ -78,7 +85,7 @@ Two watch modes exist: `pnpm run check:watch` recompiles the solution, and
 
 ## Setup
 
-You need Node 22 or later and Docker.
+You need Node 22.13 or later and Docker.
 
 ```sh
 ./scripts/bootstrap.sh
@@ -263,9 +270,9 @@ The suites truncate tables between cases, so two files sharing one database
 would corrupt each other. The run's teardown asserts that none did.
 
 The `mail` project still runs one file at a time. Both its suites drive the
-one GreenMail server and own mailboxes on it. Vitest treats
-`fileParallelism` as a root option, so that project sets
-`poolOptions.forks.singleFork`.
+one GreenMail server and own mailboxes on it. So that project sets
+`maxWorkers: 1`. `pnpm run check` type-checks both vitest configs, so an
+option vitest does not know fails the check.
 Set `AURACLE_TEST_DB_REUSE=1` to keep one warm database between local runs.
 Set `AURACLE_TEST_MAIL_REUSE=1` to keep the mail server warm the same way.
 
