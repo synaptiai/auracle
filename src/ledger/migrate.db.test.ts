@@ -108,7 +108,7 @@ describe('migrate', () => {
     ).rejects.toThrow(/outbox_status_check/);
 
     // Every status the code actually writes is accepted.
-    for (const status of ['pending', 'sent', 'fenced', 'delivery_unknown', 'malformed']) {
+    for (const status of ['pending', 'sent', 'fenced', 'delivery_unknown', 'malformed', 'not_sent']) {
       await expect(
         client.query(
           `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class,

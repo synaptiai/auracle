@@ -128,11 +128,11 @@ export const TERMINAL_RUN_STATES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Every status the relay writes on an outbox row, as the db/006 CHECK allows.
+ * Every status the relay writes on an outbox row, as the db/040 CHECK allows.
  * A reader narrows the column to these, so a status a later migration adds
  * fails where it is read rather than drawing as an unknown word.
  */
-export const OUTBOX_STATUSES = ['pending', 'sent', 'fenced', 'delivery_unknown', 'malformed'] as const;
+export const OUTBOX_STATUSES = ['pending', 'sent', 'fenced', 'delivery_unknown', 'malformed', 'not_sent'] as const;
 export type OutboxStatus = (typeof OUTBOX_STATUSES)[number];
 
 /**

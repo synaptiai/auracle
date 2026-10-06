@@ -297,6 +297,32 @@ So the relay sets the record to `delivery_unknown` and moves the run to the
 approval path (DEC-30).
 Escalation is the only action that does not pick a failure for you.
 
+A send can fail before anything reaches the customer.
+The `imap-smtp` adapter reports this when the draft read fails on a dropped connection or a timeout.
+It does the same for a throttle and a goodbye before the login.
+So does a refusal with the try-later code `UNAVAILABLE` or `INUSE`.
+The relay then leaves the record pending, and the next scan sends it.
+
+The `record_relayed` line names the cause in `sendError`, after `no SMTP send was attempted`.
+No limit stops these retries. A long run of these lines means the mail server is down, throttled or unreachable.
+
+Some faults are permanent: they recur on every scan, and no attempt can ever reach the customer through them.
+These faults are a draft with no To address and a bad draft id or key.
+The relay escalates such a record as `not_sent`, and stops retrying it.
+
+The mail server can refuse the login, or refuse to open Drafts or the draft.
+The draft or the Drafts mailbox can also be gone.
+Each of these escalates as `delivery_unknown`.
+A person can send a draft from a mail client, and that moves it out of Drafts.
+A relay that stops after its send leaves the draft, and the reply is out.
+So a refusal or a missing draft does not show that the customer has no reply.
+
+The ledger can refuse the escalation itself. The relay process then keeps it, and writes it on a later scan.
+The `record_failed` line names the escalation the relay owes.
+A relay that restarts in that window, or a second relay process, can send the record once more.
+An `already_settled` line with a `sendError` means another relay settled a record this one tried to send.
+Check the customer's mailbox before anyone sends that reply again.
+
 The process drains the in-flight record on SIGTERM or SIGINT before it exits.
 
 | Variable | Meaning | Default |
@@ -1305,6 +1331,15 @@ Do not resend the action by hand.
 The first copy may have arrived, so a resend can act twice.
 The run waits in the approval path (DEC-30).
 
+A status of `not_sent` means that no attempt on the record reaches the customer.
+The relay stops retrying it, because no retry can send it.
+The `escalate` journal row names the cause.
+The turn stays open to a new attempt. A later message on the conversation parks one.
+A send-back still refuses while the mail adapter's draft is in Drafts.
+
+An image built before migration 040 does not read `not_sent`.
+Before you deploy one, list the `not_sent` records, because its escalations list omits them.
+
 A status of `fenced` means the fence moved past a record whose run was still in flight.
 The relay sends nothing, and the record keeps the key a re-run would collide with.
 It moves the run to `escalated` with the cause, so a person decides what happens to that action.
@@ -2004,7 +2039,8 @@ second draft stays until a person deletes it.
 The heading over reply text says what the customer has, and reads the row alone.
 "The system replied" needs approved text and a sent row. A pending row says the
 send is pending. A malformed row says the relay never sent the reply, because
-the relay refuses that row before any send. A turn with no row says only that a
+the relay refuses that row before any send. A `not_sent` row says the same,
+because the adapter shows that no attempt reached the customer. A turn with no row says only that a
 person approved the reply.
 
 A fenced row or an unknown row says nobody can confirm the delivery. The relay

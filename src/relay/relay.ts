@@ -19,19 +19,20 @@
  * is unknown, the relay must not retry: it sets the record to
  * `delivery_unknown` and escalates the run to the approval path (DEC-30).
  * When the adapter supports read-back, the relay reconciles instead of
- * escalating.
+ * escalating. When the adapter proves that nothing was sent, the state is
+ * known: the record stays pending, or escalates as `not_sent` when no retry
+ * can clear the fault (issue #159).
  */
 import type { Pool, PoolClient } from 'pg';
 
 // The relay routes by negation: only a customer reply takes the draft
 // path, so it never names the other classes.
-import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
-import type { LedgerReply } from '../adapters/types.js';
-
+import { CUSTOMER_REPLY_ACTION_CLASS, NothingSentError } from '../adapters/types.js';
 import type {
   AdapterCapabilities,
   DeliveryState,
   EgressAdapter,
+  LedgerReply,
 } from '../adapters/types.js';
 import { errorMessage } from '../errors.js';
 import { journalStep } from '../ledger/journal-write.js';
@@ -120,6 +121,7 @@ export interface RelayResult {
     | 'sent' // send succeeded
     | 'sent_reconciled' // send threw, read-back proved delivery (DEC-30)
     | 'delivery_unknown_escalated' // DEC-30: no retry, approval path
+    | 'not_sent_escalated' // nothing was sent, and no retry can send it
     | 'malformed_escalated' // payload matches no known shape; no send attempted
     | 'left_pending_retry' // safe to retry on a later scan
     | 'fenced' // DEC-28 at send time, for a run that has not finished
@@ -171,12 +173,72 @@ export async function pendingRows(pool: Pool): Promise<PendingOutboxRow[]> {
   return rows.rows as PendingOutboxRow[];
 }
 
-export async function relayPending(pool: Pool, adapter: EgressAdapter): Promise<RelayResult[]> {
+export async function relayPending(
+  pool: Pool,
+  adapter: EgressAdapter,
+  owed: OwedEscalations = owedFor(pool),
+): Promise<RelayResult[]> {
   const results: RelayResult[] = [];
-  for (const row of await pendingRows(pool)) {
-    results.push(await relayOne(pool, adapter, row));
+  const rows = await pendingRows(pool);
+  pruneOwed(owed, rows);
+  for (const row of rows) {
+    results.push(await relayOne(pool, adapter, row, owed));
   }
   return results;
+}
+
+/** An escalation the relay decided on and could not write to the ledger. */
+export interface OwedEscalation {
+  readonly status: 'delivery_unknown' | 'not_sent';
+  readonly reason: string;
+  readonly sendError: string;
+}
+
+/**
+ * The escalations a relay process owes, by record.
+ *
+ * A failed send that escalates writes its status in a transaction of its own.
+ * When that write fails, the ledger still holds the record as pending, and the
+ * next scan would send it again. After a send whose outcome is unknown, that is
+ * the blind retry DEC-30 forbids. So the process keeps the decision here, and
+ * the next scan writes it instead of sending. The map lives in one process. A
+ * relay that restarts in that window, or a second relay process that scans the
+ * record, can still send once more, as after a crash between a send and its
+ * status write.
+ */
+export type OwedEscalations = Map<string, OwedEscalation>;
+
+/**
+ * The map a caller gets when it passes none, one per pool object, so a caller
+ * that leaves the argument out cannot lose a debt. The daemon keeps a map of
+ * its own.
+ */
+const owedByPool = new WeakMap<Pool, OwedEscalations>();
+
+function owedFor(pool: Pool): OwedEscalations {
+  let owed = owedByPool.get(pool);
+  if (owed === undefined) {
+    owed = new Map();
+    owedByPool.set(pool, owed);
+  }
+  return owed;
+}
+
+/**
+ * Drops each debt whose record the scan no longer finds pending: another relay
+ * settled it. An undo cannot have deleted it, because an undo acts only while
+ * the record's hold runs and the relay sends only after the hold ends (DEC-51).
+ */
+export function pruneOwed(owed: OwedEscalations, rows: readonly PendingOutboxRow[]): void {
+  const pending = new Set(rows.map(owedKeyOf));
+  for (const key of owed.keys()) {
+    if (!pending.has(key)) owed.delete(key);
+  }
+}
+
+/** The key a record's owed escalation sits under. */
+export function owedKeyOf(row: PendingOutboxRow): string {
+  return `${row.run_id}\u0000${row.step_id}\u0000${row.idem_key}`;
 }
 
 function assertDeliveryRule(value: string): DeliveryRule {
@@ -396,8 +458,32 @@ export async function relayOne(
   pool: Pool,
   adapter: EgressAdapter,
   row: PendingOutboxRow,
+  owed: OwedEscalations = owedFor(pool),
 ): Promise<RelayResult> {
   const idemKey = row.idem_key;
+
+  // An escalation this process decided on and could not write. The record
+  // must not be sent again: write the escalation, and nothing else. A write
+  // that fails again keeps the debt for the next scan.
+  const debt = owed.get(owedKeyOf(row));
+  if (debt !== undefined) {
+    let marked: boolean;
+    try {
+      marked = await parkEscalated(pool, row, debt.status, debt.reason);
+    } catch (error) {
+      throw new Error(
+        `the escalation the relay owes (${debt.status}) was not written: ${errorText(error)} (${causeOf(debt)})`,
+        { cause: error },
+      );
+    }
+    owed.delete(owedKeyOf(row));
+    if (!marked) return { idemKey, sendError: debt.sendError, outcome: 'already_settled' };
+    return {
+      idemKey,
+      sendError: debt.sendError,
+      outcome: debt.status === 'not_sent' ? 'not_sent_escalated' : 'delivery_unknown_escalated',
+    };
+  }
 
   // DEC-28, second check: the fence at insert time does not cover a lease
   // that expired between insert and send. A fenced record can never become
@@ -419,14 +505,14 @@ export async function relayOne(
   // Nothing carries that action twice, and nothing else carries it at all.
   const { fence, runState } = await fenceFor(pool, row.run_id);
   if (fence !== null && BigInt(row.epoch) < fence && runStateClass(runState) !== 'terminal') {
-    await parkEscalated(
+    const marked = await parkEscalated(
       pool,
       row,
       'fenced',
       `fenced_stale_epoch: the ticket fence (${fence.toString()}) rose above`
         + ` this record's epoch (${row.epoch}) while its run was in flight`,
     );
-    return { idemKey, outcome: 'fenced' };
+    return { idemKey, outcome: marked ? 'fenced' : 'already_settled' };
   }
 
   // Route by action semantics before any adapter call. A payload that
@@ -438,8 +524,8 @@ export async function relayOne(
     dispatch = dispatchFor(row, adapter.capabilities.supportsLedgerReply);
   } catch (error) {
     if (!(error instanceof PayloadShapeError)) throw error;
-    await parkEscalated(pool, row, 'malformed', `malformed_payload: ${errorText(error)}`);
-    return { idemKey, outcome: 'malformed_escalated' };
+    const marked = await parkEscalated(pool, row, 'malformed', `malformed_payload: ${errorText(error)}`);
+    return { idemKey, outcome: marked ? 'malformed_escalated' : 'already_settled' };
   }
 
   // Three deliveries, chosen by what the record routes to. DEC-44 adds the
@@ -573,6 +659,27 @@ export async function relayOne(
     // call manufactures delivery_unknown escalations that look exactly like
     // genuine ones.
     sendFailure = errorText(sendError);
+    // Issue #159: the adapter proved this attempt sent nothing, so DEC-30's
+    // matrix is not asked. A transient fault leaves the record pending under
+    // either delivery rule: at most once forbids a second delivery, and this
+    // attempt made none. A permanent fault, which no attempt can ever pass,
+    // escalates under its own status, or every scan would retry it. A key that
+    // makes a retry safe does not change that, so the adapter's capabilities
+    // are not read here.
+    if (sendError instanceof NothingSentError) {
+      if (!sendError.permanent) {
+        return { idemKey, sendError: sendFailure, outcome: 'left_pending_retry' };
+      }
+      const marked = await escalateOrOwe(pool, row, owed, {
+        status: 'not_sent',
+        reason: `not_sent: ${sendFailure}`,
+        sendError: sendFailure,
+      });
+      // Another relay settled it. The failure stays on the result: it is the
+      // one trace that this process tried the send.
+      if (!marked) return { idemKey, sendError: sendFailure, outcome: 'already_settled' };
+      return { idemKey, sendError: sendFailure, outcome: 'not_sent_escalated' };
+    }
     let readBack: DeliveryState | null = null;
     if (adapter.capabilities.supportsReadBack) {
       try {
@@ -617,15 +724,49 @@ export async function relayOne(
       // (`delivery_unknown`) and the run moves to the approval path.
       // No approval-queue table exists yet; the escalated run plus this
       // status is the hand-off signal until that card lands.
-      await parkEscalated(
-        pool,
-        row,
-        'delivery_unknown',
-        sendFailure === null ? undefined : `delivery_unknown: ${sendFailure}`,
-      );
+      // `sendFailure` is set on every path into the matrix.
+      const marked = await escalateOrOwe(pool, row, owed, {
+        status: 'delivery_unknown',
+        reason: `delivery_unknown: ${sendFailure!}`,
+        sendError: sendFailure!,
+      });
+      // Another relay settled it, and this process's send may also have
+      // landed. The causes stay on the result for whoever reconciles it.
+      if (!marked) return { idemKey, ...causes, outcome: 'already_settled' };
       return { idemKey, ...causes, outcome: 'delivery_unknown_escalated' };
     }
   }
+}
+
+/**
+ * Escalates a record after a failed send, or records that the escalation is
+ * owed when the ledger refuses the write.
+ *
+ * The thrown error names the send failure as well as the ledger's: the daemon
+ * logs only what reaches it, and the send failure is the cause an operator
+ * needs.
+ */
+async function escalateOrOwe(
+  pool: Pool,
+  row: PendingOutboxRow,
+  owed: OwedEscalations,
+  debt: OwedEscalation,
+): Promise<boolean> {
+  try {
+    return await parkEscalated(pool, row, debt.status, debt.reason);
+  } catch (error) {
+    owed.set(owedKeyOf(row), debt);
+    throw new Error(`the relay owes a ${debt.status} escalation: ${errorText(error)} (${causeOf(debt)})`, {
+      cause: error,
+    });
+  }
+}
+
+/** The send failure an owed escalation carries, in words that fit its status. */
+function causeOf(debt: OwedEscalation): string {
+  return debt.status === 'not_sent'
+    ? `the adapter had reported that nothing was sent: ${debt.sendError}`
+    : `the send had already failed with: ${debt.sendError}`;
 }
 
 /**
@@ -633,9 +774,11 @@ export async function relayOne(
  * `status` states what went wrong on the record, and the run stops in a state
  * an operator reads. Terminal for the relay — a later scan finds nothing.
  *
- * Three cases reach it, and the reason names which: a send whose delivery
- * state is unknown (DEC-30), a payload matching no known shape, and — since
- * issue #113 — a record the fence refuses while its run is still in flight.
+ * Four cases reach it, and the reason names which: a send whose delivery
+ * state is unknown (DEC-30), a payload matching no known shape, a send that
+ * provably sent nothing and cannot succeed on a retry (issue #159), and —
+ * since issue #113 — a record the fence refuses while its run is still in
+ * flight.
  *
  * `escalated` is a terminal state, so the move stamps `finished_at` exactly
  * as the ledger path does (db/005_run_timing.sql). Without the stamp the
@@ -647,10 +790,9 @@ async function parkEscalated(
   row: PendingOutboxRow,
   status: string,
   reason?: string,
-): Promise<void> {
-  
+): Promise<boolean> {
   let rolledBack: unknown = null;
-const client = await pool.connect();
+  const client = await pool.connect();
   try {
     await client.query('BEGIN');
     // The record's own write is the token for this whole move. Two scans can
@@ -666,7 +808,7 @@ const client = await pool.connect();
     );
     if ((marked.rowCount ?? 0) === 0) {
       await client.query('COMMIT');
-      return;
+      return false;
     }
     await client.query(
       "UPDATE run SET state = 'escalated', finished_at = now() WHERE run_id = $1",
@@ -694,6 +836,7 @@ const client = await pool.connect();
       { ifAbsent: true },
     );
     await client.query('COMMIT');
+    return true;
   } catch (error) {
     // As elsewhere in this codebase: a rollback that throws must not replace
     // the cause, and is reported rather than dropped. The caller logs the

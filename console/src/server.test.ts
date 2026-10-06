@@ -2106,6 +2106,8 @@ describe('the conversation a responder reads', () => {
           turnOf(4, { replyAbsence: 'no_reply_sent', runState: 'escalated', outboxStatus: 'pending' }),
           // The relay escalated this run's own send, which may have landed.
           turnOf(5, { replyAbsence: 'no_reply_sent', runState: 'escalated', outboxStatus: 'delivery_unknown' }),
+          // The adapter proved its send stopped before anything went out.
+          turnOf(6, { replyAbsence: 'no_reply_sent', runState: 'escalated', outboxStatus: 'not_sent' }),
         ],
       }) as never,
     }));
@@ -2123,6 +2125,7 @@ describe('the conversation a responder reads', () => {
     expect(blocks.get(3)).toContain('<p class="absent">the run stopped without sending a reply</p>');
     expect(blocks.get(4)).toContain('<p class="absent">the run stopped; the action recorded on this turn is still to be sent</p>');
     expect(blocks.get(5)).toContain('<p class="absent">the run stopped; nobody can confirm the action recorded on this turn</p>');
+    expect(blocks.get(6)).toContain('<p class="absent">the run stopped without sending a reply</p>');
   });
 
   // A redelivered message parks a second run on a turn whose first reply went
@@ -2285,6 +2288,8 @@ describe('the conversation a responder reads', () => {
           turnOf(8, { replyText: reply, runState: 'escalated', outboxStatus: 'delivery_unknown' }),
           // The chip and heading read the status alone when the run resolved.
           turnOf(9, { replyText: reply, outboxStatus: 'delivery_unknown' }),
+          // The adapter proved nothing went out, and no retry could send it.
+          turnOf(10, { replyText: reply, runState: 'escalated', outboxStatus: 'not_sent' }),
         ],
       }) as never,
     }));
@@ -2318,8 +2323,10 @@ describe('the conversation a responder reads', () => {
     expect(blocks.get(8)).not.toContain('never sent');
     expect(chipOf(9)).toBe('<span class="chip" style="color:var(--hot)">approved · delivery_unknown</span>');
     expect(blocks.get(9)).toContain('<div class="who">approved, delivery not confirmed</div>');
+    expect(chipOf(10)).toBe('<span class="chip" style="color:var(--hot)">approved · escalated · not_sent</span>');
+    expect(blocks.get(10)).toContain('<div class="who">approved, never sent</div>');
 
-    for (const n of [2, 3, 4, 5, 6, 7, 8, 9]) {
+    for (const n of [2, 3, 4, 5, 6, 7, 8, 9, 10]) {
       expect(chipOf(n), `turn ${n}`).not.toContain('var(--ok)');
       expect(blocks.get(n), `turn ${n}`).not.toContain('the system replied');
     }

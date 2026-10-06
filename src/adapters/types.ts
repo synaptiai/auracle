@@ -445,3 +445,33 @@ export class PermanentEgressError extends Error {
     this.name = 'PermanentEgressError';
   }
 }
+
+/**
+ * A send that failed before anything reached a recipient (DEC-30).
+ *
+ * DEC-30 escalates a send whose delivery state is unknown. A send that threw
+ * before it handed anything to the target has a known state: nothing went
+ * out. A throw from the send itself never qualifies, whatever it says.
+ *
+ * A transient one covers this call: the relay leaves the record pending, as
+ * it would after any stop between a send and its status write. A permanent
+ * one covers every attempt on the record, because the relay reads it as
+ * "this reply never reached the customer". So an absence does not qualify: a
+ * draft that is gone may have been sent from somewhere else first. An
+ * adapter that declares `supportsIdempotencyKey` throws a permanent one only
+ * when no earlier call under the same key delivered, because the relay leaves
+ * its records pending after an uncertain send.
+ *
+ * `permanent` says whether a retry can clear it. The relay leaves a
+ * transient one pending for the next scan, and escalates a permanent one as
+ * `not_sent`, because a retry would find the same fault on every scan.
+ */
+export class NothingSentError extends Error {
+  readonly permanent: boolean;
+
+  constructor(message: string, options: { readonly permanent: boolean; readonly cause?: unknown }) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = 'NothingSentError';
+    this.permanent = options.permanent;
+  }
+}

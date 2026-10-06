@@ -213,7 +213,8 @@ export async function undoApproval(
       return { outcome: 'nothing_to_undo' };
     }
     if (record.status !== 'pending') {
-      // Sent, fenced, malformed or unknown: something already acted on it.
+      // Sent, fenced, malformed, not sent or unknown: something already acted
+      // on it.
       await client.query('ROLLBACK');
       return { outcome: 'already_sent' };
     }

@@ -37,8 +37,8 @@
  * A turn with a record that has reached the customer, may have (fact 14: a
  * `fenced` row may have), or will — an approved reply still `pending`.
  * Starting a new attempt would send a second reply for one turn. Only a
- * record the relay will never send leaves the turn open — `malformed` — and
- * DEC-30 still governs the unknown.
+ * record the relay will never send leaves the turn open — `malformed` or
+ * `not_sent` — and DEC-30 still governs the unknown.
  *
  * The DEC-46 guard, as every other console outcome on a case carries it: a
  * reviewer who read one reply does not reject a case holding another.

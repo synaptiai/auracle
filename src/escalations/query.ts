@@ -5,8 +5,8 @@
  *   - runs parked in `escalated` or `awaiting_approval` state, joined with
  *     the `escalate` journal step (the coordinator's EscalationReason) and
  *     the `park` journal step (the gated draft, where present)
- *   - outbox records stuck in `delivery_unknown` or `malformed` (DEC-30: no retry, the
- *     approval path), even when the run state read differs
+ *   - outbox records stuck in `delivery_unknown`, `malformed` or `not_sent`
+ *     (DEC-30: no retry, the approval path), even when the run state read differs
  *
  * Every statement is a SELECT. The module never writes, so it is safe to
  * run against a live database without approval.
@@ -133,7 +133,7 @@ export interface EscalationItem {
    * where the ledger holds one about other text.
    */
   readonly replyRewritten: boolean;
-  /** Outbox status when a record is stuck: `delivery_unknown` or `malformed`. */
+  /** Outbox status when a record is stuck: `delivery_unknown`, `malformed` or `not_sent`. */
   readonly outboxStatus: string | null;
   /**
    * The prompt version the run was pinned to.
@@ -321,7 +321,7 @@ const RUN_SELECT_BODY = `
       ON saved.conversation_id = r.conversation_id AND saved.turn_number = r.turn_number
     LEFT JOIN LATERAL (
       SELECT status FROM outbox
-       WHERE run_id = r.run_id AND status IN ('delivery_unknown', 'malformed')
+       WHERE run_id = r.run_id AND status IN ('delivery_unknown', 'malformed', 'not_sent')
        LIMIT 1
     ) o ON TRUE
 `;
@@ -422,7 +422,7 @@ const OUTBOX_SELECT = `
       ON cls.run_id = r.run_id AND cls.step_id = 'classify'
     LEFT JOIN turn saved
       ON saved.conversation_id = r.conversation_id AND saved.turn_number = r.turn_number
-   WHERE o.status IN ('delivery_unknown', 'malformed')`;
+   WHERE o.status IN ('delivery_unknown', 'malformed', 'not_sent')`;
 
 /**
  * A gate value from the text of a jsonb number: the double JavaScript reads
@@ -611,11 +611,14 @@ export async function listEscalations(
     // db/006 added 'malformed' and parkEscalated writes it, but nothing read
     // it: such a run showed up with a null outbox status, indistinguishable
     // from any other escalation, and this filter excluded it outright.
+    // db/040 adds 'not_sent' on the same terms.
     items =
       wanted === 'delivery_unknown'
         ? items.filter(
             (item) =>
-              item.outboxStatus === 'delivery_unknown' || item.outboxStatus === 'malformed',
+              item.outboxStatus === 'delivery_unknown'
+              || item.outboxStatus === 'malformed'
+              || item.outboxStatus === 'not_sent',
           )
         : items.filter((item) => item.state === wanted);
   }

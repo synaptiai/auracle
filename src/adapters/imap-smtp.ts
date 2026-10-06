@@ -33,8 +33,9 @@ import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { ImapFlow } from 'imapflow';
 import { createTransport } from 'nodemailer';
+import { draftReadFault } from './imap-fault.js';
 import { normalizeMime } from './mime.js';
-import { PermanentEgressError, requireNonEmpty } from './types.js';
+import { NothingSentError, PermanentEgressError, requireNonEmpty } from './types.js';
 import type {
   AdapterCapabilities,
   DeliveryState,
@@ -721,35 +722,13 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
   }
 
   async sendDraft(draftExternalId: string, idemKey: string): Promise<{ readonly externalId: string }> {
-    requireNonEmpty('draftExternalId', draftExternalId);
-    requireNonEmpty('idemKey', idemKey);
-    requireUid(draftExternalId);
-
     // Three steps, and only the first two can fail the send. The draft is
     // read on one connection and sent over SMTP with no IMAP connection open.
     // Marking it seen then opens a connection of its own. A connection that
     // dropped while the draft was marked would otherwise report a send the
     // customer already received as failed, and SMTP has no read-back to
     // correct that, so the relay would escalate it as an unknown delivery.
-    const source = await this.withImap((client) =>
-      readDraftSource(
-        client,
-        this.config.draftsMailbox,
-        draftExternalId,
-        'the draft could not be read, so no SMTP send was attempted',
-      ),
-    );
-    // Permanent, as the FreeScout adapter says of a missing draft: a retry
-    // finds the same absence.
-    if (source === null) {
-      throw new PermanentEgressError(
-        `no draft with UID '${draftExternalId}' in '${this.config.draftsMailbox}'`,
-      );
-    }
-    const parsed = normalizeMime(source.toString());
-    if (parsed.toAddresses.length === 0) {
-      throw new PermanentEgressError(`draft '${draftExternalId}' has no To address to send to`);
-    }
+    const { source, parsed } = await this.draftToSend(draftExternalId, idemKey);
 
     // The same three bounds the IMAP client gets, and for a sharper reason
     // than symmetry: a send runs inside the relay's transaction, so a server
@@ -813,6 +792,64 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
     const externalId: string =
       parsed.messageId ?? info.messageId ?? draftExternalId;
     return { externalId };
+  }
+
+  /**
+   * The first step of a send: the draft, read and checked before SMTP sees
+   * anything (issue #159, DEC-30).
+   *
+   * A fault here throws `NothingSentError` only when this attempt sent nothing.
+   * A permanent one also says that no attempt, by this relay or from a mail
+   * client, can have reached the customer:
+   *
+   * - an argument no retry can change, and a draft with no To address, are
+   *   permanent. Nobody could have sent such a draft.
+   * - a dropped connection, a timeout, a throttle and a refusal that asks for
+   *   a later try are transient, and the relay retries them.
+   *
+   * A refusal from the server proves nothing about an earlier attempt: a
+   * refused login, a draft or Drafts mailbox that is gone, a refused FETCH. A
+   * person can send the draft from a mail client, which moves it out of
+   * Drafts, and a relay that stopped between its send and its status write
+   * leaves a pending record behind a reply that went out. Those faults pass
+   * through as plain errors, and DEC-30 escalates them as an unknown delivery.
+   *
+   * A fault of the SMTP step never comes through here. Once that step starts,
+   * nothing can say what reached the customer.
+   */
+  private async draftToSend(
+    draftExternalId: string,
+    idemKey: string,
+  ): Promise<{ readonly source: Buffer; readonly parsed: ReturnType<typeof normalizeMime> }> {
+    const nothingSent = (error: unknown, permanent: boolean): NothingSentError =>
+      new NothingSentError(`no SMTP send was attempted: ${errorMessage(error)}`, { permanent, cause: error });
+    try {
+      requireNonEmpty('draftExternalId', draftExternalId);
+      requireNonEmpty('idemKey', idemKey);
+      requireUid(draftExternalId);
+    } catch (error) {
+      throw nothingSent(error, true);
+    }
+    let source: Buffer | null;
+    try {
+      source = await this.withImap((client) =>
+        readDraftSource(client, this.config.draftsMailbox, draftExternalId, 'the draft could not be read'),
+      );
+    } catch (error) {
+      throw draftReadFault(error, this.config.draftsMailbox, nothingSent);
+    }
+    // Permanent, as the FreeScout adapter says of a missing draft: a retry
+    // finds the same absence.
+    if (source === null) {
+      throw new PermanentEgressError(
+        `no draft with UID '${draftExternalId}' in '${this.config.draftsMailbox}'`,
+      );
+    }
+    const parsed = normalizeMime(source.toString());
+    if (parsed.toAddresses.length === 0) {
+      throw nothingSent(new PermanentEgressError(`draft '${draftExternalId}' has no To address to send to`), true);
+    }
+    return { source, parsed };
   }
 
   /**
@@ -903,6 +940,15 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
     work.catch(() => undefined);
     try {
       return await Promise.race([work, failure]);
+    } catch (error) {
+      // imapflow keeps the server's goodbye on the client, not on every error
+      // it raises after one. A login failure after a goodbye carries no code,
+      // and reads as a refusal without it (issue #159).
+      const goodbye = (client as unknown as { byeReason?: unknown }).byeReason;
+      if (typeof error === 'object' && error !== null && typeof goodbye === 'string') {
+        (error as { serverGoodbye?: string }).serverGoodbye ??= goodbye;
+      }
+      throw error;
     } finally {
       // The operation's answer is already in hand, so the logout gets a short
       // grace and the connection is closed when it runs out. Nothing runs on

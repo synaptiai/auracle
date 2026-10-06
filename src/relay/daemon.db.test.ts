@@ -4,6 +4,7 @@
 // skipped when it is down; the scan-failure case needs no database at all.
 import { randomUUID } from 'node:crypto';
 
+import { failingConnects } from '../test-support/failing-pool.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -344,6 +345,49 @@ describe('relay daemon loop', () => {
     expect(adapter.sendCalls).toHaveLength(2);
     // The structured log shows both outcomes of section 4.4 in order.
     expect(outcomes).toEqual(['left_pending_retry', 'sent']);
+  });
+
+  // DEC-30: a send that failed, with an escalation the ledger then refused.
+  // The record is still pending, so the next scan must write the escalation
+  // and never send the record a second time.
+  it('writes an escalation the ledger refused on a later scan, and sends once', async () => {
+    const key = 'idem:an-owed-escalation';
+    await seedPending('T-' + randomUUID().slice(0, 8), key);
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: false,
+        supportsReadBack: false,
+        supportsDraftState: false,
+        supportsStructuredFields: false,
+        supportsThreading: false,
+        supportsLedgerReply: false,
+      }),
+      async () => {
+        throw new Error('connection lost mid-send');
+      },
+      async () => {
+        throw new Error('read-back must not run without supportsReadBack');
+      },
+    );
+    // The send's transaction takes the first connection, and the escalation
+    // the second. Only the second fails.
+    const flaky = failingConnects(pool, [2]);
+
+    const logs: RelayLogEntry[] = [];
+    daemon = startRelayDaemon({ pool: flaky, adapter, intervalMs: 20, logger: (e) => logs.push(e) });
+    await vi.waitFor(async () => expect(await outboxStatus(key)).toBe('delivery_unknown'), {
+      timeout: 2_000,
+      interval: 10,
+    });
+    await daemon.stop();
+
+    expect(adapter.sendCalls).toHaveLength(1);
+    expect(await runState(key)).toBe('escalated');
+    const relevant = logs.filter((e) => e.event === 'record_failed' || e.event === 'record_relayed');
+    expect(relevant.map((e) => (e.event === 'record_relayed' ? e.outcome : e.event))).toEqual([
+      'record_failed',
+      'delivery_unknown_escalated',
+    ]);
   });
 
   afterAll(async () => {

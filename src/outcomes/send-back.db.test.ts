@@ -396,15 +396,18 @@ describe('DEC-49: a case a reviewer sends back', () => {
     });
   }
 
-  it('leaves the turn open for a malformed record, which the relay will never send', async () => {
-    const ticketId = `T-${randomUUID().slice(0, 8)}`;
-    const { runId } = await parkOnTurnOne(ticketId);
-    await recordOnTurn(runId, 'malformed');
+  // Neither record was ever sent, and the relay will never send it.
+  for (const status of ['malformed', 'not_sent'] as const) {
+    it(`leaves the turn open for a ${status} record, which the relay will never send`, async () => {
+      const ticketId = `T-${randomUUID().slice(0, 8)}`;
+      const { runId } = await parkOnTurnOne(ticketId);
+      await recordOnTurn(runId, status);
 
-    const outcome = await sendBackRun(pool, runId, { note: NOTE, ledgerReply: true });
+      const outcome = await sendBackRun(pool, runId, { note: NOTE, ledgerReply: true });
 
-    expect(outcome).toEqual({ outcome: 'sent_back' });
-  });
+      expect(outcome).toEqual({ outcome: 'sent_back' });
+    });
+  }
 
   it('refuses a run that is not waiting for a person, and names its state', async () => {
     const ticketId = `T-${randomUUID().slice(0, 8)}`;

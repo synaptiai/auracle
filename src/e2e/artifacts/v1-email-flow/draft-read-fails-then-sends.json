@@ -1,0 +1,340 @@
+{
+  "artifact": "v1-email-flow/draft-read-fails-then-sends",
+  "inputs": {
+    "broken": "imap",
+    "capabilities": {
+      "supportsDraftState": true,
+      "supportsIdempotencyKey": false,
+      "supportsLedgerReply": false,
+      "supportsReadBack": false,
+      "supportsStructuredFields": false,
+      "supportsThreading": true
+    },
+    "document": {
+      "body": "We are sorry about the broken tiles. We ship a replacement today.",
+      "docId": "d1",
+      "kind": "document",
+      "owner": "synthetic-owner",
+      "reviewBy": "2999-01-01",
+      "title": "Broken shipments",
+      "vector": {
+        "numbers": 1536,
+        "sha256": "d260b1dd9db38b1c215e297a052ad58df1dfa5b1570bc5d88d007fb9a0132355"
+      }
+    },
+    "inbound": [
+      {
+        "from": "Dana Doe <dana.doe@example.test>",
+        "messageId": "<order-4471-damaged@example.test>",
+        "subject": "Order 4471 arrived damaged",
+        "text": "The box arrived with a crushed corner. Two tiles are broken.",
+        "to": "support@acme.example"
+      }
+    ],
+    "limits": {
+      "deadlineAfterMs": 60000,
+      "maxCostMicros": 100000000,
+      "maxSteps": 50
+    },
+    "pins": {
+      "modelVer": "e2e-email-model",
+      "promptVer": "e2e-email-prompt"
+    },
+    "refused": {
+      "host": "127.0.0.1",
+      "port": 1
+    },
+    "script": [
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "text": "complaint_resolution"
+      },
+      {
+        "vectors": [
+          {
+            "numbers": 1536,
+            "sha256": "d260b1dd9db38b1c215e297a052ad58df1dfa5b1570bc5d88d007fb9a0132355"
+          }
+        ]
+      },
+      {
+        "text": "[doc:d1] We are sorry about the broken tiles. We ship a replacement today."
+      },
+      {
+        "text": "VERDICT: SUPPORTED"
+      }
+    ],
+    "taxonomy": {
+      "intents": [
+        {
+          "id": "complaint_resolution",
+          "label": "Complaint resolution",
+          "risk_tier": "low"
+        },
+        {
+          "id": "other",
+          "label": "Everything else",
+          "risk_tier": "medium"
+        }
+      ]
+    },
+    "ticket": {
+      "actionClass": "customer_reply",
+      "actionPayload": {
+        "summary": "replacement shipment answer"
+      },
+      "delivery": "at_least_once",
+      "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+      "epoch": "1",
+      "isCustomerVisible": true,
+      "ticketId": "order-4471-damaged@example.test",
+      "ticketText": "The box arrived with a crushed corner. Two tiles are broken."
+    }
+  },
+  "observed": {
+    "approval": {
+      "idemKey": "<idem:1>",
+      "outcome": "approved"
+    },
+    "drafts": [
+      {
+        "bodyText": "We are sorry about the broken tiles. We ship a replacement today.",
+        "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+        "from": "support@acme.example",
+        "idemKey": "customer_reply:park:order-4471-damaged@example.test:95594c193ee4c454e766d09cc4baa1be369f6f75e88a596bd466d10058f8f6a2",
+        "inReplyTo": "order-4471-damaged@example.test",
+        "references": [
+          "order-4471-damaged@example.test"
+        ],
+        "subject": "Re: Order 4471 arrived damaged",
+        "to": [
+          "dana.doe@example.test"
+        ],
+        "uid": "<uid:1>"
+      }
+    ],
+    "idemKeysFromActionSemantics": [
+      true
+    ],
+    "inboxes": {
+      "dana.doe@example.test": [
+        {
+          "bodyText": "We are sorry about the broken tiles. We ship a replacement today.",
+          "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+          "from": "support@acme.example",
+          "idemKey": "customer_reply:park:order-4471-damaged@example.test:95594c193ee4c454e766d09cc4baa1be369f6f75e88a596bd466d10058f8f6a2",
+          "inReplyTo": "order-4471-damaged@example.test",
+          "references": [
+            "order-4471-damaged@example.test"
+          ],
+          "subject": "Re: Order 4471 arrived damaged",
+          "to": [
+            "dana.doe@example.test"
+          ]
+        }
+      ]
+    },
+    "ledger": {
+      "gateRecord": {
+        "gate_at": "<time>",
+        "intent_id": "complaint_resolution",
+        "product": null,
+        "reason": "no_idempotency",
+        "run_created_at": "<time>",
+        "run_id": "<uuid:1>",
+        "thresholds": {
+          "agreement": 0.6,
+          "groundednessBlock": 0.7,
+          "groundednessReview": 0.8
+        },
+        "unreadable": 0
+      },
+      "journal": [
+        {
+          "cost_micros": 90000,
+          "model_ver": "e2e-email-model",
+          "prompt_ver": "e2e-email-prompt",
+          "result": {
+            "agreement": 1,
+            "intentId": "complaint_resolution"
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "classify"
+        },
+        {
+          "cost_micros": 100000,
+          "model_ver": "e2e-email-model",
+          "prompt_ver": "e2e-email-prompt",
+          "result": {
+            "abstained": false,
+            "citedBodies": {
+              "d1": "We are sorry about the broken tiles. We ship a replacement today."
+            },
+            "claimCount": 1,
+            "provider": "stub",
+            "sentences": [
+              {
+                "docId": "d1",
+                "text": "We are sorry about the broken tiles. We ship a replacement today."
+              }
+            ],
+            "staleDocumentIds": []
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "compose"
+        },
+        {
+          "cost_micros": 110000,
+          "model_ver": "e2e-email-model",
+          "prompt_ver": "e2e-email-prompt",
+          "result": {
+            "claimVerdicts": [
+              {
+                "claimIndex": 0,
+                "supported": true
+              }
+            ],
+            "decision": "gated",
+            "groundedness": 1,
+            "reason": "no_idempotency",
+            "riskTier": "low",
+            "thresholds": {
+              "agreement": 0.6,
+              "groundednessBlock": 0.7,
+              "groundednessReview": 0.8
+            }
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "gate"
+        },
+        {
+          "cost_micros": 110000,
+          "model_ver": "e2e-email-model",
+          "prompt_ver": "e2e-email-prompt",
+          "result": {
+            "actionClass": "customer_reply",
+            "body": "We are sorry about the broken tiles. We ship a replacement today.",
+            "delivery": "at_least_once",
+            "disclosure": "This reply was drafted by an automated assistant and approved by a person.",
+            "draftExternalId": "<uid:1>",
+            "provenance": {
+              "generatedAt": "<time>",
+              "generatedBy": "auracle",
+              "modelId": "e2e-email-model",
+              "promptVer": "e2e-email-prompt"
+            }
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "park"
+        },
+        {
+          "cost_micros": 90000,
+          "model_ver": "e2e-email-model",
+          "prompt_ver": "e2e-email-prompt",
+          "result": {
+            "docIds": [
+              "d1"
+            ],
+            "documents": [
+              {
+                "bodyHash": "466d46be103b8fe45ac5b2b7904445f7048caabc714d46bfd45d518b4ea7c7fb",
+                "docId": "d1",
+                "owner": "synthetic-owner",
+                "reviewBy": "2999-01-01",
+                "title": "Broken shipments"
+              }
+            ],
+            "embed_model_ver": "e2e-email-model"
+          },
+          "run_id": "<uuid:1>",
+          "status": "done",
+          "step_id": "retrieve"
+        }
+      ],
+      "outbox": [
+        {
+          "action_class": "customer_reply",
+          "delivery": "at_least_once",
+          "epoch": "1",
+          "idem_key": "<idem:1>",
+          "not_before": null,
+          "payload": {
+            "draftExternalId": "<uid:1>"
+          },
+          "reply": null,
+          "run_id": "<uuid:1>",
+          "status": "sent",
+          "step_id": "approve"
+        }
+      ],
+      "run": {
+        "approval_edit_distance": null,
+        "approved_by": "unattributed",
+        "approved_by_source": "none",
+        "attempt": 1,
+        "conversation_id": null,
+        "cost_micros": 110000,
+        "created_at": "<time>",
+        "deadline_at": "<time>",
+        "enqueued_at": null,
+        "epoch": "1",
+        "finished_at": "<time>",
+        "model_ver": "e2e-email-model",
+        "partition": 4,
+        "product": null,
+        "prompt_ver": "e2e-email-prompt",
+        "run_id": "<uuid:1>",
+        "send_back_note": null,
+        "sent_back_at": null,
+        "snoozed_until": null,
+        "state": "resolved",
+        "steps_used": 5,
+        "ticket_id": "order-4471-damaged@example.test",
+        "turn_number": null
+      }
+    },
+    "scans": {
+      "failed": [
+        {
+          "idemKey": "<idem:1>",
+          "outcome": "left_pending_retry",
+          "sendError": "no SMTP send was attempted: connect ECONNREFUSED 127.0.0.1:1"
+        }
+      ],
+      "sent": [
+        {
+          "idemKey": "<idem:1>",
+          "outcome": "sent"
+        }
+      ]
+    }
+  },
+  "seed": null
+}

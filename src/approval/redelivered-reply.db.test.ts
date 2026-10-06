@@ -1168,14 +1168,14 @@ describe('a message redelivered on a turn that is answered, or about to be', () 
     expect(await supersedeRecord(reply.runId)).toBeNull();
   });
 
-  it("parks again when the turn's only record was refused as malformed", async () => {
+  it.each(['malformed', 'not_sent'])("parks again when the turn's only record was refused as %s", async (status) => {
     const ticketId = `T-${randomUUID().slice(0, 8)}`;
     const egress = new NewDraftEachPark(ticketOf(ticketId));
     const d = deps(egress, NO_IDEMPOTENCY);
     await deliver(d, ticketId);
     const [first] = await runsOfTurn(ticketId);
     expect(await approveRun(pool, first!.runId)).toMatchObject({ outcome: 'approved' });
-    await pool.query("UPDATE outbox SET status = 'malformed' WHERE run_id = $1", [first!.runId]);
+    await pool.query('UPDATE outbox SET status = $2 WHERE run_id = $1', [first!.runId, status]);
     await deliver(d, ticketId);
     const second = (await runsOfTurn(ticketId))[1]!;
     expect(second.state).toBe('awaiting_approval');

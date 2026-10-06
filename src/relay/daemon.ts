@@ -18,8 +18,8 @@
 import type { Pool } from 'pg';
 
 import type { EgressAdapter } from '../adapters/types.js';
-import type { RelayResult } from './relay.js';
-import { pendingRows, relayOne } from './relay.js';
+import type { OwedEscalations, RelayResult } from './relay.js';
+import { pendingRows, pruneOwed, relayOne } from './relay.js';
 import { errorMessage } from '../errors.js';
 import { logLine } from '../log/line.js';
 
@@ -68,6 +68,9 @@ export function startRelayDaemon(options: RelayDaemonOptions): RelayDaemon {
 
   let stopped = false;
   let scanning = false;
+  // Escalations a failed ledger write left unrecorded. The next scan writes
+  // them instead of sending those records again (DEC-30).
+  const owed: OwedEscalations = new Map();
   let drained: (() => void) | null = null;
   // Wakes an in-flight inter-scan delay so `stop` never leaves a timer
   // behind holding the process open.
@@ -76,10 +79,12 @@ export function startRelayDaemon(options: RelayDaemonOptions): RelayDaemon {
   const now = (): string => new Date().toISOString();
 
   async function scanOnce(): Promise<void> {
-    for (const row of await pendingRows(pool)) {
+    const rows = await pendingRows(pool);
+    pruneOwed(owed, rows);
+    for (const row of rows) {
       if (stopped) break;
       try {
-        const result = await relayOne(pool, adapter, row);
+        const result = await relayOne(pool, adapter, row, owed);
         log({
           event: 'record_relayed',
           at: now(),

@@ -4654,7 +4654,8 @@ function absenceSays(table: Readonly<Record<string, string>>, code: string): str
  * is read across every run of the turn, so a superseded retry sits on a row an
  * earlier run sent, and a run the relay escalated holds an action nobody can
  * confirm. Saying nothing went out would contradict the chip beside it. Only a
- * malformed row proves the relay sent nothing, so it keeps the sentence.
+ * malformed or not_sent row proves the relay sent nothing, so it keeps the
+ * sentence.
  *
  * The row on a turn with no reply text is an action this page cannot call a
  * customer reply: an internal write, or one a person approved (DEC-12,
@@ -4662,7 +4663,12 @@ function absenceSays(table: Readonly<Record<string, string>>, code: string): str
  */
 function replyAbsenceSays(turn: TurnView): string {
   const code = turn.replyAbsence ?? 'not_retained';
-  if (code !== 'no_reply_sent' || turn.outboxStatus === null || turn.outboxStatus === 'malformed') {
+  if (
+    code !== 'no_reply_sent'
+    || turn.outboxStatus === null
+    || turn.outboxStatus === 'malformed'
+    || turn.outboxStatus === 'not_sent'
+  ) {
     return absenceSays(REPLY_ABSENCE, code);
   }
   switch (turn.outboxStatus) {
@@ -4798,9 +4804,9 @@ function delivered(word: string, outboxStatus: OutboxStatus | null): { readonly 
  * recorded sending it. An absent reply is headed as the reply, because the
  * sentence below says whether anything was sent.
  *
- * Only a malformed row proves nothing went out. Every other status short of
- * `sent` may follow a send that landed: the relay leaves a row pending after a
- * send that timed out, and fences it on a later scan once the epoch moves on
+ * Only a malformed or not_sent row proves nothing went out. Every other status
+ * short of `sent` may follow a send that landed: the relay leaves a row pending
+ * after a send that timed out, and fences it on a later scan once the epoch moves on
  * (DEC-28). A heading that said "never sent" over those would invite a second
  * reply to a customer who already has one.
  */
@@ -4821,6 +4827,10 @@ function replyHeading(turn: TurnView): string {
     // ledger knows nothing went out. Nothing rewrites a payload, so this holds
     // unless a relay deploy tightens the payload check after a send timed out.
     case 'malformed': return 'approved, never sent';
+    // The fault recurs on every attempt, and no attempt can have reached the
+    // customer through it: a draft with nobody to send to, or a bad id
+    // (issue #159). The relay stopped retrying.
+    case 'not_sent': return 'approved, never sent';
     case 'pending': return 'approved, send pending';
     case null: return 'a person approved this reply';
     // `fenced` and `delivery_unknown`. The core refuses any status outside

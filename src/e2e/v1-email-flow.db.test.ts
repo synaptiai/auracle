@@ -152,22 +152,29 @@ function replyInput(epoch: bigint): CoordinateInput {
   };
 }
 
-function egressAdapter(): SmtpEgressAdapter {
+/**
+ * Port 1 on the loopback refuses at once. A case points one protocol at it to
+ * fail that step of a send for real, with the other step on the real server.
+ */
+const REFUSED = { host: '127.0.0.1', port: 1 } as const;
+
+/** A Drafts mailbox the support account does not have, as after a rename. */
+const RENAMED_DRAFTS = 'Drafts-renamed';
+
+function egressAdapter(broken?: 'imap' | 'smtp' | 'drafts'): SmtpEgressAdapter {
   return new SmtpEgressAdapter({
     imap: {
-      host: greenmail.host,
-      port: greenmail.imapPort,
+      ...(broken === 'imap' ? REFUSED : { host: greenmail.host, port: greenmail.imapPort }),
       secure: false,
       user: SUPPORT_USER,
       pass: 'synthetic-password',
     },
     smtp: {
-      host: greenmail.host,
-      port: greenmail.smtpPort,
+      ...(broken === 'smtp' ? REFUSED : { host: greenmail.host, port: greenmail.smtpPort }),
       secure: false,
     },
     fromAddress: SUPPORT_USER,
-    draftsMailbox: 'Drafts',
+    draftsMailbox: broken === 'drafts' ? RENAMED_DRAFTS : 'Drafts',
   });
 }
 
@@ -593,20 +600,7 @@ describe('email duplex flow end to end', () => {
     artifact.vary(draftExternalId, 'uid', DRAFT_UID_KEYS);
 
     // The operator deleted the draft in the mail client.
-    const client = new ImapFlow({
-      host: greenmail.host,
-      port: greenmail.imapPort,
-      secure: false,
-      auth: { user: SUPPORT_USER, pass: 'synthetic-password' },
-      logger: false,
-    });
-    try {
-      await client.connect();
-      await client.mailboxOpen('Drafts');
-      expect(await client.messageDelete(draftExternalId, { uid: true })).toBe(true);
-    } finally {
-      await client.logout().catch(() => client.close());
-    }
+    await deleteDraft(draftExternalId);
 
     // Approving a missing draft would fabricate the distance, so the
     // call refuses and commits nothing.
@@ -622,6 +616,140 @@ describe('email duplex flow end to end', () => {
     // The artifact of this case (AGENTS.md, rule 3).
     await observeEndState(artifact, runId, []);
     artifact.observe('refusal', refusal);
+    artifact.finish();
+  }, 120_000);
+
+  // Issue #159. The draft read fails before SMTP sees anything, so the
+  // delivery state is known: nothing went out. DEC-30 escalates an unknown
+  // state, and this one is not, so the record waits for the next scan.
+  it('leaves the reply pending when the draft cannot be read, and the next scan sends it once', async () => {
+    const artifact = emailArtifact('draft-read-fails-then-sends', { refused: REFUSED, broken: 'imap' });
+    await seedInboundThread();
+    const { runId } = await parkReply();
+    const approval = await approveRun(pool, runId);
+    expect(approval.outcome).toBe('approved');
+    if (approval.outcome !== 'approved') return;
+
+    const failed = await relayPending(pool, egressAdapter('imap'));
+    expect(failed).toEqual([
+      {
+        idemKey: approval.idemKey,
+        outcome: 'left_pending_retry',
+        sendError: expect.stringMatching(/^no SMTP send was attempted: /),
+      },
+    ]);
+    expect(await outboxStatuses()).toEqual(['pending']);
+    expect(await runStateOf(runId)).not.toBe('escalated');
+    expect(await fetchInbox(CUSTOMER_ADDRESS)).toEqual([]);
+
+    // The read works again, and the reply goes out once.
+    const sent = await relayPending(pool, egressAdapter());
+    expect(sent).toEqual([{ idemKey: approval.idemKey, outcome: 'sent' }]);
+    expect(await outboxStatuses()).toEqual(['sent']);
+    await waitFor(async () => (await fetchInbox(CUSTOMER_ADDRESS)).length > 0, 'reply delivery');
+    expect(await fetchInbox(CUSTOMER_ADDRESS)).toHaveLength(1);
+    expect(await relayPending(pool, egressAdapter())).toEqual([]);
+
+    // The artifact of this case (AGENTS.md, rule 3).
+    await observeEndState(artifact, runId, [CUSTOMER_ADDRESS]);
+    artifact.observe('approval', approval);
+    artifact.observe('scans', { failed, sent });
+    artifact.finish();
+  }, 120_000);
+
+  // A draft that is gone may have gone out first: a person can send it from a
+  // mail client, which moves it out of Drafts. So it proves nothing about the
+  // customer, and the record escalates as an unknown delivery (DEC-30).
+  it('escalates a reply whose draft is gone as an unknown delivery, and sends nothing', async () => {
+    const artifact = emailArtifact('draft-gone-delivery-unknown');
+    await seedInboundThread();
+    const { runId, draftExternalId } = await parkReply();
+    artifact.vary(draftExternalId, 'uid', DRAFT_UID_KEYS);
+    const approval = await approveRun(pool, runId);
+    expect(approval.outcome).toBe('approved');
+    if (approval.outcome !== 'approved') return;
+    await deleteDraft(draftExternalId);
+
+    const results = await relayPending(pool, egressAdapter());
+    const gone = `no draft with UID '${draftExternalId}' in 'Drafts'`;
+    expect(results).toEqual([
+      { idemKey: approval.idemKey, outcome: 'delivery_unknown_escalated', sendError: gone },
+    ]);
+    // The cause quotes the UID, which varies with the server.
+    artifact.vary(gone, 'cause', ['sendError']);
+    artifact.vary(`delivery_unknown: ${gone}`, 'reason', ['reason']);
+    expect(await outboxStatuses()).toEqual(['delivery_unknown']);
+    expect(await runStateOf(runId)).toBe('escalated');
+    expect(await fetchInbox(CUSTOMER_ADDRESS)).toEqual([]);
+    expect(await relayPending(pool, egressAdapter())).toEqual([]);
+
+    // The artifact of this case (AGENTS.md, rule 3).
+    await observeEndState(artifact, runId, [CUSTOMER_ADDRESS]);
+    artifact.observe('approval', approval);
+    artifact.observe('relay', results);
+    artifact.finish();
+  }, 120_000);
+
+  // A Drafts mailbox that is gone takes the draft with it, on the same terms.
+  // The relay reads a mailbox name the account does not have, as after a
+  // rename: GreenMail cannot delete a mailbox a session once selected.
+  it('escalates a reply whose Drafts mailbox is gone as an unknown delivery', async () => {
+    const artifact = emailArtifact('drafts-mailbox-gone-delivery-unknown', { relayDrafts: RENAMED_DRAFTS });
+    await seedInboundThread();
+    const { runId, draftExternalId } = await parkReply();
+    artifact.vary(draftExternalId, 'uid', DRAFT_UID_KEYS);
+    const approval = await approveRun(pool, runId);
+    expect(approval.outcome).toBe('approved');
+    if (approval.outcome !== 'approved') return;
+
+    const results = await relayPending(pool, egressAdapter('drafts'));
+    expect(results).toEqual([
+      {
+        idemKey: approval.idemKey,
+        outcome: 'delivery_unknown_escalated',
+        sendError: `the mailbox '${RENAMED_DRAFTS}' does not exist`,
+      },
+    ]);
+    expect(await outboxStatuses()).toEqual(['delivery_unknown']);
+    expect(await runStateOf(runId)).toBe('escalated');
+    expect(await fetchInbox(CUSTOMER_ADDRESS)).toEqual([]);
+
+    // The artifact of this case (AGENTS.md, rule 3). The draft is still in
+    // the mailbox the relay could not find.
+    await observeEndState(artifact, runId, [CUSTOMER_ADDRESS]);
+    artifact.observe('approval', approval);
+    artifact.observe('relay', results);
+    artifact.finish();
+  }, 120_000);
+
+  // The other half of DEC-30. Once the SMTP step starts, SMTP has no
+  // read-back to say what reached the customer, so the record escalates.
+  it('still escalates a failed SMTP send as an unknown delivery', async () => {
+    const artifact = emailArtifact('smtp-fails-delivery-unknown', { refused: REFUSED, broken: 'smtp' });
+    await seedInboundThread();
+    const { runId } = await parkReply();
+    const approval = await approveRun(pool, runId);
+    expect(approval.outcome).toBe('approved');
+    if (approval.outcome !== 'approved') return;
+
+    const results = await relayPending(pool, egressAdapter('smtp'));
+    expect(results).toEqual([
+      {
+        idemKey: approval.idemKey,
+        outcome: 'delivery_unknown_escalated',
+        sendError: expect.stringContaining('ECONNREFUSED'),
+      },
+    ]);
+    expect(results[0]!.sendError).not.toMatch(/no SMTP send was attempted/);
+    expect(await outboxStatuses()).toEqual(['delivery_unknown']);
+    expect(await runStateOf(runId)).toBe('escalated');
+    expect(await fetchInbox(CUSTOMER_ADDRESS)).toEqual([]);
+    expect(await relayPending(pool, egressAdapter())).toEqual([]);
+
+    // The artifact of this case (AGENTS.md, rule 3).
+    await observeEndState(artifact, runId, [CUSTOMER_ADDRESS]);
+    artifact.observe('approval', approval);
+    artifact.observe('relay', results);
     artifact.finish();
   }, 120_000);
 });
@@ -660,4 +788,27 @@ async function parkReply(): Promise<{
     throw new Error(`expected awaiting_approval, got ${result.outcome}`);
   }
   return { runId: result.runId, draftExternalId: result.draftExternalId!, egress };
+}
+
+async function runStateOf(runId: string): Promise<string> {
+  const rows = await pool.query<{ state: string }>('SELECT state FROM run WHERE run_id = $1', [runId]);
+  return rows.rows[0]!.state;
+}
+
+/** Deletes one parked draft, as an operator would in a mail client. */
+async function deleteDraft(draftExternalId: string): Promise<void> {
+  const client = new ImapFlow({
+    host: greenmail.host,
+    port: greenmail.imapPort,
+    secure: false,
+    auth: { user: SUPPORT_USER, pass: 'synthetic-password' },
+    logger: false,
+  });
+  try {
+    await client.connect();
+    await client.mailboxOpen('Drafts');
+    expect(await client.messageDelete(draftExternalId, { uid: true })).toBe(true);
+  } finally {
+    await client.logout().catch(() => client.close());
+  }
 }

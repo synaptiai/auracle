@@ -121,9 +121,10 @@ export interface SavedReply {
  * held for the DEC-51 window — and it will go out. A new attempt beside any of
  * them would put a second reply on one turn.
  *
- * Only `malformed` leaves the turn open: the relay escalated that record and
- * will never send it. A reviewer who wants a new attempt over a held send
- * undoes the approval first; the undo deletes the pending record.
+ * Only `malformed` and `not_sent` leave the turn open: the relay escalated
+ * that record and sent nothing, and it will never send it. A reviewer who
+ * wants a new attempt over a held send undoes the approval first; the undo
+ * deletes the pending record.
  *
  * One list, read by the send-back, the consumer's scan and the approval, so
  * the rules that refuse a request, drop one and refuse a second reply cannot

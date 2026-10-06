@@ -250,13 +250,13 @@ export interface ParkRecord {
    * does return.
    *
    * That last sentence is true of the coordinator's own escalations and not
-   * of every value under the key. The relay writes two interpolated strings
-   * into it:
-   * `delivery_unknown: ${sendFailure}` (`src/relay/relay.ts:345`) and
-   * `malformed_payload: ${errorText(error)}` (`src/relay/relay.ts:262`). The
-   * first quotes whatever the adapter threw from `sendDraft`, and an SMTP
+   * of every value under the key. The relay writes four interpolated strings
+   * into it, all in `src/relay/relay.ts`:
+   * `delivery_unknown: ${sendFailure}`, `not_sent: ${sendFailure}`,
+   * `malformed_payload: ${errorText(error)}` and `fenced_stale_epoch: ...`. The
+   * first two quote whatever the adapter threw from `sendDraft`, and an SMTP
    * rejection routinely quotes the recipient. The consumer's
-   * `intake_abandoned after N attempts: ${reason}` is a third.
+   * `intake_abandoned after N attempts: ${reason}` is another.
    *
    * So the key is not a closed vocabulary and a reader must not treat it as
    * one. This reader trims the interpolated tail itself, through

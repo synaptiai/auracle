@@ -32,7 +32,7 @@ import {
 import type { FetchMessageObject, MailboxObject } from 'imapflow';
 
 import type { ImapReadClient } from './imap-smtp.js';
-import { AdapterCapabilityError, PermanentEgressError } from './types.js';
+import { AdapterCapabilityError, NothingSentError, PermanentEgressError } from './types.js';
 
 const adapter = new ImapSmtpAdapter();
 
@@ -114,7 +114,13 @@ describe('SmtpEgressAdapter declares what it cannot do (DEC-06)', () => {
 const PARKED_SOURCE = 'From: support@example.invalid\r\nTo: customer@example.invalid\r\n'
   + 'Message-ID: <draft-7@example.invalid>\r\nSubject: Re: synthetic\r\n\r\nYour refund is on its way.\r\n';
 
-type Reaction = 'answer' | 'reset' | 'stall' | 'nothing' | 'refuse' | 'other-uid' | 'bodiless';
+/** The same draft with nobody to send it to. */
+const UNADDRESSED_SOURCE = 'From: support@example.invalid\r\n'
+  + 'Message-ID: <draft-7@example.invalid>\r\nSubject: Re: synthetic\r\n\r\nYour refund is on its way.\r\n';
+
+type Reaction =
+  | 'answer' | 'reset' | 'stall' | 'nothing' | 'refuse' | 'other-uid' | 'bodiless' | 'unaddressed'
+  | 'bad-credentials' | 'try-later' | 'throttled' | 'select-later' | 'long-refusal';
 
 /**
  * An IMAP server that speaks just enough of the protocol for ImapFlow, holds
@@ -169,6 +175,33 @@ async function fakeImap(reactions: Readonly<Record<string, Reaction>> = {}): Pro
         if (reaction === 'other-uid') {
           // An unsolicited flag update for another message, then the draft.
           sock.write(`* 2 FETCH (UID 9 FLAGS (\\Seen))\r\n* 1 FETCH (UID 7 BODY[] {${Buffer.byteLength(PARKED_SOURCE)}}\r\n${PARKED_SOURCE})\r\n${tag} OK fetched\r\n`);
+          continue;
+        }
+        // RFC 5530 response codes: a refusal of the credentials, and one that
+        // asks the client to try again later.
+        if (reaction === 'bad-credentials') {
+          sock.write(`${tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n`);
+          continue;
+        }
+        if (reaction === 'try-later') {
+          sock.write(`${tag} NO [UNAVAILABLE] Temporary authentication failure\r\n`);
+          continue;
+        }
+        // Microsoft 365's throttle reply, which imapflow marks ETHROTTLE.
+        if (reaction === 'throttled') {
+          sock.write(`${tag} BAD Request is throttled. Suggested Backoff Time: 20 milliseconds\r\n`);
+          continue;
+        }
+        if (reaction === 'select-later') {
+          sock.write(`${tag} NO [UNAVAILABLE] backend down, try later\r\n`);
+          continue;
+        }
+        if (reaction === 'long-refusal') {
+          sock.write(`${tag} NO ${'x'.repeat(300)}\r\n`);
+          continue;
+        }
+        if (reaction === 'unaddressed') {
+          sock.write(`* 1 FETCH (UID 7 BODY[] {${Buffer.byteLength(UNADDRESSED_SOURCE)}}\r\n${UNADDRESSED_SOURCE})\r\n${tag} OK fetched\r\n`);
           continue;
         }
         if (reaction === 'bodiless') {
@@ -367,14 +400,17 @@ describe('the IMAP connection a draft read opens (issue #102)', () => {
     }
   });
 
-  // A draft that is not there, or that names nobody to send to, never sends
-  // on a retry. The FreeScout adapter says the same of a missing draft.
-  it('refuses a missing draft as a permanent failure', async () => {
+  // A draft that is not there never sends on a retry. The FreeScout adapter
+  // says the same of a missing draft. It does not prove that nothing reached
+  // the customer: a person can send the draft from a mail client, which moves
+  // it out of Drafts. So it is not reported as a send that sent nothing (#159).
+  it('refuses a missing draft as permanent, and never as a send that sent nothing', async () => {
     const { server, port } = await fakeImap({ 'UID FETCH': 'nothing' });
     try {
       const failure = await egressOn(port, 2_000).sendDraft('7', 'refund:41:v1').catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(PermanentEgressError);
-      expect((failure as Error).message).toContain("no draft with UID '7'");
+      expect(failure).not.toBeInstanceOf(NothingSentError);
+      expect((failure as Error).message).toBe("no draft with UID '7' in 'Drafts'");
     } finally {
       server.close();
     }
@@ -508,13 +544,194 @@ describe('the IMAP connection a draft read opens (issue #102)', () => {
       const error = await egressOn(imap.port, 10_000, smtp.port)
         .sendDraft('7', 'refund:41:v1')
         .catch((caught: unknown) => caught);
-      expect(error).toBeInstanceOf(Error);
-      expect(error).not.toBeInstanceOf(PermanentEgressError);
-      expect((error as Error).message).toMatch(/without its body; the draft could not be read, so no SMTP send was attempted/);
+      // Transient and unsent: the relay leaves the record for the next scan.
+      expect(error).toBeInstanceOf(NothingSentError);
+      expect((error as NothingSentError).permanent).toBe(false);
+      expect((error as Error).message).toMatch(/^no SMTP send was attempted: .*without its body; the draft could not be read$/);
       expect(smtp.accepted()).toBe(0);
     } finally {
       imap.server.close();
       smtp.server.close();
+    }
+  });
+
+  // Issue #159. A draft that names nobody could never have been sent, by this
+  // relay or from a mail client, so nothing reached a recipient on any attempt.
+  it('reports a draft with no To address as a permanent send that sent nothing', async () => {
+    const imap = await fakeImap({ 'UID FETCH': 'unaddressed' });
+    const smtp = await fakeSmtp();
+    try {
+      const error = await egressOn(imap.port, 10_000, smtp.port)
+        .sendDraft('7', 'refund:41:v1')
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(NothingSentError);
+      expect((error as NothingSentError).permanent).toBe(true);
+      expect((error as Error).message).toBe("no SMTP send was attempted: draft '7' has no To address to send to");
+      expect(smtp.accepted()).toBe(0);
+    } finally {
+      imap.server.close();
+      smtp.server.close();
+    }
+  });
+
+  // A refused login reads nothing, so it proves nothing about an earlier
+  // attempt: a relay that stopped after SMTP, or a person sending from a mail
+  // client, leaves no trace the relay can see. So it is a plain fault, and
+  // DEC-30 escalates it as an unknown delivery.
+  it('does not report a refused login as a send that sent nothing', async () => {
+    for (const reaction of ['bad-credentials', 'refuse'] as const) {
+      const imap = await fakeImap({ LOGIN: reaction, AUTHENTICATE: reaction });
+      const smtp = await fakeSmtp();
+      try {
+        const error = await egressOn(imap.port, 10_000, smtp.port)
+          .sendDraft('7', 'refund:41:v1')
+          .catch((caught: unknown) => caught);
+        expect(error, reaction).toBeInstanceOf(Error);
+        expect(error, reaction).not.toBeInstanceOf(NothingSentError);
+        expect((error as Error).message, reaction).toBe(
+          reaction === 'refuse'
+            ? 'the IMAP server refused the login: refused'
+            : 'the IMAP server refused the login: Invalid credentials',
+        );
+        expect(smtp.accepted(), reaction).toBe(0);
+      } finally {
+        imap.server.close();
+        smtp.server.close();
+      }
+    }
+  });
+
+  // RFC 5530: [UNAVAILABLE] asks the client to try again later, and nothing
+  // was read, so nothing was sent on this attempt. The record waits.
+  it('reports a login refused for now as a transient send that sent nothing', async () => {
+    const imap = await fakeImap({ LOGIN: 'try-later', AUTHENTICATE: 'try-later' });
+    const smtp = await fakeSmtp();
+    try {
+      const error = await egressOn(imap.port, 10_000, smtp.port)
+        .sendDraft('7', 'refund:41:v1')
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(NothingSentError);
+      expect((error as NothingSentError).permanent).toBe(false);
+      expect((error as Error).message).toBe(
+        'no SMTP send was attempted: the IMAP server refused the login for now: Temporary authentication failure',
+      );
+      expect(smtp.accepted()).toBe(0);
+    } finally {
+      imap.server.close();
+      smtp.server.close();
+    }
+  });
+
+  // A refusal that asks for a later try waits, whatever the command. A
+  // throttle, RFC 5530's UNAVAILABLE on SELECT, and a connection reset during
+  // LOGIN each read nothing and say nothing about the draft.
+  it('reports a throttle, a try-later and a reset as a transient send that sent nothing', async () => {
+    for (const reactions of [
+      { LOGIN: 'throttled', AUTHENTICATE: 'throttled' },
+      { SELECT: 'throttled' },
+      { SELECT: 'select-later' },
+      // imapflow sets no response code on a refused FETCH; the reply holds it.
+      { 'UID FETCH': 'select-later' },
+      { LOGIN: 'reset', AUTHENTICATE: 'reset' },
+    ] as const) {
+      const label = JSON.stringify(reactions);
+      const imap = await fakeImap(reactions);
+      const smtp = await fakeSmtp();
+      try {
+        const error = await egressOn(imap.port, 10_000, smtp.port)
+          .sendDraft('7', 'refund:41:v1')
+          .catch((caught: unknown) => caught);
+        expect(error, label).toBeInstanceOf(NothingSentError);
+        expect((error as NothingSentError).permanent, label).toBe(false);
+        expect(smtp.accepted(), label).toBe(0);
+      } finally {
+        imap.server.close();
+        smtp.server.close();
+      }
+    }
+  });
+
+  // A server that says goodbye between its greeting and LOGIN, as one that is
+  // shutting down does. imapflow then raises a login failure with no code, and
+  // nothing was read. It records the goodbye, and the adapter reads that.
+  it('reports a goodbye before the login as a transient send that sent nothing', async () => {
+    const closing = createServer((sock: Socket) => {
+      sock.on('error', () => undefined);
+      sock.write('* OK ready\r\n');
+      let buffered = '';
+      sock.on('data', (chunk) => {
+        buffered += chunk.toString();
+        let end: number;
+        while ((end = buffered.indexOf('\r\n')) !== -1) {
+          const [tag, verb] = buffered.slice(0, end).split(' ');
+          buffered = buffered.slice(end + 2);
+          if ((verb ?? '').toUpperCase() === 'CAPABILITY') {
+            sock.write(`* CAPABILITY IMAP4rev1\r\n* BYE server shutting down\r\n${tag} OK done\r\n`);
+          } else sock.write(`${tag} NO nope\r\n`);
+        }
+      });
+    });
+    await new Promise<void>((resolve) => closing.listen(0, '127.0.0.1', resolve));
+    const smtp = await fakeSmtp();
+    try {
+      const error = await egressOn((closing.address() as AddressInfo).port, 3_000, smtp.port)
+        .sendDraft('7', 'refund:41:v1')
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(NothingSentError);
+      expect((error as NothingSentError).permanent).toBe(false);
+      expect((error as Error).message).toBe(
+        'no SMTP send was attempted: the IMAP server closed the session: server shutting down',
+      );
+      expect(smtp.accepted()).toBe(0);
+    } finally {
+      closing.close();
+      smtp.server.close();
+    }
+  });
+
+  // The server's text reaches the journal and the console, so it is bounded.
+  it('bounds the server text a refusal carries', async () => {
+    const imap = await fakeImap({ SELECT: 'long-refusal', LIST: 'long-refusal' });
+    const smtp = await fakeSmtp();
+    try {
+      const error = await egressOn(imap.port, 10_000, smtp.port)
+        .sendDraft('7', 'refund:41:v1')
+        .catch((caught: unknown) => caught);
+      expect((error as Error).message).toBe(`the IMAP server refused the draft read: ${'x'.repeat(200)}…`);
+    } finally {
+      imap.server.close();
+      smtp.server.close();
+    }
+  });
+
+  // A Drafts mailbox the server refuses to open may be gone, and imapflow only
+  // says so when its own LIST answers. Either way the draft may have gone out
+  // first, so a refusal proves nothing. The end-to-end suite covers a mailbox
+  // that LIST shows is missing.
+  it('does not report a refused Drafts mailbox as a send that sent nothing', async () => {
+    const imap = await fakeImap({ SELECT: 'refuse', LIST: 'refuse' });
+    const smtp = await fakeSmtp();
+    try {
+      const error = await egressOn(imap.port, 10_000, smtp.port)
+        .sendDraft('7', 'refund:41:v1')
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(NothingSentError);
+      expect((error as Error).message).toBe('the IMAP server refused the draft read: refused');
+      expect(smtp.accepted()).toBe(0);
+    } finally {
+      imap.server.close();
+      smtp.server.close();
+    }
+  });
+
+  // An argument no retry can change. The caller sent nothing anywhere.
+  it('reports an invalid draft id or key as a permanent send that sent nothing', async () => {
+    const adapter = egressOn(1);
+    for (const [id, key] of [['42:1007', 'k'], ['7', ' '], ['', 'k']] as const) {
+      const error = await adapter.sendDraft(id, key).catch((caught: unknown) => caught);
+      expect(error, `${id} ${key}`).toBeInstanceOf(NothingSentError);
+      expect((error as NothingSentError).permanent, `${id} ${key}`).toBe(true);
     }
   });
 

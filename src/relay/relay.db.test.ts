@@ -4,11 +4,12 @@
 // relay -> terminal status exactly as production would.
 import { randomUUID } from 'node:crypto';
 
+import { beforeConnect, failingConnects } from '../test-support/failing-pool.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { AdapterCapabilityError } from '../adapters/types.js';
+import { AdapterCapabilityError, NothingSentError } from '../adapters/types.js';
 import type {
   AdapterCapabilities,
   DeliveryState,
@@ -19,7 +20,7 @@ import { HelpdeskAdapter } from '../adapters/helpdesk.js';
 import { dbUrl } from '../db/config.js';
 import { fencedInsert, type FencedOutboxInput, type FencedRunInput } from '../ledger/insert.js';
 import { COMPENSATION_ACTION_CLASS } from '../adapters/types.js';
-import { relayOne, relayPending } from './relay.js';
+import { owedKeyOf, pendingRows, relayOne, relayPending, type OwedEscalations } from './relay.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 
@@ -354,6 +355,315 @@ describe('section 4.4 outbox relay', () => {
     // relay, so no second refund can ever be paid by accident.
     await relayPending(pool, adapter);
     expect(adapter.sendCalls).toHaveLength(1);
+  });
+
+  // Issue #159. An adapter that proves nothing went out has a known delivery
+  // state, so DEC-30's matrix is not asked. At most once forbids a second
+  // delivery, and there was no first: the matrix would escalate this record,
+  // and a person would reconcile a reply the next scan can send.
+  it('leaves an at-most-once record pending when the adapter proves nothing was sent', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedPending(ticket, 10n, 'at_most_once');
+    let calls = 0;
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: false,
+        supportsReadBack: false,
+        supportsDraftState: false,
+        supportsStructuredFields: false,
+        supportsThreading: false,
+        supportsLedgerReply: false,
+      }),
+      async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new NothingSentError('the draft could not be read: connection refused', { permanent: false });
+        }
+        return { externalId: 'sent-on-the-second-scan' };
+      },
+      async () => {
+        throw new Error('read-back must not run without supportsReadBack');
+      },
+    );
+
+    expect(await relayPending(pool, adapter)).toEqual([
+      {
+        idemKey,
+        outcome: 'left_pending_retry',
+        sendError: 'the draft could not be read: connection refused',
+      },
+    ]);
+    expect(await outboxStatus(idemKey)).toBe('pending');
+    expect(await runState(idemKey)).toBe('queued');
+
+    // The next scan sends it, once.
+    expect(await relayPending(pool, adapter)).toEqual([{ idemKey, outcome: 'sent' }]);
+    expect(await outboxStatus(idemKey)).toBe('sent');
+    expect(adapter.sendCalls).toHaveLength(2);
+  });
+
+  /** What the mail adapter says of a draft with nobody to send it to. */
+  const UNADDRESSED = "no SMTP send was attempted: draft '7' has no To address to send to";
+
+  // A fault no retry clears stays out of the pending scan, or it would be
+  // retried on every scan forever. It is not an unknown delivery either, so it
+  // escalates under its own status. An adapter whose key makes every retry
+  // safe gets the same answer: the matrix would leave its record pending.
+  it.each([
+    ['no idempotency key', false],
+    ['an idempotency key', true],
+  ])('escalates a permanent failure that sent nothing as not_sent, on an adapter with %s', async (_label, keyed) => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedPending(ticket, 10n, 'at_least_once');
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: keyed,
+        supportsReadBack: false,
+        supportsDraftState: false,
+        supportsStructuredFields: false,
+        supportsThreading: false,
+        supportsLedgerReply: false,
+      }),
+      async () => {
+        throw new NothingSentError(UNADDRESSED, { permanent: true });
+      },
+      async () => {
+        throw new Error('read-back must not run without supportsReadBack');
+      },
+    );
+
+    expect(await relayPending(pool, adapter)).toEqual([
+      { idemKey, outcome: 'not_sent_escalated', sendError: UNADDRESSED },
+    ]);
+    expect(await outboxStatus(idemKey)).toBe('not_sent');
+    expect(await runState(idemKey)).toBe('escalated');
+    expect(await runFinishedAt(idemKey)).toBeInstanceOf(Date);
+    const { rows } = await pool.query(
+      `SELECT sj.result->>'reason' AS reason FROM step_journal sj
+        JOIN outbox o ON o.run_id = sj.run_id
+       WHERE o.idem_key = $1 AND sj.step_id = 'escalate'`,
+      [idemKey],
+    );
+    expect(rows[0]!.reason).toBe(`not_sent: ${UNADDRESSED}`);
+
+    // Terminal for the relay: a later scan finds nothing to send.
+    expect(await relayPending(pool, adapter)).toEqual([]);
+    expect(adapter.sendCalls).toHaveLength(1);
+  });
+
+  // The proof comes before the matrix, so the target is never read back for
+  // a send that never reached it.
+  it('never reads back a send the adapter proves sent nothing', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedPending(ticket, 10n, 'at_least_once');
+    const readBacks: string[] = [];
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: false,
+        supportsReadBack: true,
+        supportsDraftState: false,
+        supportsStructuredFields: false,
+        supportsThreading: false,
+        supportsLedgerReply: false,
+      }),
+      async () => {
+        throw new NothingSentError('the draft could not be read', { permanent: false });
+      },
+      async (ref) => {
+        readBacks.push(ref.idemKey);
+        return { state: 'not_found' };
+      },
+    );
+
+    expect(await relayPending(pool, adapter)).toEqual([
+      { idemKey, outcome: 'left_pending_retry', sendError: 'the draft could not be read' },
+    ]);
+    expect(readBacks).toEqual([]);
+  });
+
+  // DEC-30 holds when the escalation itself cannot be written. The record is
+  // still pending in the ledger, so a later scan would send it again: a blind
+  // retry after a send whose outcome nobody knows. The relay keeps the
+  // escalation it owes and writes it on a later scan instead of sending, however
+  // many writes fail first.
+  it.each([
+    ['an unknown delivery', new Error('connection lost mid-send'), 'delivery_unknown', 'delivery_unknown_escalated', 'the send had already failed with'],
+    ['a send that sent nothing', new NothingSentError(UNADDRESSED, { permanent: true }), 'not_sent', 'not_sent_escalated', 'the adapter had reported that nothing was sent'],
+  ] as const)('writes %s it could not record on a later scan, and never sends again', async (_label, thrown, status, outcome, said) => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedPending(ticket, 10n, 'at_most_once');
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: false,
+        supportsReadBack: false,
+        supportsDraftState: false,
+        supportsStructuredFields: false,
+        supportsThreading: false,
+        supportsLedgerReply: false,
+      }),
+      async () => {
+        throw thrown;
+      },
+      async () => {
+        throw new Error('read-back must not run without supportsReadBack');
+      },
+    );
+    // The send's transaction takes the first connection and the escalation
+    // the second. The owed escalation takes the third, and it fails as well.
+    const flaky = failingConnects(pool, [2, 3]);
+    const owed: OwedEscalations = new Map();
+
+    await expect(relayPending(flaky, adapter, owed)).rejects.toThrow(
+      `the relay owes a ${status} escalation: the ledger dropped the connection (${said}: ${thrown.message})`,
+    );
+    expect(await outboxStatus(idemKey)).toBe('pending');
+    await expect(relayPending(flaky, adapter, owed)).rejects.toThrow(
+      `the escalation the relay owes (${status}) was not written: the ledger dropped the connection (${said}: ${thrown.message})`,
+    );
+    expect(await outboxStatus(idemKey)).toBe('pending');
+    expect(adapter.sendCalls).toHaveLength(1);
+
+    expect(await relayPending(flaky, adapter, owed)).toEqual([
+      { idemKey, outcome, sendError: thrown.message },
+    ]);
+    expect(await outboxStatus(idemKey)).toBe(status);
+    expect(await runState(idemKey)).toBe('escalated');
+    expect(adapter.sendCalls).toHaveLength(1);
+    expect(owed.size).toBe(0);
+  });
+
+  // A caller that passes no map still owes the escalation: the relay keeps
+  // one map per pool, so no caller can lose a debt by leaving the argument out.
+  it('keeps an owed escalation for a caller that passes no map', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedPending(ticket, 10n, 'at_least_once');
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: false,
+        supportsReadBack: false,
+        supportsDraftState: false,
+        supportsStructuredFields: false,
+        supportsThreading: false,
+        supportsLedgerReply: false,
+      }),
+      async () => {
+        throw new Error('connection lost mid-send');
+      },
+      async () => {
+        throw new Error('read-back must not run without supportsReadBack');
+      },
+    );
+    const flaky = failingConnects(pool, [2]);
+
+    await expect(relayPending(flaky, adapter)).rejects.toThrow(/the ledger dropped the connection/);
+    expect(await relayPending(flaky, adapter)).toEqual([
+      { idemKey, outcome: 'delivery_unknown_escalated', sendError: 'connection lost mid-send' },
+    ]);
+    expect(adapter.sendCalls).toHaveLength(1);
+  });
+
+  // A record can leave the pending scan another way: another relay settles
+  // it. Its debt goes with it, and nothing is written.
+  it('drops an owed escalation whose record another scan settled, and says so', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedPending(ticket, 10n, 'at_least_once');
+    const [row] = await pendingRows(pool);
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: false,
+        supportsReadBack: false,
+        supportsDraftState: false,
+        supportsStructuredFields: false,
+        supportsThreading: false,
+        supportsLedgerReply: false,
+      }),
+      async () => {
+        throw new Error('a settled record must not reach the adapter');
+      },
+      async () => {
+        throw new Error('unreachable');
+      },
+    );
+    const debt = { status: 'delivery_unknown', reason: 'delivery_unknown: lost', sendError: 'lost' } as const;
+    const owed: OwedEscalations = new Map([[owedKeyOf(row!), debt]]);
+    // The other relay sent it while this one held it as pending.
+    await pool.query("UPDATE outbox SET status = 'sent' WHERE idem_key = $1", [idemKey]);
+
+    // The send this process tried is the trace an operator needs.
+    expect(await relayOne(pool, adapter, row!, owed)).toEqual({ idemKey, outcome: 'already_settled', sendError: 'lost' });
+    expect(await outboxStatus(idemKey)).toBe('sent');
+    expect(await runState(idemKey)).toBe('queued');
+    expect(owed.size).toBe(0);
+
+    // A scan that no longer finds the record drops its debt too.
+    owed.set(owedKeyOf(row!), debt);
+    expect(await relayPending(pool, adapter, owed)).toEqual([]);
+    expect(owed.size).toBe(0);
+  });
+
+  // Another relay settles the record between this one's failed send and its
+  // escalation. Nothing is written, and the result keeps the failure: it is
+  // the one trace that this process may also have delivered a copy.
+  it.each([
+    ['an unknown delivery', new Error('connection lost mid-send')],
+    ['a send that sent nothing', new NothingSentError(UNADDRESSED, { permanent: true })],
+  ] as const)('keeps the send failure when another relay settled the record before %s was escalated', async (_label, thrown) => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedPending(ticket, 10n, 'at_least_once');
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: false,
+        supportsReadBack: false,
+        supportsDraftState: false,
+        supportsStructuredFields: false,
+        supportsThreading: false,
+        supportsLedgerReply: false,
+      }),
+      async () => {
+        throw thrown;
+      },
+      async () => {
+        throw new Error('read-back must not run without supportsReadBack');
+      },
+    );
+    // The escalation takes the second connection. The other relay sends first.
+    const racing = beforeConnect(pool, 2, () =>
+      pool.query("UPDATE outbox SET status = 'sent' WHERE idem_key = $1", [idemKey]));
+
+    expect(await relayPending(racing, adapter, new Map())).toEqual([
+      { idemKey, outcome: 'already_settled', sendError: thrown.message },
+    ]);
+    expect(await outboxStatus(idemKey)).toBe('sent');
+    expect(await runState(idemKey)).toBe('queued');
+    expect(adapter.sendCalls).toHaveLength(1);
+  });
+
+  // The malformed refusal makes no adapter call, so it carries no cause.
+  it('reports a malformed record another relay settled as already settled', async () => {
+    const ticket = 'T-' + randomUUID().slice(0, 8);
+    const idemKey = await seedPendingAction(ticket, 10n, 'customer_reply', { note: 'no draft handle' });
+    const adapter = new ScriptedEgress(
+      Object.freeze({
+        supportsIdempotencyKey: false,
+        supportsReadBack: false,
+        supportsDraftState: false,
+        supportsStructuredFields: false,
+        supportsThreading: false,
+        supportsLedgerReply: false,
+      }),
+      async () => {
+        throw new Error('a malformed record must not reach the adapter');
+      },
+      async () => {
+        throw new Error('unreachable');
+      },
+    );
+    const racing = beforeConnect(pool, 1, () =>
+      pool.query("UPDATE outbox SET status = 'sent' WHERE idem_key = $1", [idemKey]));
+
+    expect(await relayPending(racing, adapter, new Map())).toEqual([{ idemKey, outcome: 'already_settled' }]);
+    expect(await outboxStatus(idemKey)).toBe('sent');
+    expect(await runState(idemKey)).toBe('queued');
   });
 
   it('reconciles through read-back instead of escalating when the delivery landed', async () => {
@@ -716,7 +1026,7 @@ describe('section 4.4 outbox relay', () => {
         reply: null,
         not_before: null,
       }),
-    ).toEqual({ idemKey, outcome: 'fenced' });
+    ).toEqual({ idemKey, outcome: 'already_settled' });
     expect(adapter.sendCalls).toHaveLength(0);
     // The record keeps the other scan's verdict, and its run is not moved:
     // an escalation here would report a reply that went out.

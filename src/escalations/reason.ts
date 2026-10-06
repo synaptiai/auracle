@@ -3,10 +3,11 @@
  *
  * The `escalate` journal row's `reason` is not a closed vocabulary. The
  * coordinator writes one of its own `EscalationReason` values, but the relay
- * writes `delivery_unknown: <what the adapter threw>` and
- * `malformed_payload: <error text>`, and the consumer writes
- * `intake_abandoned after N attempts: <reason>`. The first of those ends in
- * `transport.sendMail`, and an SMTP rejection routinely quotes the recipient.
+ * writes `delivery_unknown: <what the adapter threw>`,
+ * `not_sent: <what the adapter threw>` and `malformed_payload: <error text>`,
+ * and the consumer writes `intake_abandoned after N attempts: <reason>`. The
+ * first two quote the adapter, and an SMTP rejection routinely quotes the
+ * recipient.
  *
  * So the head before the first colon is the part the system chose, and
  * everything after it is the part something else wrote.

@@ -356,8 +356,24 @@ sends the record to the approval queue and states the uncertainty. A retry can
 pay a second refund. A silent abandon can leave a customer with no answer.
 Escalation is the only action that does not select a failure for the operator.
 
-If the adapter has read-back support, the relay reads the target system. Then it
-reconciles. It does not escalate.
+An adapter can prove that an attempt sent nothing. Then the relay leaves the
+record pending for the next scan, under either delivery rule. The table gives
+the rule for a failure the adapter cannot explain. An attempt that sends nothing
+delivers nothing, so a retry delivers once.
+
+Some faults no retry can clear, and no attempt can ever reach the customer
+through them. Then the relay sets the record to `not_sent`. It
+escalates the run with the cause.
+
+A refusal from the target proves nothing about an earlier attempt. A person can
+send a draft from a mail client, and a relay can stop after its send. So a
+refused login, or a draft that is gone, goes to the table as an unexplained
+failure.
+
+If the adapter has read-back support, the relay reads the target system. When it
+finds the delivery, it reconciles and does not escalate. When it finds nothing,
+the table decides: an at-most-once record still escalates, because the target
+can lag behind a send.
 
 **The approval path does not solve duplicate delivery.** It prevents an
 automatic and incorrect action. The relay still sends through the same adapter
