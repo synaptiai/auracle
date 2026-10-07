@@ -94,12 +94,15 @@ MAX_SENTENCES = 6
 
 # The markdown this repository ships to a reader. Internal notes under
 # docs/internal/ are deliberately absent: a working document should not gate
-# a pull request.
+# a pull request. CODE_OF_CONDUCT.md is absent too. It is the Contributor
+# Covenant text unchanged, and a rewrite would make it another document.
 SHIPPED_GLOBS = (
     "README.md",
     "AGENTS.md",
     "CONTRIBUTING.md",
     "REVIEW.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
     "docs/*.md",
     # Each of these is one level deep, and `docs/*.md` does not recurse. A
     # glob that silently covers nothing reads exactly like a clean run, so

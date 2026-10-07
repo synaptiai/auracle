@@ -3,7 +3,9 @@ services:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: auracle
-      POSTGRES_PASSWORD: auracle
+      # Read once, when Postgres first creates its data volume. Set
+      # AURACLE_DB_PASSWORD in the host's .env before the first `up`.
+      POSTGRES_PASSWORD: ${AURACLE_DB_PASSWORD:-auracle}
       POSTGRES_DB: auracle
     ports:
       # Loopback, and deliberately. This file is the ledger for a checkout,

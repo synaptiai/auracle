@@ -120,9 +120,12 @@ describe('the deployments that must not name the development reviewer', () => {
     for (const line of copies) {
       expect(line, line).not.toMatch(/console\/src|\/src\b/);
       expect(line, line).toMatch(
-        /dist|package\.json|db\b|fixtures|entrypoint\.sh|products\.json/,
+        /dist|package\.json|db\b|fixtures|entrypoint\.sh|products\.json|LICENSE NOTICE/,
       );
     }
+    // The image redistributes the code. The Apache License 2.0 requires a copy
+    // of the licence and the notice to travel with every redistribution.
+    expect(copies).toContain('COPY LICENSE NOTICE ./');
     // And the console's entry point is the compiled one, not a source run.
     expect(readFileSync(ROOT + 'docker/entrypoint.sh', 'utf8')).not.toContain('tsx');
   });

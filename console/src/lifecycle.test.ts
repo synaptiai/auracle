@@ -217,19 +217,26 @@ describe('the console as a long-running process', () => {
   // `listen` reports a bind failure by event, after `main`'s promise has
   // resolved, so the top-level catch never sees it.
   it('handles a bind failure by name rather than by stack', () => {
-    expect(MAIN).toMatch(/server\.on\(\s*'error'/);
     // Inside the handler, not anywhere in the file. `CONSOLE_PORT` also names
     // the header comment and three other lines, so a file-wide check held
     // whatever the handler said.
-    const handler = MAIN.slice(MAIN.indexOf("server.on('error'"));
-    expect(handler.slice(0, handler.indexOf('});'))).toContain('CONSOLE_PORT');
+    const handler = MAIN.slice(MAIN.indexOf('const refuse = '));
+    expect(handler.slice(0, handler.indexOf('};'))).toContain('CONSOLE_PORT');
+    // The handler answers the bind alone. The listen callback removes it, so
+    // a later fault does not close the pool under a live server.
+    expect(MAIN).toMatch(/server\.once\(\s*'error',\s*refuse\s*\)/);
+    const listening = MAIN.slice(MAIN.indexOf('server.listen(port, host'));
+    expect(listening.slice(0, listening.indexOf('});'))).toMatch(/server\.off\(\s*'error',\s*refuse\s*\)/);
   });
 
   // An approval cut off mid-flight leaves the operator unable to tell whether
   // the reply went, and that is the state DEC-30 says a person must resolve.
   it('stops on a signal, and lets an in-flight approval finish', () => {
-    expect(MAIN).toMatch(/process\.once\(\s*'SIGINT'/);
-    expect(MAIN).toMatch(/process\.once\(\s*'SIGTERM'/);
+    // `on`, not `once`: a second signal during the drain takes Node's default
+    // action under `once`, and that ends the process mid-flight.
+    expect(MAIN).toMatch(/process\.on\(\s*'SIGINT'/);
+    expect(MAIN).toMatch(/process\.on\(\s*'SIGTERM'/);
+    expect(MAIN).not.toMatch(/process\.once\(\s*'SIG(INT|TERM)'/);
     // `server.close` stops accepting and waits for what is in flight; ending
     // the pool first would fail that request instead of completing it. Read
     // inside the shutdown block, so the guard's own definition above cannot
@@ -239,12 +246,14 @@ describe('the console as a long-running process', () => {
     // calls. Asserting the two strings in order stopped describing the code
     // once `finish` was named above the call that takes it.
     expect(block).toMatch(/server\.close\(finish\)/);
-    expect(block).toMatch(/const finish[\s\S]*?endPool\(\)/);
-    expect(block.split('endPool()').length - 1).toBe(1);
+    // The pool's end is bounded too, so an approval stuck behind a lock
+    // cannot hold the process open. It runs once, inside `finish`.
+    expect(block).toMatch(/const finish[\s\S]*?endWithin\(endPool, SHUTDOWN_GRACE_MS\)/);
+    expect(block.split('endWithin(endPool').length - 1).toBe(1);
+    expect(block).not.toMatch(/endPool\(\)/);
   });
 
-  // A keep-alive socket sitting idle holds `close` open on its own, and an
-  // in-flight request holds it to Node's 300 s request timeout. The
+  // An in-flight request holds `close` to Node's 300 s request timeout. The
   // supervisor's grace period expires first and sends SIGKILL, which is the
   // one signal that can cut an approval mid-flight (DEC-30).
   it('bounds the wait rather than holding the process open', () => {

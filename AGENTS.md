@@ -31,7 +31,13 @@ The individual targets still exist and are worth running alone while you work:
 `pnpm run verify:console`.
 
 `pnpm run check` is the fastest signal of all. Neither it nor
-`pnpm run verify:fast` is a substitute for `pnpm run verify`.
+`pnpm run verify:fast` is a substitute for `pnpm run verify`, with one
+exception.
+
+The exception applies to a pull request that changes markdown alone. It may
+paste the output of `pnpm run verify:fast`, because CI still runs every job on
+it. A change to the register or to `docs/decisions/` still cites its DEC.
+`CONTRIBUTING.md` describes that path.
 
 The repository installs two TypeScript releases. TypeScript 7 builds and
 type-checks, and every script calls it as `node_modules/typescript-7/bin/tsc`.
@@ -78,8 +84,11 @@ pnpm run dev:relay      pnpm run dev:console
 They use `tsx`. Node's own type stripping cannot run this tree. It resolves a
 NodeNext `./x.js` specifier literally, and no `.js` file exists in `src/`. It
 also refuses a TypeScript parameter property, which five production classes
-use. `dev:console` reads the core from `dist/`, so build once first. It
-also needs `READER_DATABASE_URL` exported, because its readers connect as
+use.
+
+`dev:console` runs the core from source too, through
+`console/tsconfig.dev.json`. Only `start` and the image read `dist/`.
+`dev:console` also needs `READER_DATABASE_URL` exported, because its readers connect as
 `auracle_reader`.
 
 Two watch modes exist: `pnpm run check:watch` recompiles the solution, and
@@ -425,6 +434,7 @@ like, and that is not the corpus.
 
 ## Verifying your work
 
-A task is not complete until `pnpm run verify` exits 0. Paste its output and the
-exit code. Report the skip count from the test run, not only the pass count.
+A task is not complete until `pnpm run verify` exits 0. For markdown alone,
+`pnpm run verify:fast` is enough, as the Commands section says. Paste its
+output and the exit code. Report the skip count from the test run, not only the pass count.
 Report what you ran and what you saw.

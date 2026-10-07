@@ -28,15 +28,10 @@
 # (see src/test-support/projects.ts).
 name: Tests
 
+# No path filter. The unit and database suites read shipped prose, so a
+# change to markdown alone can fail them.
 on:
   pull_request:
-    # A change to prose starts no database. The style and documentation checks
-    # that do govern these paths live in the Guardrails workflow, which has no
-    # such filter.
-    paths-ignore:
-      - "docs/**"
-      - "intent/**"
-      - "**/*.md"
 
 # A superseded push cancels the run it replaced. Two runs on one branch 37
 # seconds apart both ran to completion before this.
@@ -44,22 +39,26 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job only reads the repository.
+permissions:
+  contents: read
+
 jobs:
   # Types, lint, the pure suite, the documentation and style checks, the guard
   # self-tests and the fixtures diff. No service, no Docker socket.
   fast:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 11.20.0
-      # engines requires Node >= 22.
-      - uses: actions/setup-node@v4
+      # `.nvmrc` names the Node major. engines requires 22.13 or later.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -111,13 +110,13 @@ jobs:
           --health-retries 24
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 11.20.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -134,13 +133,13 @@ jobs:
   console:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 11.20.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

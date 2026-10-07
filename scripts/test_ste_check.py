@@ -496,7 +496,8 @@ def check_default_set() -> int:
         failures += 1
         print(f"FAIL the shipped set is not vacuous: only {len(paths)} file(s)")
     for required in ("README.md", "AGENTS.md", "CONTRIBUTING.md", "REVIEW.md",
-                     "fixtures/README.md", "docs/v1-architecture.md"):
+                     "fixtures/README.md", "docs/v1-architecture.md",
+                     "SECURITY.md", "CHANGELOG.md"):
         if required not in paths:
             failures += 1
             print(f"FAIL the shipped set names {required}")

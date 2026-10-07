@@ -136,7 +136,6 @@ It refuses any file left in `intent/` but the template.
 
 This repository ships synthetic fixtures only (DEC-18).
 Invented values are what let this repository stay public to read.
-This repository carries no licence file, so no grant to use it exists yet.
 Never commit real emails, phone numbers, names or account identifiers.
 Read `fixtures/README.md` before you touch anything under `fixtures/`.
 
@@ -253,7 +252,8 @@ Include these items in the description:
 
 1. The problem, the outcome and the constraints your change respects.
 2. The pasted output of `pnpm run verify`, with its exit code and the skip
-   count from the test run.
+   count from the test run. A change to markdown alone may paste
+   `pnpm run verify:fast` instead, as the section below on prose describes.
 3. One sentence per behaviour change that names the DEC it cites, or states
    that it is an implementation detail. Link your design record here when the
    change cites a DEC. This is the only place the description asks.
@@ -344,8 +344,33 @@ A non-zero exit means a sentence is above the limit.
 Rewrite the sentence as two sentences.
 Do not split it with a semicolon.
 
+## A change to prose alone
+
+A change to markdown alone can run `pnpm run verify:fast` instead of the full
+`verify`. It needs no Docker, and it runs the prose checks and the unit
+suites. Several unit suites read shipped prose, so a reworded sentence can
+fail one. Paste its output into the pull request.
+
+CI still runs every job on such a pull request. Some database suites read the
+runbook, and CI runs those for you.
+
+A change to `docs/v1-architecture.md` or to `docs/decisions/` is prose too, but
+it is never "prose only". Section 2 of the pull request still names the DEC it
+cites. The commit hook still asks for that citation too.
+
+## Licence and conduct
+
+Synapti licenses this repository under the Apache License 2.0. See `LICENSE`.
+You license your contribution under the same terms when you contribute it.
+Everyone who takes part follows the code of conduct in `CODE_OF_CONDUCT.md`.
+That file is the Contributor Covenant text, unchanged, so the style rules in
+section 9 do not apply to it.
+
 ## Questions
 
 Open an issue if this guide leaves a step unclear.
 Say which section failed you.
 We fix the guide, not only the answer.
+
+Report a vulnerability privately, as `SECURITY.md` describes. Never report one
+in a public issue.

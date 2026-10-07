@@ -2,6 +2,24 @@
   "name": "@auracle/console",
   "version": "0.1.0",
   "private": true,
+  "description": "The operator console: reviewers clear the queue of cases that need a person",
+  "license": "Apache-2.0",
+  "author": "Synapti",
+  "homepage": "https://github.com/synaptiai/auracle#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synaptiai/auracle.git",
+    "directory": "console"
+  },
+  "bugs": {
+    "url": "https://github.com/synaptiai/auracle/issues"
+  },
+  "keywords": [
+    "customer-support",
+    "operator-console",
+    "human-in-the-loop",
+    "review-queue"
+  ],
   "type": "module",
   "scripts": {
     "build": "node node_modules/typescript-7/bin/tsc -p tsconfig.json",

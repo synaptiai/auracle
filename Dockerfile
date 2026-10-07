@@ -14,16 +14,16 @@
 # `exports` map points into `dist/`, so both trees are copied and the link is
 # recreated by a production install rather than carried across.
 
-ARG NODE_VERSION=22
-# Pinned by digest, not by tag alone. `node:22-bookworm-slim` moves, so two
-# builds of one commit can carry different base layers and a re-pushed
-# upstream tag enters the deployed image with no diff here. Move it
-# deliberately: `docker buildx imagetools inspect node:22-bookworm-slim`
-# prints the current digest, and the tag beside it says what it is.
-ARG NODE_DIGEST=sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
+# The base is pinned by digest, not by tag alone. `node:22-bookworm-slim`
+# moves, so two builds of one commit could carry different base layers.
+# Dependabot proposes each new digest as a pull request, and both stages must
+# name the same one. The major version matches `.nvmrc`. To move it by hand,
+# `docker buildx imagetools inspect node:22-bookworm-slim` prints the current
+# digest. The two FROM lines spell the image literally, because Dependabot
+# cannot read a base image built from build arguments.
 
 # ---------------------------------------------------------------- build ----
-FROM node:${NODE_VERSION}-bookworm-slim@${NODE_DIGEST} AS build
+FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS build
 WORKDIR /app
 
 # The version is pinned here and in package.json's `packageManager` field.
@@ -43,7 +43,7 @@ COPY console ./console
 RUN pnpm run build
 
 # -------------------------------------------------------------- runtime ----
-FROM node:${NODE_VERSION}-bookworm-slim@${NODE_DIGEST} AS runtime
+FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
@@ -77,6 +77,10 @@ COPY fixtures ./fixtures
 # Found by running the image, not by building it: the build is silent about
 # a file read at runtime, and a missing one refuses the process at startup.
 COPY products.json ./products.json
+
+# The image redistributes the code, so the licence and the notice travel with
+# it, as the Apache License 2.0 requires.
+COPY LICENSE NOTICE ./
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

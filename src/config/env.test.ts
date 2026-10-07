@@ -7,9 +7,9 @@
 // or two processes claim the same partition.
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { positiveIntEnv, requiredEnv } from './env.js';
+import { hostEnv, positiveIntEnv, requiredEnv } from './env.js';
 
-const TOUCHED = ['AURACLE_TEST_INT', 'AURACLE_TEST_STR'] as const;
+const TOUCHED = ['AURACLE_TEST_INT', 'AURACLE_TEST_STR', 'AURACLE_TEST_HOST'] as const;
 const saved = new Map<string, string | undefined>();
 for (const name of TOUCHED) saved.set(name, process.env[name]);
 
@@ -19,6 +19,41 @@ afterEach(() => {
     if (original === undefined) delete process.env[name];
     else process.env[name] = original;
   }
+});
+
+describe('hostEnv', () => {
+  // Node's listen() reads an empty host as every interface. A blank value
+  // must never reach it, or a `X_HOST=` line left in `.env` opens a listener
+  // to the whole network.
+  it('returns the fallback when the variable is absent', () => {
+    delete process.env['AURACLE_TEST_HOST'];
+    expect(hostEnv('AURACLE_TEST_HOST', '127.0.0.1')).toBe('127.0.0.1');
+  });
+
+  it('reads the interface the variable names', () => {
+    process.env['AURACLE_TEST_HOST'] = '0.0.0.0';
+    expect(hostEnv('AURACLE_TEST_HOST', '127.0.0.1')).toBe('0.0.0.0');
+  });
+
+  it('refuses an empty value rather than binding every interface', () => {
+    process.env['AURACLE_TEST_HOST'] = '';
+    expect(() => hostEnv('AURACLE_TEST_HOST', '127.0.0.1')).toThrow(
+      /^AURACLE_TEST_HOST is set but empty; unset it to bind the default of 127\.0\.0\.1$/,
+    );
+  });
+
+  it('refuses whitespace alone as empty', () => {
+    process.env['AURACLE_TEST_HOST'] = '   ';
+    expect(() => hostEnv('AURACLE_TEST_HOST', '127.0.0.1')).toThrow(/is set but empty/);
+  });
+
+  it('refuses a padded value and names the variable', () => {
+    // Name resolution fails on it with an error that names no variable.
+    process.env['AURACLE_TEST_HOST'] = ' 127.0.0.1 ';
+    expect(() => hostEnv('AURACLE_TEST_HOST', '127.0.0.1')).toThrow(
+      "AURACLE_TEST_HOST has surrounding whitespace: ' 127.0.0.1 '",
+    );
+  });
 });
 
 describe('positiveIntEnv', () => {

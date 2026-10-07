@@ -78,6 +78,9 @@ The `dev` GitHub environment names a host, and
 2. Put a filled `.env` in that directory. Start from `.env.example`. The
    deploy overwrites both compose files on every run, so `.env` is the only
    durable place for host configuration.
+   Set `AURACLE_DB_PASSWORD` and `AURACLE_READER_PASSWORD` in it before the
+   first deploy. `openssl rand -hex 24` makes each one. Postgres reads the
+   ledger's password only when it creates its data volume.
 3. Give the deploy user membership of the `docker` group.
 4. Set the `dev` environment's deployment branch policy to `main` only.
 
@@ -295,8 +298,11 @@ Supply the password in one of two ways:
   `.env` file.
 
 The password is part of a URL, so percent-encode `@`, `/`, `:`, `?`, `#`, `%`
-and a space in it. Use printable ASCII only. The migrator refuses a `%` in the
-password that starts no escape.
+and a space in it. That advice is for a URL you write yourself. The compose
+stack writes both passwords into its URLs unencoded, so give
+`AURACLE_DB_PASSWORD` and `AURACLE_READER_PASSWORD` URL-safe characters only.
+In a URL you write yourself, use printable ASCII. The migrator refuses a `%`
+in the password that starts no escape.
 
 The console reads the URL as the Node `pg` driver does. The migrator refuses a
 URL that driver reads with another user or password than the URL standard
@@ -648,7 +654,8 @@ Start the webhook server:
 pnpm run webhook
 ```
 
-It listens on `WEBHOOK_PORT` (default 8080). It enqueues into
+It listens on `WEBHOOK_PORT` (default 8080) at `WEBHOOK_HOST` (default
+`127.0.0.1`). It enqueues into
 `PARTITION_COUNT` partitions (default 8). Set the count to the number of
 partitions your consumers own.
 

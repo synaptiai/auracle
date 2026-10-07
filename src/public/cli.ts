@@ -6,3 +6,8 @@
 export { runEntry, describeFault } from '../cli/entry.js';
 export type { EntryOptions } from '../cli/entry.js';
 export { errorMessage } from '../errors.js';
+// The one rule for a listener's interface, which the console shares with the
+// webhook so neither binds every interface on a blank value.
+export { hostEnv } from '../config/env.js';
+// The bound on a shutdown, which the console shares with the webhook.
+export { SHUTDOWN_GRACE_MS, endWithin } from '../cli/shutdown.js';

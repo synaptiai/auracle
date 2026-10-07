@@ -28,6 +28,10 @@ into commands.
                 spelling, including one a line break splits.
   map-coverage  The quick map's list of decisions no row names is exactly the
                 set no row names.
+  licence       The repository root holds the Apache License 2.0, and every
+                workspace package declares that licence.
+  cooldown      Every Dependabot ecosystem waits at least a day, so no update
+                proposal lands inside pnpm's release-age gate.
 
 A Mermaid parser accepts an edge to an undeclared node. It mints a new
 unlabelled box instead of joining the two the author meant, so the diagram
@@ -48,6 +52,8 @@ check passes.
 from collections.abc import Iterator
 
 import argparse
+import glob
+import hashlib
 import json
 import os
 import re
@@ -62,6 +68,30 @@ ARCHIVE_DIR = "intent/archive"
 MANIFEST = "package.json"
 RUNBOOK = "docs/operations.md"
 QUICK_MAP = "docs/quick-map.md"
+LICENCE_FILE = "LICENSE"
+DEPENDABOT = ".github/dependabot.yml"
+WORKSPACE = "pnpm-workspace.yaml"
+# The directories pnpm never takes a workspace package from.
+IGNORED_DIRS = frozenset({"node_modules", "bower_components"})
+# The SPDX identifier every package declares, and the text it names. The check
+# compares the terms by digest. It takes everything up to and including their
+# closing line, with whitespace collapsed, because the published text centres
+# its heading with spaces.
+LICENCE_ID = "Apache-2.0"
+LICENCE_TERMS_END = "END OF TERMS AND CONDITIONS"
+# The digest of the text the Apache Software Foundation publishes at
+# https://www.apache.org/licenses/LICENSE-2.0.txt, taken by the rule above.
+# GitHub's own template for apache-2.0 gives the same digest. To reproduce:
+#   curl -s https://www.apache.org/licenses/LICENSE-2.0.txt | python3 -c \
+#     "import sys,hashlib; t=sys.stdin.read(); e='END OF TERMS AND CONDITIONS'; \
+#     print(hashlib.sha256(' '.join(t[:t.index(e)+len(e)].split()).encode()).hexdigest())"
+LICENCE_TERMS_SHA256 = "59d8f0ba87ad9a2f1a431123c8d16646e5b89ba53653e818f16d136d77263c99"
+# Only the appendix may follow the terms, and it stays the published
+# template. The copyright line belongs in NOTICE, as the Apache Software
+# Foundation advises, so no text an adopter writes after the terms can change
+# them. A file may also end at the terms. This is the digest of the same
+# apache.org appendix, taken the same way.
+LICENCE_APPENDIX_SHA256 = "15e0e14d590e112dcf1801fb0ca4a74c6178f468147941bfe6840cb55fa84ca4"
 # The documents that state the register's range. Each says it in prose a
 # reader believes, and each went stale when DEC-43 arrived: two said DEC-42
 # while the register defined 43 (issue #79).
@@ -1027,6 +1057,251 @@ def check_script_claim(root: str, findings: list[str]) -> None:
             findings.append(f"{RUNBOOK}: claims {claim}")
 
 
+def list_item(value: str) -> str | None:
+    """The text of one list item after its dash, or None when it cannot be read.
+
+    A quoted item runs to its closing quote, so a `#` inside it is part of the
+    path. A bare item ends at a comment. An empty item, an unclosed quote or
+    text after the closing quote cannot be read. Neither can a bare item that
+    opens with a YAML indicator: YAML reads `!!str x` as the string "x", so an
+    exclusion is only read in quotes, as `'!x'`.
+    """
+    value = value.strip()
+    if value[:1] in tuple("!&*|>%@`{[]}?:,-"):
+        return None
+    if value[:1] in ("'", '"'):
+        close = value.find(value[0], 1)
+        if close < 0:
+            return None
+        rest = value[close + 1:].strip()
+        if rest and not rest.startswith("#"):
+            return None
+        text = value[1:close]
+    else:
+        text = re.split(r"(?:^|\s)#", value, maxsplit=1)[0].strip()
+    return text or None
+
+
+def package_list(text: str, findings: list[str]) -> list[str]:
+    """The items of the block-style `packages:` list, failing closed.
+
+    The list ends at the next unindented line that is not a list item. An
+    indented line inside it that is not a readable item is a finding, because
+    ending the list there would leave every later package unchecked.
+    """
+    entries: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        head = re.match(r"^packages:(.*)$", line)
+        if head:
+            rest = head.group(1).strip()
+            if rest and not rest.startswith("#"):
+                findings.append(
+                    f"{WORKSPACE}: lists its packages in a form this check cannot read")
+                return []
+            inside = True
+            continue
+        if not inside or not line.strip() or line.lstrip().startswith("#"):
+            continue
+        dash = re.match(r"^\s*-(?:\s(.*))?$", line)
+        if dash:
+            item = list_item(dash.group(1) or "")
+            if item is None:
+                findings.append(
+                    f"{WORKSPACE}: cannot read the package list item {line.strip()!r}")
+            else:
+                entries.append(item)
+        elif line[0].isspace():
+            findings.append(
+                f"{WORKSPACE}: cannot read the package list item {line.strip()!r}")
+        else:
+            inside = False
+    return entries
+
+
+def workspace_packages(root: str, findings: list[str]) -> list[str]:
+    """The manifest path of every package the workspace lists.
+
+    The check reads the list from `pnpm-workspace.yaml`, so it covers a package
+    added later with no edit here. It reads a block-style `packages:` list
+    only. Each item is a quoted or bare directory or glob, where `*` matches
+    within one directory and `**` matches any depth. An item starting with `!`
+    excludes what it matches. A glob that matches no package is a finding.
+
+    The check always reads the root manifest. pnpm includes the workspace root
+    whatever the list says, and without the file the root is the only package.
+    """
+    path = os.path.join(root, WORKSPACE)
+    if not os.path.lexists(path):
+        return [MANIFEST]
+    text = read_repo_file(root, WORKSPACE, findings)
+    if text is None:
+        return [MANIFEST]
+    # A byte-order mark is an encoding detail, not part of the first key.
+    text = text.removeprefix("\ufeff")
+    before = len(findings)
+    entries = package_list(text, findings)
+    if not entries:
+        if len(findings) == before:
+            findings.append(f"{WORKSPACE}: lists no packages, so only the root manifest is checked")
+        return [MANIFEST]
+    def matching(pattern: str) -> list[str]:
+        # pnpm matches `<pattern>/package.json`, where `*` stays inside one
+        # directory, and it never takes a package from `node_modules` or
+        # `bower_components`. The check escapes the root, so a glob character
+        # in the checkout's own path matches only itself.
+        found = glob.glob(os.path.join(glob.escape(root), pattern, MANIFEST), recursive=True)
+        relative = (os.path.relpath(m, root) for m in sorted(found))
+        return [m for m in relative if IGNORED_DIRS.isdisjoint(m.split(os.sep))]
+
+    manifests = [MANIFEST]
+    excluded: set[str] = set()
+    for entry in entries:
+        if entry.startswith("!"):
+            found = matching(entry[1:])
+            if not found:
+                findings.append(f"{WORKSPACE}: {entry!r} matches no package")
+            excluded.update(found)
+        elif "*" in entry:
+            found = matching(entry)
+            if not found:
+                findings.append(f"{WORKSPACE}: {entry!r} matches no package")
+            manifests += found
+        else:
+            manifests.append(os.path.normpath(os.path.join(entry, MANIFEST)))
+    return [m for m in dict.fromkeys(manifests) if m == MANIFEST or m not in excluded]
+
+
+def check_licence(root: str, findings: list[str]) -> None:
+    """The code carries the licence its owner chose, in every place a reader looks.
+
+    A reader of the root sees `LICENSE`. A reader of one package sees that
+    package's manifest, and a package that declares nothing reads as
+    unlicensed. So the check reads both. The file must hold the Apache License
+    2.0 and not merely exist, and each workspace package must declare it.
+    """
+    if not os.path.lexists(os.path.join(root, LICENCE_FILE)):
+        findings.append(f"{LICENCE_FILE}: missing")
+    else:
+        text = read_repo_file(root, LICENCE_FILE, findings)
+        if text is not None:
+            # A byte-order mark is an encoding detail, not part of the text.
+            text = text.removeprefix("\ufeff")
+            end = text.find(LICENCE_TERMS_END)
+            split = end + len(LICENCE_TERMS_END) if end >= 0 else len(text)
+            terms = " ".join(text[:split].split())
+            appendix = " ".join(text[split:].split())
+            if end < 0 or hashlib.sha256(terms.encode()).hexdigest() != LICENCE_TERMS_SHA256:
+                findings.append(f"{LICENCE_FILE}: is not the Apache License 2.0")
+            elif appendix and hashlib.sha256(appendix.encode()).hexdigest() != LICENCE_APPENDIX_SHA256:
+                findings.append(
+                    f"{LICENCE_FILE}: the text after the terms is not the published appendix; "
+                    "keep that template unchanged or remove it, and put a copyright line in NOTICE")
+    for manifest in workspace_packages(root, findings):
+        if not os.path.lexists(os.path.join(root, manifest)):
+            findings.append(f"{manifest}: missing")
+            continue
+        text = read_repo_file(root, manifest, findings)
+        if text is None:
+            continue
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            findings.append(f"{manifest}: does not parse")
+            continue
+        if not isinstance(data, dict):
+            findings.append(f"{manifest}: is not a JSON object")
+            continue
+        declared = data.get("license")
+        if declared is None:
+            findings.append(f"{manifest}: declares no license")
+        elif declared != LICENCE_ID:
+            findings.append(f"{manifest}: declares {declared!r}, not {LICENCE_ID!r}")
+
+
+def check_cooldown(root: str, findings: list[str]) -> None:
+    """Every Dependabot ecosystem waits at least a day before it proposes.
+
+    pnpm holds back a release younger than one day, so a proposal for one
+    would not match what an install resolves. The file is read by its block
+    structure. Each item of the `updates:` list starts at a dash in the list's
+    column, whatever key follows the dash, and runs to the next one. Its
+    `package-ecosystem:` and `cooldown:` are read at the item's own key column,
+    and `cooldown` holds a `default-days:` of 1 or more, in block or flow form.
+    An item whose ecosystem cannot be read is a finding.
+    """
+    if not os.path.lexists(os.path.join(root, DEPENDABOT)):
+        findings.append(f"{DEPENDABOT}: missing")
+        return
+    text = read_repo_file(root, DEPENDABOT, findings)
+    if text is None:
+        return
+    lines = text.removeprefix("\ufeff").splitlines()
+    start = next((n for n, line in enumerate(lines) if re.match(r"^updates:\s*(#.*)?$", line)), None)
+    items: list[tuple[int, int, list[tuple[int, str]]]] = []
+    dash_column = None
+    for n in range(start + 1 if start is not None else len(lines), len(lines)):
+        line = lines[n]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        dash = re.match(r"^(\s*)-(?:\s+(\S.*))?\s*$", line)
+        if dash and (dash_column is None or indent == dash_column):
+            dash_column = indent
+            if dash.group(2):
+                # The text after the dash is the item's first key line.
+                key_column = len(line) - len(dash.group(2))
+                items.append((n + 1, key_column, [(key_column, dash.group(2))]))
+            else:
+                # A bare dash: the item's keys sit on the lines below it, and
+                # the first of them sets its key column.
+                items.append((n + 1, -1, []))
+        elif items and indent > dash_column:
+            if items[-1][1] == -1:
+                items[-1] = (items[-1][0], indent, items[-1][2])
+            items[-1][2].append((indent, line.strip()))
+        elif indent == 0:
+            # A top-level key ends the list.
+            break
+        else:
+            findings.append(f"{DEPENDABOT}: cannot read line {n + 1} of the updates list")
+            break
+    if not items:
+        findings.append(f"{DEPENDABOT}: names no ecosystem")
+        return
+    for line_number, key_column, body in items:
+        ecosystem = None
+        days = None
+        cooldown_open = False
+        for indent, content in body:
+            if cooldown_open and indent > key_column:
+                value = re.match(r"^default-days:\s*(\d+)\s*(#.*)?$", content)
+                if value and days is None:
+                    days = int(value.group(1))
+                continue
+            cooldown_open = False
+            if indent != key_column:
+                continue
+            key = re.match(r"^([A-Za-z-]+):\s*(.*?)\s*(#.*)?$", content)
+            if not key:
+                continue
+            name, value = key.group(1), key.group(2)
+            if name == "package-ecosystem" and value:
+                ecosystem = value.strip("'\"")
+            elif name == "cooldown":
+                if value.startswith("{"):
+                    flow = re.search(r"(?:^|[{,\s])default-days:\s*(\d+)", value)
+                    days = int(flow.group(1)) if flow else None
+                elif not value:
+                    cooldown_open = True
+        if ecosystem is None:
+            findings.append(
+                f"{DEPENDABOT}: cannot read the ecosystem of the item at line {line_number}")
+        elif days is None or days < 1:
+            findings.append(
+                f"{DEPENDABOT}: {ecosystem} waits no day before proposing an update")
+
+
 CHECKS = {
     "diagrams": check_diagrams,
     "legends": check_legends,
@@ -1040,6 +1315,8 @@ CHECKS = {
     "script-index": check_script_index,
     "script-claim": check_script_claim,
     "map-coverage": check_map_coverage,
+    "licence": check_licence,
+    "cooldown": check_cooldown,
 }
 
 

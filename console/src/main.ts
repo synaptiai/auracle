@@ -83,6 +83,8 @@ import type {
 } from './surfaces.js';
 import { runEntry } from 'auracle/cli';
 import { errorMessage } from 'auracle/cli';
+import { hostEnv } from 'auracle/cli';
+import { endWithin } from 'auracle/cli';
 
 /**
  * The conversation to link at the foot of a run detail, or null.
@@ -273,7 +275,8 @@ async function main(): Promise<void> {
   // nothing. That is the failure class this file exists to close, introduced
   // by the code closing it.
   const port = requirePort(process.env['CONSOLE_PORT']);
-  const host = process.env['CONSOLE_HOST'] ?? '127.0.0.1';
+  // A blank value is refused, because listen() binds every interface for it.
+  const host = hostEnv('CONSOLE_HOST', '127.0.0.1');
   const hosts = allowedHosts(host, port);
   // The header a trusted proxy sets to name the reviewer (DEC-42). Naming it
   // is the operator stating that a proxy they trust sets it and strips any
@@ -716,7 +719,7 @@ async function main(): Promise<void> {
   // already resolved, so the catch below never sees it. Without this the
   // operator gets a raw stack for a busy port rather than the named-variable
   // message every other fault here produces.
-  server.on('error', (error: Error & { code?: string }) => {
+  const refuse = (error: Error & { code?: string }): void => {
     console.error(logLine({
       event: 'console_listen_failed',
       error: error.message,
@@ -726,9 +729,21 @@ async function main(): Promise<void> {
     }));
     process.exitCode = 1;
     void endPool();
-  });
+  };
+  server.once('error', refuse);
 
   server.listen(port, host, () => {
+    server.off('error', refuse);
+    // The console logs a fault after the bind, such as running out of file
+    // descriptors, and keeps serving. A failed-bind reading of it would close
+    // the pool under a server still taking requests.
+    server.on('error', (error: Error & { code?: string }) => {
+      console.error(logLine({
+        event: 'console_server_error',
+        error: error.message,
+        code: error.code ?? null,
+      }));
+    });
     console.log(logLine({ event: 'console_listening', host, port }));
   });
 
@@ -746,13 +761,22 @@ async function main(): Promise<void> {
       const finish = (): void => {
         if (done) return;
         done = true;
-        void endPool().then(() => {
+        // A request still open after the grace would keep the process alive
+        // until Node's request timeout, so it is cut first.
+        server.closeAllConnections();
+        // An approval stuck behind a lock keeps its client, and the pool's
+        // end waits for it. After the bounded wait, that client's socket
+        // would keep the process alive, so the console exits on its own.
+        void endWithin(endPool, SHUTDOWN_GRACE_MS).then((outcome) => {
+          if (outcome === 'timeout') {
+            log({ event: 'console_pool_end_timeout', waitedMs: SHUTDOWN_GRACE_MS });
+            process.exit(1);
+          }
           resolve();
         });
       };
       server.close(finish);
-      // A keep-alive socket sitting idle holds `close` open on its own, and
-      // an in-flight request holds it to Node's 300 s request timeout. The
+      // An in-flight request holds `close` to Node's 300 s request timeout. The
       // supervisor's grace period expires long before that and sends SIGKILL,
       // which is the one signal that can cut an approval mid-flight — the
       // state DEC-30 says a person must resolve. So idle sockets go at once,
@@ -763,8 +787,10 @@ async function main(): Promise<void> {
       // The timer must not itself keep the process alive.
       cutoff.unref();
     };
-    process.once('SIGINT', shutdown);
-    process.once('SIGTERM', shutdown);
+    // `on`, not `once`. A second signal while the first drains would
+    // otherwise take Node's default action and cut an approval mid-flight.
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   });
 }
 

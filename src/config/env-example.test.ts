@@ -61,10 +61,10 @@ const NOT_A_VARIABLE = new Set([
 /**
  * Variables no process reads, which the example still has to carry.
  *
- * The compose files interpolate the first four: compose is a shell, not a
+ * The compose files interpolate the first five: compose is a shell, not a
  * program. `AURACLE_IMAGE` selects the tag the dev stack runs,
- * `COMPOSE_PROFILES` selects its optional services, and
- * `AURACLE_READER_PASSWORD` is the readers' role's login in the stack.
+ * `COMPOSE_PROFILES` selects its optional services, and the two passwords
+ * are the ledger's and the readers' role's logins in the stack.
  * The rest are read by `src/test-support/`, which the scan skips because a
  * harness is not something an adopter configures — but an adopter running
  * the suite still needs to know they exist.
@@ -74,6 +74,7 @@ const NOT_READ_BY_A_PROCESS = new Set([
   'AURACLE_IMAGE',
   'COMPOSE_PROFILES',
   'AURACLE_READER_PASSWORD',
+  'AURACLE_DB_PASSWORD',
   'AURACLE_TEST_DB_REUSE',
   'AURACLE_TEST_MAIL_REUSE',
   'AURACLE_TEST_ALLOW_REMOTE_DB',

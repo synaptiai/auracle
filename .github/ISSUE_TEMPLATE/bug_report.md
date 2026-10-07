@@ -16,6 +16,9 @@ The exact command, with the environment variables you set.
 
 Redact every secret first. Never paste `OPENROUTER_API_KEY`, `WEBHOOK_SECRET`
 or a real database password. Write `***` in their place. This issue is public.
+
+A vulnerability does not belong here. Report it privately, as SECURITY.md
+describes.
 -->
 
 ```sh
@@ -36,6 +39,17 @@ or a real database password. Write `***` in their place. This issue is public.
 
 ## Your setup
 
-- Node version:
+- Node version (`node --version`):
+- pnpm version (`pnpm --version`):
+- Docker version (`docker --version`):
 - Operating system:
 - Commit or release:
+
+<!--
+Paste the output of `./scripts/bootstrap.sh --check`. It changes nothing, and
+it reports the tools, the dependencies, the commit hook and `.env`.
+-->
+
+```
+
+```

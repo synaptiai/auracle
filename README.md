@@ -117,7 +117,7 @@ allow the compose address for a local run.
 | `pnpm run triage` | Selects cases for human review with the offline judge. Writes `triage/vN.json`, the next version. |
 | `pnpm run relay` | Starts the outbox relay daemon. Configure `RELAY_ADAPTER` and `RELAY_INTERVAL_MS` if needed. |
 | `pnpm run consumer` | Starts the partition consumer daemon. Set `CONSUMER_PARTITIONS` (for example `0,1`). Configure `CONSUMER_INTERVAL_MS` and `TICKET_DEADLINE_MS` if needed. |
-| `pnpm run webhook` | Starts the webhook ingress server. Set `WEBHOOK_PORT` (default 8080) and `PARTITION_COUNT` (default 8). |
+| `pnpm run webhook` | Starts the webhook ingress server. Set `WEBHOOK_PORT` (default 8080), `WEBHOOK_HOST` (default `127.0.0.1`) and `PARTITION_COUNT` (default 8). |
 | `pnpm run imap` | Starts the IMAP ingress poller. Set `IMAP_HOST`, `IMAP_USER` and `IMAP_PASS`. |
 | `pnpm run load-docs -- <dir>` | Embeds each markdown file in the directory into the `document` table. Needs `OPENROUTER_API_KEY`. |
 | `pnpm run approve -- --run <run-id>` | Approves one gated customer reply through the approval bridge. |

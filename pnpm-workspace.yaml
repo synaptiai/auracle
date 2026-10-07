@@ -2,6 +2,11 @@ packages:
   - '.'
   - 'console'
 
+# pnpm installs no release younger than one day. It is pnpm 11's default too,
+# and stated here so the gate rests on this file. Dependabot's cooldown in
+# `.github/dependabot.yml` waits past it.
+minimumReleaseAge: 1440
+
 # Build scripts pnpm may run during install.
 #
 # pnpm blocks lifecycle scripts by default. Each package below is a real

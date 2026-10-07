@@ -1,0 +1,71 @@
+# Weekly update proposals for the packages, the workflow actions and the
+# container images.
+#
+# pnpm holds back a release younger than one day, so a proposal for a newer
+# release would not match what an install resolves. The cooldown holds each
+# version update for two days, past that gate. Security updates are a
+# repository setting, and the cooldown does not hold one when that is on.
+# `scripts/check-docs.py` fails when an ecosystem waits less than a day.
+version: 2
+updates:
+  - package-ecosystem: npm
+    # The root manifest names the workspace, so the console is covered too.
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 2
+    open-pull-requests-limit: 10
+    groups:
+      # Patch and minor releases arrive as one pull request, and a major
+      # release arrives alone.
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # The `typescript` package stays on 6.x. typescript-eslint and the
+      # source guards load its compiler API, which TypeScript 7 does not ship.
+      # The build's TypeScript 7 is the `typescript-7` alias.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      # The types follow the Node major in `.nvmrc`, so the type check refuses
+      # an API the runtime lacks. A new major moves with Node, by hand.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 2
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # The base image of the build and runtime stages. Its major stays the one
+  # `.nvmrc` names, which CI tests; a new major moves both by hand.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 2
+    ignore:
+      - dependency-name: node
+        update-types: [version-update:semver-major]
+
+  # The ledger and the test mail server the compose files run. A new
+  # Postgres major cannot open an existing data volume, and CI's service
+  # image names the major too, so a major moves by hand.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 2
+    ignore:
+      - dependency-name: pgvector/pgvector
+        update-types: [version-update:semver-major]
+      # The FreeScout stack's database keeps its data volume the same way.
+      - dependency-name: mariadb
+        update-types: [version-update:semver-major]

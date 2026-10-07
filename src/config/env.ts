@@ -81,6 +81,26 @@ export function positiveIntEnv(name: string, fallback: number): number {
 }
 
 /**
+ * The interface a listener binds, read from the environment.
+ *
+ * Node's `listen()` reads an empty host as every interface. So a blank value
+ * is refused, as `positiveIntEnv` refuses a blank port, and never passed on.
+ * A value with spaces around it fails name resolution with an error that
+ * names no variable, so it is refused here with one that does.
+ */
+export function hostEnv(name: string, fallback: string): string {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  if (raw.trim() === '') {
+    throw new Error(`${name} is set but empty; unset it to bind the default of ${fallback}`);
+  }
+  if (raw !== raw.trim()) {
+    throw new Error(`${name} has surrounding whitespace: '${raw}'`);
+  }
+  return raw;
+}
+
+/**
  * The DEC-17 data guarantee, read from the environment.
  *
  * DEC-17 requires the guarantee to be configurable and documented; its

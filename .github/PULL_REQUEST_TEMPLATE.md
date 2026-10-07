@@ -21,10 +21,16 @@ no decision writes no file, so this is where its rationale lives.
 ## 1. Verify
 
 <!--
-Run `pnpm run verify` and paste its output, with the exit code.
-It covers the build, the types, the lint, every test project, the console,
-the documentation checks, the style check, the guard self-tests and the
-fixtures diff. Report the skip count from the test run, not only pass or
+A change to markdown alone may paste `pnpm run verify:fast` instead. It
+needs no Docker. Write "prose only" in sections 2 and 3, and CI runs the
+database suites. A change to the register or to `docs/decisions/` still names
+its DEC in section 2.
+
+Every other change runs `pnpm run verify`. Paste its output with the exit
+code.
+It covers the build, the types, the lint, every test project and the console.
+It also runs the documentation checks, the style check, the guard self-tests
+and the fixtures diff. Report the skip count from the test run, not only pass or
 fail.
 -->
 
@@ -57,7 +63,7 @@ If not, write "unchanged".
 
 ## Checklist
 
-- [ ] `pnpm run verify` ran, and its output is pasted above with the exit code.
+- [ ] `pnpm run verify` ran, and its output is pasted above with the exit code. For prose only, `verify:fast` ran instead.
 - [ ] Every behaviour change cites a DEC or declares itself an implementation detail.
 - [ ] A design record under `docs/decisions/` accompanies this change, or it cites no DEC.
 - [ ] No real email, phone number, name or account identifier enters the repository (DEC-18).

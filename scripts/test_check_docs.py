@@ -831,8 +831,8 @@ def case_a_three_digit_dec_is_read_whole(root):
 # They skip there instead. A skip is honest; a pass is not.
 NEEDS_DENIAL = "needs-permission-denial"
 
-# check_crash_guard, plus the three check_cli cases in main().
-EXTRA_CASES = 4
+# check_crash_guard, plus the four check_cli cases in main().
+EXTRA_CASES = 5
 
 
 def denies_permission() -> bool:
@@ -1086,7 +1086,486 @@ def case_map_coverage_reads_no_rows(root):
     return "map-coverage", FAIL, "scanned nothing"
 
 
+# The repository's own licence file, so a case passes only on the full text.
+with open(os.path.join(os.path.dirname(CHECKER), "..", "LICENSE")) as _handle:
+    APACHE = _handle.read()
+
+# The two lines that open the licence, and nothing else. GitHub detects no
+# licence in this file, so neither may the check.
+APACHE_HEADER_ONLY = """
+                                 Apache License
+                           Version 2.0, January 2004
+"""
+
+MIT = """MIT License
+
+Copyright (c) 2026 Someone
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+"""
+
+# The shape of the real file: comments after the list, then another map.
+WORKSPACE = ("packages:\n  - '.'\n  - 'console'\n\n# Build scripts pnpm may run.\n#\n"
+             "#   esbuild        vitest's bundler\nallowBuilds:\n  esbuild: true\n")
+
+
+def licence_repo(root, licence=APACHE, root_pkg='{"license": "Apache-2.0"}',
+                 console_pkg='{"license": "Apache-2.0"}', workspace=WORKSPACE):
+    if licence is not None:
+        write(root, "LICENSE", licence)
+    write(root, "package.json", root_pkg)
+    if console_pkg is not None:
+        write(root, "console/package.json", console_pkg)
+    if workspace is not None:
+        write(root, "pnpm-workspace.yaml", workspace)
+
+
+DEPENDABOT = """version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 2
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # The workflow actions.
+  - package-ecosystem: github-actions
+    directory: /
+    cooldown:
+      default-days: 1
+"""
+
+
+def case_cooldown_on_every_ecosystem_passes(root):
+    write(root, ".github/dependabot.yml", DEPENDABOT)
+    return "cooldown", PASS, None
+
+
+def case_cooldown_missing_on_one_ecosystem_fails(root):
+    # The plausible wrong version: a new ecosystem added without the wait, so
+    # its updates land inside pnpm's one-day gate.
+    write(root, ".github/dependabot.yml", DEPENDABOT + """
+  - package-ecosystem: docker
+    directory: /
+""")
+    return "cooldown", FAIL, ".github/dependabot.yml: docker waits no day before proposing an update"
+
+
+def case_cooldown_of_zero_days_fails(root):
+    write(root, ".github/dependabot.yml",
+          DEPENDABOT.replace("default-days: 1", "default-days: 0"))
+    return "cooldown", FAIL, "github-actions waits no day"
+
+
+def case_cooldown_key_order_second_item_fails(root):
+    # YAML keys come in any order. An item that opens with another key is
+    # still an item, and its missing cooldown is still a finding.
+    write(root, ".github/dependabot.yml", DEPENDABOT + """
+  - directory: /
+    package-ecosystem: docker
+""")
+    return "cooldown", FAIL, ".github/dependabot.yml: docker waits no day"
+
+
+def case_cooldown_key_order_first_item_fails(root):
+    write(root, ".github/dependabot.yml", """version: 2
+updates:
+  - directory: /
+    package-ecosystem: docker
+  - package-ecosystem: npm
+    directory: /
+    cooldown:
+      default-days: 2
+""")
+    return "cooldown", FAIL, ".github/dependabot.yml: docker waits no day"
+
+
+def case_cooldown_nested_under_groups_fails(root):
+    # Dependabot reads `cooldown` at the item's own level only.
+    write(root, ".github/dependabot.yml", """version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    groups:
+      g:
+        cooldown:
+          default-days: 2
+""")
+    return "cooldown", FAIL, ".github/dependabot.yml: npm waits no day"
+
+
+def case_cooldown_comment_at_column_zero_passes(root):
+    write(root, ".github/dependabot.yml", """version: 2
+updates:
+  - package-ecosystem: npm
+# A comment at the margin, inside the item.
+    directory: /
+    cooldown:
+      default-days: 2
+""")
+    return "cooldown", PASS, None
+
+
+def case_cooldown_flow_map_passes(root):
+    write(root, ".github/dependabot.yml", """version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    cooldown: {default-days: 2, semver-major-days: 7}
+""")
+    return "cooldown", PASS, None
+
+
+def case_cooldown_item_without_ecosystem_fails(root):
+    write(root, ".github/dependabot.yml", DEPENDABOT + """
+  - directory: /
+""")
+    return "cooldown", FAIL, ".github/dependabot.yml: cannot read the ecosystem of the item at line"
+
+
+def case_cooldown_bare_dash_item_fails(root):
+    # A dash alone on its line, with the keys indented below it, is an item.
+    write(root, ".github/dependabot.yml", DEPENDABOT + """
+  -
+    package-ecosystem: docker
+    directory: /
+""")
+    return "cooldown", FAIL, ".github/dependabot.yml: docker waits no day"
+
+
+def case_cooldown_unreadable_line_fails_closed(root):
+    # A line at the list's column that is not an item must not end the read
+    # in silence, or every item after it goes unchecked.
+    write(root, ".github/dependabot.yml", DEPENDABOT.replace(
+        "\n  # The workflow actions.\n", "\n  not-an-item: x\n"))
+    return "cooldown", FAIL, ".github/dependabot.yml: cannot read line"
+
+
+def case_cooldown_file_missing_fails(root):
+    return "cooldown", FAIL, ".github/dependabot.yml: missing"
+
+
+def case_cooldown_no_ecosystem_fails(root):
+    write(root, ".github/dependabot.yml", "version: 2\nupdates: []\n")
+    return "cooldown", FAIL, ".github/dependabot.yml: names no ecosystem"
+
+
+def case_licence_complete_passes(root):
+    licence_repo(root)
+    return "licence", PASS, None
+
+
+def case_licence_file_missing(root):
+    licence_repo(root, licence=None)
+    return "licence", FAIL, "LICENSE: missing"
+
+
+def case_licence_file_is_another_licence(root):
+    # A LICENSE file alone proves nothing. MIT text in it would publish the
+    # code under terms the owner did not choose.
+    licence_repo(root, licence=MIT)
+    return "licence", FAIL, "LICENSE: is not the Apache License 2.0"
+
+
+def case_licence_workspace_package_lacks_field(root):
+    # The plausible wrong version reads the root manifest alone. The console
+    # is a package of its own, and a reader of its manifest sees no licence.
+    licence_repo(root, console_pkg='{"name": "@auracle/console"}')
+    return "licence", FAIL, "console/package.json: declares no license"
+
+
+def case_licence_package_declares_another(root):
+    licence_repo(root, root_pkg='{"license": "MIT"}')
+    return "licence", FAIL, "package.json: declares 'MIT', not 'Apache-2.0'"
+
+
+def case_licence_package_does_not_parse(root):
+    licence_repo(root, console_pkg='{"license": ')
+    return "licence", FAIL, "console/package.json: does not parse"
+
+
+def case_licence_workspace_names_a_missing_package(root):
+    # A package the workspace lists and the checker cannot read is a finding,
+    # never a package that silently has no licence to check.
+    licence_repo(root, console_pkg=None)
+    return "licence", FAIL, "console/package.json: missing"
+
+
+def case_licence_header_only_fails(root):
+    licence_repo(root, licence=APACHE_HEADER_ONLY)
+    return "licence", FAIL, "LICENSE: is not the Apache License 2.0"
+
+
+def case_licence_altered_text_fails(root):
+    # One word changed inside the terms is another licence.
+    licence_repo(root, licence=APACHE.replace("perpetual", "temporary", 1))
+    return "licence", FAIL, "LICENSE: is not the Apache License 2.0"
+
+
+def case_licence_root_checked_when_the_list_omits_it(root):
+    # pnpm always includes the workspace root, whatever the list says. A list
+    # without '.' must not take the root manifest out of the check.
+    licence_repo(root, root_pkg='{"private": true}', workspace="packages:\n  - 'console'\n")
+    return "licence", FAIL, "package.json: declares no license"
+
+
+def case_licence_no_workspace_file_checks_the_root(root):
+    licence_repo(root, root_pkg='{"private": true}', console_pkg=None, workspace=None)
+    return "licence", FAIL, "package.json: declares no license"
+
+
+def case_licence_flow_style_list_is_refused(root):
+    licence_repo(root, workspace="packages: ['.', 'console']\n")
+    return "licence", FAIL, "pnpm-workspace.yaml: lists its packages in a form this check cannot read"
+
+
+def case_licence_recursive_glob_is_read(root):
+    licence_repo(root, workspace="packages:\n  - '.'\n  - 'pkgs/**'\n")
+    write(root, "pkgs/a/b/package.json", '{"private": true}')
+    return "licence", FAIL, "pkgs/a/b/package.json: declares no license"
+
+
+def case_licence_negated_entry_is_excluded(root):
+    licence_repo(root, workspace="packages:\n  - '.'\n  - 'pkgs/*'\n  - '!pkgs/skip'\n")
+    write(root, "pkgs/one/package.json", '{"license": "Apache-2.0"}')
+    write(root, "pkgs/skip/package.json", '{"private": true}')
+    return "licence", PASS, None
+
+
+def case_licence_glob_matching_nothing_fails(root):
+    licence_repo(root, workspace="packages:\n  - '.'\n  - 'nowhere/*'\n")
+    return "licence", FAIL, "pnpm-workspace.yaml: 'nowhere/*' matches no package"
+
+
+def case_licence_exclusion_does_not_cross_a_directory(root):
+    # In pnpm `*` stays inside one directory. `!pkgs/*` excludes pkgs/a and
+    # keeps pkgs/a/b, so pkgs/a/b is still checked.
+    licence_repo(root, workspace="packages:\n  - '.'\n  - 'pkgs/*'\n  - 'pkgs/*/*'\n  - '!pkgs/*'\n")
+    write(root, "pkgs/a/package.json", '{"private": true}')
+    write(root, "pkgs/a/b/package.json", '{"private": true}')
+    return "licence", FAIL, "pkgs/a/b/package.json: declares no license"
+
+
+def case_licence_recursive_exclusion_reaches_any_depth(root):
+    licence_repo(root, workspace="packages:\n  - '.'\n  - 'pkgs/**'\n  - '!**/test/**'\n")
+    write(root, "pkgs/one/package.json", '{"license": "Apache-2.0"}')
+    write(root, "pkgs/test/package.json", '{"private": true}')
+    return "licence", PASS, None
+
+
+def case_licence_node_modules_is_never_a_package(root):
+    licence_repo(root, workspace="packages:\n  - '.'\n  - 'pkgs/**'\n")
+    write(root, "pkgs/a/package.json", '{"license": "Apache-2.0"}')
+    write(root, "pkgs/a/node_modules/dep/package.json", '{"name": "dep"}')
+    return "licence", PASS, None
+
+
+def case_licence_bower_components_is_never_a_package(root):
+    # pnpm ignores bower_components as it ignores node_modules.
+    licence_repo(root, workspace="packages:\n  - '.'\n  - 'pkgs/**'\n")
+    write(root, "pkgs/a/package.json", '{"license": "Apache-2.0"}')
+    write(root, "pkgs/a/bower_components/x/package.json", '{"name": "x"}')
+    return "licence", PASS, None
+
+
+def unreadable_item_repo(root, item):
+    # An item the parser cannot read must not end the list in silence: every
+    # package after it would go unchecked and the run would report clean.
+    licence_repo(root, workspace=f"packages:\n  - '.'\n  {item}\n  - 'b'\n", console_pkg=None)
+    write(root, "b/package.json", '{"private": true}')
+
+
+def case_licence_bare_dash_fails_closed(root):
+    unreadable_item_repo(root, "-")
+    return "licence", FAIL, "pnpm-workspace.yaml: cannot read the package list item '-'"
+
+
+def case_licence_empty_item_fails_closed(root):
+    unreadable_item_repo(root, "- ''")
+    return "licence", FAIL, "cannot read the package list item \"- ''\""
+
+
+def case_licence_text_after_quote_fails_closed(root):
+    unreadable_item_repo(root, "- 'it''s'")
+    return "licence", FAIL, "cannot read the package list item \"- 'it''s'\""
+
+
+def case_licence_later_package_still_checked(root):
+    # The item after an unreadable one is still read and checked.
+    unreadable_item_repo(root, "-")
+    return "licence", FAIL, "b/package.json: declares no license"
+
+
+def case_licence_zero_indent_list_is_read(root):
+    # pnpm accepts a block list whose dashes start in column 0.
+    licence_repo(root, workspace="packages:\n- '.'\n- console\n", console_pkg='{"private": true}')
+    return "licence", FAIL, "console/package.json: declares no license"
+
+
+def case_licence_quoted_hash_is_part_of_the_path(root):
+    licence_repo(root, workspace="packages:\n  - '.'\n  - 'x#y'\n", console_pkg=None)
+    write(root, "x#y/package.json", '{"private": true}')
+    return "licence", FAIL, "x#y/package.json: declares no license"
+
+
+def case_licence_manifest_not_an_object_fails(root):
+    licence_repo(root, console_pkg='["license", "Apache-2.0"]')
+    return "licence", FAIL, "console/package.json: is not a JSON object"
+
+
+def case_licence_rider_after_the_terms_fails(root):
+    # A clause appended after the terms is another licence, whatever the terms
+    # say. Only the appendix template may follow them.
+    licence_repo(root, licence=APACHE + "\nCommons Clause: you may not sell the Software.\n")
+    return "licence", FAIL, "LICENSE: the text after the terms is not the published appendix"
+
+
+def case_licence_filled_appendix_is_named(root):
+    # The copyright line belongs in NOTICE. The appendix stays the template,
+    # so no text an adopter writes into it can change the terms.
+    licence_repo(root, licence=APACHE.replace("[yyyy]", "2026").replace(
+        "[name of copyright owner]", "Synapti"))
+    return "licence", FAIL, "LICENSE: the text after the terms is not the published appendix"
+
+
+def rider_in_the_copyright_line(root, owner):
+    # A rider written as the owner's name is still a rider.
+    licence_repo(root, licence=APACHE.replace("[yyyy] [name of copyright owner]", owner))
+    return "licence", FAIL, "LICENSE: the text after the terms is not the published appendix"
+
+
+def case_licence_comma_rider_fails(root):
+    return rider_in_the_copyright_line(root, "2026 Synapti, and the Software may not be sold")
+
+
+def case_licence_licensed_under_rider_fails(root):
+    return rider_in_the_copyright_line(
+        root, "2026 Synapti. Licensed under these terms for non-commercial use only")
+
+
+def case_licence_empty_package_list(root):
+    licence_repo(root, workspace="packages:\n\nallowBuilds:\n  esbuild: true\n")
+    return "licence", FAIL, "pnpm-workspace.yaml: lists no packages, so only the root manifest is checked"
+
+
+def case_licence_workspace_byte_order_mark_is_read(root):
+    licence_repo(root, workspace="\ufeff" + WORKSPACE, console_pkg='{"private": true}')
+    return "licence", FAIL, "console/package.json: declares no license"
+
+
+def case_licence_terms_without_appendix_pass(root):
+    # The appendix is guidance for an adopter, and a file may leave it out.
+    end = APACHE.index("END OF TERMS AND CONDITIONS") + len("END OF TERMS AND CONDITIONS")
+    licence_repo(root, licence=APACHE[:end] + "\n")
+    return "licence", PASS, None
+
+
+def case_licence_crlf_passes(root):
+    # A Windows checkout writes CRLF. Binary mode, because `write` would
+    # translate the line endings back.
+    licence_repo(root)
+    with open(os.path.join(root, "LICENSE"), "wb") as handle:
+        handle.write(APACHE.replace("\n", "\r\n").encode())
+    return "licence", PASS, None
+
+
+def case_licence_yaml_tag_item_fails_closed(root):
+    # In YAML `- !!str console` is the string "console", not an exclusion.
+    # The check cannot read an unquoted item that opens with a YAML
+    # indicator. So the item is a finding, not a guess.
+    licence_repo(root, workspace="packages:\n  - '.'\n  - !!str console\n",
+                 console_pkg='{"private": true}')
+    return "licence", FAIL, "cannot read the package list item '- !!str console'"
+
+
+def case_licence_unquoted_exclusion_fails_closed(root):
+    licence_repo(root, workspace="packages:\n  - '.'\n  - console\n  - !console\n")
+    return "licence", FAIL, "cannot read the package list item '- !console'"
+
+
+def case_licence_exclusion_matching_nothing_fails(root):
+    licence_repo(root, workspace="packages:\n  - '.'\n  - console\n  - '!nowhere'\n")
+    return "licence", FAIL, "pnpm-workspace.yaml: '!nowhere' matches no package"
+
+
+def case_licence_byte_order_mark_is_read(root):
+    licence_repo(root, licence="\ufeff" + APACHE)
+    return "licence", PASS, None
+
+
+def case_licence_workspace_glob_is_read(root):
+    licence_repo(root, workspace="packages:\n  - '.'\n  - 'pkgs/*'\n")
+    write(root, "pkgs/one/package.json", '{"license": "Apache-2.0"}')
+    write(root, "pkgs/two/package.json", '{"private": true}')
+    return "licence", FAIL, "pkgs/two/package.json: declares no license"
+
+
 CASES = [
+    ("a cooldown on every ecosystem passes", case_cooldown_on_every_ecosystem_passes),
+    ("an ecosystem with no cooldown fails", case_cooldown_missing_on_one_ecosystem_fails),
+    ("a cooldown of zero days fails", case_cooldown_of_zero_days_fails),
+    ("a missing Dependabot file fails", case_cooldown_file_missing_fails),
+    ("an item opening with another key is read", case_cooldown_key_order_second_item_fails),
+    ("a first item opening with another key is read", case_cooldown_key_order_first_item_fails),
+    ("a cooldown nested under groups does not count", case_cooldown_nested_under_groups_fails),
+    ("a comment at the margin keeps the item", case_cooldown_comment_at_column_zero_passes),
+    ("a flow-style cooldown is read", case_cooldown_flow_map_passes),
+    ("an item with no ecosystem fails", case_cooldown_item_without_ecosystem_fails),
+    ("a bare-dash item is read", case_cooldown_bare_dash_item_fails),
+    ("an unreadable line in the list fails closed", case_cooldown_unreadable_line_fails_closed),
+    ("a Dependabot file naming no ecosystem fails", case_cooldown_no_ecosystem_fails),
+    ("a licence and a field in every package passes", case_licence_complete_passes),
+    ("a missing licence file fails", case_licence_file_missing),
+    ("a licence file holding another licence fails", case_licence_file_is_another_licence),
+    ("a workspace package with no licence field fails",
+     case_licence_workspace_package_lacks_field),
+    ("a package declaring another licence fails", case_licence_package_declares_another),
+    ("a package manifest that does not parse fails", case_licence_package_does_not_parse),
+    ("a workspace package with no manifest fails",
+     case_licence_workspace_names_a_missing_package),
+    ("a workspace glob is expanded", case_licence_workspace_glob_is_read),
+    ("a licence file holding only the heading fails", case_licence_header_only_fails),
+    ("a licence file with altered terms fails", case_licence_altered_text_fails),
+    ("the root is checked when the list omits it",
+     case_licence_root_checked_when_the_list_omits_it),
+    ("no workspace file means the root alone", case_licence_no_workspace_file_checks_the_root),
+    ("a flow-style package list is refused", case_licence_flow_style_list_is_refused),
+    ("a recursive glob reaches nested packages", case_licence_recursive_glob_is_read),
+    ("a negated entry excludes its package", case_licence_negated_entry_is_excluded),
+    ("a glob matching nothing fails", case_licence_glob_matching_nothing_fails),
+    ("an exclusion does not cross a directory",
+     case_licence_exclusion_does_not_cross_a_directory),
+    ("a recursive exclusion reaches any depth",
+     case_licence_recursive_exclusion_reaches_any_depth),
+    ("node_modules is never a workspace package",
+     case_licence_node_modules_is_never_a_package),
+    ("a byte-order mark does not change the licence", case_licence_byte_order_mark_is_read),
+    ("CRLF line endings do not change the licence", case_licence_crlf_passes),
+    ("a YAML-tagged item fails closed", case_licence_yaml_tag_item_fails_closed),
+    ("an unquoted exclusion fails closed", case_licence_unquoted_exclusion_fails_closed),
+    ("an exclusion matching nothing fails", case_licence_exclusion_matching_nothing_fails),
+    ("a bare dash fails closed", case_licence_bare_dash_fails_closed),
+    ("an empty item fails closed", case_licence_empty_item_fails_closed),
+    ("text after a closing quote fails closed", case_licence_text_after_quote_fails_closed),
+    ("a package after an unreadable item is still checked",
+     case_licence_later_package_still_checked),
+    ("a zero-indent list is read", case_licence_zero_indent_list_is_read),
+    ("a quoted # is part of the path", case_licence_quoted_hash_is_part_of_the_path),
+    ("a manifest that is not an object fails", case_licence_manifest_not_an_object_fails),
+    ("a rider after the terms fails", case_licence_rider_after_the_terms_fails),
+    ("a filled-in appendix is named", case_licence_filled_appendix_is_named),
+    ("the terms without the appendix pass", case_licence_terms_without_appendix_pass),
+    ("a rider after a comma fails", case_licence_comma_rider_fails),
+    ("a rider that says Licensed under fails", case_licence_licensed_under_rider_fails),
+    ("an empty package list checks the root alone", case_licence_empty_package_list),
+    ("a byte-order mark in the workspace file is read",
+     case_licence_workspace_byte_order_mark_is_read),
+    ("bower_components is never a workspace package",
+     case_licence_bower_components_is_never_a_package),
     ("a stated DEC range that matches the register passes", case_dec_range_matches),
     ("a range split by a line break is still read", case_dec_range_wrapped_across_lines),
     ("an evasive range connector is still read", case_dec_range_evasive_connector),
@@ -1329,7 +1808,10 @@ def main() -> int:
         write(root, "README.md", "The register holds DEC-01 to DEC-02.\n")
         write(root, "CONTRIBUTING.md", "# Contributing\n")
         write(root, "AGENTS.md", "# Agents\n")
-        write(root, "package.json", '{"scripts": {"build": "tsc"}}')
+        write(root, "package.json",
+              '{"license": "Apache-2.0", "scripts": {"build": "tsc"}}')
+        write(root, "LICENSE", APACHE)
+        write(root, ".github/dependabot.yml", DEPENDABOT)
         write(root, "docs/operations.md", "Run `pnpm run build`.\n")
         write(root, "docs/quick-map.md",
               "| `a` | DEC-01 | `x.test.ts` | 1 |\n| `b` | DEC-02 | `x.test.ts` | 1 |\n"
@@ -1339,13 +1821,22 @@ def main() -> int:
                               "unknown check 'nonsense'")
         failures += check_cli("a blank --only runs every check",
                               ["--root", root, "--only", " , , "], 0,
-                              "docs clean: 12 check(s)")
+                              "docs clean: 14 check(s)")
         failures += check_cli("a repeated --only runs once",
                               ["--root", root, "--only", "links,links,links"], 0,
                               "docs clean: 1 check(s)")
 
-    # The crash guard and the three command-line cases run too, so counting
-    # CASES alone undercounted every line below by four.
+    # A checkout whose path holds a glob character must not change what a
+    # workspace pattern matches.
+    with tempfile.TemporaryDirectory(prefix="a[1]") as root:
+        licence_repo(root, workspace="packages:\n  - '.'\n  - 'pkgs/*'\n", console_pkg=None)
+        write(root, "pkgs/x/package.json", '{"private": true}')
+        failures += check_cli("a bracket in the checkout path changes no match",
+                              ["--root", root, "--only", "licence"], 1,
+                              "pkgs/x/package.json: declares no license")
+
+    # The crash guard and the four command-line cases run too, so counting
+    # CASES alone undercounted every line below by five.
     total = len(CASES) + EXTRA_CASES
     if failures:
         print(f"\n{failures} of {total} case(s) failed")

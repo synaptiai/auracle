@@ -2,7 +2,29 @@
   "name": "auracle",
   "version": "0.1.0",
   "private": true,
-  "description": "Agentic support system with evidence gates (v1 reference architecture)",
+  "description": "Reference architecture for agentic customer support under two independent evidence gates, with a person approving every reply",
+  "license": "Apache-2.0",
+  "author": "Synapti",
+  "homepage": "https://github.com/synaptiai/auracle#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synaptiai/auracle.git"
+  },
+  "bugs": {
+    "url": "https://github.com/synaptiai/auracle/issues"
+  },
+  "keywords": [
+    "customer-support",
+    "agents",
+    "llm",
+    "human-in-the-loop",
+    "evidence-gates",
+    "groundedness",
+    "transactional-outbox",
+    "postgresql",
+    "pgvector",
+    "typescript"
+  ],
   "type": "module",
   "engines": {
     "node": ">=22.13"
@@ -63,7 +85,7 @@
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^12.2.0",
-    "@types/node": "^26.6.4",
+    "@types/node": "^22.20.5",
     "@types/pg": "^8.23.1",
     "eslint": "^10.12.0",
     "testcontainers": "^12.2.0",

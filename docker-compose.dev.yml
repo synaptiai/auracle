@@ -39,6 +39,8 @@ services:
     extends:
       file: docker-compose.yml
       service: db
+    # The ledger is the one service on both networks.
+    networks: [default, console]
 
   # Runs to completion before any process starts, so no daemon opens a
   # connection to a ledger that is missing a table. `service_completed_successfully`
@@ -49,7 +51,7 @@ services:
     command: ["migrate"]
     env_file: [{ path: .env, required: false }]
     environment:
-      DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+      DATABASE_URL: postgres://auracle:${AURACLE_DB_PASSWORD:-auracle}@db:5432/auracle
       # The migration gives the readers' role, auracle_reader, its login with
       # the password this URL carries. AURACLE_READER_PASSWORD in the host's
       # .env sets it; the default is the local stack's own.
@@ -60,18 +62,24 @@ services:
     restart: "no"
 
   webhook:
+    # More than the two 5 s waits a stuck shutdown takes, so the process exits
+    # on its own before Docker sends SIGKILL.
+    stop_grace_period: 15s
     image: ${AURACLE_IMAGE:-auracle:local}
     build: .
     command: ["webhook"]
     env_file: [{ path: .env, required: false }]
     environment:
-      DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+      DATABASE_URL: postgres://auracle:${AURACLE_DB_PASSWORD:-auracle}@db:5432/auracle
       # Named here as well as in the mapping, so the two cannot disagree.
       # The mapping interpolates from the shell and from `.env`; the process
       # reads only what reaches the container. A port set in the shell alone
       # published 18080 while the process listened on 8080, and the
       # published port answered nothing.
       WEBHOOK_PORT: ${WEBHOOK_PORT:-8080}
+      # Every interface inside the container. The port below publishes it on
+      # the host's loopback only.
+      WEBHOOK_HOST: 0.0.0.0
     # Loopback. An absent WEBHOOK_SECRET means the driver verifies nothing
     # and says so at startup, and `.env.example` ships it empty — so a stack
     # started from the documented copy accepts any request that reaches the
@@ -90,7 +98,7 @@ services:
     command: ["imap"]
     env_file: [{ path: .env, required: false }]
     environment:
-      DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+      DATABASE_URL: postgres://auracle:${AURACLE_DB_PASSWORD:-auracle}@db:5432/auracle
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -113,7 +121,7 @@ services:
     command: ["consumer"]
     env_file: [{ path: .env, required: false }]
     environment:
-      DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+      DATABASE_URL: postgres://auracle:${AURACLE_DB_PASSWORD:-auracle}@db:5432/auracle
       # One consumer owns each partition (DEC-27), and the count must agree
       # with every other process (DEC-36). A single consumer owns all eight.
       # Two consumers need two services here, each naming its own half, and
@@ -130,19 +138,21 @@ services:
     command: ["relay"]
     env_file: [{ path: .env, required: false }]
     environment:
-      DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+      DATABASE_URL: postgres://auracle:${AURACLE_DB_PASSWORD:-auracle}@db:5432/auracle
     depends_on:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
 
   console:
+    # As for the webhook: more than its two bounded shutdown waits.
+    stop_grace_period: 15s
     image: ${AURACLE_IMAGE:-auracle:local}
     build: .
     command: ["console"]
     env_file: [{ path: .env, required: false }]
     environment:
-      DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+      DATABASE_URL: postgres://auracle:${AURACLE_DB_PASSWORD:-auracle}@db:5432/auracle
       # The console's readers connect as auracle_reader, and refuse a session
       # that can act beyond a read. The same URL the migration set the login with.
       READER_DATABASE_URL: postgres://auracle_reader:${AURACLE_READER_PASSWORD:-auracle_reader}@db:5432/auracle
@@ -171,10 +181,18 @@ services:
     # CONSOLE_IDENTITY_HEADER names, which `.env` supplies (DEC-42).
     ports:
       - "127.0.0.1:${CONSOLE_PORT:-8787}:${CONSOLE_PORT:-8787}"
+    # A network of its own, shared with the ledger alone. The console trusts
+    # its identity header from any peer, so no other container may reach it.
+    networks: [console]
     depends_on:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+
+networks:
+  # The console and the ledger. A bridge network, so the console still reaches
+  # a helpdesk on the internet for its read-back.
+  console: {}
 
 configs:
   # The host's rule admits the readers' role to the ledger and nothing else.
