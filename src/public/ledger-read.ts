@@ -9,7 +9,7 @@
 // This module opens connections, transitively. `src/test-support/purity.test.ts`
 // lists it alongside `db/config` for that reason, so a pure `*.test.ts` that
 // imports it fails rather than reaching a real database through a barrel.
-export { probeLedger, requireDbUrl } from '../db/config.js';
+export { assertOneLedger, probeLedger, requireDbUrl, requireReaderDbUrl } from '../db/config.js';
 
 /**
  * Every export of this barrel that can change the ledger (DEC-46).

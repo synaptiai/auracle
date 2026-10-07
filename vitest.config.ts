@@ -49,7 +49,7 @@ export default defineConfig({
           // and pass green against the developer's own ledger — or against the
           // service Postgres that tests.yml exports to the whole run. This
           // points it at a port that refuses, so it fails where it stands.
-          env: { DATABASE_URL: NO_DATABASE_URL },
+          env: { DATABASE_URL: NO_DATABASE_URL, READER_DATABASE_URL: NO_DATABASE_URL },
           hookTimeout: 60_000,
           testTimeout: 30_000,
         },

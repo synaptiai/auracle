@@ -15,7 +15,7 @@
 
 import { Pool } from 'pg';
 
-import { closeLedger, requireDbUrl } from '../db/config.js';
+import { closeLedger, requireReaderDbUrl } from '../db/config.js';
 import { loadDotEnv } from '../config/env.js';
 import { startedAsCommand } from '../corpus/output-path.js';
 import {
@@ -145,12 +145,17 @@ async function main(): Promise<void> {
     window = { since: parseSince(value) };
   }
 
-  // `requireDbUrl`, never `dbUrl`. The compose fallback would let an operator
-  // who lost DATABASE_URL read a versioned, plausible report about a
+  // `requireReaderDbUrl`, never a fallback. The compose default would let an
+  // operator who lost the variable read a versioned, plausible report about a
   // throwaway container and take it for production. Every other entry point
   // in this repository refuses to guess, and this one reads a live ledger.
-  // One connection, because the job issues one statement.
-  const pool = guardLedgerPool(new Pool({ connectionString: requireDbUrl('the latency report'), max: 1 }), logLedgerPoolError('the latency report'));
+  // The readers' role, because the report reads through `boundedRead`, which
+  // refuses a session that can act beyond a read (issue #153). One
+  // connection, because the job issues one statement.
+  const pool = guardLedgerPool(
+    new Pool({ connectionString: requireReaderDbUrl('the latency report'), max: 1 }),
+    logLedgerPoolError('the latency report'),
+  );
   // An idle client that fails reaches the pool as an 'error' event, and with no
   // listener Node rethrows it outside this function's promise chain: the catch
   // below never sees it. The window is the whole artifact write, and it opens

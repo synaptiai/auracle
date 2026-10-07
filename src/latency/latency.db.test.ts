@@ -13,7 +13,7 @@ import { pathToFileURL } from 'node:url';
 import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { fencedInsert } from '../ledger/insert.js';
 import type { FencedRunInput } from '../ledger/insert.js';
@@ -22,6 +22,8 @@ import { loadLatencyArtifact } from './artifact.js';
 import { runLatencyJob } from './run.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 // The global setup guarantees a reachable database before the workers fork.
 // A failure here is a fault, and a suite that skipped itself would report
@@ -85,6 +87,7 @@ describe('the latency report (V2 open item 7)', () => {
   // the rows survived the run and the next `pnpm run latency` reported them.
   afterAll(async () => {
     await truncateLedger(pool);
+    await readers.end();
     await pool.end();
   });
 
@@ -96,7 +99,7 @@ describe('the latency report (V2 open item 7)', () => {
       await seedRun({ partition: 3, waitMs: i * MINUTE, serviceMs: i * MINUTE });
     }
 
-    const report = await readLatency(pool);
+    const report = await readLatency(readers);
     expect(report.partitions).toHaveLength(1);
     const p = report.partitions[0]!;
     expect(p.partition).toBe(3);
@@ -118,7 +121,7 @@ describe('the latency report (V2 open item 7)', () => {
     await seedRun({ partition: 1, waitMs: 6 * MINUTE, serviceMs: MINUTE });
     await seedRun({ partition: 1, waitMs: null, serviceMs: MINUTE });
 
-    const p = (await readLatency(pool)).partitions[0]!;
+    const p = (await readLatency(readers)).partitions[0]!;
     expect(p.wait.count).toBe(2);
     expect(p.wait.unmeasured).toBe(1);
     // The median of the two measured waits, not of three with a zero in them.
@@ -135,7 +138,7 @@ describe('the latency report (V2 open item 7)', () => {
     await seedRun({ partition: 2, waitMs: MINUTE, serviceMs: 8 * MINUTE });
     await seedRun({ partition: 2, waitMs: MINUTE, serviceMs: null, state: 'executing' });
 
-    const p = (await readLatency(pool)).partitions[0]!;
+    const p = (await readLatency(readers)).partitions[0]!;
     expect(p.service.count).toBe(2);
     expect(p.service.unfinished).toBe(1);
     expect(p.service.maxMs).toBe(8 * MINUTE);
@@ -151,7 +154,7 @@ describe('the latency report (V2 open item 7)', () => {
       await seedRun({ partition: 1, waitMs: 30 * MINUTE, serviceMs: MINUTE });
     }
 
-    const report = await readLatency(pool);
+    const report = await readLatency(readers);
     expect(report.partitions.map((x) => x.partition)).toEqual([0, 1]);
     expect(report.partitions[0]!.wait.maxMs).toBe(MINUTE);
     expect(report.partitions[1]!.wait.maxMs).toBe(30 * MINUTE);
@@ -164,7 +167,7 @@ describe('the latency report (V2 open item 7)', () => {
   it('counts a closed case as finished work, not as a run still going', async () => {
     await seedRun({ partition: 0, waitMs: 1_000, serviceMs: 4 * MINUTE, state: 'closed' });
 
-    const [row] = (await readLatency(pool)).partitions;
+    const [row] = (await readLatency(readers)).partitions;
     expect(row!.service.unfinished).toBe(0);
     expect(row!.service.count).toBe(1);
     expect(row!.service.maxMs).toBe(4 * MINUTE);
@@ -191,7 +194,7 @@ describe('the latency report (V2 open item 7)', () => {
     // A run nobody snoozed, so the distribution is not empty.
     await seedRun({ partition: 0, waitMs: 1_000, serviceMs: 30_000, state: 'resolved' });
 
-    const [row] = (await readLatency(pool)).partitions;
+    const [row] = (await readLatency(readers)).partitions;
     expect(row!.service.snoozed).toBe(2);
     // Neither is unfinished, and neither is in the duration.
     expect(row!.service.unfinished).toBe(0);
@@ -222,7 +225,7 @@ describe('the latency report (V2 open item 7)', () => {
     // The attempt that answered the turn, so the distribution is not empty.
     await seedRun({ partition: 0, waitMs: 1_000, serviceMs: 30_000, state: 'resolved' });
 
-    const [row] = (await readLatency(pool)).partitions;
+    const [row] = (await readLatency(readers)).partitions;
     expect(row!.service.rejected).toBe(2);
     // Neither is unfinished, and neither is in the duration.
     expect(row!.service.unfinished).toBe(0);
@@ -231,7 +234,7 @@ describe('the latency report (V2 open item 7)', () => {
   });
 
   it('reports no partitions over an empty ledger, rather than failing', async () => {
-    const report = await readLatency(pool);
+    const report = await readLatency(readers);
     expect(report.partitions).toEqual([]);
     expect(report.runs).toBe(0);
   });
@@ -255,7 +258,7 @@ describe('the latency report (V2 open item 7)', () => {
     );
     await seedRun({ partition: 0, waitMs: MINUTE, serviceMs: MINUTE });
 
-    const report = await readLatency(pool, { since: new Date('2026-09-01T00:00:00.000Z') });
+    const report = await readLatency(readers, { since: new Date('2026-09-01T00:00:00.000Z') });
     expect(report.runs).toBe(1);
     expect(report.partitions[0]!.wait.maxMs).toBe(MINUTE);
   });
@@ -272,7 +275,7 @@ describe('the latency report (V2 open item 7)', () => {
       [reversed],
     );
 
-    const report = await readLatency(pool);
+    const report = await readLatency(readers);
     const p = report.partitions[0]!;
     expect(p.wait.unordered).toBe(1);
     expect(p.wait.unmeasured).toBe(0);
@@ -294,7 +297,7 @@ describe('the latency report (V2 open item 7)', () => {
     await pool.query("UPDATE run SET state = 'resolved' WHERE run_id = $1", [old]);
     await seedRun({ partition: 2, waitMs: MINUTE, serviceMs: 3 * MINUTE });
 
-    const p = (await readLatency(pool)).partitions[0]!;
+    const p = (await readLatency(readers)).partitions[0]!;
     expect(p.service.unstamped).toBe(1);
     expect(p.service.unfinished).toBe(0);
     expect(p.service.count).toBe(1);
@@ -322,7 +325,7 @@ describe('the latency report (V2 open item 7)', () => {
       modelVer: 'intake',
     });
 
-    const p = (await readLatency(pool)).partitions[0]!;
+    const p = (await readLatency(readers)).partitions[0]!;
     expect(p.service.neverRan).toBe(1);
     expect(p.service.count).toBe(3);
     expect(p.service.p50Ms).toBe(20 * MINUTE);
@@ -337,7 +340,7 @@ describe('the latency report (V2 open item 7)', () => {
     const dirPath = mkdtempSync(join(tmpdir(), 'latency-job-'));
     const dir = pathToFileURL(`${dirPath}/`);
 
-    const first = await runLatencyJob({ pool, artifactDir: dir });
+    const first = await runLatencyJob({ pool: readers, artifactDir: dir });
     expect(first.artifact.version).toBe(1);
     const p = first.artifact.partitions[0]!;
     expect(p.wait.max_ms).toBe(5 * MINUTE);
@@ -349,7 +352,7 @@ describe('the latency report (V2 open item 7)', () => {
     expect(loaded).toEqual(first.artifact);
 
     // A second run mints the next version rather than overwriting the first.
-    const second = await runLatencyJob({ pool, artifactDir: dir });
+    const second = await runLatencyJob({ pool: readers, artifactDir: dir });
     expect(second.artifact.version).toBe(2);
     rmSync(dirPath, { recursive: true, force: true });
   });
@@ -367,7 +370,7 @@ describe('the latency report (V2 open item 7)', () => {
       modelVer: 'm1',
     });
 
-    const p = (await readLatency(pool)).partitions[0]!;
+    const p = (await readLatency(readers)).partitions[0]!;
     expect(p.service.neverRan).toBe(0);
     expect(p.service.count).toBe(1);
     expect(p.service.p50Ms).toBe(7 * MINUTE);
@@ -381,7 +384,7 @@ describe('the latency report (V2 open item 7)', () => {
     }
     await seedRun({ partition: 5, waitMs: MINUTE, serviceMs: -5 * MINUTE });
 
-    const p = (await readLatency(pool)).partitions[0]!;
+    const p = (await readLatency(readers)).partitions[0]!;
     expect(p.service.unordered).toBe(1);
     expect(p.service.count).toBe(3);
     expect(p.service.p50Ms).toBe(20 * MINUTE);

@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { readDays } from '../bands/query.js';
 import { approvalEditDistance } from '../approval/edit_distance.js';
@@ -28,6 +28,8 @@ import {
 import { writeDocuments, writeHistory } from './write.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 8 });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 await pool.query('SELECT 1');
 
@@ -58,6 +60,7 @@ async function ledgerFingerprint(): Promise<string> {
 
 afterAll(async () => {
   await truncate();
+  await readers.end();
   await pool.end();
 });
 
@@ -267,7 +270,7 @@ describe('the readers over the seeded history', () => {
   // always holds some. The other five columns each mean the row taught the
   // reader nothing, and none of them may hold a seeded run.
   it('leaves no seeded run in a latency column that means a broken ledger', async () => {
-    const report = await readLatency(pool);
+    const report = await readLatency(readers);
     expect(report.runs).toBeGreaterThan(0);
     let unfinished = 0;
     for (const p of report.partitions) {
@@ -283,7 +286,7 @@ describe('the readers over the seeded history', () => {
   });
 
   it('loads every partition, so the report has something to compare', async () => {
-    const report = await readLatency(pool);
+    const report = await readLatency(readers);
     expect(report.partitions).toHaveLength(OPTIONS.partitions);
     for (const p of report.partitions) expect(p.wait.count).toBeGreaterThan(0);
   });

@@ -8,16 +8,19 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { indexDocument } from '../retriever/retriever.js';
 import { readRunJournal } from '../journal/query.js';
 import { readDocument } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 4 });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 const EMBEDDING = Array.from({ length: 1536 }, () => 0);
 
 afterAll(async () => {
+  await readers.end();
   await pool.end();
 });
 
@@ -50,7 +53,7 @@ async function index(
 describe('a document a claim cited', () => {
   it('returns what it says, so a person can check the citation', async () => {
     await index('SYN-1', 'A charge is refundable inside fourteen days.', '2030-01-01');
-    const doc = await readDocument(pool, 'SYN-1');
+    const doc = await readDocument(readers, 'SYN-1');
     expect(doc?.body).toBe('A charge is refundable inside fourteen days.');
     expect(doc?.title).toBe('Refund eligibility windows');
     expect(doc?.owner).toBe('billing-team');
@@ -64,8 +67,8 @@ describe('a document a claim cited', () => {
   it('says which products the document serves (DEC-47)', async () => {
     await index('SYN-SCOPED', 'Only for one product.', '2030-01-01', ['aurora', 'ledger']);
     await index('SYN-UNSCOPED', 'For anybody.', '2030-01-01');
-    expect((await readDocument(pool, 'SYN-SCOPED'))?.products).toEqual(['aurora', 'ledger']);
-    expect((await readDocument(pool, 'SYN-UNSCOPED'))?.products).toEqual([]);
+    expect((await readDocument(readers, 'SYN-SCOPED'))?.products).toEqual(['aurora', 'ledger']);
+    expect((await readDocument(readers, 'SYN-UNSCOPED'))?.products).toEqual([]);
   });
 
   // A run journals the ids it retrieved, and a document can leave the index
@@ -73,7 +76,7 @@ describe('a document a claim cited', () => {
   // meet, and it is the document that is gone rather than the run that was
   // wrong.
   it('answers null for an id the index no longer holds', async () => {
-    expect(await readDocument(pool, 'SYN-GONE')).toBeNull();
+    expect(await readDocument(readers, 'SYN-GONE')).toBeNull();
   });
 
   // The retriever filters on `review_by >= CURRENT_DATE`, and this is that
@@ -82,8 +85,8 @@ describe('a document a claim cited', () => {
   it('says whether the document is still inside its review window (DEC-23)', async () => {
     await index('SYN-FRESH', 'current guidance', '2030-01-01');
     await index('SYN-STALE', 'guidance nobody has reviewed', '2020-01-01');
-    expect((await readDocument(pool, 'SYN-FRESH'))?.fresh).toBe(true);
-    expect((await readDocument(pool, 'SYN-STALE'))?.fresh).toBe(false);
+    expect((await readDocument(readers, 'SYN-FRESH'))?.fresh).toBe(true);
+    expect((await readDocument(readers, 'SYN-STALE'))?.fresh).toBe(false);
   });
 });
 
@@ -119,7 +122,7 @@ describe('whether a document moved since the run cited it', () => {
   it('says it did not when the body still matches', async () => {
     await index('SYN-1', 'A charge is refundable inside fourteen days.', '2030-01-01');
     const runId = await retrieveRun('SYN-1', await digestOf('SYN-1'));
-    const doc = (await readRunJournal(pool, runId))?.documents?.[0];
+    const doc = (await readRunJournal(readers, runId))?.documents?.[0];
     expect(doc?.bodyUnchanged).toBe(true);
   });
 
@@ -128,7 +131,7 @@ describe('whether a document moved since the run cited it', () => {
     const runId = await retrieveRun('SYN-1', await digestOf('SYN-1'));
     // Reindexed in place, which is what `indexDocument` does.
     await index('SYN-1', 'the text somebody replaced it with', '2030-01-01');
-    const doc = (await readRunJournal(pool, runId))?.documents?.[0];
+    const doc = (await readRunJournal(readers, runId))?.documents?.[0];
     expect(doc?.bodyUnchanged).toBe(false);
   });
 
@@ -153,8 +156,8 @@ describe('whether a document moved since the run cited it', () => {
       // coordinator computes it.
       const written = createHash('sha256').update(body, 'utf8').digest('hex');
       const runId = await retrieveRun('SYN-1', written);
-      const doc = (await readRunJournal(pool, runId))?.documents?.[0];
-      expect((await readDocument(pool, 'SYN-1'))?.body, name).toBe(body);
+      const doc = (await readRunJournal(readers, runId))?.documents?.[0];
+      expect((await readDocument(readers, 'SYN-1'))?.body, name).toBe(body);
       expect(doc?.bodyUnchanged, name).toBe(true);
     });
   }
@@ -170,7 +173,7 @@ describe('whether a document moved since the run cited it', () => {
        VALUES ($1, 'retrieve', 'done', $2::jsonb, 'p', 'm', 0)`,
       [runId, JSON.stringify({ docIds: ['SYN-1'], embed_model_ver: 'e1' })],
     );
-    const doc = (await readRunJournal(pool, runId))?.documents?.[0];
+    const doc = (await readRunJournal(readers, runId))?.documents?.[0];
     expect(doc?.bodyUnchanged).toBeNull();
   });
 });

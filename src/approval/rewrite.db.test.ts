@@ -20,7 +20,7 @@ import { CUSTOMER_REPLY_ACTION_CLASS } from '../adapters/types.js';
 import { coordinateTicket } from '../coordinator/coordinator.js';
 import type { CoordinatorDeps } from '../coordinator/coordinator.js';
 import { enqueueTicket } from '../coordinator/intake.js';
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { readRunJournal } from '../journal/query.js';
 import { readSavedReply } from '../ledger/conversation.js';
 import { FakeProvider } from '../models/fake.js';
@@ -36,8 +36,11 @@ import { rewriteReply } from './rewrite.js';
 import { replyDigest } from './shown.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 afterAll(async () => {
+  await readers.end();
   await pool.end();
 });
 
@@ -365,7 +368,7 @@ describe('DEC-48: a reply a person rewrote from scratch', () => {
     const second = await parkAgain(first);
     await rewriteReply(pool, first.runId, PERSON_TEXT, { ledgerReply: true });
 
-    const sibling = await readRunJournal(pool, second.runId);
+    const sibling = await readRunJournal(readers, second.runId);
     expect(sibling?.rewrite).not.toBeNull();
     // The record belongs to the run that wrote it, so the sibling reads it as
     // unnamed rather than borrowing its sibling's reviewer.
@@ -495,7 +498,7 @@ describe('DEC-48: a reply a person rewrote from scratch', () => {
   // to, so no reader reports it as the verdict on a person's words.
   it('reports the gate verdict as the replaced draft, not as the reply', async () => {
     const parked = await parkOnTurnOne();
-    const before = await readRunJournal(pool, parked.runId);
+    const before = await readRunJournal(readers, parked.runId);
     expect(before?.coverage?.groundedness).not.toBeNull();
 
     await rewriteReply(pool, parked.runId, PERSON_TEXT, {
@@ -504,7 +507,7 @@ describe('DEC-48: a reply a person rewrote from scratch', () => {
       ledgerReply: true,
     });
 
-    const after = await readRunJournal(pool, parked.runId);
+    const after = await readRunJournal(readers, parked.runId);
     expect(after?.rewrite).toMatchObject({ reviewer: 'anna@example.test', reviewerSource: 'roster' });
     // The record of the draft the gate judged is still there to read.
     expect(after?.coverage?.groundedness).toBe(before?.coverage?.groundedness);

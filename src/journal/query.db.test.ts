@@ -15,11 +15,13 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { readRunJournal } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 4 });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 // The global setup guarantees a reachable database before the workers fork.
 // A failure here is a fault, and a suite that skipped itself would report
@@ -126,13 +128,14 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  await readers.end();
   await pool.end();
 });
 
 describe('a run with a full journal', () => {
   it('returns every step in the canonical order, not the alphabetical one', async () => {
     const runId = await fullRun();
-    const result = await readRunJournal(pool, runId);
+    const result = await readRunJournal(readers, runId);
     expect(result?.steps.map((s) => s.stepId)).toEqual([
       'classify',
       'retrieve',
@@ -148,7 +151,7 @@ describe('a run with a full journal', () => {
 
   it('reads the two gates as two independent values (DEC-05)', async () => {
     const runId = await fullRun();
-    const result = await readRunJournal(pool, runId);
+    const result = await readRunJournal(readers, runId);
     expect(result?.agreement).toEqual({
       intentId: 'password_reset',
       agreement: 0.89,
@@ -169,7 +172,7 @@ describe('a run with a full journal', () => {
 
   it('takes the fitted threshold when the classified intent has one (DEC-41)', async () => {
     const runId = await fullRun('refund_request');
-    const result = await readRunJournal(pool, runId);
+    const result = await readRunJournal(readers, runId);
     // The scalar is not stored anywhere. It is the per-intent entry from the
     // gate row applied to the intent from the classify row, which is two rows
     // and a rule that lives in the policy engine.
@@ -181,13 +184,13 @@ describe('a run with a full journal', () => {
 
   it('reports the run cost at each step, which is cumulative and not per step', async () => {
     const runId = await fullRun();
-    const result = await readRunJournal(pool, runId);
+    const result = await readRunJournal(readers, runId);
     expect(result?.steps.map((s) => s.runCostMicrosAtStep)).toEqual([120, 200, 900, 1400, 1400]);
   });
 
   it('carries the pins and the embedding pin (DEC-26)', async () => {
     const runId = await fullRun();
-    const result = await readRunJournal(pool, runId);
+    const result = await readRunJournal(readers, runId);
     const retrieve = result?.steps.find((s) => s.stepId === 'retrieve');
     expect(retrieve?.promptVer).toBe('p1');
     expect(retrieve?.modelVer).toBe('m1');
@@ -196,7 +199,7 @@ describe('a run with a full journal', () => {
 
   it('reports the compose outcome and the execute key', async () => {
     const runId = await fullRun();
-    const result = await readRunJournal(pool, runId);
+    const result = await readRunJournal(readers, runId);
     expect(result?.steps.find((s) => s.stepId === 'compose')?.compose).toEqual({
       abstained: false,
       claimCount: 3,
@@ -221,7 +224,7 @@ describe('the compose step', () => {
         result: { abstained: true, claimCount: 0, staleDocumentIds: [], provider: 'stub' },
       },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps[0];
+    const step = (await readRunJournal(readers, runId))?.steps[0];
     // An allowlist of `done` alone would have discarded this, which is the
     // outcome an operator most wants to see.
     expect(step?.compose?.abstained).toBe(true);
@@ -236,14 +239,14 @@ describe('the compose step', () => {
         result: { abstained: true, shape: 'no-content', error: 'unreadable' },
       },
     ]);
-    expect((await readRunJournal(pool, runId))?.steps[0]?.compose).toBeNull();
+    expect((await readRunJournal(readers, runId))?.steps[0]?.compose).toBeNull();
   });
 
   it('reports an unrecorded claim count as unmeasured, never as zero', async () => {
     const runId = await journal([
       { stepId: 'compose', status: 'done', result: { abstained: false, provider: 'stub' } },
     ]);
-    const compose = (await readRunJournal(pool, runId))?.steps[0]?.compose;
+    const compose = (await readRunJournal(readers, runId))?.steps[0]?.compose;
     // Zero claims is a real outcome and the groundedness denominator. A row
     // that recorded nothing must not be shown as one.
     expect(compose?.claimCount).toBeNull();
@@ -260,7 +263,7 @@ describe('the compose step', () => {
         result: { abstained: false, claimCount: 2, staleDocumentIds: [], provider: 'model' },
       },
     ]);
-    expect((await readRunJournal(pool, runId))?.steps[0]?.compose?.staleDocumentIds).toEqual([]);
+    expect((await readRunJournal(readers, runId))?.steps[0]?.compose?.staleDocumentIds).toEqual([]);
   });
 
   // The field's own contract says null, never the empty list, because an
@@ -275,7 +278,7 @@ describe('the compose step', () => {
         result: { abstained: false, claimCount: 2, staleDocumentIds: ['SYN-1', 7], provider: 'model' },
       },
     ]);
-    expect((await readRunJournal(pool, runId))?.steps[0]?.compose?.staleDocumentIds).toBeNull();
+    expect((await readRunJournal(readers, runId))?.steps[0]?.compose?.staleDocumentIds).toBeNull();
   });
 });
 
@@ -287,7 +290,7 @@ describe('a retrieval the reader cannot take at its word', () => {
     const runId = await journal([
       { stepId: 'retrieve', status: 'done', result: { docIds: 'SYN-1', embed_model_ver: 'e1' } },
     ]);
-    const read = await readRunJournal(pool, runId);
+    const read = await readRunJournal(readers, runId);
     expect(read?.documentsMalformed).toBe(true);
     expect(read?.documents).toBeNull();
   });
@@ -296,7 +299,7 @@ describe('a retrieval the reader cannot take at its word', () => {
     const runId = await journal([
       { stepId: 'classify', status: 'done', result: { intentId: 'password_reset', agreement: 1 } },
     ]);
-    const read = await readRunJournal(pool, runId);
+    const read = await readRunJournal(readers, runId);
     expect(read?.documentsMalformed).toBe(false);
     expect(read?.documents).toBeNull();
   });
@@ -305,7 +308,7 @@ describe('a retrieval the reader cannot take at its word', () => {
     const runId = await journal([
       { stepId: 'retrieve', status: 'done', result: { docIds: [], embed_model_ver: 'e1' } },
     ]);
-    const read = await readRunJournal(pool, runId);
+    const read = await readRunJournal(readers, runId);
     expect(read?.documentsMalformed).toBe(false);
     expect(read?.documents).toEqual([]);
   });
@@ -318,7 +321,7 @@ describe('a retrieval the reader cannot take at its word', () => {
     const runId = await journal([
       { stepId: 'retrieve', status: 'done', result: { docIds: [null, 'SYN-KEEP'], embed_model_ver: 'e1' } },
     ]);
-    const read = await readRunJournal(pool, runId);
+    const read = await readRunJournal(readers, runId);
     expect(read?.documentsMalformed).toBe(true);
     expect(read?.documents).toBeNull();
   });
@@ -338,14 +341,14 @@ describe('what the reader now returns about a draft and its claims', () => {
         },
       },
     ]);
-    const park = (await readRunJournal(pool, withDraft))?.steps[0]?.park;
+    const park = (await readRunJournal(readers, withDraft))?.steps[0]?.park;
     expect(park?.draftRecorded).toBe(true);
     expect(park?.draftBody).toBe('We refunded the duplicate charge.');
 
     const marker = await journal([
       { stepId: 'park', status: 'parking', result: { actionClass: 'send_reply', parkKey: 'k' } },
     ]);
-    const none = (await readRunJournal(pool, marker))?.steps[0]?.park;
+    const none = (await readRunJournal(readers, marker))?.steps[0]?.park;
     expect(none?.draftRecorded).toBe(false);
     expect(none?.draftBody).toBeNull();
   });
@@ -371,7 +374,7 @@ describe('what the reader now returns about a draft and its claims', () => {
         },
       },
     ]);
-    const read = await readRunJournal(pool, runId);
+    const read = await readRunJournal(readers, runId);
     expect(read?.steps[0]?.park?.failureRecorded).toBe(true);
     expect(read?.steps[0]?.park?.payloadRecorded).toBe(true);
     expect(read?.steps[0]?.park?.payload).toEqual({ queue: 'billing' });
@@ -391,7 +394,7 @@ describe('what the reader now returns about a draft and its claims', () => {
           result: { actionClass: 'compensate', parkKey: 'k', payload },
         },
       ]);
-      const park = (await readRunJournal(pool, runId))?.steps[0]?.park;
+      const park = (await readRunJournal(readers, runId))?.steps[0]?.park;
       expect(park?.payload, JSON.stringify(payload)).toBeNull();
     }
   });
@@ -411,7 +414,7 @@ describe('what the reader now returns about a draft and its claims', () => {
         },
       },
     ]);
-    const compose = (await readRunJournal(pool, runId))?.steps[0]?.compose;
+    const compose = (await readRunJournal(readers, runId))?.steps[0]?.compose;
     expect(compose?.claims).toEqual([
       { text: 'Refunds post in five days.', docId: 'SYN-1' },
       { text: 'Your subscription is unchanged.', docId: 'SYN-2' },
@@ -436,7 +439,7 @@ describe('what the reader now returns about a draft and its claims', () => {
         },
       },
     ]);
-    const compose = (await readRunJournal(pool, runId))?.steps[0]?.compose;
+    const compose = (await readRunJournal(readers, runId))?.steps[0]?.compose;
     expect(compose?.sentences).toEqual([
       { text: 'Thanks for writing in.', docId: null },
       { text: 'Refunds post in five days.', docId: 'SYN-1' },
@@ -464,7 +467,7 @@ describe('what the reader now returns about a draft and its claims', () => {
         },
       },
     ]);
-    const compose = (await readRunJournal(pool, runId))?.steps[0]?.compose;
+    const compose = (await readRunJournal(readers, runId))?.steps[0]?.compose;
     expect(compose?.sentences).toEqual([
       { text: 'Refunds post in five days.', docId: 'SYN-1' },
     ]);
@@ -483,7 +486,7 @@ describe('what the reader now returns about a draft and its claims', () => {
         },
       },
     ]);
-    expect((await readRunJournal(pool, runId))?.steps[0]?.compose?.claims).toBeNull();
+    expect((await readRunJournal(readers, runId))?.steps[0]?.compose?.claims).toBeNull();
   });
 
   // The twin of the case above, on the other field. An unreadable docId that
@@ -506,7 +509,7 @@ describe('what the reader now returns about a draft and its claims', () => {
           },
         },
       ]);
-      const compose = (await readRunJournal(pool, runId))?.steps[0]?.compose;
+      const compose = (await readRunJournal(readers, runId))?.steps[0]?.compose;
       expect(compose?.sentences, JSON.stringify(docId)).toBeNull();
       expect(compose?.claims, JSON.stringify(docId)).toBeNull();
     }
@@ -526,7 +529,7 @@ describe('what the reader now returns about a draft and its claims', () => {
         },
       },
     ]);
-    const compose = (await readRunJournal(pool, runId))?.steps[0]?.compose;
+    const compose = (await readRunJournal(readers, runId))?.steps[0]?.compose;
     expect(compose?.sentences).toBeNull();
   });
 
@@ -548,7 +551,7 @@ describe('what the reader now returns about a draft and its claims', () => {
         },
       },
     ]);
-    const coverage = (await readRunJournal(pool, runId))?.coverage;
+    const coverage = (await readRunJournal(readers, runId))?.coverage;
     expect(coverage?.groundedness).toBe(0.5);
     expect(coverage?.claimVerdicts).toEqual([
       { claimIndex: 0, supported: true },
@@ -571,7 +574,7 @@ describe('what the reader now returns about a draft and its claims', () => {
         },
       },
     ]);
-    expect((await readRunJournal(pool, runId))?.coverage?.claimVerdicts).toBeNull();
+    expect((await readRunJournal(readers, runId))?.coverage?.claimVerdicts).toBeNull();
   });
 });
 
@@ -594,7 +597,7 @@ describe('whether a cited document still says what the run read', () => {
         },
       },
     ]);
-    const doc = (await readRunJournal(pool, runId))?.documents?.[0];
+    const doc = (await readRunJournal(readers, runId))?.documents?.[0];
     expect(doc?.bodyUnchanged).toBe(true);
     expect(doc?.titleAtRun).toBe('a document');
   });
@@ -614,7 +617,7 @@ describe('whether a cited document still says what the run read', () => {
         },
       },
     ]);
-    const doc = (await readRunJournal(pool, runId))?.documents?.[0];
+    const doc = (await readRunJournal(readers, runId))?.documents?.[0];
     expect(doc?.bodyUnchanged).toBe(false);
     // Today's title and the run's title are both reported, and they differ.
     expect(doc?.titleAtRun).toBe('the title it had');
@@ -631,7 +634,7 @@ describe('whether a cited document still says what the run read', () => {
         result: { docIds: ['SYN-NOHASH'], embed_model_ver: 'e1' },
       },
     ]);
-    expect((await readRunJournal(pool, noHash))?.documents?.[0]?.bodyUnchanged).toBeNull();
+    expect((await readRunJournal(readers, noHash))?.documents?.[0]?.bodyUnchanged).toBeNull();
 
     const gone = await journal([
       {
@@ -643,7 +646,7 @@ describe('whether a cited document still says what the run read', () => {
         },
       },
     ]);
-    const missing = (await readRunJournal(pool, gone))?.documents?.[0];
+    const missing = (await readRunJournal(readers, gone))?.documents?.[0];
     expect(missing?.resolved).toBe(false);
     expect(missing?.bodyUnchanged).toBeNull();
   });
@@ -654,21 +657,21 @@ describe('a run the ledger holds no journal for', () => {
     // Null here means no journalled step under this id. It does not mean no
     // such run: this reader joins no run row, and the caller that knows
     // whether the run exists is the one that read it.
-    expect(await readRunJournal(pool, randomUUID())).toBeNull();
+    expect(await readRunJournal(readers, randomUUID())).toBeNull();
   });
 
   it('answers null for an id the uuid column could not be asked about', async () => {
     // A console route takes this out of a URL. Bound into a uuid comparison
     // it makes the database raise a syntax fault instead of answering, and
     // the run detail would show an error page for a mistyped link.
-    expect(await readRunJournal(pool, 'not-a-uuid')).toBeNull();
+    expect(await readRunJournal(readers, 'not-a-uuid')).toBeNull();
   });
 });
 
 describe('a step journalled before it produced an outcome', () => {
   it('reports the outcome as missing, and says nothing about why', async () => {
     const runId = await journal([{ stepId: 'classify', status: 'started' }]);
-    const step = (await readRunJournal(pool, runId))?.steps[0];
+    const step = (await readRunJournal(readers, runId))?.steps[0];
     // In flight or crashed mid-step. `db/006` keeps the column nullable for
     // exactly this window, and nothing stored separates the two, so the
     // reader must not guess.
@@ -679,7 +682,7 @@ describe('a step journalled before it produced an outcome', () => {
 
   it('reads no agreement off it', async () => {
     const runId = await journal([{ stepId: 'classify', status: 'started' }]);
-    expect((await readRunJournal(pool, runId))?.agreement).toBeNull();
+    expect((await readRunJournal(readers, runId))?.agreement).toBeNull();
   });
 });
 
@@ -697,7 +700,7 @@ describe('a step that failed', () => {
         result: { shape: 'no-content', error: 'OpenRouter chat: content is not a string' },
       },
     ]);
-    const result = await readRunJournal(pool, runId);
+    const result = await readRunJournal(readers, runId);
     expect(result?.coverage).toBeNull();
     expect(result?.steps.find((s) => s.stepId === 'gate')?.faultShape).toBe('no-content');
     // The threshold rides on the gate row, so a failed gate loses it too.
@@ -719,7 +722,7 @@ describe('a step that failed', () => {
         result: { groundedness: 0.95, decision: 'auto', reason: 'auto', shape: 'no-content' },
       },
     ]);
-    expect((await readRunJournal(pool, runId))?.coverage).toBeNull();
+    expect((await readRunJournal(readers, runId))?.coverage).toBeNull();
   });
 
   it('refuses an agreement carried on a row that failed', async () => {
@@ -730,7 +733,7 @@ describe('a step that failed', () => {
         result: { intentId: 'refund_request', agreement: 0.95, shape: 'no-label' },
       },
     ]);
-    expect((await readRunJournal(pool, runId))?.agreement).toBeNull();
+    expect((await readRunJournal(readers, runId))?.agreement).toBeNull();
   });
 
   // Every case above uses `failed`, and that is the hole they leave together:
@@ -761,7 +764,7 @@ describe('a step that failed', () => {
         },
         { stepId: 'retrieve', status, result: { docIds: ['doc-a'] } },
       ]);
-      const result = await readRunJournal(pool, runId);
+      const result = await readRunJournal(readers, runId);
       expect(result?.coverage, status).toBeNull();
       expect(result?.agreement, status).toBeNull();
       expect(result?.documents, status).toBeNull();
@@ -776,14 +779,14 @@ describe('a step that failed', () => {
         result: { docIds: ['doc-a'], shape: 'no-vector' },
       },
     ]);
-    expect((await readRunJournal(pool, runId))?.documents).toBeNull();
+    expect((await readRunJournal(readers, runId))?.documents).toBeNull();
   });
 
   it('does not read a failed classify as an agreement', async () => {
     const runId = await journal([
       { stepId: 'classify', status: 'failed', result: { shape: 'no-label', error: 'unreadable' } },
     ]);
-    const result = await readRunJournal(pool, runId);
+    const result = await readRunJournal(readers, runId);
     expect(result?.agreement).toBeNull();
     expect(result?.steps[0]?.faultShape).toBe('no-label');
   });
@@ -793,7 +796,7 @@ describe('a step that failed', () => {
       { stepId: 'retrieve', status: 'failed', result: { shape: 'no-vector', error: 'no vector' } },
     ]);
     // Null, not the empty list. The run never retrieved.
-    expect((await readRunJournal(pool, runId))?.documents).toBeNull();
+    expect((await readRunJournal(readers, runId))?.documents).toBeNull();
   });
 
   it('returns no fault message, only the shape it was typed with (DEC-18)', async () => {
@@ -811,7 +814,7 @@ describe('a step that failed', () => {
         },
       },
     ]);
-    const result = await readRunJournal(pool, runId);
+    const result = await readRunJournal(readers, runId);
     expect(JSON.stringify(result)).not.toContain('@example.test');
     expect(result?.steps[0]?.park?.failureRecorded).toBe(true);
   });
@@ -824,7 +827,7 @@ describe('a result the database did not constrain', () => {
       { stepId: 'compose', status: 'done', result: 'not an object' },
       { stepId: 'gate', status: 'done', result: { groundedness: 0.9, decision: 'gated', reason: 'customer_visible' } },
     ]);
-    const result = await readRunJournal(pool, runId);
+    const result = await readRunJournal(readers, runId);
     const compose = result?.steps.find((s) => s.stepId === 'compose');
     expect(compose?.resultRecorded).toBe(true);
     expect(compose?.resultMalformed).toBe(true);
@@ -841,7 +844,7 @@ describe('a result the database did not constrain', () => {
       { stepId: 'classify', status: 'done', result: { intentId: 'x', agreement: 1.4 } },
       { stepId: 'gate', status: 'done', result: { groundedness: 1.5, decision: 'gated', reason: 'customer_visible' } },
     ]);
-    const result = await readRunJournal(pool, runId);
+    const result = await readRunJournal(readers, runId);
     expect(result?.agreement).toMatchObject({ intentId: 'x', agreement: 1.4 });
     expect(result?.coverage).toMatchObject({ decision: 'gated', reason: 'customer_visible', groundedness: 1.5 });
   });
@@ -850,7 +853,7 @@ describe('a result the database did not constrain', () => {
     const runId = await journal([
       { stepId: 'gate', status: 'done', result: { groundedness: 0.9, decision: 'auto' } },
     ]);
-    const coverage = (await readRunJournal(pool, runId))?.coverage;
+    const coverage = (await readRunJournal(readers, runId))?.coverage;
     expect(coverage?.reason).toBeNull();
     expect(coverage?.blockThreshold).toBeNull();
   });
@@ -859,7 +862,7 @@ describe('a result the database did not constrain', () => {
     const runId = await journal([
       { stepId: 'classify', status: 'unknown', promptVer: 'unrecorded', modelVer: 'unrecorded' },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps[0];
+    const step = (await readRunJournal(readers, runId))?.steps[0];
     expect(step?.promptVer).toBeNull();
     expect(step?.modelVer).toBeNull();
     expect(step?.status).toBe('unknown');
@@ -870,7 +873,7 @@ describe('a result the database did not constrain', () => {
       { stepId: 'classify', status: 'done', result: { intentId: 'x', agreement: 0.9 } },
       { stepId: 'reconcile', status: 'done', result: {} },
     ]);
-    const steps = (await readRunJournal(pool, runId))?.steps;
+    const steps = (await readRunJournal(readers, runId))?.steps;
     expect(steps?.map((s) => s.stepId)).toEqual(['classify', 'reconcile']);
     expect(steps?.[1]?.recognized).toBe(false);
     expect(steps?.[0]?.recognized).toBe(true);
@@ -890,7 +893,7 @@ describe('a result the database did not constrain', () => {
         },
       },
     ]);
-    const result = await readRunJournal(pool, runId);
+    const result = await readRunJournal(readers, runId);
     // A string typed as a number would have reached the console as one.
     expect(result?.agreement?.threshold).toBeNull();
     expect(result?.coverage?.reviewThreshold).toBeNull();
@@ -915,7 +918,7 @@ describe('the four park shapes', () => {
         },
       },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps[0];
+    const step = (await readRunJournal(readers, runId))?.steps[0];
     expect(step?.status).toBe('done');
     expect(step?.park).toEqual({
       actionClass: 'issue_credit',
@@ -950,7 +953,7 @@ describe('the four park shapes', () => {
         result: { actionClass: 'send_reply', delivery: 'at_most_once', parkKey: 'idem-park' },
       },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps[0];
+    const step = (await readRunJournal(readers, runId))?.steps[0];
     expect(step?.status).toBe('parking');
     expect(step?.park?.parkKey).toBe('idem-park');
     expect(step?.park?.draftExternalId).toBeNull();
@@ -970,7 +973,7 @@ describe('the four park shapes', () => {
         },
       },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps[0];
+    const step = (await readRunJournal(readers, runId))?.steps[0];
     expect(step?.status).toBe('failed');
     expect(step?.park?.parkKey).toBe('idem-park');
     expect(step?.park?.failureRecorded).toBe(true);
@@ -992,7 +995,7 @@ describe('the four park shapes', () => {
         },
       },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps[0];
+    const step = (await readRunJournal(readers, runId))?.steps[0];
     expect(step?.park?.draftExternalId).toBe('draft-77');
     expect(step?.park?.draftRecorded).toBe(true);
     expect(step?.park?.payloadRecorded).toBe(false);
@@ -1008,7 +1011,7 @@ describe('the escalate step', () => {
     const runId = await journal([
       { stepId: 'escalate', status: 'done', result: { reason: 'egress_refused' } },
     ]);
-    expect((await readRunJournal(pool, runId))?.steps[0]?.escalationReason).toBe('egress_refused');
+    expect((await readRunJournal(readers, runId))?.steps[0]?.escalationReason).toBe('egress_refused');
   });
 });
 
@@ -1017,7 +1020,7 @@ describe('the retrieved documents', () => {
     await indexDoc('doc-b', 'Refund policy', '2030-06-01');
     await indexDoc('doc-a', 'Password reset', '2030-07-01');
     const runId = await fullRun();
-    const documents = (await readRunJournal(pool, runId))?.documents;
+    const documents = (await readRunJournal(readers, runId))?.documents;
     // The journal recorded doc-b first, so doc-b is position one. RRF fuses
     // ranks and discards the scores, and the reranker stands down below fifty
     // candidates without recording that it did, so the position is the
@@ -1035,7 +1038,7 @@ describe('the retrieved documents', () => {
     await indexDoc('doc-b', 'Refund policy', '2030-06-01');
     await indexDoc('doc-a', 'Password reset', '2030-07-01');
     const runId = await fullRun();
-    const documents = (await readRunJournal(pool, runId))?.documents;
+    const documents = (await readRunJournal(readers, runId))?.documents;
     // A `date` read as a JavaScript Date lands at the local midnight, so a
     // console behind UTC would show the day before. The database renders it.
     expect(documents?.map((d) => d.reviewBy)).toEqual(['2030-06-01', '2030-07-01']);
@@ -1044,7 +1047,7 @@ describe('the retrieved documents', () => {
   it('reports an id the index no longer holds rather than shortening the list', async () => {
     await indexDoc('doc-b', 'Refund policy', '2030-06-01');
     const runId = await fullRun();
-    const documents = (await readRunJournal(pool, runId))?.documents;
+    const documents = (await readRunJournal(readers, runId))?.documents;
     // There is no foreign key from the journal to the index, so this happens.
     // Dropping the row would hide that the run cited something that is gone,
     // and would silently renumber every position after it.
@@ -1072,7 +1075,7 @@ describe('the retrieved documents', () => {
     await indexDoc('doc-a', 'Password reset', '2030-07-01');
     const runId = await fullRun();
     await indexDoc('doc-b', 'Refund policy, second edition', '2030-06-01');
-    const documents = (await readRunJournal(pool, runId))?.documents;
+    const documents = (await readRunJournal(readers, runId))?.documents;
     // The retriever rewrites a document in place, so only the id is a
     // historical fact. The type says so; this proves the type is not lying.
     expect(documents?.[0]?.title).toBe('Refund policy, second edition');
@@ -1082,12 +1085,12 @@ describe('the retrieved documents', () => {
     const empty = await journal([
       { stepId: 'retrieve', status: 'done', result: { docIds: [], embed_model_ver: 'embed-1' } },
     ]);
-    expect((await readRunJournal(pool, empty))?.documents).toEqual([]);
+    expect((await readRunJournal(readers, empty))?.documents).toEqual([]);
 
     const never = await journal([
       { stepId: 'classify', status: 'done', result: { intentId: 'x', agreement: 0.9 } },
     ]);
-    expect((await readRunJournal(pool, never))?.documents).toBeNull();
+    expect((await readRunJournal(readers, never))?.documents).toBeNull();
   });
 
   it('keeps a duplicated id, because the journal recorded one', async () => {
@@ -1099,7 +1102,7 @@ describe('the retrieved documents', () => {
         result: { docIds: ['doc-a', 'doc-a'], embed_model_ver: 'embed-1' },
       },
     ]);
-    const documents = (await readRunJournal(pool, runId))?.documents;
+    const documents = (await readRunJournal(readers, runId))?.documents;
     // A join without ordinality collapses these into one row and the console
     // shows a retrieval the run did not make.
     expect(documents?.map((d) => d.position)).toEqual([1, 2]);
@@ -1123,7 +1126,7 @@ describe('the close a person made (DEC-48)', () => {
         },
       },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'close');
+    const step = (await readRunJournal(readers, runId))?.steps.find((s) => s.stepId === 'close');
     expect(step?.close).toEqual({
       reason: 'Duplicate of ticket T-4471.',
       reviewer: 'anna@example.test',
@@ -1138,14 +1141,14 @@ describe('the close a person made (DEC-48)', () => {
     const runId = await journal([
       { stepId: 'close', status: 'done', result: { reviewer: 'anna@example.test' } },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'close');
+    const step = (await readRunJournal(readers, runId))?.steps.find((s) => s.stepId === 'close');
     expect(step?.close?.reason).toBeNull();
     expect(step?.close?.reviewer).toBe('anna@example.test');
   });
 
   it('reads a close row whose result is not an object as malformed, not as empty', async () => {
     const runId = await journal([{ stepId: 'close', status: 'done', result: ['no'] }]);
-    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'close');
+    const step = (await readRunJournal(readers, runId))?.steps.find((s) => s.stepId === 'close');
     expect(step?.resultMalformed).toBe(true);
     expect(step?.close).toBeNull();
   });
@@ -1163,7 +1166,7 @@ describe('the reason a run was superseded (#122)', () => {
         result: { reason: 'turn_answered', answeredBy: '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34' },
       },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'supersede');
+    const step = (await readRunJournal(readers, runId))?.steps.find((s) => s.stepId === 'supersede');
     expect(step?.supersede).toEqual({
       reason: 'turn_answered',
       answeredBy: '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34',
@@ -1181,7 +1184,7 @@ describe('the reason a run was superseded (#122)', () => {
         result: { reason: 'draft_parked', parkedBy: '4f1c2b8e-9d3a-4e77-b0d1-6a5c8e2f1b34' },
       },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'supersede');
+    const step = (await readRunJournal(readers, runId))?.steps.find((s) => s.stepId === 'supersede');
     expect(step?.supersede).toEqual({
       reason: 'draft_parked',
       answeredBy: null,
@@ -1198,7 +1201,7 @@ describe('the reason a run was superseded (#122)', () => {
         result: { reason: 'reply_waiting', waitingRun: '99999999-8888-4777-8666-555555555555' },
       },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'supersede');
+    const step = (await readRunJournal(readers, runId))?.steps.find((s) => s.stepId === 'supersede');
     expect(step?.supersede).toEqual({
       reason: 'reply_waiting',
       answeredBy: null,
@@ -1211,7 +1214,7 @@ describe('the reason a run was superseded (#122)', () => {
     const runId = await journal([
       { stepId: 'supersede', status: 'done', result: { reason: 'attempt_rejected' } },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'supersede');
+    const step = (await readRunJournal(readers, runId))?.steps.find((s) => s.stepId === 'supersede');
     expect(step?.supersede).toEqual({
       reason: 'attempt_rejected',
       answeredBy: null,
@@ -1222,7 +1225,7 @@ describe('the reason a run was superseded (#122)', () => {
 
   it('reads a supersede row whose result is not an object as malformed, not as empty', async () => {
     const runId = await journal([{ stepId: 'supersede', status: 'done', result: ['no'] }]);
-    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'supersede');
+    const step = (await readRunJournal(readers, runId))?.steps.find((s) => s.stepId === 'supersede');
     expect(step?.resultMalformed).toBe(true);
     expect(step?.supersede).toBeNull();
   });
@@ -1238,7 +1241,7 @@ describe('the send-back a reviewer made (DEC-49)', () => {
         result: { note: 'Answer the second request.', reviewer: 'anna@example.test', reviewerSource: 'roster' },
       },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'send_back');
+    const step = (await readRunJournal(readers, runId))?.steps.find((s) => s.stepId === 'send_back');
     expect(step?.sendBack).toEqual({
       note: 'Answer the second request.', reviewer: 'anna@example.test', reviewerSource: 'roster',
       documentTitle: null,
@@ -1257,7 +1260,7 @@ describe('the send-back a reviewer made (DEC-49)', () => {
         },
       },
     ]);
-    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'send_back');
+    const step = (await readRunJournal(readers, runId))?.steps.find((s) => s.stepId === 'send_back');
     expect(step?.sendBack).toEqual({
       note: null, reviewer: 'anna@example.test', reviewerSource: 'roster', documentTitle: 'Pausing a plan',
     });
@@ -1265,7 +1268,7 @@ describe('the send-back a reviewer made (DEC-49)', () => {
 
   it('reads a send-back row whose result is not an object as malformed, not as empty', async () => {
     const runId = await journal([{ stepId: 'send_back', status: 'done', result: ['no'] }]);
-    const step = (await readRunJournal(pool, runId))?.steps.find((s) => s.stepId === 'send_back');
+    const step = (await readRunJournal(readers, runId))?.steps.find((s) => s.stepId === 'send_back');
     expect(step?.resultMalformed).toBe(true);
     expect(step?.sendBack).toBeNull();
   });

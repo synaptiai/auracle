@@ -88,6 +88,7 @@ The setup probes that database before the run starts. An unreachable one fails t
 ```sh
 docker compose up -d
 export DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle
+export READER_DATABASE_URL=postgres://auracle_reader:auracle_reader@localhost:5433/auracle
 pnpm install
 pnpm run build
 pnpm run db:migrate
@@ -95,8 +96,14 @@ pnpm run db:migrate
 
 Compose starts Postgres 16 with pgvector on host port 5433.
 `pnpm run db:migrate` applies every pending migration under `db/` to that database and records each version in `schema_version`.
+It then restates `auracle_reader`, the role the console's readers and `pnpm run latency` connect as.
+With `READER_DATABASE_URL` set, it also gives that role its login.
+It needs a superuser. The compose stack's role is one.
+
 Use this database for the daemons and the CLI tools below.
 The daemons and the CLI tools refuse to start without `DATABASE_URL`.
+`pnpm run latency` is the exception: it reads through `READER_DATABASE_URL`
+alone, and refuses to start without it. The console needs both.
 A process that guesses its database processes real traffic against the wrong
 one and reports health while it does. Set `AURACLE_ALLOW_COMPOSE_DEFAULT=1` to
 allow the compose address for a local run.
@@ -115,7 +122,7 @@ allow the compose address for a local run.
 | `pnpm run load-docs -- <dir>` | Embeds each markdown file in the directory into the `document` table. Needs `OPENROUTER_API_KEY`. |
 | `pnpm run approve -- --run <run-id>` | Approves one gated customer reply through the approval bridge. |
 | `pnpm run escalations` | Lists the runs that need a person now, with the reason. The command only reads the ledger. |
-| `pnpm run latency` | Reports queue wait and service time per partition, so a partition falling behind is visible. Writes `latency/vN.json`. The command only reads the ledger. |
+| `pnpm run latency` | Reports queue wait and service time per partition, so a partition falling behind is visible. Writes `latency/vN.json`. The command only reads the ledger, through `READER_DATABASE_URL`. |
 | `pnpm run bands` | Reports the four control-band metrics for one day against the 30 most recent measured days before it. Writes `bands/v<n>.json`. The command only reads the ledger. |
 
 Notes on the consumers:

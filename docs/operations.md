@@ -159,9 +159,174 @@ A v1 database predates `schema_version`. Its tables already exist, and the v1
 files are idempotent. The first `db:migrate` run on such a database re-runs
 those files as no-ops and records their versions. No manual step exists.
 
+### The readers' role
+
+The console's readers and `pnpm run latency` connect as a role of their own,
+`auracle_reader`. Each read refuses any other session, so the writer's
+`DATABASE_URL` cannot stand in for it. The role reads the tables the readers
+read.
+
+The role is the barrier against code that holds the readers' URL or pool. It
+is not a barrier against a superuser who grants the role more by hand. The
+restate takes back attributes, settings and memberships. It does not look for
+every other right a person can grant.
+
+In the ledger's database the role cannot end or cancel a session, or call
+`pg_logical_emit_message`. It cannot create a replication slot or origin. It
+cannot take an advisory lock, so it cannot hold the migration lock. It cannot
+create a large object, a temporary table or an object in `public`. It
+holds no membership in another role, and it owns nothing. A read refuses the
+role when it holds any attribute beyond a login, any membership, or any
+object it owns.
+
+The role logs in to the ledger's database and to no other. In another
+database the role gets the rights PUBLIC holds there, so `pg_hba.conf` refuses
+that login. The compose stack ships this rule. On any other server, put these
+lines above every other line that matches the role:
+
+```
+local  auracle  auracle_reader        scram-sha-256
+host   auracle  auracle_reader  all   scram-sha-256
+local  all      auracle_reader        reject
+host   all      auracle_reader  all   reject
+```
+
+Replace `auracle` with the name of the ledger's database. In a checkout, the
+compose rule also admits the databases a test run clones. Their names begin
+`auracle_clone_` or `auracle_tmpl_`. The deploy overlay admits the ledger
+alone.
+
+When `READER_DATABASE_URL` is set, `db:migrate` logs in as the role to every
+other database after each restate. It uses that URL's host and transport, so
+it tests the `pg_hba.conf` lines for that route only. A warning names each
+database that admits the role. In a database that is not another ledger,
+limit the login in `pg_hba.conf`. A login can also fail for another reason,
+such as a timeout. That login decides nothing, and a second warning names it.
+
+Postgres bounds these effects, which stay open to the role:
+
+- A read can raise its own statement timeout. The client still gives up at its
+  deadline, but the server runs the query on. The role holds at most 10
+  connections, so at most 10 such queries run at once.
+- A read can claim memory up to the server's limits. Each process may write at
+  most 1 GB of temporary files. A parallel query has more than one process.
+- The role can change its own password and its own settings. It can also
+  change the default rights on objects it would create. Each is a write to the
+  catalog. The next `db:migrate` resets the settings. With
+  `READER_DATABASE_URL` set, it also resets the password.
+- A read takes a transaction ID when it calls a function that needs one.
+  Vacuum reclaims transaction IDs, as it does for every role.
+
+Nothing bounds these effects, so a person ends the session:
+
+- A read can send a NOTIFY, and a session can listen. A session that listens
+  and holds a transaction open keeps every notification on the server. When
+  the queue fills, intake cannot signal the consumer and refuses tickets.
+- A session opened outside a read can hold a lock on a table, or a
+  snapshot. It holds each for as long as it stays open. A migration that
+  needs that table waits for it.
+- A server can allow prepared transactions, with `max_prepared_transactions`
+  above zero. There the role can leave one that holds its locks after the
+  session ends.
+
+Migration 041 creates the role without a login. `pnpm run db:migrate` then
+restates the role on every run. The restate sets the role's attributes, limits
+and settings, and removes every membership, whoever granted it. It also removes
+any grant the role made from a membership. Then it grants the role CONNECT on
+the ledger, USAGE on `public`, and SELECT on the tables the readers read.
+
+The restate also revokes from PUBLIC some rights that act beyond a read, in
+the ledger's database only. These are the WAL message, session signal, large
+object and advisory lock functions. They are also CREATE on the `public`
+schema and TEMP on the database. A role that is not a superuser in that database loses them
+too. No process in this repository uses them.
+
+The restate commits, then reads back what it states. It fails `db:migrate`
+when the role differs from that. It also fails when the role owns an object
+in the ledger's database or on the server. The error names each difference,
+and the role's login is unchanged. The restate never gives an object the role
+owns to another role.
+
+The restate also creates the role when the server lacks it. A ledger restored
+onto a server where migration 041 has not run is such a case.
+
+A person must clear a right PUBLIC holds, a membership, or an object the role
+owns. A person must also find what takes a right the role lacks. A rerun
+clears an attribute or limit that another session changes, once that session
+ends. It also clears a setting the role changes for itself.
+
+Migration 041 and each `db:migrate` after it need a superuser. On PostgreSQL 16
+no other role can strip a role's attributes or revoke a predefined role. The
+compose stack's role is a superuser.
+
+When `READER_DATABASE_URL` is set, `db:migrate` also gives the role its login,
+after a clean read-back. The URL must name the user `auracle_reader`, and the
+migrator refuses any other before it applies a file. The server receives a
+SCRAM verifier, never the password. So the password appears in no server log.
+Without the variable the login does not change.
+
+Before it applies a file, the migrator compares the two URLs. It reads each
+as the driver does, and compares the host, port and database. It connects
+nowhere for this, so no credential goes to a host `READER_DATABASE_URL` names.
+On any difference it fails and migrates nothing.
+
+It also refuses a weaker TLS setting on the readers' URL. The role's own login
+uses that URL, so a weaker setting could send its password in clear. The
+migrator ranks four levels: none, no certificate check, a certificate check
+without the server name, and a full check. When `DATABASE_URL` names a
+certificate authority, the readers' URL must name the same one. A client
+certificate is each login's own, and the migrator does not compare it.
+
+A host name matches in any case, but two spellings of one server do not.
+`localhost` and `127.0.0.1` are two hosts. A socket directory and a host name
+are two hosts too. So spell the host alike in both URLs.
+
+After the restate, the migrator logs in as the role through that URL and
+checks that it reaches this server. The console makes that check when it
+starts.
+
+Supply the password in one of two ways:
+
+- Compose stack: set `AURACLE_READER_PASSWORD` in the host's `.env`. The
+  overlay builds `READER_DATABASE_URL` from it for the migration and the
+  console. Without it the stack uses the local default, `auracle_reader`.
+- Checkout: set `READER_DATABASE_URL` in `.env` for the migration and
+  `pnpm run latency`. Export it in the shell for the console, which reads no
+  `.env` file.
+
+The password is part of a URL, so percent-encode `@`, `/`, `:`, `?`, `#`, `%`
+and a space in it. Use printable ASCII only. The migrator refuses a `%` in the
+password that starts no escape.
+
+The console reads the URL as the Node `pg` driver does. The migrator refuses a
+URL that driver reads with another user or password than the URL standard
+does. A leading space causes it. A space elsewhere causes it when the password
+holds an escape such as `%2F`. So does a `%` elsewhere that starts no escape.
+
+Set your own password on a host that serves traffic. Anyone who reads this
+repository knows the default.
+
+The role belongs to the whole server, as every Postgres role does. Two ledgers
+on one server share the readers' role and its password, and each keeps its own
+CONNECT grant. They also share its limit of 10 connections. Two consoles of four
+each and two latency reports fill it, and the migrator's own login then fails.
+
+Two migrations on one ledger at once run in turn. The second waits up to 30
+seconds for the migration lock while the first applies its files. It waits
+again while the first sets and checks the login. A longer wait fails the
+second run, and the message names the migration lock and what applied. Two
+migrations from two ledgers on one server can fail with "tuple concurrently
+updated". A rerun is safe, so run it again.
+
+A test run sets that password to the default and the connection limit to 200.
+It does so only on a server on this machine, unless you set
+`AURACLE_TEST_ALLOW_REMOTE_DB=1`. The next `db:migrate` restates
+the limit of 10.
+
 ## 3. Running the processes
 
-The system runs as separate processes. Each process reads `DATABASE_URL`.
+The system runs as separate processes. Each process but the latency report
+reads `DATABASE_URL`.
 Start each process in its own terminal.
 
 ### Start order
@@ -1455,6 +1620,7 @@ pnpm install
 pnpm run build
 pnpm --filter @auracle/console build
 DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle \
+READER_DATABASE_URL=postgres://auracle_reader:auracle_reader@localhost:5433/auracle \
   pnpm --filter @auracle/console start
 ```
 
@@ -1465,9 +1631,10 @@ It listens on 127.0.0.1:8787. Set `CONSOLE_PORT` and `CONSOLE_HOST` to change
 that.
 
 The console reads no `.env` file, as `pnpm run escalations` and `pnpm run
-triage` do not. Name `DATABASE_URL` on the command line, as above. It refuses
-to start when it cannot reach that ledger. So a wrong URL fails at startup
-rather than one page at a time.
+triage` do not. Name `DATABASE_URL` and `READER_DATABASE_URL` on the command
+line, as above. It refuses to start without either, or when it cannot reach a
+ledger through either. So a wrong URL fails at startup rather than one page at
+a time. Section 2 says how the readers' role gets its login.
 
 The console answers only the host names it was started for. It refuses a
 form post that did not come from one of its own pages. Those two checks stop
@@ -2283,7 +2450,8 @@ writes: the case page's hold read clears every hold whose period has run out.
 
 READ ONLY does not refuse every effect. A function can still act on another
 session. A superuser's session can still write to the catalog or create a
-replication slot. A reader role without those rights would refuse them.
+replication slot. The readers' role holds none of those rights, so the
+database refuses them. Section 2 describes that role.
 
 Each reader that goes through `boundedRead` sets its own statement timeout.
 The latency report uses sixty seconds, and each other one uses two. The statements of
@@ -2428,8 +2596,8 @@ others is.
 sitting there means the database refused the listener. Check the consumer log
 for `arrival_signal_lost` or `arrival_signal_unavailable`.
 
-`pnpm run latency` shows it. The job reads the ledger and writes
-`latency/vN.json`.
+`pnpm run latency` shows it. The job reads the ledger as the readers' role,
+through `READER_DATABASE_URL`, and writes `latency/vN.json`.
 
 ```sh
 pnpm run latency
@@ -2595,7 +2763,7 @@ explains why Node's own type stripping cannot run this tree.
 
 | Command | What it does |
 |---|---|
-| `pnpm run db:migrate` | Applies the SQL files under `db/` in order. |
+| `pnpm run db:migrate` | Applies the SQL files under `db/` in order, and restates the readers' role. |
 | `pnpm run escalations` | Lists what needs a person, and why. |
 | `pnpm run approve` | Approves or rejects one parked reply. |
 | `pnpm run reviewers` | Adds, deactivates and lists the reviewers who may use the console. |

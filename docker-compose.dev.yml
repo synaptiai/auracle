@@ -50,6 +50,10 @@ services:
     env_file: [{ path: .env, required: false }]
     environment:
       DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+      # The migration gives the readers' role, auracle_reader, its login with
+      # the password this URL carries. AURACLE_READER_PASSWORD in the host's
+      # .env sets it; the default is the local stack's own.
+      READER_DATABASE_URL: postgres://auracle_reader:${AURACLE_READER_PASSWORD:-auracle_reader}@db:5432/auracle
     depends_on:
       db:
         condition: service_healthy
@@ -139,6 +143,9 @@ services:
     env_file: [{ path: .env, required: false }]
     environment:
       DATABASE_URL: postgres://auracle:auracle@db:5432/auracle
+      # The console's readers connect as auracle_reader, and refuse a session
+      # that can act beyond a read. The same URL the migration set the login with.
+      READER_DATABASE_URL: postgres://auracle_reader:${AURACLE_READER_PASSWORD:-auracle_reader}@db:5432/auracle
       # The container's own loopback reaches nothing outside it, so the bind
       # is explicit and the mapping below is what limits reach.
       CONSOLE_HOST: 0.0.0.0
@@ -168,3 +175,21 @@ services:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+
+configs:
+  # The host's rule admits the readers' role to the ledger and nothing else.
+  # The base file also admits the databases a test run clones, which a host
+  # that serves traffic never has, so this overlay drops that pattern.
+  pg_hba:
+    content: |
+      local       auracle     auracle_reader              scram-sha-256
+      host        auracle     auracle_reader  all         scram-sha-256
+      local       all         auracle_reader              reject
+      host        all         auracle_reader  all         reject
+      local       all         all                     trust
+      host        all         all     127.0.0.1/32    trust
+      host        all         all     ::1/128         trust
+      local       replication all                     trust
+      host        replication all     127.0.0.1/32    trust
+      host        replication all     ::1/128         trust
+      host        all         all     all             scram-sha-256

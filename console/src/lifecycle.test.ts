@@ -15,6 +15,7 @@
 // and CONSOLE_PORT, and an unreachable DATABASE_URL exits 1 before it
 // listens. This case is what stops either one from being deleted quietly.
 import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 const MAIN = readFileSync(new URL('./main.ts', import.meta.url).pathname, 'utf8');
@@ -80,7 +81,7 @@ describe('the console as a long-running process', () => {
     expect([...MAIN.matchAll(declaration)]).toHaveLength(7);
     // DEC-50: and the case's re-run read, which draws a parked draft as a
     // copy a person could send exactly where the publish's verdict does.
-    expect([...MAIN.matchAll(/readCaseReruns\(pool, runId, readBack\?\.supportsLedgerReply \?\? false\)/g)])
+    expect([...MAIN.matchAll(/readCaseReruns\(readers, runId, readBack\?\.supportsLedgerReply \?\? false\)/g)])
       .toHaveLength(1);
     expect(MAIN).not.toContain('approveFromConsole');
   });
@@ -118,15 +119,68 @@ describe('the console as a long-running process', () => {
     expect(MAIN).toMatch(/undo: undoFor\(\{ pool, undoApproval \}\)/);
   });
 
-  // Two paths close the pool, and `pool.end()` rejects on the second call.
+  // Issue #153: the twelve readers read through `boundedRead`, which refuses
+  // the writer's pool at the first read. Every call takes the readers' pool,
+  // and the pool comes from READER_DATABASE_URL, probed before the console
+  // listens.
+  it('hands every reader the readers\' pool', () => {
+    const readers = [
+      'readConversation', 'turnAnsweredBy', 'conversationOfRun', 'readDocument', 'readQueueToday',
+      'readRunJournal', 'readCaseGap', 'readKnowledge', 'readCaseReruns', 'readLatency',
+      'readRouting', 'readTeam',
+    ];
+    // Read through the compiler, so an import under another name or a call
+    // split over lines is still a call to the reader it names.
+    const tree = ts.createSourceFile('main.ts', MAIN, ts.ScriptTarget.Latest, true);
+    const localName = new Map<string, string>();
+    for (const statement of tree.statements) {
+      if (!ts.isImportDeclaration(statement)) continue;
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings === undefined || !ts.isNamedImports(bindings)) continue;
+      for (const element of bindings.elements) {
+        localName.set(element.name.text, (element.propertyName ?? element.name).text);
+      }
+    }
+    const firstArguments = new Map<string, string[]>();
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        const imported = localName.get(node.expression.text);
+        if (imported !== undefined && readers.includes(imported)) {
+          const first = node.arguments[0];
+          const seen = firstArguments.get(imported) ?? [];
+          seen.push(first !== undefined && ts.isIdentifier(first) ? first.text : (first?.getText(tree) ?? '(none)'));
+          firstArguments.set(imported, seen);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(tree);
+    for (const reader of readers) {
+      const calls = firstArguments.get(reader) ?? [];
+      expect(calls.length, reader).toBeGreaterThan(0);
+      expect(calls.filter((first) => first !== 'readers'), reader).toEqual([]);
+    }
+    expect(MAIN).toMatch(/const readerConnectionString = requireReaderDbUrl\('the operator console'\);/);
+    expect(MAIN).toMatch(/new Pool\(consolePoolConfig\(readerConnectionString\)\)/);
+    expect(MAIN).toMatch(/await probeLedger\(readers, 'the operator console', 'READER_DATABASE_URL'\);/);
+    expect(MAIN).toMatch(/await assertOneLedger\(pool, readers, 'the operator console'\);/);
+    // Before the socket opens, as the writer's probe is.
+    expect(MAIN.indexOf('assertOneLedger(pool, readers')).toBeLessThan(MAIN.indexOf('server.listen('));
+  });
+
+  // Two paths close the pools, and `pool.end()` rejects on the second call.
   // An unhandled rejection is fatal in Node, so it replaces the exit path it
   // was meant to take.
-  it('closes the pool once, however many paths ask for it', () => {
+  it('closes the pools once, however many paths ask for it', () => {
     expect(MAIN).toContain('const endPool =');
-    // One real call, inside the guard. Every other site goes through it.
-    // Counted over `await pool.end();` rather than `pool.end()`, because the
-    // comment above the guard names the method it is guarding.
-    expect(MAIN.split('await pool.end();').length - 1).toBe(1);
+    // One real call, inside the guard, over both pools: the writer's and the
+    // readers' (issue #153). Every other site goes through it. Counted over
+    // the statement rather than `pool.end()`, because the comment above the
+    // guard names the method it is guarding.
+    expect(MAIN).toContain("for (const [each, which] of [[pool, 'console'], [readers, 'readers']] as const) {");
+    expect(MAIN.split('await each.end();').length - 1).toBe(1);
+    expect(MAIN.split('await pool.end();').length - 1).toBe(0);
+    expect(MAIN.split('await readers.end();').length - 1).toBe(0);
   });
 
   // A pool connects lazily, so a wrong URL starts clean and fails one page at

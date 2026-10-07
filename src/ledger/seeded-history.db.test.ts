@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { readDays } from '../bands/query.js';
 import { readLatency } from '../latency/query.js';
@@ -27,6 +27,8 @@ import {
 } from './insert.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 await pool.query('SELECT 1');
 
@@ -119,6 +121,7 @@ describe('a history seeded through the fenced path', () => {
 
   afterAll(async () => {
     await truncateLedger(pool);
+    await readers.end();
     await pool.end();
   });
 
@@ -136,7 +139,7 @@ describe('a history seeded through the fenced path', () => {
       });
     }
 
-    const report = await readLatency(pool);
+    const report = await readLatency(readers);
     expect(report.runs).toBe(3);
     expect(report.partitions).toHaveLength(1);
     const p = report.partitions[0]!;
@@ -164,7 +167,7 @@ describe('a history seeded through the fenced path', () => {
       waitMs: 45 * SECOND,
       serviceMs: 15 * SECOND,
     });
-    const p = (await readLatency(pool)).partitions[0]!;
+    const p = (await readLatency(readers)).partitions[0]!;
     expect(p.wait.unmeasured).toBe(0);
     expect(p.wait.unordered).toBe(0);
     expect(p.service.unfinished).toBe(0);
@@ -189,11 +192,11 @@ describe('a history seeded through the fenced path', () => {
       serviceMs: 25 * SECOND,
     });
 
-    const all = await readLatency(pool);
+    const all = await readLatency(readers);
     expect(all.runs).toBe(2);
     expect(all.partitions.map((x) => x.partition)).toEqual([0, 1]);
 
-    const windowed = await readLatency(pool, { since: new Date(`${DAY_TWO}T00:00:00.000Z`) });
+    const windowed = await readLatency(readers, { since: new Date(`${DAY_TWO}T00:00:00.000Z`) });
     expect(windowed.runs).toBe(1);
     expect(windowed.partitions).toHaveLength(1);
     expect(windowed.partitions[0]!.partition).toBe(1);
@@ -247,7 +250,7 @@ describe('a history seeded through the fenced path', () => {
       await seedSupersededLoser(createdAt, `idem-loser-${i}`);
     }
 
-    const p = (await readLatency(pool)).partitions[0]!;
+    const p = (await readLatency(readers)).partitions[0]!;
     expect(p.service.count).toBe(1);
     expect(p.service.p50Ms).toBe(30 * SECOND);
     expect(p.service.unstamped).toBe(3);

@@ -4,6 +4,8 @@ import { errorMessage } from '../errors.js';
 import { terminalText } from '../cli/terminal-text.js';
 import { logLine } from '../log/line.js';
 import { guardLedgerPool, logLedgerPoolError } from './client-errors.js';
+import { driverParameters } from './driver-parameters.js';
+import { LEDGER_IDENTITY, type LedgerIdentity, probeReaders } from './probe-readers.js';
 
 // Mirrors the credentials in docker-compose.yml. Compose cannot export
 // environment variables to the host shell, so this fallback is the default.
@@ -16,6 +18,89 @@ const COMPOSE_DEFAULT_URL = 'postgres://auracle:auracle@localhost:5433/auracle';
 
 export function dbUrl(): string {
   return process.env.DATABASE_URL ?? COMPOSE_DEFAULT_URL;
+}
+
+/**
+ * The compose ledger as the readers' role sees it (issue #153). The password
+ * is the compose stack's local default, as `auracle` is the writer's.
+ */
+const COMPOSE_READER_DEFAULT_URL = 'postgres://auracle_reader:auracle_reader@localhost:5433/auracle';
+
+/**
+ * The ledger as the readers' role, `auracle_reader`, connects to it.
+ *
+ * `boundedRead` refuses a session that can act beyond a read, so a reader
+ * handed the writer's pool fails its first read rather than running with the
+ * writer's rights. Under `pnpm test` the per-file setup publishes this URL
+ * beside `DATABASE_URL`.
+ */
+export function readerDbUrl(): string {
+  return process.env.READER_DATABASE_URL ?? COMPOSE_READER_DEFAULT_URL;
+}
+
+/**
+ * The readers' URL for a long-running process, which must never guess, by the
+ * rule `requireDbUrl` gives for the writer's.
+ */
+export function requireReaderDbUrl(processName: string): string {
+  const configured = process.env.READER_DATABASE_URL;
+  if (configured !== undefined && configured.length > 0) return configured;
+  // The compose default only beside the writer's own compose default. A
+  // writer aimed at another ledger with the reader left to the default would
+  // show reviewers one ledger while their approvals write to another.
+  const writer = process.env.DATABASE_URL;
+  const needs = `${processName} needs READER_DATABASE_URL, the ledger as the auracle_reader role connects to it. `
+    + `Its readers refuse a session that can act beyond a read, so the writer's DATABASE_URL cannot stand in.`;
+  if (process.env[ALLOW_COMPOSE_DEFAULT] === '1') {
+    let writerIsCompose: boolean;
+    try {
+      writerIsCompose = writer === undefined || writer.length === 0 || namesComposeLedger(writer);
+    } catch (error) {
+      throw new Error(
+        `${needs} DATABASE_URL could not be read: ${errorMessage(error)}. Correct it, or set READER_DATABASE_URL.`,
+      );
+    }
+    if (writerIsCompose) return COMPOSE_READER_DEFAULT_URL;
+    throw new Error(
+      `${needs} ${ALLOW_COMPOSE_DEFAULT}=1 allows the compose default only beside the compose writer, `
+        + `and DATABASE_URL names another ledger. Set READER_DATABASE_URL to that ledger.`,
+    );
+  }
+  throw new Error(`${needs} Set READER_DATABASE_URL, or set ${ALLOW_COMPOSE_DEFAULT}=1 for a local run.`);
+}
+
+/**
+ * Proves the readers' pool connects as the readers' role, to the ledger the
+ * writer's pool reaches, or throws saying which it does not (issue #153).
+ *
+ * Both pools would pass a probe of their own when the two URLs name two
+ * ledgers. A page would then join a run read from one to a journal read from
+ * the other, and an approval would write to a ledger nobody is shown.
+ */
+export async function assertOneLedger(writers: Pool, readers: Pool, processName: string): Promise<void> {
+  const reader = await probeReaders(readers, processName);
+  const { rows: [writer] } = await writers.query<LedgerIdentity>(LEDGER_IDENTITY);
+  if (writer!.database !== reader.database || writer!.started !== reader.started) {
+    throw new Error(
+      `${processName}: READER_DATABASE_URL reaches the database '${reader.database}' on a server started at `
+        + `${reader.started_at}, and DATABASE_URL reaches '${writer!.database}' on a server started at `
+        + `${writer!.started_at}. Both must name one ledger.`,
+    );
+  }
+}
+
+/**
+ * Whether a URL names the compose ledger, however it spells it: the local
+ * host by any of its names, port 5433, database `auracle`, user `auracle`.
+ * It reads the URL as the driver does, which lets a query parameter replace
+ * the host, port, user or database. A URL the driver cannot read throws.
+ */
+function namesComposeLedger(url: string): boolean {
+  const parsed = driverParameters(url);
+  return ['localhost', '127.0.0.1', '::1'].includes(parsed.host.toLowerCase())
+    && parsed.port === 5433
+    && parsed.database === 'auracle'
+    && parsed.user === 'auracle';
 }
 
 /** Set to '1' to let a daemon fall back to the compose default. */
@@ -57,12 +142,16 @@ export function requireDbUrl(processName: string): string {
  * of its own. The operator console is held to naming no SQL at all, and a
  * probe written there would be the first one.
  */
-export async function probeLedger(pool: Pool, processName: string): Promise<void> {
+export async function probeLedger(
+  pool: Pool,
+  processName: string,
+  variable: 'DATABASE_URL' | 'READER_DATABASE_URL' = 'DATABASE_URL',
+): Promise<void> {
   try {
     await pool.query('SELECT 1');
   } catch (error) {
     throw new Error(
-      `${processName} cannot reach the ledger named by DATABASE_URL: `
+      `${processName} cannot reach the ledger named by ${variable}: `
         + (errorMessage(error)),
     );
   }

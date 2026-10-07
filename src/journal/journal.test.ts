@@ -143,6 +143,9 @@ const READ_FUNCTIONS = new Set([
   // Functions.
   'array_position', 'coalesce', 'convert_to', 'count', 'encode', 'extract', 'jsonb_typeof', 'max',
   'percentile_disc', 'sha256', 'to_char', 'unnest',
+  // Which database and which running server: the readers' probe compares
+  // them with the writer's (issue #153).
+  'current_database', 'pg_postmaster_start_time',
   // Keywords.
   'all', 'and', 'as', 'exists', 'filter', 'from', 'group', 'in', 'lateral', 'not', 'or', 'ordinality', 'select',
   'where',
@@ -398,7 +401,8 @@ describe('the read modules never write', () => {
    * database holds them to one read-only statement at a time. Nothing here
    * refuses, for these modules, what READ ONLY lets through: a function that
    * acts on another session, and a superuser's write to the catalog or a
-   * replication slot. A reader role without those rights would refuse them.
+   * replication slot. The readers' role holds none of those rights, so the
+   * database refuses them (issue #153).
    */
   const BUILT_AT_RUNTIME = [
     'src/knowledge/gaps.ts',
@@ -411,6 +415,7 @@ describe('the read modules never write', () => {
   /** The statements each module sends today. */
   const STATEMENTS_SENT: Record<string, number> = {
     'src/conversation/query.ts': 4,
+    'src/db/probe-readers.ts': 1,
     'src/documents/query.ts': 1,
     'src/escalations/today.ts': 1,
     'src/journal/query.ts': 2,

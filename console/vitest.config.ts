@@ -18,6 +18,11 @@ export default defineConfig({
   test: {
     include: ['src/**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**'],
-    env: { DATABASE_URL: 'postgres://console-tests-must-not-connect@127.0.0.1:1/none' },
+    // Both URLs: the readers connect through READER_DATABASE_URL (issue #153),
+    // which the runbook tells an operator to export in the shell.
+    env: {
+      DATABASE_URL: 'postgres://console-tests-must-not-connect@127.0.0.1:1/none',
+      READER_DATABASE_URL: 'postgres://console-tests-must-not-connect@127.0.0.1:1/none',
+    },
   },
 });

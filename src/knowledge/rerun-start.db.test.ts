@@ -17,7 +17,7 @@ import type { ConsumerOptions } from '../coordinator/consumer.js';
 import { coordinateTicket } from '../coordinator/coordinator.js';
 import type { CoordinatorDeps } from '../coordinator/coordinator.js';
 import { enqueueTicket } from '../coordinator/intake.js';
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { takeHold } from '../holds/hold.js';
 import { embedPendingDocuments } from '../kb/embed-pending.js';
 import { readDays } from '../bands/query.js';
@@ -39,9 +39,12 @@ import { RERUN_STALE_HOURS, readCaseReruns } from './rerun.js';
 import { startPublishedReruns } from './rerun-start.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 8 });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 await pool.query('SELECT 1');
 
 afterAll(async () => {
+  await readers.end();
   await pool.end();
 });
 
@@ -216,7 +219,7 @@ describe('a re-run a published document asked for (DEC-50)', () => {
   it('raises an escalated turn once the document is embedded, and leaves the escalated run as it was', async () => {
     const c = await walked('escalated');
     const before = await runFacts(c.runId);
-    const latencyBefore = await readLatency(pool);
+    const latencyBefore = await readLatency(readers);
     const docId = await publish(c);
     await embed();
     expect(await scan()).toEqual({ started: [docId], dropped: [], failed: [], faults: [] });
@@ -226,7 +229,7 @@ describe('a re-run a published document asked for (DEC-50)', () => {
     // the escalated run's service time stays the system's work.
     expect(await runFacts(c.runId)).toEqual(before);
     expect(before['sent_back_at']).toBeNull();
-    expect(await readLatency(pool)).toEqual(latencyBefore);
+    expect(await readLatency(readers)).toEqual(latencyBefore);
     // A second scan finds nothing waiting.
     expect(await scan()).toEqual({ started: [], dropped: [], failed: [], faults: [] });
 
@@ -347,7 +350,7 @@ describe('a re-run a published document asked for (DEC-50)', () => {
   it('draws on the case what the scan then does', async () => {
     const c = await walked('escalated');
     const docId = await publish(c);
-    const page = () => readCaseReruns(pool, c.runId, true);
+    const page = () => readCaseReruns(readers, c.runId, true);
     expect(await page()).toEqual([{ docId, title: 'Pausing a plan', state: { kind: 'waiting', on: 'document' } }]);
     await embed();
     expect(await page()).toEqual([{ docId, title: 'Pausing a plan', state: { kind: 'starting', faults: 0 } }]);
@@ -365,7 +368,7 @@ describe('a re-run a published document asked for (DEC-50)', () => {
     const closed = await walked('awaiting_approval');
     const closedDoc = await publish(closed);
     await closeRun(pool, closed.runId, { reason: 'Answered by phone.' });
-    expect(await readCaseReruns(pool, closed.runId, true))
+    expect(await readCaseReruns(readers, closed.runId, true))
       .toEqual([{ docId: closedDoc, title: 'Pausing a plan', state: { kind: 'dropped', reason: 'closed' } }]);
     await pool.query(
       "UPDATE document SET embedding_status = 'failed', embedding_error = 'refused' WHERE doc_id = $1",
@@ -381,10 +384,10 @@ describe('a re-run a published document asked for (DEC-50)', () => {
       [failingDoc],
     );
     const failedState = { kind: 'failed', error: 'the model refused the input: HTTP 400' };
-    expect(await readCaseReruns(pool, failing.runId, true))
+    expect(await readCaseReruns(readers, failing.runId, true))
       .toEqual([{ docId: failingDoc, title: 'Pausing a plan', state: failedState }]);
     await scan();
-    expect(await readCaseReruns(pool, failing.runId, true))
+    expect(await readCaseReruns(readers, failing.runId, true))
       .toEqual([{ docId: failingDoc, title: 'Pausing a plan', state: failedState }]);
   });
 
@@ -492,7 +495,7 @@ describe('a re-run the reviews tried to break (DEC-50, DEC-49)', () => {
     expect(outcome).toMatchObject({ outcome: 'published', rerun: { status: 'waiting' } });
     await embed();
     expect(await scan()).toEqual({ started: [], dropped: [], failed: [], faults: [] });
-    expect(await readCaseReruns(pool, walking, true)).toMatchObject([{ state: { kind: 'waiting', on: 'case' } }]);
+    expect(await readCaseReruns(readers, walking, true)).toMatchObject([{ state: { kind: 'waiting', on: 'case' } }]);
   });
 
   it('reads a request that keeps faulting after the others', async () => {

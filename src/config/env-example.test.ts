@@ -61,9 +61,10 @@ const NOT_A_VARIABLE = new Set([
 /**
  * Variables no process reads, which the example still has to carry.
  *
- * The compose files interpolate the first three: compose is a shell, not a
- * program. `AURACLE_IMAGE` selects the tag the dev stack runs and
- * `COMPOSE_PROFILES` selects its optional services.
+ * The compose files interpolate the first four: compose is a shell, not a
+ * program. `AURACLE_IMAGE` selects the tag the dev stack runs,
+ * `COMPOSE_PROFILES` selects its optional services, and
+ * `AURACLE_READER_PASSWORD` is the readers' role's login in the stack.
  * The rest are read by `src/test-support/`, which the scan skips because a
  * harness is not something an adopter configures — but an adopter running
  * the suite still needs to know they exist.
@@ -72,8 +73,10 @@ const NOT_READ_BY_A_PROCESS = new Set([
   'AURACLE_DB_PORT',
   'AURACLE_IMAGE',
   'COMPOSE_PROFILES',
+  'AURACLE_READER_PASSWORD',
   'AURACLE_TEST_DB_REUSE',
   'AURACLE_TEST_MAIL_REUSE',
+  'AURACLE_TEST_ALLOW_REMOTE_DB',
   'AURACLE_E2E_ACCEPT',
   'MAIL_HOST',
   'MAIL_SMTP_PORT',
@@ -337,7 +340,7 @@ describe('.env.example', () => {
       expect(known, `${name} is hatched but not documented`).toContain(name);
       expect(reachable, `${name} is hatched and nothing reads it any more`).toContain(name);
     }
-    expect(NOT_READ_BY_A_PROCESS.size).toBeLessThan(12);
+    expect(NOT_READ_BY_A_PROCESS.size).toBeLessThan(13);
   });
 
   it('holds no name that is obviously not a variable', () => {

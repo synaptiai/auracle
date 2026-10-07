@@ -94,9 +94,17 @@ const KNOWN_PURE_MENTIONERS = [
  * invisible to this rule. Resolving specifiers against the importing file
  * closed that, and this file is what the closure found. An entry here is a
  * claim that a reader checked the import and it opens no connection.
+ *
+ * `db/config.test.ts` calls `requireReaderDbUrl`, which reads the
+ * environment and returns a string (issue #153).
+ *
+ * `test-support/local-host.test.ts` calls `prepareTemplate` with a remote
+ * host, which refuses before it opens a pool (issue #153).
  */
 const KNOWN_PURE_LEDGER_IMPORTERS: ReadonlyMap<string, string> = new Map([
   ['src/ledger/clock-statement.test.ts', "imports 'ledger/insert', which opens a connection"],
+  ['src/db/config.test.ts', "imports 'db/config', which opens a connection"],
+  ['src/test-support/local-host.test.ts', "imports 'test-support/template-db', which opens a connection"],
 ]);
 
 /**
@@ -104,8 +112,9 @@ const KNOWN_PURE_LEDGER_IMPORTERS: ReadonlyMap<string, string> = new Map([
  *
  * A suite that imports one of these needs a database without ever naming
  * `pg`, which is how a suite actually drifts. `db/config.js` hands out a URL
- * and a live pool, `ledger/insert.js` writes through one, and
- * `test-support/schema.js` applies the migrations.
+ * and a live pool, and `ledger/insert.js` writes through one.
+ * `test-support/schema.js` applies the migrations, and
+ * `test-support/template-db.js` creates databases and migrates them.
  *
  * `public/ledger-read` is here because the rule reads one level deep. It
  * re-exports `db/config`, so without this entry a pure suite could reach a
@@ -117,6 +126,7 @@ const LEDGER_MODULES = [
   'db/config',
   'ledger/insert',
   'test-support/schema',
+  'test-support/template-db',
   'public/ledger-read',
 ];
 

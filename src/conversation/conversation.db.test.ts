@@ -9,14 +9,17 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { OUTBOX_STATUSES } from '../ledger/insert.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { conversationOfRun, readConversation, turnAnsweredBy } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 4 });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 afterAll(async () => {
+  await readers.end();
   await pool.end();
 });
 
@@ -144,7 +147,7 @@ describe('the turn a run answered, and the replies on it', () => {
     await setReplies(id, 1, 'The reply a reviewer saved.', 'The reply the approval sent.');
     const runId = await run(id, 1, 'awaiting_approval');
 
-    expect(await turnAnsweredBy(pool, runId)).toMatchObject({
+    expect(await turnAnsweredBy(readers, runId)).toMatchObject({
       savedReplyText: 'The reply a reviewer saved.',
       approvedReplyText: 'The reply the approval sent.',
     });
@@ -159,7 +162,7 @@ describe('the turn a run answered, and the replies on it', () => {
     await setReplies(id, 1, '', '');
     const runId = await run(id, 1, 'awaiting_approval');
 
-    expect(await turnAnsweredBy(pool, runId)).toMatchObject({
+    expect(await turnAnsweredBy(readers, runId)).toMatchObject({
       savedReplyText: null,
       approvedReplyText: null,
     });
@@ -170,7 +173,7 @@ describe('the turn a run answered, and the replies on it', () => {
     await turn(id, 1);
     const runId = await run(id, 1, 'awaiting_approval');
 
-    expect(await turnAnsweredBy(pool, runId)).toMatchObject({
+    expect(await turnAnsweredBy(readers, runId)).toMatchObject({
       savedReplyText: null,
       approvedReplyText: null,
     });
@@ -179,10 +182,10 @@ describe('the turn a run answered, and the replies on it', () => {
 
 describe('a conversation the ledger holds', () => {
   it('answers null for one it does not hold, and for a malformed id', async () => {
-    expect(await readConversation(pool, randomUUID())).toBeNull();
+    expect(await readConversation(readers, randomUUID())).toBeNull();
     // Asked before the ledger is: the column is uuid, and a driver exception
     // is not an answer a surface can render.
-    expect(await readConversation(pool, 'not-a-uuid')).toBeNull();
+    expect(await readConversation(readers, 'not-a-uuid')).toBeNull();
   });
 
   it('returns its turns in turn order, not insertion order', async () => {
@@ -190,16 +193,16 @@ describe('a conversation the ledger holds', () => {
     await turn(id, 2, { body: 'second' });
     await turn(id, 1, { body: 'first' });
     await turn(id, 3, { body: 'third' });
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns.map((t) => t.turnNumber)).toEqual([1, 2, 3]);
     expect(thread?.turns.map((t) => t.bodyText)).toEqual(['first', 'second', 'third']);
   });
 
   it('says a participant is named without saying who', async () => {
-    const named = await readConversation(pool, await conversation('ada@customer.example'));
+    const named = await readConversation(readers, await conversation('ada@customer.example'));
     expect(named?.participantNamed).toBe(true);
     expect(JSON.stringify(named)).not.toContain('ada@customer.example');
-    const unnamed = await readConversation(pool, await conversation(null));
+    const unnamed = await readConversation(readers, await conversation(null));
     expect(unnamed?.participantNamed).toBe(false);
   });
 
@@ -207,7 +210,7 @@ describe('a conversation the ledger holds', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'hello', reply: 'hi' });
     const runId = await run(id, 1, 'resolved');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.runId).toBe(runId);
     expect(thread?.turns[0]?.runState).toBe('resolved');
   });
@@ -226,7 +229,7 @@ describe('a conversation the ledger holds', () => {
     await run(id, 3, 'awaiting_approval');
     await outbox(sent, 'approve', 'sent');
     await outbox(pending, 'approve', 'pending');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns.map((t) => t.outboxStatus)).toEqual(['sent', 'pending', null, null]);
   });
 
@@ -240,7 +243,7 @@ describe('a conversation the ledger holds', () => {
     await outbox(earlier, 'execute', 'sent');
     await pool.query("UPDATE run SET created_at = now() - interval '1 hour' WHERE run_id = $1", [earlier]);
     const retry = await run(id, 1, 'superseded');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.runId).toBe(retry);
     expect(thread?.turns[0]?.runState).toBe('superseded');
     // The absence is the retry's own: it sent nothing. The row says the rest.
@@ -259,7 +262,7 @@ describe('a conversation the ledger holds', () => {
     await outbox(earlier, 'approve', 'sent');
     await pool.query("UPDATE run SET created_at = now() - interval '1 hour' WHERE run_id = $1", [earlier]);
     const parked = await run(id, 1, 'awaiting_approval');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.runId).toBe(parked);
     expect(thread?.turns[0]?.runState).toBe('awaiting_approval');
     expect(thread?.turns[0]?.outboxStatus).toBe('sent');
@@ -277,7 +280,7 @@ describe('a conversation the ledger holds', () => {
     const later = await run(id, 1, 'resolved', 'reviewer-synthetic');
     // An approved internal write: step approve, and no draft (DEC-34).
     await outbox(later, 'approve', 'sent', { actionClass: 'tag_ticket', draft: false });
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.runId).toBe(later);
     expect(thread?.turns[0]?.outboxStatus).toBe('delivery_unknown');
   });
@@ -293,7 +296,7 @@ describe('a conversation the ledger holds', () => {
     await pool.query("UPDATE run SET created_at = now() - interval '1 hour' WHERE run_id = $1", [approved]);
     const later = await run(id, 1, 'resolved');
     await outbox(later, 'execute', 'sent');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.runId).toBe(later);
     expect(thread?.turns[0]?.outboxStatus).toBe('delivery_unknown');
   });
@@ -305,7 +308,7 @@ describe('a conversation the ledger holds', () => {
     await turn(id, 1, { body: 'answered', reply: 'the approved reply' });
     const other = await run(id, 1, 'resolved');
     await outbox(other, 'execute', 'sent');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.outboxStatus).toBeNull();
   });
 
@@ -320,7 +323,7 @@ describe('a conversation the ledger holds', () => {
     await pool.query("UPDATE run SET created_at = now() - interval '1 hour' WHERE run_id = $1", [approved]);
     const later = await run(id, 1, 'resolved');
     await outbox(later, 'execute', 'sent', { draft: true, actionClass: 'tag_ticket' });
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.outboxStatus).toBe('delivery_unknown');
   });
 
@@ -331,7 +334,7 @@ describe('a conversation the ledger holds', () => {
     await turn(id, 1, { body: 'routed', reply: 'the approved reply' });
     const approved = await run(id, 1, 'resolved', 'reviewer-synthetic');
     await outbox(approved, 'approve', 'pending', { actionClass: 'route_ticket' });
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.outboxStatus).toBe('pending');
   });
 
@@ -345,7 +348,7 @@ describe('a conversation the ledger holds', () => {
     await pool.query("UPDATE run SET created_at = now() - interval '1 hour' WHERE run_id = $1", [earlier]);
     const later = await run(id, 1, 'resolved');
     await outbox(later, 'execute', 'sent');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.outboxStatus).toBe('sent');
   });
 
@@ -358,7 +361,7 @@ describe('a conversation the ledger holds', () => {
     await pool.query("UPDATE run SET created_at = now() - interval '1 hour' WHERE run_id = $1", [earlier]);
     const newest = await run(id, 1, 'escalated');
     await outbox(newest, 'execute', 'delivery_unknown');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.runId).toBe(newest);
     expect(thread?.turns[0]?.outboxStatus).toBe('delivery_unknown');
   });
@@ -372,7 +375,7 @@ describe('a conversation the ledger holds', () => {
     const runId = await run(id, 1, 'resolved', 'reviewer-synthetic');
     await outbox(runId, 'execute', 'fenced');
     await outbox(runId, 'approve', 'sent');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.outboxStatus).toBe('sent');
   });
 
@@ -400,7 +403,7 @@ describe('a conversation the ledger holds', () => {
     await pool.query('ALTER TABLE outbox DROP CONSTRAINT outbox_status_check');
     try {
       await outbox(runId, 'execute', 'bounced');
-      await expect(readConversation(pool, id)).rejects.toThrow(/outbox status bounced/);
+      await expect(readConversation(readers, id)).rejects.toThrow(/outbox status bounced/);
     } finally {
       await pool.query('DELETE FROM outbox WHERE run_id = $1', [runId]);
       // Put back as the ledger held it, so no later case runs without it.
@@ -412,7 +415,7 @@ describe('a conversation the ledger holds', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'hello' });
     await run(id, null, 'resolved');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.runId).toBeNull();
     expect(thread?.turns[0]?.replyAbsence).toBe('not_retained');
   });
@@ -423,7 +426,7 @@ describe('the reasons a turn shows no reply', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'please close this' });
     await run(id, 1, 'resolved');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyText).toBeNull();
     expect(thread?.turns[0]?.replyAbsence).toBe('handled_automatically');
   });
@@ -435,7 +438,7 @@ describe('the reasons a turn shows no reply', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'how do I reset my password' });
     await park(await run(id, 1, 'awaiting_approval'), DRAFTED);
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyAbsence).toBe('reply_awaiting_approval');
   });
 
@@ -443,7 +446,7 @@ describe('the reasons a turn shows no reply', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'where is my refund' });
     await park(await run(id, 1, 'awaiting_approval'), LEDGER_ONLY);
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyAbsence).toBe('action_awaiting_approval');
   });
 
@@ -452,7 +455,7 @@ describe('the reasons a turn shows no reply', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'where is my refund' });
     await run(id, 1, 'awaiting_approval');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyAbsence).toBe('awaiting_approval');
   });
 
@@ -463,7 +466,7 @@ describe('the reasons a turn shows no reply', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'how do I reset my password' });
     await park(await run(id, 1, 'awaiting_approval'), { ...LEDGER_ONLY, actionClass: 'customer_reply' });
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyAbsence).toBe('awaiting_approval');
   });
 
@@ -473,7 +476,7 @@ describe('the reasons a turn shows no reply', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'where is my refund' });
     await park(await run(id, 1, 'awaiting_approval'), { ...LEDGER_ONLY, payload: 'refund' });
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyAbsence).toBe('awaiting_approval');
   });
 
@@ -486,7 +489,7 @@ describe('the reasons a turn shows no reply', () => {
     await park(earlier, DRAFTED);
     await pool.query("UPDATE run SET created_at = now() - interval '1 minute' WHERE run_id = $1", [earlier]);
     await park(await run(id, 1, 'awaiting_approval'), LEDGER_ONLY);
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyAbsence).toBe('action_awaiting_approval');
   });
 
@@ -496,7 +499,7 @@ describe('the reasons a turn shows no reply', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'how do I reset my password' });
     await park(await run(id, 1, 'awaiting_approval'), { parkKey: 'k', draftExternalId: 'hd-1' }, 'parking');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyAbsence).toBe('awaiting_approval');
   });
 
@@ -509,7 +512,7 @@ describe('the reasons a turn shows no reply', () => {
       const id = await conversation();
       await turn(id, 1, { body: 'how do I reset my password' });
       await park(await run(id, 1, 'awaiting_approval'), { ...DRAFTED, draftExternalId: handle });
-      const thread = await readConversation(pool, id);
+      const thread = await readConversation(readers, id);
       expect(thread?.turns[0]?.replyAbsence).toBe('awaiting_approval');
     });
   }
@@ -520,7 +523,7 @@ describe('the reasons a turn shows no reply', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'how do I reset my password' });
     await park(await run(id, 1, 'awaiting_approval'), { ...DRAFTED, error: 'refused' }, 'failed');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyAbsence).toBe('awaiting_approval');
   });
 
@@ -528,7 +531,7 @@ describe('the reasons a turn shows no reply', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'this went wrong' });
     await run(id, 1, 'escalated');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyAbsence).toBe('no_reply_sent');
   });
 
@@ -539,7 +542,7 @@ describe('the reasons a turn shows no reply', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'duplicate of another ticket' });
     await run(id, 1, 'closed');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyText).toBeNull();
     expect(thread?.turns[0]?.replyAbsence).toBe('closed_without_reply');
   });
@@ -552,7 +555,7 @@ describe('the reasons a turn shows no reply', () => {
     await turn(id, 1, { body: 'the parcel is late' });
     // A drafted reply put aside is still put aside: the draft does not decide.
     await park(await run(id, 1, 'snoozed'), DRAFTED);
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyText).toBeNull();
     expect(thread?.turns[0]?.replyAbsence).toBe('put_aside');
   });
@@ -581,7 +584,7 @@ describe('the reasons a turn shows no reply', () => {
     await park(await run(id, 9, 'awaiting_approval'), DRAFTED);
     await turn(id, 10, { body: 'j' });
     await run(id, 10, 'awaiting_approval');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     const codes = thread?.turns.map((t) => t.replyAbsence) ?? [];
     expect(codes).toEqual([
       'handled_automatically', 'action_awaiting_approval', 'no_reply_sent', 'not_retained',
@@ -600,7 +603,7 @@ describe('the reasons a turn shows no reply', () => {
     await run(id, 1, 'resolved');
     await turn(id, 2, { body: 'b' });
     await run(id, 2, 'resolved', 'unattributed');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyAbsence).toBe('handled_automatically');
     expect(thread?.turns[1]?.replyAbsence).toBe('approved_without_reply');
   });
@@ -613,7 +616,7 @@ describe('the reasons a turn shows no reply', () => {
       const id = await conversation();
       await turn(id, 1, { body: 'still going' });
       await run(id, 1, state);
-      const thread = await readConversation(pool, id);
+      const thread = await readConversation(readers, id);
       expect(thread?.turns[0]?.replyAbsence, `${state} (${index})`).toBe('in_flight');
     }
   });
@@ -622,7 +625,7 @@ describe('the reasons a turn shows no reply', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'hello', reply: 'the answer' });
     await run(id, 1, 'resolved');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.replyText).toBe('the answer');
     expect(thread?.turns[0]?.replyAbsence).toBeNull();
   });
@@ -640,7 +643,7 @@ describe('a turn several runs worked', () => {
     await run(id, 1, 'escalated');
     await run(id, 1, 'escalated');
     await run(id, 1, 'abandoned');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns).toHaveLength(1);
     expect(thread?.turns[0]?.bodyText).toBe('the one message the customer sent');
   });
@@ -653,7 +656,7 @@ describe('a turn several runs worked', () => {
     await turn(id, 2, { body: 'b' });
     await run(id, 2, 'resolved');
     await turn(id, 3, { body: 'c' });
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns.map((t) => t.runAttempts)).toEqual([2, 1, 0]);
   });
 
@@ -670,7 +673,7 @@ describe('a turn several runs worked', () => {
       [id],
     );
     const newest = await run(id, 1, 'resolved');
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.runId).toBe(newest);
     expect(thread?.turns[0]?.runState).toBe('resolved');
     expect(thread?.turns[0]?.runAttempts).toBe(2);
@@ -683,7 +686,7 @@ describe('a turn whose message text was never retained', () => {
   it('names the absence rather than rendering the turn blank', async () => {
     const id = await conversation();
     await turn(id, 1, { body: null, reply: 'we answered' });
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.bodyText).toBeNull();
     expect(thread?.turns[0]?.messageAbsence).toBe('not_retained');
   });
@@ -695,7 +698,7 @@ describe('a turn whose message text was never retained', () => {
     const id = await conversation();
     await turn(id, 1, { body: '' });
     await turn(id, 2, { body: null });
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.messageAbsence).toBe('empty_message');
     expect(thread?.turns[1]?.messageAbsence).toBe('not_retained');
   });
@@ -703,7 +706,7 @@ describe('a turn whose message text was never retained', () => {
   it('names no absence when the message is there', async () => {
     const id = await conversation();
     await turn(id, 1, { body: 'the message' });
-    const thread = await readConversation(pool, id);
+    const thread = await readConversation(readers, id);
     expect(thread?.turns[0]?.messageAbsence).toBeNull();
   });
 });
@@ -712,7 +715,7 @@ describe('the conversation a run belongs to', () => {
   it('names it, and answers null for a run that belongs to none', async () => {
     const id = await conversation();
     const withConversation = await run(id, 1, 'resolved');
-    expect(await conversationOfRun(pool, withConversation)).toBe(id);
+    expect(await conversationOfRun(readers, withConversation)).toBe(id);
 
     const orphan = randomUUID();
     await pool.query(
@@ -721,8 +724,8 @@ describe('the conversation a run belongs to', () => {
        VALUES ($1, 'SYN-V1', 0, 1, 'resolved', 'p', 'm', 0, 0, now())`,
       [orphan],
     );
-    expect(await conversationOfRun(pool, orphan)).toBeNull();
-    expect(await conversationOfRun(pool, 'not-a-uuid')).toBeNull();
+    expect(await conversationOfRun(readers, orphan)).toBeNull();
+    expect(await conversationOfRun(readers, 'not-a-uuid')).toBeNull();
   });
 });
 
@@ -731,7 +734,7 @@ describe('the turn one run answered', () => {
     const id = await conversation();
     await turn(id, 1, { body: 'there are two charges for the same month' });
     const runId = await run(id, 1, 'awaiting_approval');
-    const answered = await turnAnsweredBy(pool, runId);
+    const answered = await turnAnsweredBy(readers, runId);
     expect(answered?.conversationId).toBe(id);
     expect(answered?.turnNumber).toBe(1);
     expect(answered?.bodyText).toBe('there are two charges for the same month');
@@ -745,17 +748,17 @@ describe('the turn one run answered', () => {
     const id = await conversation();
     await turn(id, 1, { body: null });
     const kept = await run(id, 1, 'resolved');
-    expect((await turnAnsweredBy(pool, kept))?.absence).toBe('not_retained');
+    expect((await turnAnsweredBy(readers, kept))?.absence).toBe('not_retained');
 
     const noTurn = await run(id, null, 'resolved');
-    expect(await turnAnsweredBy(pool, noTurn)).toBeNull();
+    expect(await turnAnsweredBy(readers, noTurn)).toBeNull();
   });
 
   it('names an empty message as one the customer sent', async () => {
     const id = await conversation();
     await turn(id, 1, { body: '' });
     const runId = await run(id, 1, 'resolved');
-    expect((await turnAnsweredBy(pool, runId))?.absence).toBe('empty_message');
+    expect((await turnAnsweredBy(readers, runId))?.absence).toBe('empty_message');
   });
 
   // `intake.ticket_text` is a subject and a body joined by two newlines, so an
@@ -769,13 +772,13 @@ describe('the turn one run answered', () => {
       const id = await conversation();
       await turn(id, 1, { body });
       const runId = await run(id, 1, 'resolved');
-      expect((await turnAnsweredBy(pool, runId))?.absence, name).toBe('empty_message');
+      expect((await turnAnsweredBy(readers, runId))?.absence, name).toBe('empty_message');
     }
   });
 
   it('answers null for a run the ledger does not hold, and for a bad id', async () => {
-    expect(await turnAnsweredBy(pool, randomUUID())).toBeNull();
-    expect(await turnAnsweredBy(pool, 'not-a-uuid')).toBeNull();
+    expect(await turnAnsweredBy(readers, randomUUID())).toBeNull();
+    expect(await turnAnsweredBy(readers, 'not-a-uuid')).toBeNull();
   });
 
   // The discriminator the join needs, and the one every other fixture here
@@ -797,7 +800,7 @@ describe('the turn one run answered', () => {
       [orphan],
     );
 
-    const answered = await turnAnsweredBy(pool, orphan);
+    const answered = await turnAnsweredBy(readers, orphan);
     expect(answered, 'a run with no conversation answers no turn').toBeNull();
   });
 
@@ -807,7 +810,7 @@ describe('the turn one run answered', () => {
     await turn(mine, 1, { body: 'MINE' });
     await turn(theirs, 1, { body: 'THEIRS' });
     const runId = await run(mine, 1, 'resolved');
-    const answered = await turnAnsweredBy(pool, runId);
+    const answered = await turnAnsweredBy(readers, runId);
     expect(answered?.bodyText).toBe('MINE');
     expect(answered?.conversationId).toBe(mine);
   });

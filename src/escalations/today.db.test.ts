@@ -9,13 +9,15 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { enqueueTicket } from '../coordinator/intake.js';
 import { fencedInsert } from '../ledger/insert.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { readQueueToday } from './today.js';
 
 const pool = new Pool({ connectionString: dbUrl() });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 await pool.query('SELECT 1');
 
 const NOW = new Date('2026-09-14T15:00:00Z');
@@ -83,6 +85,7 @@ describe('what reached a person today', () => {
   });
 
   afterAll(async () => {
+    await readers.end();
     await pool.end();
   });
 
@@ -98,7 +101,7 @@ describe('what reached a person today', () => {
     const resolved = await runFor(answered, 'resolved', 1n);
     await stamp('run', 'created_at', resolved, NOW);
 
-    expect(await readQueueToday(pool, NOW)).toEqual({ day: '2026-09-14', arrived: 3, reachedQueue: 1 });
+    expect(await readQueueToday(readers, NOW)).toEqual({ day: '2026-09-14', arrived: 3, reachedQueue: 1 });
   });
 
   // A run approved later in the day has left the queue, but it did reach a
@@ -110,7 +113,7 @@ describe('what reached a person today', () => {
     await park(run);
     await stamp('run', 'created_at', run, NOW);
 
-    expect(await readQueueToday(pool, NOW)).toMatchObject({ reachedQueue: 1 });
+    expect(await readQueueToday(readers, NOW)).toMatchObject({ reachedQueue: 1 });
   });
 
   // Two runs of one message are one case for a person, not two.
@@ -124,7 +127,7 @@ describe('what reached a person today', () => {
     await stamp('run', 'created_at', first, NOW);
     await stamp('run', 'created_at', retry, NOW);
 
-    expect(await readQueueToday(pool, NOW)).toEqual({ day: '2026-09-14', arrived: 1, reachedQueue: 1 });
+    expect(await readQueueToday(readers, NOW)).toEqual({ day: '2026-09-14', arrived: 1, reachedQueue: 1 });
   });
 
   // The UTC day, and nothing from the day before.
@@ -135,7 +138,7 @@ describe('what reached a person today', () => {
     await park(run);
     await stamp('run', 'created_at', run, YESTERDAY);
 
-    expect(await readQueueToday(pool, NOW)).toEqual({ day: '2026-09-14', arrived: 0, reachedQueue: 0 });
+    expect(await readQueueToday(readers, NOW)).toEqual({ day: '2026-09-14', arrived: 0, reachedQueue: 0 });
   });
 
   // Dated by the message, not the run. A message that arrived before midnight
@@ -147,8 +150,8 @@ describe('what reached a person today', () => {
     await park(run);
     await stamp('run', 'created_at', run, new Date('2026-09-14T00:02:00Z'));
 
-    expect(await readQueueToday(pool, NOW)).toEqual({ day: '2026-09-14', arrived: 0, reachedQueue: 0 });
-    expect(await readQueueToday(pool, new Date('2026-09-13T12:00:00Z')))
+    expect(await readQueueToday(readers, NOW)).toEqual({ day: '2026-09-14', arrived: 0, reachedQueue: 0 });
+    expect(await readQueueToday(readers, new Date('2026-09-13T12:00:00Z')))
       .toEqual({ day: '2026-09-13', arrived: 1, reachedQueue: 1 });
   });
 
@@ -164,7 +167,7 @@ describe('what reached a person today', () => {
     await park(retry);
     await stamp('run', 'created_at', retry, NOW);
 
-    expect(await readQueueToday(pool, NOW)).toEqual({ day: '2026-09-14', arrived: 0, reachedQueue: 0 });
+    expect(await readQueueToday(readers, NOW)).toEqual({ day: '2026-09-14', arrived: 0, reachedQueue: 0 });
   });
 
   // A park that crashed mid-write, or failed, put nothing in front of a person.
@@ -177,7 +180,7 @@ describe('what reached a person today', () => {
       await stamp('run', 'created_at', run, NOW);
     }
 
-    expect(await readQueueToday(pool, NOW)).toEqual({ day: '2026-09-14', arrived: 2, reachedQueue: 0 });
+    expect(await readQueueToday(readers, NOW)).toEqual({ day: '2026-09-14', arrived: 2, reachedQueue: 0 });
   });
 
   // A run from before runs recorded their message has no turn to date it by,
@@ -189,7 +192,7 @@ describe('what reached a person today', () => {
     await pool.query('UPDATE run SET conversation_id = NULL, turn_number = NULL, created_at = $2 WHERE run_id = $1', [run, NOW]);
     await arrivedAt(turn, YESTERDAY);
 
-    expect(await readQueueToday(pool, NOW)).toEqual({ day: '2026-09-14', arrived: 0, reachedQueue: 1 });
+    expect(await readQueueToday(readers, NOW)).toEqual({ day: '2026-09-14', arrived: 0, reachedQueue: 1 });
   });
 
   // The day is UTC whatever zone the session runs in. A session far east of
@@ -203,7 +206,7 @@ describe('what reached a person today', () => {
     await park(run);
     await stamp('run', 'created_at', run, new Date('2026-09-14T00:30:00Z'));
 
-    const auckland = new Pool({ connectionString: dbUrl(), options: '-c TimeZone=Pacific/Auckland' });
+    const auckland = new Pool({ connectionString: readerDbUrl(), options: '-c TimeZone=Pacific/Auckland' });
     try {
       const zone = await auckland.query<{ TimeZone: string }>('SHOW TimeZone');
       expect(zone.rows[0]!.TimeZone).toBe('Pacific/Auckland');
@@ -237,7 +240,7 @@ describe('what reached a person today', () => {
     }
 
     // One turn and one run with no turn, both at the day's first instant.
-    expect(await readQueueToday(pool, NOW)).toEqual({ day: '2026-09-14', arrived: 1, reachedQueue: 2 });
+    expect(await readQueueToday(readers, NOW)).toEqual({ day: '2026-09-14', arrived: 1, reachedQueue: 2 });
   });
 
   // The console reads this on every load of its landing page, so a read that
@@ -249,7 +252,7 @@ describe('what reached a person today', () => {
       await holder.query('BEGIN');
       await holder.query('LOCK TABLE turn IN ACCESS EXCLUSIVE MODE');
       const started = Date.now();
-      await expect(readQueueToday(pool, NOW, 200)).rejects.toThrow(/statement timeout/);
+      await expect(readQueueToday(readers, NOW, 200)).rejects.toThrow(/statement timeout/);
       expect(Date.now() - started).toBeLessThan(5_000);
     } finally {
       await holder.query('ROLLBACK');
@@ -261,7 +264,7 @@ describe('what reached a person today', () => {
   // timeout left on it. A pool of one makes the next reads use that same
   // connection.
   it('returns the connection that timed out clean', async () => {
-    const single = new Pool({ connectionString: dbUrl(), max: 1 });
+    const single = new Pool({ connectionString: readerDbUrl(), max: 1 });
     const holder = await pool.connect();
     let locked = false;
     const backend = async (): Promise<number> =>
@@ -295,7 +298,7 @@ describe('what reached a person today', () => {
   // connection it gave up on is destroyed, never returned. A lock stands in for
   // the silence: the server-side timeout is set far past the client's.
   it('gives up on its own bound and destroys the connection it gave up on', async () => {
-    const single = new Pool({ connectionString: dbUrl(), max: 1 });
+    const single = new Pool({ connectionString: readerDbUrl(), max: 1 });
     const holder = await pool.connect();
     let locked = false;
     const backend = async (): Promise<number> =>
@@ -323,7 +326,7 @@ describe('what reached a person today', () => {
   // A bound of NaN, Infinity, 0 or more than a timer keeps bounds nothing, so
   // it is refused, and no connection is taken for it.
   it('refuses a bound outside 1 to 2147483647 milliseconds', async () => {
-    const counting = new Pool({ connectionString: dbUrl(), max: 1 });
+    const counting = new Pool({ connectionString: readerDbUrl(), max: 1 });
     try {
       const cases = [
         [Number.NaN, 1_000], [2_000, Number.POSITIVE_INFINITY], [0, 1_000], [2_000, 2_147_483_648],
@@ -349,6 +352,6 @@ describe('what reached a person today', () => {
     const run = await runFor(turn, 'escalated', 1n);
     await stamp('run', 'created_at', run, NOW);
 
-    expect(await readQueueToday(pool, NOW)).toMatchObject({ reachedQueue: 0 });
+    expect(await readQueueToday(readers, NOW)).toMatchObject({ reachedQueue: 0 });
   });
 });

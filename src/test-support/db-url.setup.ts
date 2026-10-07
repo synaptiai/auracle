@@ -19,7 +19,7 @@ import { beforeAll, expect, inject } from 'vitest';
 // rather than `never`.
 import type {} from './containers.js';
 import { recordDatabase } from './isolation-registry.js';
-import { cloneTemplate, databaseOf } from './template-db.js';
+import { asReader, cloneTemplate, databaseOf } from './template-db.js';
 
 // A name unique to this file, and short: Postgres truncates an identifier at
 // 63 bytes, and a truncated name would collide with another worker's.
@@ -28,6 +28,8 @@ const runId = inject('dbRunId');
 
 const url = await cloneTemplate(inject('dbUrl'), runId, label);
 process.env['DATABASE_URL'] = url;
+// The same database as the readers' role sees it (issue #153).
+process.env['READER_DATABASE_URL'] = asReader(url);
 
 // The run's teardown reads these back and fails when one database served two
 // files. No single file can see that about itself.

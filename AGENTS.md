@@ -78,7 +78,9 @@ pnpm run dev:relay      pnpm run dev:console
 They use `tsx`. Node's own type stripping cannot run this tree. It resolves a
 NodeNext `./x.js` specifier literally, and no `.js` file exists in `src/`. It
 also refuses a TypeScript parameter property, which five production classes
-use. `dev:console` reads the core from `dist/`, so build once first.
+use. `dev:console` reads the core from `dist/`, so build once first. It
+also needs `READER_DATABASE_URL` exported, because its readers connect as
+`auracle_reader`.
 
 Two watch modes exist: `pnpm run check:watch` recompiles the solution, and
 `pnpm run test:watch` reruns the unit project.
@@ -116,6 +118,9 @@ it out of the stack `.github/workflows/release.yml` deploys. A plain
 `docker compose up -d` starts the ledger alone.
 `pnpm run db:migrate` applies the SQL files under `db/` in order.
 
+The compose Postgres reads a `pg_hba.conf` rule from `docker-compose.yml`.
+It lets `auracle_reader` log in to the ledger and the test databases only.
+
 **The two variables are the local test path.** With `DATABASE_URL` and
 `MAIL_HOST` set, no suite starts a throwaway container and no test opens a
 Docker socket. Without them the suites fall back to `testcontainers`, which 95
@@ -152,7 +157,8 @@ cp .env.example .env                     # OPENROUTER_API_KEY at least
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
-The overlay sets `DATABASE_URL` itself and ignores the one in `.env`. That
+The overlay sets `DATABASE_URL` and `READER_DATABASE_URL` itself, and ignores
+both in `.env`. That
 file names `localhost:5433`, which is right for a checkout and is a
 container's own loopback inside one.
 
@@ -229,11 +235,13 @@ A type-only import of `pg` stays legal, because the compiler erases it.
 The rules read one level deep, and they do not follow the import graph.
 Importing `pg` opens no socket, and 37 of the 68 pure suites already reach it
 through `src/db/config.ts`. A transitive rule would condemn them all.
-So the `unit` project also sets `DATABASE_URL` to a port that refuses.
+So the `unit` project also sets `DATABASE_URL` and `READER_DATABASE_URL` to a
+port that refuses.
 A pure suite that connects through a helper then fails where it stands.
 Without it that suite passes green against your own compose ledger.
 
-`test:unit` starts no container and opens no socket. It needs no Docker daemon.
+`test:unit` starts no container and reaches no server but one it starts itself
+on loopback. It needs no Docker daemon.
 It runs the files in parallel and finishes in seconds.
 Use it as the inner loop, and on any machine without Docker.
 
@@ -258,6 +266,9 @@ An explicit `DATABASE_URL` disables the container and targets that database inst
 `MAIL_IMAP_PORT` beside it.
 The setup probes both first. An unreachable one fails the run.
 Without the probe every database suite skips itself and the run still exits 0.
+
+The setup also restates `auracle_reader` on that server, with a known password.
+It refuses a server on another host unless `AURACLE_TEST_ALLOW_REMOTE_DB=1`.
 
 The compose mail server outlives the run, unlike a throwaway container. So
 each mail suite empties the mailboxes it owns before every case, through

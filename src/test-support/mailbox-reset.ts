@@ -18,6 +18,8 @@
 // creates a user on first use, so nothing would ever remove them.
 import { ImapFlow } from 'imapflow';
 
+import { assertLocalHost } from './local-host.js';
+
 export interface MailboxAccount {
   readonly host: string;
   readonly imapPort: number;
@@ -32,9 +34,6 @@ export interface MailboxAccount {
  * A mailbox the account does not have yet is not an error: GreenMail creates
  * one on first use, and an absent mailbox is already empty.
  */
-/** Hosts a test run may empty mailboxes on without being asked twice. */
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0']);
-
 /** Set to '1' to empty mailboxes on a host that is not this machine. */
 export const ALLOW_REMOTE_MAIL = 'AURACLE_TEST_ALLOW_REMOTE_MAIL';
 
@@ -56,13 +55,11 @@ export const ALLOW_REMOTE_MAIL = 'AURACLE_TEST_ALLOW_REMOTE_MAIL';
  * problem.
  */
 export function assertLocalMailHost(host: string): void {
-  if (LOCAL_HOSTS.has(host)) return;
-  if (process.env[ALLOW_REMOTE_MAIL] === '1') return;
-  throw new Error(
-    `refusing to empty mailboxes on '${host}': a test run deletes every message `
-      + `in the mailboxes it owns, and this host is not this machine. `
-      + `\`docker compose --profile test up -d\` starts one on 127.0.0.1, or set `
-      + `${ALLOW_REMOTE_MAIL}=1 when the server really is disposable.`,
+  assertLocalHost(
+    host,
+    ALLOW_REMOTE_MAIL,
+    'refusing to empty mailboxes, deleting every message in the ones this run owns,',
+    '`docker compose --profile test up -d` starts one on 127.0.0.1. ',
   );
 }
 

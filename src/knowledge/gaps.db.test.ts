@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { enqueueTicket } from '../coordinator/intake.js';
 import { fencedInsert } from '../ledger/insert.js';
 import { readRunJournal, verdictAt } from '../journal/query.js';
@@ -17,6 +17,8 @@ import {
 } from './gaps.js';
 
 const pool = new Pool({ connectionString: dbUrl() });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 await pool.query('SELECT 1');
 
 const NOW = new Date('2026-09-20T12:00:00Z');
@@ -157,9 +159,10 @@ async function documentOf(docId: string, spec: DocSpec = {}): Promise<string> {
   return createHash('sha256').update(body, 'utf8').digest('hex');
 }
 
-const knowledge = (): Promise<KnowledgeReport> => readKnowledge(pool, NOW);
+const knowledge = (): Promise<KnowledgeReport> => readKnowledge(readers, NOW);
 
 afterAll(async () => {
+  await readers.end();
   await pool.end();
 });
 
@@ -233,7 +236,7 @@ describe('the cases a gap blocked', () => {
       { claimIndex: 0, supported: false }, { claimIndex: 1, supported: true }, { claimIndex: 1, supported: false }] });
     const report = await knowledge();
     expect([report.blockedCases, report.unreadCases]).toEqual([1, 0]);
-    expect(await readCaseGap(pool, runId, NOW))
+    expect(await readCaseGap(readers, runId, NOW))
       .toEqual({ runId, attempt: 1, gap: { kind: 'unsupported', docIds: ['DOC-A'] }, counted: true, unread: false });
   });
 
@@ -297,7 +300,7 @@ describe('the cases a gap blocked', () => {
     await abstained(high!);
     await answered(low!, [{ docId: 'DOC-A', supported: true }]);
     expect((await knowledge()).gaps.flatMap((g) => g.runIds)).toEqual([high]);
-    expect((await readCaseGap(pool, low!, NOW))?.runId).toBe(high);
+    expect((await readCaseGap(readers, low!, NOW))?.runId).toBe(high);
   });
 
   it('ranks by attempt before start, when a higher attempt started earlier', async () => {
@@ -309,7 +312,7 @@ describe('the cases a gap blocked', () => {
     const second = await runOf(turn, { state: 'escalated', attempt: 2, createdAt: daysAgo(3) });
     await abstained(second);
     expect((await knowledge()).gaps.flatMap((g) => g.runIds)).toEqual([second]);
-    expect((await readCaseGap(pool, first, NOW))?.runId).toBe(second);
+    expect((await readCaseGap(readers, first, NOW))?.runId).toBe(second);
   });
 
   it('chooses the attempt of record before the window, so a later attempt decides', async () => {
@@ -321,7 +324,7 @@ describe('the cases a gap blocked', () => {
     });
     await answered(later, [{ docId: 'DOC-A', supported: true }]);
     expect((await knowledge()).blockedCases).toBe(0);
-    expect(await readCaseGap(pool, first, NOW)).toEqual({ runId: later, attempt: 2, gap: null, counted: false, unread: false });
+    expect(await readCaseGap(readers, first, NOW)).toEqual({ runId: later, attempt: 2, gap: null, counted: false, unread: false });
   });
 
   it('counts a case whose attempt of record is in the window when an older one is not', async () => {
@@ -336,7 +339,7 @@ describe('the cases a gap blocked', () => {
   it('says a case older than the window is blocked but not counted now', async () => {
     const runId = await runOf(await arrive(), { state: 'escalated', createdAt: daysAgo(GAP_WINDOW_DAYS + 1) });
     await abstained(runId);
-    expect(await readCaseGap(pool, runId, NOW)).toEqual({ runId, attempt: 1, gap: { kind: 'abstained' }, counted: false, unread: false });
+    expect(await readCaseGap(readers, runId, NOW)).toEqual({ runId, attempt: 1, gap: { kind: 'abstained' }, counted: false, unread: false });
     expect((await knowledge()).blockedCases).toBe(0);
   });
 
@@ -358,7 +361,7 @@ describe('the cases a gap blocked', () => {
     await journal(ended, 'escalate', 'done', { reason: 'send_back_attempts_failed' });
     const report = await knowledge();
     expect(report.gaps.flatMap((g) => g.runIds)).toEqual([first]);
-    expect((await readCaseGap(pool, ended, NOW))?.runId).toBe(first);
+    expect((await readCaseGap(readers, ended, NOW))?.runId).toBe(first);
   });
 
   it('does not count a case whose runs reached a person without composing', async () => {
@@ -366,7 +369,7 @@ describe('the cases a gap blocked', () => {
     await classified(runId, 'refund_request');
     await journal(runId, 'escalate', 'done', { reason: 'agreement_below_threshold' });
     expect((await knowledge()).blockedCases).toBe(0);
-    expect(await readCaseGap(pool, runId, NOW)).toBeNull();
+    expect(await readCaseGap(readers, runId, NOW)).toBeNull();
   });
 
   it('keeps counting a gap after a person rewrote the reply', async () => {
@@ -376,7 +379,7 @@ describe('the cases a gap blocked', () => {
     await answered(runId, [{ docId: 'DOC-A', supported: false }]);
     await journal(runId, 'rewrite', 'done', { rewrittenBy: 'reviewer-one', cleared: 'a digest' });
     expect((await knowledge()).blockedCases).toBe(1);
-    expect((await readCaseGap(pool, runId, NOW))?.gap).toEqual({ kind: 'unsupported', docIds: ['DOC-A'] });
+    expect((await readCaseGap(readers, runId, NOW))?.gap).toEqual({ kind: 'unsupported', docIds: ['DOC-A'] });
   });
 
   it('does not count a case that never reached a person', async () => {
@@ -629,16 +632,16 @@ describe('the gap of one case', () => {
     await answered(first, [{ docId: 'DOC-A', supported: true }]);
     const second = await runOf(turn, { state: 'escalated', attempt: 2, createdAt: daysAgo(2) });
     await abstained(second);
-    expect(await readCaseGap(pool, first, NOW))
+    expect(await readCaseGap(readers, first, NOW))
       .toEqual({ runId: second, attempt: 2, gap: { kind: 'abstained' }, counted: true, unread: false });
   });
 
   it('answers null for a case that never reached a person, and for an id that is not one', async () => {
     const runId = await runOf(await arrive(), { state: 'resolved' });
     await abstained(runId);
-    expect(await readCaseGap(pool, runId, NOW)).toBeNull();
-    expect(await readCaseGap(pool, randomUUID(), NOW)).toBeNull();
-    expect(await readCaseGap(pool, 'not-a-uuid', NOW)).toBeNull();
+    expect(await readCaseGap(readers, runId, NOW)).toBeNull();
+    expect(await readCaseGap(readers, randomUUID(), NOW)).toBeNull();
+    expect(await readCaseGap(readers, 'not-a-uuid', NOW)).toBeNull();
   });
 
   it('agrees with the knowledge screen about every case', async () => {
@@ -717,7 +720,7 @@ describe('the gap of one case', () => {
     const groups = new Map(report.gaps.map((g) => [g.intentId, g]));
     for (const [intent, runs] of runsByIntent) {
       for (const runId of runs) {
-        const gap = await readCaseGap(pool, runId, NOW);
+        const gap = await readCaseGap(readers, runId, NOW);
         const onScreen = gap !== null && gap.gap !== null && gap.counted;
         // The same documents on both, not only the same answer.
         const namedOnPage = gap?.gap?.kind === 'unsupported' ? gap.gap.docIds : [];
@@ -730,9 +733,9 @@ describe('the gap of one case', () => {
     // The unreadable claims and the malformed verdict list.
     expect(report.unreadCases).toBe(2);
     for (const intent of ['unreadable', 'malformed']) {
-      expect((await readCaseGap(pool, runsByIntent.get(intent)![0]!, NOW))?.unread).toBe(true);
+      expect((await readCaseGap(readers, runsByIntent.get(intent)![0]!, NOW))?.unread).toBe(true);
     }
-    expect(await readCaseGap(pool, runsByIntent.get('turnless')![0]!, NOW))
+    expect(await readCaseGap(readers, runsByIntent.get('turnless')![0]!, NOW))
       .toEqual({ runId: runsByIntent.get('turnless')![0], attempt: 1, gap: { kind: 'abstained' }, counted: true, unread: false });
   });
 
@@ -770,20 +773,20 @@ describe('the gap of one case', () => {
           [runId, shape.gate.status, JSON.stringify(shape.gate.result)],
         );
       }
-      const journalRead = (await readRunJournal(pool, runId))!;
+      const journalRead = (await readRunJournal(readers, runId))!;
       const compose = journalRead.steps.find((step) => step.compose !== null)!.compose!;
       const refusedOnPage = [...new Set((compose.claims ?? [])
         .filter((_, i) => verdictAt(journalRead.coverage?.claimVerdicts ?? null, i) === false)
         .map((claim) => claim.docId))];
-      const gap = (await readCaseGap(pool, runId, NOW))!.gap;
+      const gap = (await readCaseGap(readers, runId, NOW))!.gap;
       expect({ shape, docIds: gap?.kind === 'unsupported' ? gap.docIds : [] })
         .toEqual({ shape, docIds: refusedOnPage });
     }
   });
 
   it('refuses a bound outside what both ends honour, before taking a connection', async () => {
-    await expect(readCaseGap(pool, randomUUID(), NOW, 0)).rejects.toThrow(/readCaseGap: timeoutMs/);
-    await expect(readKnowledge(pool, NOW, 1_000, Number.POSITIVE_INFINITY))
+    await expect(readCaseGap(readers, randomUUID(), NOW, 0)).rejects.toThrow(/readCaseGap: timeoutMs/);
+    await expect(readKnowledge(readers, NOW, 1_000, Number.POSITIVE_INFINITY))
       .rejects.toThrow(/readKnowledge: clientTimeoutMs/);
   });
 });

@@ -30,8 +30,56 @@
 import { randomUUID } from 'node:crypto';
 
 import { Pool } from 'pg';
+import type { PoolClient } from 'pg';
 
+import { errorMessage } from '../errors.js';
 import { migrate } from '../ledger/migrate.js';
+import { READER_ROLE, restateReaderRole, revokeTempFromPublic } from '../ledger/reader-role.js';
+import { assertLocalHost, postgresHost } from './local-host.js';
+
+/**
+ * The password the readers' role logs in with on a test server: the compose
+ * stack's own default. A run sets it on the whole server, because a role is the
+ * server's: a compose stack that set its own `AURACLE_READER_PASSWORD` needs a
+ * `db:migrate` after a test run.
+ */
+const TEST_READER_CREDENTIAL = 'auracle_reader';
+
+/**
+ * The connections the role may hold during a test run. The files run in
+ * parallel and each opens a reader pool, so the production limit of ten would
+ * refuse them. A `db:migrate` restates the production limit.
+ */
+const TEST_READER_CONNECTION_LIMIT = 200;
+
+/** Set to '1' to let a test run set the readers' login on a host that is not this machine. */
+export const ALLOW_REMOTE_DB = 'AURACLE_TEST_ALLOW_REMOTE_DB';
+
+/**
+ * Refuses to set the readers' login on a server that is not this machine.
+ *
+ * The role and its password belong to the whole server. A run aimed at a
+ * shared server with an explicit DATABASE_URL would reset the password every
+ * service on it uses to a value printed in this repository.
+ */
+function assertLocalDbHost(url: string): void {
+  assertLocalHost(
+    postgresHost(url),
+    ALLOW_REMOTE_DB,
+    `refusing to create ${READER_ROLE} and set its login for the whole server`,
+  );
+}
+
+/**
+ * The same database as `url`, as the readers' role connects to it (issue #153).
+ * Every reader runs through `boundedRead`, which refuses the writer's session.
+ */
+export function asReader(url: string): string {
+  const parsed = new URL(url);
+  parsed.username = READER_ROLE;
+  parsed.password = TEST_READER_CREDENTIAL;
+  return parsed.toString();
+}
 
 /** Fixed part of every clone name. Never used as a LIKE pattern. */
 export const CLONE_PREFIX = 'auracle_clone_';
@@ -76,6 +124,9 @@ export function databaseOf(url: string): string {
  * that reason.
  */
 export async function prepareTemplate(adminUrl: string, runId: string): Promise<void> {
+  // Before the first statement: migration 041 creates the role on the whole
+  // server, so a run on a remote server would change it before refusing.
+  assertLocalDbHost(adminUrl);
   const name = templateName(runId);
   const admin = new Pool({ connectionString: adminUrl, max: 1 });
   try {
@@ -90,12 +141,41 @@ export async function prepareTemplate(adminUrl: string, runId: string): Promise<
     const client = await template.connect();
     try {
       await migrate(client);
+      // The role is the server's, so this is the one place a run restates it
+      // and sets its login, as `pnpm run db:migrate` does after the migrations.
+      await restateWithRetry(client);
     } finally {
       client.release();
     }
   } finally {
     // Nothing may hold this open, or every clone fails.
     await template.end();
+  }
+}
+
+/**
+ * Restates the readers' role for a test run. The role is the server's, and
+ * its lock is the database's, so two runs on one server can update the role
+ * at once; Postgres refuses the second with "tuple concurrently updated".
+ * That clears by waiting, so it is retried.
+ */
+async function restateWithRetry(client: PoolClient): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    try {
+      await restateReaderRole(client, {
+        credential: TEST_READER_CREDENTIAL,
+        connectionLimit: TEST_READER_CONNECTION_LIMIT,
+      });
+      return;
+    } catch (error) {
+      // Only after a clean rollback: a connection that failed to roll back
+      // cannot run the next attempt.
+      const raced = /tuple concurrently updated/.test(errorMessage(error))
+        && (error as { rollbackFailed?: boolean }).rollbackFailed !== true;
+      if (!raced || Date.now() > deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50 + Math.random() * 200));
+    }
   }
 }
 
@@ -120,6 +200,10 @@ export async function cloneTemplate(
     for (;;) {
       try {
         await admin.query(`CREATE DATABASE "${name}" TEMPLATE "${templateName(runId)}"`);
+        // A clone copies the template's tables and functions, and not the
+        // database's own rights: PUBLIC gets TEMP back, which the readers'
+        // role must not hold (issue #153).
+        await revokeTempFromPublic(admin, name);
         return withDatabase(adminUrl, name);
       } catch (error) {
         const code = (error as { code?: string }).code;

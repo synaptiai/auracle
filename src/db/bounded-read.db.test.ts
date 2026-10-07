@@ -6,11 +6,12 @@
 import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { dbUrl } from './config.js';
+import { dbUrl, readerDbUrl } from './config.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { boundedRead } from './bounded-read.js';
 
-const pool = new Pool({ connectionString: dbUrl(), max: 1 });
+// The readers' role (issue #153): boundedRead refuses the writer's session.
+const pool = new Pool({ connectionString: readerDbUrl(), max: 1 });
 const writer = new Pool({ connectionString: dbUrl(), max: 1 });
 await pool.query('SELECT 1');
 
@@ -35,7 +36,7 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 describe('a bounded read', () => {
   beforeEach(async () => {
-    await truncateLedger(pool);
+    await truncateLedger(writer);
   });
 
   it('returns the session clean after a read that throws on its own', async () => {
@@ -315,14 +316,17 @@ describe('a bounded read', () => {
   });
 
   // READ ONLY refuses a write to a table, and nothing that changes the
-  // session. A setting made for the session and an advisory lock both
-  // outlived the read on the connection the pool handed out next.
+  // session. A setting made for the session outlived the read on the
+  // connection the pool handed out next. The role cannot take an advisory
+  // lock, since the restate revokes the functions from PUBLIC.
   it('hands back a session with no setting and no lock the read made', async () => {
     const before = await session();
     await boundedRead(pool, 'test', 2_000, 3_000, async (query) => {
       await query("SELECT set_config('search_path', 'pg_catalog', false)");
-      await query('SELECT pg_advisory_lock(146)');
     });
+    await expect(boundedRead(pool, 'test', 2_000, 3_000, async (query) => {
+      await query('SELECT pg_advisory_lock(146)');
+    })).rejects.toMatchObject({ code: '42501' });
     const after = await pool.query<{ pid: number; path: string; locks: number }>(
       `SELECT pg_backend_pid() AS pid, current_setting('search_path') AS path,
               (SELECT count(*)::int FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()) AS locks`,

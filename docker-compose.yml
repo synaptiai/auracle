@@ -21,6 +21,14 @@ services:
       - "127.0.0.1:${AURACLE_DB_PORT:-5433}:5432"
     volumes:
       - auracle-db-data:/var/lib/postgresql/data
+    # The readers' role logs in to the ledger and to no other database
+    # (issue #153). Its rights are taken in the ledger's database only, and
+    # a login to `postgres` would get PUBLIC's there. The file lives outside
+    # the data directory, so an existing volume takes it at its next start.
+    command: ["postgres", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
+    configs:
+      - source: pg_hba
+        target: /etc/postgresql/pg_hba.conf
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U auracle -d auracle"]
       interval: 5s
@@ -84,3 +92,21 @@ services:
 
 volumes:
   auracle-db-data:
+
+configs:
+  # The first line that matches decides. The readers' role's lines come first, so
+  # the trust lines below never admit it. The pattern admits the databases a
+  # test run clones. The rest is the image's own file.
+  pg_hba:
+    content: |
+      local       auracle,/^auracle_(clone|tmpl)_  auracle_reader        scram-sha-256
+      host        auracle,/^auracle_(clone|tmpl)_  auracle_reader  all   scram-sha-256
+      local       all         auracle_reader              reject
+      host        all         auracle_reader  all         reject
+      local       all         all                     trust
+      host        all         all     127.0.0.1/32    trust
+      host        all         all     ::1/128         trust
+      local       replication all                     trust
+      host        replication all     127.0.0.1/32    trust
+      host        replication all     ::1/128         trust
+      host        all         all     all             scram-sha-256

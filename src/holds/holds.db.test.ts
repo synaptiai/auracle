@@ -12,7 +12,7 @@ import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readDays } from '../bands/query.js';
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { readLatency } from '../latency/query.js';
 import { truncateLedger } from '../test-support/schema.js';
 import {
@@ -20,6 +20,8 @@ import {
 } from './hold.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 6 });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 await pool.query('SELECT 1');
 
@@ -384,7 +386,7 @@ describe('the case hold (DEC-46)', () => {
     );
     const before = await customerFacing(runId);
     const daysBefore = await readDays(pool, FROM, TO);
-    const latencyBefore = await readLatency(pool);
+    const latencyBefore = await readLatency(readers);
     // The sets the comparison rests on are not empty, and the reports cover
     // this run. Without these three lines the case would pass against a
     // fixture that read nothing, and against a window that covered nothing.
@@ -406,7 +408,7 @@ describe('the case hold (DEC-46)', () => {
     // it was.
     expect(await customerFacing(runId)).toEqual(before);
     expect(await readDays(pool, FROM, TO)).toEqual(daysBefore);
-    expect(await readLatency(pool)).toEqual(latencyBefore);
+    expect(await readLatency(readers)).toEqual(latencyBefore);
   });
 
   // One case per person, on the handover path too. The recipient is a
@@ -767,6 +769,7 @@ describe('the case hold (DEC-46)', () => {
   });
 
   afterAll(async () => {
+    await readers.end();
     await pool.end();
   });
 });

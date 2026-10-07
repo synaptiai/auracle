@@ -348,6 +348,9 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   // two read-back faults apart. A class, and no statement.
   PermanentEgressError: 'read',
   probeLedger: 'read',
+  // Issue #153: at startup, one bounded read on the readers' pool and one SELECT on
+  // the writer's, which refuse a pool that is not the readers' role or not this ledger.
+  assertOneLedger: 'read',
   // DEC-47: the product catalogue, read once at startup for the labels the
   // queue draws. A file read, and no statement.
   productCatalogueFromEnv: 'read',
@@ -376,6 +379,7 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   releaseHold: 'write',
   replyDigest: 'read',
   requireDbUrl: 'read',
+  requireReaderDbUrl: 'read',
   // DEC-47: the products the reviewer covers, for the queue's own order. A
   // read of the roster: the console can order by a preference, and cannot
   // set one.

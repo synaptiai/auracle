@@ -42,7 +42,7 @@ import { evaluateMetric, loadTaxonomy } from 'auracle/domain';
 import { lastCompleteDay } from 'auracle/format';
 import { LOOKBACK_DAYS, METRICS } from 'auracle/domain';
 import { humanValue } from 'auracle/format';
-import { probeLedger, requireDbUrl } from 'auracle/ledger-read';
+import { assertOneLedger, probeLedger, requireDbUrl, requireReaderDbUrl } from 'auracle/ledger-read';
 import { LEDGER_STATES, listEscalations, listRuns, readQueueToday, readRun } from 'auracle/ledger-read';
 import { readRunJournal } from 'auracle/ledger-read';
 import { conversationOfRun, readConversation, turnAnsweredBy } from 'auracle/ledger-read';
@@ -97,12 +97,12 @@ import { errorMessage } from 'auracle/cli';
  * run has no request to carry the link, so it is asked for here.
  */
 async function conversationLink(
-  pool: Pool,
+  readers: Pool,
   runId: string,
   request: RequestView | null,
 ): Promise<string | null> {
   if (request !== null) return null;
-  return conversationOfRun(pool, runId);
+  return conversationOfRun(readers, runId);
 }
 
 /**
@@ -112,8 +112,8 @@ async function conversationLink(
  * reads none: it is uncapped by design, and a turn read per waiting row would
  * be a statement for each row of a list that has been 476 long.
  */
-async function requestFor(pool: Pool, runId: string): Promise<RequestView | null> {
-  const turn = await turnAnsweredBy(pool, runId);
+async function requestFor(readers: Pool, runId: string): Promise<RequestView | null> {
+  const turn = await turnAnsweredBy(readers, runId);
   return turn === null ? null : {
     conversationId: turn.conversationId,
     turnNumber: turn.turnNumber,
@@ -124,15 +124,20 @@ async function requestFor(pool: Pool, runId: string): Promise<RequestView | null
   };
 }
 
-/** The run detail surface's view of one run, or null when there is no run. */
-async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
+/**
+ * The run detail surface's view of one run, or null when there is no run.
+ *
+ * `readers` serves the reads that run through `boundedRead`, as the readers'
+ * role (issue #153). `readRun` reads with the console's own pool.
+ */
+async function readRunView(pool: Pool, readers: Pool, runId: string): Promise<RunView | null> {
   const found = await readRun(pool, runId, LEDGER_STATES);
   if (found === null) return null;
   // Two reads, because they answer different questions and one of them can
   // come back empty: a run that journalled nothing is still a run, and the
   // page says so rather than answering 404.
-  const journal = await readRunJournal(pool, runId);
-  const requested = await requestFor(pool, runId);
+  const journal = await readRunJournal(readers, runId);
+  const requested = await requestFor(readers, runId);
   const base = toDetail(found);
   if (journal === null) {
     return {
@@ -150,7 +155,7 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
         replyRewritten: false,
         draftReplaced: false,
       },
-      conversationId: await conversationLink(pool, runId, requested),
+      conversationId: await conversationLink(readers, runId, requested),
       request: requested,
     };
   }
@@ -177,7 +182,7 @@ async function readRunView(pool: Pool, runId: string): Promise<RunView | null> {
       malformed: step.resultMalformed,
     })),
     evidence: evidenceOf(journal),
-    conversationId: await conversationLink(pool, runId, requested),
+    conversationId: await conversationLink(readers, runId, requested),
     request: requested,
   };
 }
@@ -329,10 +334,18 @@ async function main(): Promise<void> {
   // pool rather than on the first confirm.
   const sendHoldMs = requireSendHold(process.env['CONSOLE_SEND_HOLD_MS']);
   const connectionString = requireDbUrl('the operator console');
+  // Issue #153: the readers connect as a role that cannot act beyond a read,
+  // and refuse any other. Asked for before either pool opens.
+  const readerConnectionString = requireReaderDbUrl('the operator console');
 
   // A connection that fails while a request holds it would otherwise end the
   // console, with every reviewer's page (src/db/client-errors.ts).
   const pool = guardLedgerPool(new Pool(consolePoolConfig(connectionString)), logLedgerPoolError('the console'));
+  // The reads that run through `boundedRead`, which refuses the pool above.
+  const readers = guardLedgerPool(
+    new Pool(consolePoolConfig(readerConnectionString)),
+    logLedgerPoolError('the console readers'),
+  );
 
   // `pool.end()` rejects when it is called twice, and two paths call it: the
   // bind-failure handler and the signal shutdown. A bind failure followed by
@@ -342,13 +355,16 @@ async function main(): Promise<void> {
   const endPool = async (): Promise<void> => {
     if (ended) return;
     ended = true;
-    try {
-      await pool.end();
-    } catch (error) {
-      console.error(logLine({
-        event: 'console_pool_end_failed',
-        error: errorMessage(error),
-      }));
+    for (const [each, which] of [[pool, 'console'], [readers, 'readers']] as const) {
+      try {
+        await each.end();
+      } catch (error) {
+        console.error(logLine({
+          event: 'console_pool_end_failed',
+          pool: which,
+          error: errorMessage(error),
+        }));
+      }
     }
   };
   closePool = endPool;
@@ -366,6 +382,10 @@ async function main(): Promise<void> {
   // same way. One `catch` over the whole span rather than one per statement.
   try {
     await probeLedger(pool, 'the operator console');
+    await probeLedger(readers, 'the operator console', 'READER_DATABASE_URL');
+    // And that the pool is the readers' role, on the writer's ledger: a URL
+    // naming the writer connects, and every reader page would then refuse.
+    await assertOneLedger(pool, readers, 'the operator console');
     // DEC-45: a development reviewer nobody added refuses every request, and
     // a console that listened anyway would look configured and serve nobody.
     // The roster decides, so this is the same question the gate asks, asked
@@ -385,7 +405,7 @@ async function main(): Promise<void> {
     listRuns: async (states): Promise<RunRow[]> =>
       (await listRuns(pool, states, RUNS_PAGE)).map(toRow),
 
-    readRun: async (runId): Promise<RunView | null> => readRunView(pool, runId),
+    readRun: async (runId): Promise<RunView | null> => readRunView(pool, readers, runId),
 
     // Unbounded on purpose, and it is the one surface that should be.
     //
@@ -401,7 +421,7 @@ async function main(): Promise<void> {
     // Two counts for the queue header, for the UTC day the request lands in.
     // Held for a short window, because the landing page asks on every load.
     readQueueToday: cachedDaily(
-      async () => readQueueToday(pool),
+      async () => readQueueToday(readers),
       QUEUE_TODAY_HOLD_MS,
       Date.now,
       QUEUE_TODAY_GIVE_UP_MS,
@@ -496,7 +516,7 @@ async function main(): Promise<void> {
     },
 
     readLatency: async (): Promise<LatencyRow[]> => {
-      const report = await readLatency(pool);
+      const report = await readLatency(readers);
       // The bars compare across partitions, so they share one scale for each
       // column. Scaling each row to its own maximum would draw the slowest
       // partition and the fastest identically, which is the one comparison
@@ -531,7 +551,7 @@ async function main(): Promise<void> {
     },
 
     readConversation: async (conversationId) => {
-      const thread = await readConversation(pool, conversationId);
+      const thread = await readConversation(readers, conversationId);
       if (thread === null) return null;
       return {
         conversationId: thread.conversationId,
@@ -555,14 +575,14 @@ async function main(): Promise<void> {
       };
     },
 
-    readDocument: async (docId) => readDocument(pool, docId),
+    readDocument: async (docId) => readDocument(readers, docId),
     // DEC-50: the knowledge screen, and the case's gap by the same definition.
     // Each page gives up on its read at a limit, as the queue's count does, so
     // a slow ledger costs the page a "not read" line and no longer wait. The
     // screen's read is shared while it runs, so reviewers loading it together
     // hold one connection between them, not one each.
     ...knowledgeReads(
-      { readKnowledge: async () => readKnowledge(pool), readCaseGap: async (runId) => readCaseGap(pool, runId) },
+      { readKnowledge: async () => readKnowledge(readers), readCaseGap: async (runId) => readCaseGap(readers, runId) },
       KNOWLEDGE_GIVE_UP_MS,
       lateFault,
     ),
@@ -571,7 +591,7 @@ async function main(): Promise<void> {
     // a parked draft is no copy a person could send. The page gives up on it
     // at the same limit as the case's gap.
     readCaseReruns: givingUp(
-      async (runId: string) => readCaseReruns(pool, runId, readBack?.supportsLedgerReply ?? false),
+      async (runId: string) => readCaseReruns(readers, runId, readBack?.supportsLedgerReply ?? false),
       KNOWLEDGE_GIVE_UP_MS,
       'readCaseReruns',
       (error, wait) => lateFault('readCaseReruns', error, wait),
@@ -580,13 +600,13 @@ async function main(): Promise<void> {
     // at the knowledge screen's limit, and reviewers loading a screen together
     // share one read.
     readTeam: givingUp(
-      sharedRead(async () => readTeam(pool, { lapseMs })),
+      sharedRead(async () => readTeam(readers, { lapseMs })),
       KNOWLEDGE_GIVE_UP_MS,
       'readTeam',
       (error, wait) => lateFault('readTeam', error, wait),
     ),
     readRouting: givingUp(
-      sharedRead(async () => readRouting(pool, {
+      sharedRead(async () => readRouting(readers, {
         intents: taxonomy.intents,
         products: catalogue.products.map((product) => product.id),
       })),
@@ -606,7 +626,7 @@ async function main(): Promise<void> {
     // DEC-44: the callout's first button takes the cited document's own
     // sentence, so the document is read where the edit is applied and not
     // where the page is drawn.
-    readDocumentBody: async (docId) => (await readDocument(pool, docId))?.body ?? null,
+    readDocumentBody: async (docId) => (await readDocument(readers, docId))?.body ?? null,
     // DEC-44: the helpdesk's copy, read for the refusal that names it. Null
     // is no adapter to read through, which the page says in words.
     readCopy: async (draftExternalId) =>

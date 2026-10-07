@@ -25,7 +25,7 @@ import { startSentBackAttempts } from '../coordinator/consumer.js';
 import { coordinateTicket } from '../coordinator/coordinator.js';
 import type { CoordinatorDeps } from '../coordinator/coordinator.js';
 import { enqueueTicket } from '../coordinator/intake.js';
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { readLatency } from '../latency/query.js';
 import type { LatencyReport } from '../latency/query.js';
 import { FakeProvider } from '../models/fake.js';
@@ -44,6 +44,8 @@ import { sendBackRun } from './send-back.js';
 import { snoozeRun } from './snooze.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 // src/test-support/db-global-setup.ts guarantees a reachable database before
 // the workers fork. A failure here is a fault, and a suite that skipped
@@ -126,7 +128,7 @@ async function reports(): Promise<{
   // against a window that covered nothing.
   expect(days).toHaveLength(1);
   const sample = days[0]!.samples.approval_edit_distance;
-  const latency = await readLatency(pool);
+  const latency = await readLatency(readers);
   expect(latency.partitions).toHaveLength(1);
   const service = latency.partitions[0]!.service;
   return {
@@ -182,6 +184,7 @@ describe('DEC-48: each outcome, run for real, counts for what it is', () => {
   });
 
   afterAll(async () => {
+    await readers.end();
     await pool.end();
   });
 
@@ -261,7 +264,7 @@ describe('DEC-48: each outcome, run for real, counts for what it is', () => {
     // "Unchanged until the send" in bands, and "unchanged" in latency: the
     // whole of each report, not only its totals.
     expect(await readDays(pool, FROM, TO)).toEqual(daysBefore);
-    expect(await readLatency(pool)).toEqual(before.latency);
+    expect(await readLatency(readers)).toEqual(before.latency);
 
     // "The edit distance counts, and a full rewrite reads near 1": the send,
     // which is where bands takes the distance from.
@@ -337,7 +340,7 @@ describe('DEC-48: each outcome, run for real, counts for what it is', () => {
     expect(days[0]!.assisted).toBe(1);
     // Latency counts runs, not turns, so the new attempt is one more run, and
     // the rejected one stays in its class.
-    const latency = await readLatency(pool);
+    const latency = await readLatency(readers);
     expect(latency.runs).toBe(before.latency.runs + 1);
     expect(latency.partitions.reduce((sum, partition) => sum + partition.service.rejected, 0)).toBe(1);
   });

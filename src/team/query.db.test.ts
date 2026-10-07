@@ -10,12 +10,14 @@ import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { enqueueTicket } from '../coordinator/intake.js';
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { fencedInsert, resumeStrandedRun } from '../ledger/insert.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { readTeam } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl() });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 await pool.query('SELECT 1');
 
 const NOW = new Date('2026-09-14T15:00:00Z');
@@ -87,7 +89,7 @@ async function written(writer: string, at: Date): Promise<void> {
 }
 
 async function read(now = NOW) {
-  return readTeam(pool, { now, lapseMs: LAPSE });
+  return readTeam(readers, { now, lapseMs: LAPSE });
 }
 
 describe('the team screen (issue #112)', () => {
@@ -95,6 +97,7 @@ describe('the team screen (issue #112)', () => {
     await truncateLedger(pool);
   });
   afterAll(async () => {
+    await readers.end();
     await pool.end();
   });
 
@@ -268,7 +271,7 @@ describe('the team screen (issue #112)', () => {
     // at the console's setting: 30 minutes, up to now.
     const unheld = await run(await arrive(), 'awaiting_approval');
     await event(unheld, 'reviewer-a', 'take', minutesBefore(30));
-    const report = await readTeam(pool, { now: NOW, lapseMs: 60 * MINUTE });
+    const report = await readTeam(readers, { now: NOW, lapseMs: 60 * MINUTE });
     expect(report.supportMs).toBe((20 + 30) * MINUTE);
   });
 
@@ -315,7 +318,7 @@ describe('the team screen (issue #112)', () => {
          FROM generate_series(1, 4000) n`,
       [minutesBefore(4 * 24 * 60)],
     );
-    const report = await readTeam(pool, { now: NOW, lapseMs: LAPSE });
+    const report = await readTeam(readers, { now: NOW, lapseMs: LAPSE });
     expect(report.sentCases).toBe(4000);
     expect(report.medianCaseMs).toBe(5 * MINUTE);
   });
@@ -374,7 +377,7 @@ describe('the team screen (issue #112)', () => {
 
   it('refuses a lapse that is not a positive whole number of milliseconds', async () => {
     for (const lapseMs of [0, -1, 1.5, Number.NaN]) {
-      await expect(readTeam(pool, { now: NOW, lapseMs })).rejects.toThrow(RangeError);
+      await expect(readTeam(readers, { now: NOW, lapseMs })).rejects.toThrow(RangeError);
     }
   });
 });

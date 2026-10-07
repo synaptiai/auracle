@@ -6,6 +6,8 @@
 // statements of the whole read.
 import type { Pool, QueryConfig, QueryResultRow } from 'pg';
 
+import { READER_ROLE } from './reader-role-name.js';
+
 /** The longest delay a Node timer keeps; a longer one fires after 1 ms. */
 const MAX_TIMER_MS = 2_147_483_647;
 
@@ -19,6 +21,37 @@ const READ_STATEMENT = /^\s*(?:\(|(?:select|with|values|table)\b)/i;
 
 /** The message node-pg gives a query that outlasted its `query_timeout`. */
 const CLIENT_TIMEOUT = 'Query read timeout';
+
+/**
+ * Who the session is, and whether it is the role named by $1 and nothing
+ * more (issue #153). `who` is the user the connection logged in as.
+ *
+ * It names the role rather than testing for rights, because a role with
+ * none of the superuser's rights can still own the tables. It reads the
+ * login user, because SET ROLE and SET SESSION AUTHORIZATION change
+ * current_user and session_user. It refuses a role with any attribute
+ * beyond a login: superuser, replication, RLS bypass, or the right to create
+ * a database or a role. It refuses a role that holds any membership,
+ * because a membership lets a read take that role with set_config('role').
+ * And it refuses a role that owns an object here or on the server, because
+ * an owner can write to what it owns outside a read.
+ */
+export const SESSION_CHECK = sessionCheck('$1');
+
+/** SESSION_CHECK with the role in another parameter, for a statement that has others. */
+function sessionCheck(role: '$1' | '$2'): string {
+  return `SELECT a.usename AS who,
+       (a.usename = ${role} AND session_user = ${role}
+        AND NOT (r.rolsuper OR r.rolreplication OR r.rolbypassrls OR r.rolcreatedb OR r.rolcreaterole)
+        AND NOT EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid)
+        AND NOT EXISTS (SELECT 1 FROM pg_shdepend o
+                         WHERE o.refobjid = r.oid AND o.deptype = 'o'
+                           AND o.classid <> 'pg_default_acl'::regclass
+                           AND o.dbid IN (0, (SELECT oid FROM pg_database WHERE datname = current_database())))) AS reader
+  FROM pg_stat_activity a
+  LEFT JOIN pg_roles r ON r.rolname = session_user
+ WHERE a.pid = pg_backend_pid()`;
+}
 
 /** One statement inside the read, under the client bound. */
 export type BoundedQuery = <R extends QueryResultRow>(
@@ -115,9 +148,9 @@ export async function boundedRead<T>(
     return config;
   };
   // READ ONLY refuses a write to a table, and nothing that changes the
-  // session. A setting made for the session, an advisory lock, a prepared
-  // statement and a LISTEN each outlived the read on the connection the pool
-  // handed out next, and the console writes on that pool. So each read ends
+  // session. A setting made for the session, a prepared statement and a
+  // LISTEN each outlive the read on the connection the pool hands out next.
+  // A pool that is not the readers' role can also hold an advisory lock. So each read ends
   // by discarding the session's state. A connection whose state cannot be
   // discarded is destroyed rather than returned.
   const discard = async (): Promise<boolean> => {
@@ -163,11 +196,31 @@ export async function boundedRead<T>(
     await client.query(bounded('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'));
     // The idle bound covers the time `read` spends between statements, which
     // no statement timeout does. Both are local to this transaction.
-    await client.query(bounded(
+    //
+    // The same statement asks who the session is (issue #153). READ ONLY
+    // refuses a write to a table and nothing else: a superuser's read can
+    // still end another session, write to the catalog or create a replication
+    // slot. The readers connect as auracle_reader, a role with none of those
+    // rights, and any other session is refused before the read runs. The
+    // rules are SESSION_CHECK's.
+    //
+    // The search path names pg_temp last, so no temporary object a session
+    // left behind stands in front of a table a reader names.
+    const checked = await client.query<{ who: string | null; reader: boolean | null }>(bounded(
       `SELECT set_config('statement_timeout', $1, true),
-              set_config('idle_in_transaction_session_timeout', $1, true)`,
-      [String(Math.trunc(timeoutMs))],
+              set_config('idle_in_transaction_session_timeout', $1, true),
+              set_config('search_path', 'public, pg_temp', true),
+              s.who, s.reader
+         FROM (${sessionCheck('$2')}) s`,
+      [String(Math.trunc(timeoutMs)), READER_ROLE],
     ));
+    const session = checked.rows[0];
+    if (session === undefined || session.reader !== true) {
+      throw new Error(
+        `${name}: refuses a session as '${session?.who ?? 'unknown'}', which can act beyond a read; `
+          + `connect the readers with READER_DATABASE_URL, as ${READER_ROLE}`,
+      );
+    }
     result = await read(query);
     ended = true;
     committing = true;

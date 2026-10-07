@@ -14,12 +14,14 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { readRunJournal } from '../journal/query.js';
 import { readConversation } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 4 });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 const REPO_ROOT = new URL('../../', import.meta.url).pathname;
 
 /**
@@ -41,6 +43,7 @@ function publishedStatements(): string[] {
 }
 
 afterAll(async () => {
+  await readers.end();
   await pool.end();
 });
 
@@ -171,12 +174,12 @@ describe('the erasure path the runbook publishes', () => {
     const { conversationId, runId } = await seedOldConversation();
     await runPublished();
 
-    const thread = await readConversation(pool, conversationId);
+    const thread = await readConversation(readers, conversationId);
     expect(thread?.turns[0]?.bodyText).toBeNull();
     expect(thread?.turns[0]?.replyText).toBeNull();
     expect(thread?.participantNamed).toBe(false);
 
-    const journal = await readRunJournal(pool, runId);
+    const journal = await readRunJournal(readers, runId);
     const park = journal?.steps.find((step) => step.stepId === 'park')?.park;
     const compose = journal?.steps.find((step) => step.stepId === 'compose')?.compose;
     expect(park?.draftBody).toBeNull();
@@ -234,7 +237,7 @@ describe('the erasure path the runbook publishes', () => {
     const { conversationId, runId, refusedRun } = await seedOldConversation();
     await runPublished();
 
-    const thread = await readConversation(pool, conversationId);
+    const thread = await readConversation(readers, conversationId);
     // The turn is still there, and it names why it is empty.
     expect(thread?.turns).toHaveLength(1);
     expect(thread?.turns[0]?.turnNumber).toBe(1);
@@ -246,7 +249,7 @@ describe('the erasure path the runbook publishes', () => {
     expect(thread?.turns[0]?.runId).toBe(refusedRun);
     expect(thread?.turns[0]?.runAttempts).toBe(2);
 
-    const journal = await readRunJournal(pool, runId);
+    const journal = await readRunJournal(readers, runId);
     const park = journal?.steps.find((step) => step.stepId === 'park')?.park;
     // The approval derives its idempotency key from these (DEC-24, DEC-38).
     expect(park?.draftExternalId).toBe('hd-1');
@@ -270,7 +273,7 @@ describe('the erasure path the runbook publishes', () => {
       [conversationId],
     );
     await runPublished();
-    const thread = await readConversation(pool, conversationId);
+    const thread = await readConversation(readers, conversationId);
     expect(thread?.turns[0]?.bodyText).toBe('written today');
     expect(thread?.participantNamed).toBe(true);
   });

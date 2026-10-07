@@ -10,12 +10,14 @@ import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { fencedInsert, type FencedRunInput } from '../ledger/insert.js';
 import { listEscalations, parseSince, listRuns, readRun } from './query.js';
 import { readRunJournal } from '../journal/query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 // src/test-support/db-global-setup.ts guarantees a reachable database before
 // the workers fork: it starts a container, or probes an explicit
@@ -316,7 +318,7 @@ describe('escalations CLI queries', () => {
 
     const byRun = new Map((await listEscalations(pool)).map((item) => [item.runId, item]));
     for (const [index, runId] of runs.entries()) {
-      const journal = await readRunJournal(pool, runId);
+      const journal = await readRunJournal(readers, runId);
       const queued = byRun.get(runId)!;
       expect(queued.agreement, texts[index]).toBe(journal?.agreement?.agreement ?? null);
       expect(queued.coverage, texts[index]).toBe(journal?.coverage?.groundedness ?? null);
@@ -706,6 +708,7 @@ describe('escalations CLI queries', () => {
   });
 
   afterAll(async () => {
+    await readers.end();
     await pool.end();
   });
 });

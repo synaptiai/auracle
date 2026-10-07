@@ -1208,6 +1208,144 @@ describe('migrate', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  // A failure before the next file's own statements still names the file
+  // and what this run committed before it.
+  it('names the committed files when the next file cannot start', async () => {
+    const dir = await tempMigrations([['001_a.sql', 'SELECT 1'], ['002_b.sql', 'SELECT 2']]);
+    try {
+      let begins = 0;
+      const lost = {
+        query: async (sql: string, values?: unknown[]) => {
+          if (sql === 'BEGIN' && ++begins === 2) throw new Error('Connection terminated unexpectedly');
+          return client.query(sql, values);
+        },
+      } as unknown as PoolClient;
+      await expect(migrate(lost, dir)).rejects.toThrow(
+        /^002_b\.sql could not start its transaction: Connection terminated unexpectedly\. This run applied 001_a\.sql before it\.$/,
+      );
+      await client.query('ROLLBACK').catch(() => undefined);
+      await client.query('DELETE FROM schema_version');
+
+      const unread = {
+        query: async (sql: string, values?: unknown[]) => {
+          const result = await client.query(sql, values);
+          if (sql === 'COMMIT') await rm(path.join(dir, '002_b.sql'), { force: true });
+          return result;
+        },
+      } as unknown as PoolClient;
+      await expect(migrate(unread, dir)).rejects.toThrow(
+        /^002_b\.sql could not be read: .*ENOENT.*\. This run applied 001_a\.sql before it\.$/,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A held lock stops a migrator before it reads anything, and the session's
+  // own lock wait comes back as it was, whether the run applies or stops.
+  it('names a held migration lock and puts back the lock wait', async () => {
+    const dir = await tempMigrations([['001_a.sql', 'CREATE TABLE a (id integer)']]);
+    const other = await pool.connect();
+    try {
+      await client.query("SET lock_timeout = '7s'");
+      await other.query('SELECT pg_advisory_lock(153041)');
+      try {
+        await expect(migrate(client, dir, { lockTimeoutMs: 200 })).rejects.toThrow(
+          /^nothing was migrated: another session holds the migration lock, perhaps another migrator or a session of auracle_reader; a rerun succeeds once that session ends/,
+        );
+      } finally {
+        await other.query('SELECT pg_advisory_unlock(153041)');
+      }
+      expect((await client.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows[0]!.lock_timeout).toBe('7s');
+      // A statement timeout below the lock wait ends it with its own code,
+      // and the lock is still the cause.
+      await client.query("SET statement_timeout = '200ms'");
+      await other.query('SELECT pg_advisory_lock(153041)');
+      try {
+        await expect(migrate(client, dir, { lockTimeoutMs: 5_000 })).rejects.toThrow(
+          /^nothing was migrated: another session holds the migration lock/,
+        );
+      } finally {
+        await client.query('RESET statement_timeout');
+        await other.query('SELECT pg_advisory_unlock(153041)');
+      }
+
+      // The run stopped before it made its own version table.
+      const { rows: [made] } = await client.query<{ table: string | null }>(
+        "SELECT to_regclass('migrate_test.schema_version')::text AS table",
+      );
+      expect(made!.table).toBeNull();
+      await migrate(client, dir);
+      expect((await client.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows[0]!.lock_timeout).toBe('7s');
+      // A failure before the first file says nothing was migrated.
+      await expect(migrate(client, path.join(dir, 'no-such-directory'))).rejects.toThrow(
+        /^nothing was migrated: .*ENOENT/,
+      );
+    } finally {
+      await client.query('RESET lock_timeout');
+      other.release();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Two migrators on one ledger: the second waits, then finds every file
+  // applied. Without the lock it applies the first file again and fails.
+  it('runs two migrators on one ledger in turn', async () => {
+    const dir = await tempMigrations([
+      ['001_slow.sql', 'CREATE TABLE slow (id integer); SELECT pg_sleep(0.3)'],
+      ['002_next.sql', 'CREATE TABLE next_one (id integer)'],
+    ]);
+    const second = await pool.connect();
+    try {
+      await second.query('SET search_path TO migrate_test, public');
+      const [one, two] = await Promise.all([migrate(client, dir), migrate(second, dir)]);
+      expect([...one.applied, ...two.applied].map((f) => f.version).sort()).toEqual([1, 2]);
+    } finally {
+      await second.query('RESET search_path').catch(() => undefined);
+      second.release();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A deferred constraint fails at COMMIT. The server refused the commit, so
+  // the file rolled back, and the message names it.
+  it('names the file whose commit the server refuses', async () => {
+    const dir = await tempMigrations([['010_deferred.sql', `
+      CREATE TABLE parent (id integer PRIMARY KEY);
+      CREATE TABLE child (parent integer REFERENCES parent DEFERRABLE INITIALLY DEFERRED);
+      INSERT INTO child VALUES (1);`]]);
+    try {
+      await expect(migrate(client, dir)).rejects.toThrow(/^010_deferred\.sql failed and rolled back: .*foreign key/);
+      const { rows } = await client.query<{ version: number }>('SELECT version FROM schema_version');
+      expect(rows.map((row) => row.version)).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A commit that fails off the server may follow the commit, so the message
+  // claims neither outcome.
+  it('says a commit lost in transit may have committed', async () => {
+    const dir = await tempMigrations([['010_lost.sql', 'CREATE TABLE lost (id integer)']]);
+    const losing = {
+      query: async (sql: string, values?: unknown[]) => {
+        if (sql === 'COMMIT') {
+          await client.query('COMMIT');
+          throw Object.assign(new Error('Connection terminated unexpectedly'), { code: 'ECONNRESET' });
+        }
+        return client.query(sql, values);
+      },
+    } as unknown as PoolClient;
+    try {
+      await expect(migrate(losing, dir)).rejects.toThrow(
+        /^010_lost\.sql failed at its commit, and whether it committed is unknown: Connection terminated unexpectedly$/,
+      );
+    } finally {
+      await client.query('DELETE FROM schema_version WHERE version = 10');
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('refuses to apply a file older than the highest recorded version', async () => {
     const dir = await tempMigrations([
       ['010_late.sql', 'CREATE TABLE late (id integer)'],
@@ -1231,7 +1369,10 @@ describe('migrate', () => {
       ['002_bad.sql', 'CREATE TABLE bad (id integer); THIS IS NOT SQL'],
     ]);
 
-    await expect(migrate(client, dir)).rejects.toThrow(/002_bad\.sql failed/);
+    // The file that committed before the failure is named with it.
+    await expect(migrate(client, dir)).rejects.toThrow(
+      /^002_bad\.sql failed and rolled back: .+\. This run applied 001_good\.sql before it\.$/,
+    );
 
     // 001 committed with its record; 002 left neither table nor record.
     const { rows } = await client.query<{ version: number }>(

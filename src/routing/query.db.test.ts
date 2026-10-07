@@ -12,7 +12,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { enqueueTicket } from '../coordinator/intake.js';
-import { dbUrl } from '../db/config.js';
+import { dbUrl, readerDbUrl } from '../db/config.js';
 import { fencedInsert } from '../ledger/insert.js';
 import type { GateThresholds, PolicyReason } from '../policy/policy.js';
 import { truncateLedger } from '../test-support/schema.js';
@@ -20,6 +20,8 @@ import { recordGateLatest } from './latest.js';
 import { ROUTING_TIMEOUT_MS, readRouting } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl() });
+// The readers connect as the role that cannot act beyond a read (issue #153).
+const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 await pool.query('SELECT 1');
 
 const INTENTS = [
@@ -82,6 +84,7 @@ describe('the routing screen (issue #112)', () => {
     await truncateLedger(pool);
   });
   afterAll(async () => {
+    await readers.end();
     await pool.end();
   });
 
@@ -94,7 +97,7 @@ describe('the routing screen (issue #112)', () => {
     await gated('ledger', 'billing_refund', 'customer_visible', SEED, at(2));
     await gated('ledger', 'billing_refund', 'agreement', SEED, at(6));
 
-    const report = await readRouting(pool, { intents: INTENTS });
+    const report = await readRouting(readers, { intents: INTENTS });
     const intent = (product: string, id: string) =>
       report.products.find((row) => row.product === product)!.intents.find((row) => row.id === id)!;
     expect(intent('aurora', 'billing_refund')).toEqual({
@@ -110,27 +113,27 @@ describe('the routing screen (issue #112)', () => {
     const fitted: GateThresholds = { ...SEED, perIntent: { billing_refund: 0.8 } };
     await gated('aurora', 'billing_refund', 'auto', fitted, at(1));
     await gated('aurora', 'account_access', 'auto', fitted, at(2));
-    const intents = (await readRouting(pool, { intents: INTENTS })).products[0]!.intents;
+    const intents = (await readRouting(readers, { intents: INTENTS })).products[0]!.intents;
     expect(intents[0]!.gate).toMatchObject({ threshold: 0.8, fitted: true });
     expect(intents[1]!.gate).toMatchObject({ threshold: 0.6, fitted: false });
   });
 
   it('matches an intent however the classifier cased it', async () => {
     await gated('aurora', ' Billing_Refund ', 'irreversible', { ...SEED, perIntent: { billing_refund: 0.75 } }, at(1));
-    const gate = (await readRouting(pool, { intents: INTENTS })).products[0]!.intents[0]!.gate;
+    const gate = (await readRouting(readers, { intents: INTENTS })).products[0]!.intents[0]!.gate;
     expect(gate).toMatchObject({ reason: 'irreversible', mayAct: false, threshold: 0.75, fitted: true });
   });
 
   it('shows a backfilled record with the newer rows the backfill could not read', async () => {
     await backfilled('aurora', 'billing_refund', { gateAt: at(1), reason: 'auto', thresholds: SEED, unreadable: 4 });
-    const row = (await readRouting(pool, { intents: INTENTS })).products[0]!.intents[0]!;
+    const row = (await readRouting(readers, { intents: INTENTS })).products[0]!.intents[0]!;
     expect(row.unreadable).toBe(4);
     expect(row.gate).toMatchObject({ at: at(1).toISOString(), reason: 'auto', mayAct: true });
   });
 
   it('counts every row it cannot read when the backfill could read none', async () => {
     await backfilled('aurora', 'billing_refund', { gateAt: null, unreadable: 3 });
-    const row = (await readRouting(pool, { intents: INTENTS })).products[0]!.intents[0]!;
+    const row = (await readRouting(readers, { intents: INTENTS })).products[0]!.intents[0]!;
     expect(row).toEqual({ id: 'billing_refund', risk: 'high', gate: null, unreadable: 3, unreadableAtMost: false });
   });
 
@@ -143,7 +146,7 @@ describe('the routing screen (issue #112)', () => {
     await pool.query(
       `UPDATE gate_latest SET thresholds = jsonb_set(thresholds, '{agreement}', '1e-400'::jsonb) WHERE intent_id = 'billing_refund'`,
     );
-    const intents = (await readRouting(pool, { intents: INTENTS })).products[0]!.intents;
+    const intents = (await readRouting(readers, { intents: INTENTS })).products[0]!.intents;
     expect(intents[0]).toMatchObject({ gate: null, unreadable: 3 });
     expect(intents[1]).toMatchObject({ gate: null, unreadable: 1 });
   });
@@ -152,7 +155,7 @@ describe('the routing screen (issue #112)', () => {
     await backfilled('aurora', 'billing_refund', {
       gateAt: at(2), reason: 'auto', thresholds: { ...SEED, perIntent: { account_access: 'high' } }, unreadable: 0,
     });
-    const row = (await readRouting(pool, { intents: INTENTS })).products[0]!.intents[0]!;
+    const row = (await readRouting(readers, { intents: INTENTS })).products[0]!.intents[0]!;
     expect(row).toMatchObject({ unreadable: 0, gate: { at: at(2).toISOString(), threshold: 0.6, fitted: false } });
   });
 
@@ -167,7 +170,7 @@ describe('the routing screen (issue #112)', () => {
     // so none of them is newer.
     await backfilled('aurora', ' ACCOUNT_access', { gateAt: at(9), reason: 'high_risk', thresholds: SEED, unreadable: 0 });
     await backfilled('aurora', 'account_access', { gateAt: at(2), runAt: at(3), reason: 'auto', thresholds: SEED, unreadable: 1 });
-    const report = await readRouting(pool, { intents: INTENTS });
+    const report = await readRouting(readers, { intents: INTENTS });
     const [refund, access] = report.products[0]!.intents;
     // Some of refund's 2 unread rows can be older than the record shown, so
     // the count is a bound, not an exact figure.
@@ -187,14 +190,14 @@ describe('the routing screen (issue #112)', () => {
     await gated('ledger', 'loyalty_points', 'auto', SEED, at(4));
     // Another spelling of one unlisted intent is the same intent.
     await backfilled('aurora', ' Loyalty_Points', { gateAt: at(0), reason: 'auto', thresholds: SEED, unreadable: 0 });
-    const products = (await readRouting(pool, { intents: INTENTS })).products;
+    const products = (await readRouting(readers, { intents: INTENTS })).products;
     expect(products.map((row) => [row.product, row.unlisted])).toEqual([['aurora', 2], ['ledger', 1]]);
     expect(products[0]!.intents.map((intent) => intent.id)).toEqual(INTENTS.map((intent) => intent.id));
   });
 
   it('lists configured products with no records, and no product last', async () => {
     await gated(null, 'billing_refund', 'auto', SEED, at(1));
-    const report = await readRouting(pool, { intents: INTENTS, products: ['kestrel', 'aurora'] });
+    const report = await readRouting(readers, { intents: INTENTS, products: ['kestrel', 'aurora'] });
     expect(report.products.map((row) => row.product)).toEqual(['aurora', 'kestrel', null]);
     expect(report.products[0]).toEqual({
       product: 'aurora',
@@ -214,7 +217,7 @@ describe('the routing screen (issue #112)', () => {
       await pool.query('UPDATE intake SET product = $2, enqueued_at = $3, attempts = $4 WHERE ticket_id = $1',
         [ticketId, 'aurora', at(minute), attempts]);
     }
-    const products = (await readRouting(pool, { intents: INTENTS })).products;
+    const products = (await readRouting(readers, { intents: INTENTS })).products;
     // The newest arrival of aurora is a message that waits, not a run.
     expect(products.map((row) => [row.product, row.channels])).toEqual([
       ['aurora', { lastArrival: at(30).toISOString(), waiting: 3, oldestWaiting: at(15).toISOString(), retried: 2 }],
@@ -226,7 +229,7 @@ describe('the routing screen (issue #112)', () => {
     const ticketId = 'T-' + randomUUID().slice(0, 8);
     await enqueueTicket(pool, { ticketId, messageId: randomUUID(), ticketText: 'a synthetic question' }, 4);
     await pool.query('UPDATE intake SET product = $2, enqueued_at = $3 WHERE ticket_id = $1', [ticketId, 'kestrel', at(4)]);
-    const channels = (await readRouting(pool, { intents: INTENTS })).products[0]!.channels;
+    const channels = (await readRouting(readers, { intents: INTENTS })).products[0]!.channels;
     expect(channels).toEqual({ lastArrival: at(4).toISOString(), waiting: 1, oldestWaiting: at(4).toISOString(), retried: 0 });
   });
 
@@ -234,7 +237,7 @@ describe('the routing screen (issue #112)', () => {
     const runId = await runOf('aurora', at(7));
     await runOf(null, at(3));
     await pool.query('UPDATE run SET enqueued_at = NULL WHERE run_id = $1', [runId]);
-    const products = (await readRouting(pool, { intents: INTENTS })).products;
+    const products = (await readRouting(readers, { intents: INTENTS })).products;
     expect(products.map((row) => [row.product, row.channels.lastArrival])).toEqual([
       ['aurora', at(7).toISOString()], [null, at(3).toISOString()],
     ]);
@@ -278,7 +281,7 @@ describe('the routing screen (issue #112)', () => {
     await pool.query('ANALYZE');
     const intents = Array.from({ length: 25 }, (_, i) => ({ id: `intent-${i}`, risk_tier: 'low' as const }));
     const started = Date.now();
-    const report = await readRouting(pool, { intents });
+    const report = await readRouting(readers, { intents });
     const took = Date.now() - started;
     expect(report.products.map((row) => row.product)).toEqual(['prod-0', 'prod-1', 'prod-2']);
     expect(report.products.every((row) => row.intents.every((intent) => intent.gate !== null))).toBe(true);

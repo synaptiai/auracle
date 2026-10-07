@@ -19,7 +19,7 @@ usage: <image> <process>
   consumer   the state machine, for its partitions
   relay      drains the outbox to the adapters
   console    the operator console
-  migrate    applies db/ in order, then exits
+  migrate    applies db/ in order, restates auracle_reader, then exits
 
 Every process reads its configuration from the environment. See .env.example.
 EOF

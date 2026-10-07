@@ -44,7 +44,8 @@ A database role is the barrier against that code.
 READ ONLY refuses a write to a table, and it does not refuse every effect.
 A function can still act on another session.
 A superuser's session can still write to the catalog or create a replication slot.
-A reader role without those rights would refuse them.
+The readers' role can neither act on another session nor create a replication slot.
+It writes to the catalog only to change its own password, settings and default rights.
 
 ## Affected users and systems
 
