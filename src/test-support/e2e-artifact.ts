@@ -4,7 +4,7 @@
 // A case records its inputs, its seed and the end state it observed. At its
 // end the case renders them to stable JSON and compares that text with the
 // artifact committed under src/e2e/artifacts/. The same inputs must give the
-// same bytes, so a difference is a behaviour change or a determinism leak.
+// same bytes, so a difference is a behavior change or a determinism leak.
 // Either way the case fails, and the new text is left beside the golden as
 // `<case>.actual.json`, which git ignores. The golden itself never changes
 // unless AURACLE_E2E_ACCEPT=1 is set, so a rerun after a failure fails again.

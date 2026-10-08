@@ -149,7 +149,7 @@ describe('every adapter validates the reply it is handed (DEC-24, DEC-14)', () =
   // A guard over call *sites* cannot see a call that was deleted. Adversarial
   // review removed `requireNonEmpty('reply.idemKey', reply.idemKey)` from
   // HelpdeskAdapter.createDraft — the exact defect this file's header
-  // describes — and every case here stayed green. These assert the behaviour
+  // describes — and every case here stayed green. These assert the behavior
   // rather than the source, so a dropped call fails them.
   for (const { name, adapter } of egressAdapterInstances()) {
     for (const field of ['idemKey', 'body', 'disclosure', 'ticketExternalId'] as const) {

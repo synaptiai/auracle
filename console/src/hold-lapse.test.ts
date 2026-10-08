@@ -1,6 +1,6 @@
 // The hold period, and the default three documents state (DEC-46, #107).
 //
-// A behaviour test rather than a reading of `main.ts`: the entry point runs
+// A behavior test rather than a reading of `main.ts`: the entry point runs
 // `main()` when it is imported, so the period it uses is a value only this
 // module can be asked about.
 import { describe, expect, it } from 'vitest';

@@ -116,6 +116,11 @@ export type PublishOutcome =
   | { readonly outcome: 'already_published'; readonly docId: string }
   | { readonly outcome: 'unknown_run' }
   /**
+   * This post repeats a document that a person removes by hand while the post
+   * runs. The removal stands, so the post publishes nothing.
+   */
+  | { readonly outcome: 'removed' }
+  /**
    * Another write held the case past the publish's bound, or a statement
    * ran past it. The transaction rolled back, so nothing was published.
    */
@@ -365,8 +370,20 @@ async function publishIn(
       WHERE q.run_id = $1 AND d.title = $2 AND d.body = $3`,
     [input.runId, fields.title, fields.body, fields.owner, input.reviewBy, fields.products, input.writtenBy.trim()],
   );
-  const same = earlier.rows[0];
-  if (same !== undefined) {
+  const found = earlier.rows[0];
+  if (found !== undefined) {
+    // A person can remove the first document by hand while this post runs,
+    // with the runbook's removal block. That block locks the request before it
+    // deletes, so this lock waits for it, and then reads the request as it
+    // stands. A removed document stays removed: a reviewer writes the post
+    // before that act, and publishing it again would undo it (DEC-50).
+    const locked = await client.query<{ status: string; reason: RerunReason | null }>(
+      'SELECT status, reason FROM document_rerun WHERE doc_id = $1 FOR UPDATE',
+      [found.doc_id],
+    );
+    const request = locked.rows[0];
+    if (request === undefined) return { outcome: 'removed' };
+    const same = { ...found, ...request };
     if (!same.exact) return { outcome: 'already_published', docId: same.doc_id };
     // A re-run that ended, as one on a run the system held too long does,
     // is asked for again by the same post. It keeps the replies and the time

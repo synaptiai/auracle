@@ -17,9 +17,8 @@ Nothing here is a decision. A document becomes a decision only when a row
 enters the register's table in section 2. Where design material already exists
 under `docs/design/`, this document reports it and names its status.
 
-Four items stay open: 1, 4, 5 and 7. Items 1, 4 and 5 have never closed.
-Item 7 has its measurement and not its correction. So it has a section of
-its own below the other three.
+Four items stay open: 1, 4, 5 and 7. Item 7 has its measurement and not its
+correction. So it has a section of its own below the other three.
 
 ---
 
@@ -48,10 +47,10 @@ groundedness floor. They also cover person-set eligibility, disclosure, an
 adapter floor and a daily cap. They stay a proposal until a row enters
 section 2.
 
-**B3. No production data exists.** The four control bands have no baseline
-here. `pnpm run bands` computes a baseline from an adopter's own ledger. That
-baseline is a production number, so it stays with the adopter. This repository ships
-synthetic fixtures only (DEC-18).
+**B3. No production data exists.** The control bands have no baseline here.
+`pnpm run bands` computes a baseline from an adopter's own ledger. That
+baseline is a production number, so it stays with the adopter. This repository
+ships synthetic fixtures only (DEC-18).
 
 ### Who owns each blocker
 
@@ -63,13 +62,10 @@ synthetic fixtures only (DEC-18).
 
 ### What has shipped toward it
 
-**The measurement now has a reader.** Issue #17 shipped `pnpm run bands`. It
-reports the four control-band metrics for one day, against the thirty most
-recent measured days before it. Criterion C2 rests on the approval-edit
-distance, and that number is now readable from the ledger alone.
-
-So B3 is half closed. The tooling exists and the data does not. The design
-document predates that job and still describes the blocker as whole.
+`pnpm run bands` reads the measurement. It reports the control-band metrics
+for one day, against the window `bands.yaml` sets. Criterion C2 rests on the
+approval-edit distance, and the ledger alone gives that number. The tooling
+for B3 exists. The data does not.
 
 ### The next step
 
@@ -79,19 +75,19 @@ C7 sets an adapter floor. An automatic send needs `supportsIdempotencyKey` and
 `supportsReadBack` (DEC-06). With no person in the loop, the relay must
 reconcile delivery itself (DEC-30).
 
-The policy engine applies that floor. It reads both flags, and a write on an
-adapter that declares either one false goes to the approval path.
+The policy engine applies that adapter floor. It reads both flags, and a write
+on an adapter that declares either one false goes to the approval path.
 
-No channel meets the floor and reaches a real customer. Read the two halves
-apart, because each adapter fails a different one.
+No channel meets the adapter floor and reaches a real customer:
 
-| Adapter | Meets the C7 floor? | Reaches a customer? |
+| Adapter | Meets the C7 adapter floor? | Reaches a customer? |
 |---|---|---|
-| Mail | No. It declares `supportsReadBack: false` and its `readBack` throws | Yes |
+| Mail | No. It declares both delivery flags false, and its `readBack` throws | Yes |
 | Helpdesk | Yes. It declares both capabilities | No. It holds fixtures and opens no connection |
 | FreeScout | No. It declares both delivery flags false | Yes, once a person installs the API module |
 
-So an automatic customer reply has no channel to leave through, whatever the
+Mail and FreeScout fail the adapter floor. Helpdesk fails the reach. So an
+automatic customer reply has no channel to leave through, whatever the
 register later decides. This document names the gap and does not close it.
 
 ### What the FreeScout adapter established
@@ -107,25 +103,25 @@ two threads.
 
 **No key comes back either.** The relay reads delivery state back by the
 outbox key. FreeScout records no such key on a thread, so the question has no
-answer there. A guess would turn an unknown delivery into a claim, which DEC-30
+answer there. A guess turns an unknown delivery into a claim, which DEC-30
 forbids.
 
-**A shim was available and was refused.** DEC-06's rejected column names "a
-shim that removes duplicates". The adapter declares `supportsIdempotencyKey:
-false` and builds none.
+**The adapter builds no shim.** DEC-06's rejected column names "a shim that
+removes duplicates". The adapter declares `supportsIdempotencyKey: false` and
+builds none.
 
 So C7 stays open. An adopter supplies the channel.
 
 ### The API module a person must buy
 
 FreeScout's REST API lives in the `API & Webhooks` module. It is a separate
-purchase, and FreeScout 1.8.239 ships an empty `Modules` directory. A stock
+purchase, and the stock image ships an empty `Modules` directory. A stock
 instance answers `404` to every `/api/` route.
 
 So `docker-compose.freescout.yml` brings a FreeScout instance up, and the
-adapter cannot reach its API until a person installs that module. The automated suites drive
-the adapter against the documented wire contract instead.
-`docs/operations.md` says how to check a real instance by hand.
+adapter cannot reach its API until a person installs that module. The
+automated suites drive the adapter against the documented wire contract
+instead. `docs/operations.md` says how to check a real instance by hand.
 
 Everything else waits on a person and on traffic.
 
@@ -152,9 +148,8 @@ The adopter. Volume arrives with their own traffic and with nothing else.
 
 ### What has shipped toward it
 
-Nothing, and the design material was missing too. The design document
-`f4c1a90e-7d3b-4c2a-9e15-3b8d6f0a5c47.md` now records the mechanism, the
-trigger and the reason V1 answers this manually.
+No code. The design document `f4c1a90e-7d3b-4c2a-9e15-3b8d6f0a5c47.md`
+records the mechanism, the trigger and the reason V1 answers this manually.
 
 The taxonomy induction job already embeds records, groups them, and folds
 small groups into an `other` group. It also asks a model to name each
@@ -176,124 +171,71 @@ them run.
 
 ### What the item asks
 
-The system compares classifier agreement against one global threshold. The item
-asks for a threshold fitted for each intent, above roughly 8000 labelled
-tickets.
+The item asks for an agreement threshold fitted for each intent, above
+roughly 8,000 labeled cases.
 
 ### What blocks it
 
-One thing now, and it was not this one.
+One thing blocks it: labeled history from an adopter's own traffic.
 
-**DEC-13 no longer binds alone.** It selected one global threshold and
-rejected a threshold the system learns for each intent. DEC-13 now names the
-trigger as its own bound, and DEC-41 governs above it. Each case records what
-labelled it. The mechanism has shipped: the job fits per intent, the artifact
-carries the map and the policy engine reads it.
+The trigger counts labeled cases, and DEC-41 requires each one to record what
+labeled it. The history carries no tags (DEC-02), so something applies each
+one. Section 5 calls that labeling the largest single cost in the whole plan,
+and it means labeling by a person.
 
-**The trigger cannot fire.** Section 3.3 gives the arithmetic. One global
-threshold needs 385 labelled tickets for an interval of five points. A
-threshold for each of 25 intents needs roughly 2400. Intent frequencies follow
-a Zipf distribution, so the intent at rank 20 needs roughly 7700. The item
-rounds that to 8000.
-
-Read 385 as a requirement and not as a corpus size. The fit half holds 4100
-cases, so the global threshold has the data it needs.
-
-**The fit refuses most intents.** Section 3.3 sizes a corpus for an interval
-of five points. The job fits against a precision floor instead, and the two
-ask for different amounts.
-
-The shipped floor is 0.985. A perfect sample needs 253 cases to hold it.
-Twenty-five intents at that count would need 6325 in the fit half, and that
-half holds 4100. The Zipf shape spends those 4100 unevenly, so the four most
-frequent intents clear the floor and 21 do not. The next step below reports
-that run.
-
-The shipped corpus holds 8200 synthetic cases, which clears the trigger. It
-is synthetic (DEC-18), and a stand-in labels it. So the mechanism runs end to
-end, and the numbers describe this corpus and not an adopter's traffic.
-
-Clearing the trigger is not the same as fitting a threshold. The next step
-below reports what the fit produces on this corpus.
+A model may label the cases, and the artifact then says so. It also states how
+often that model agrees with a known answer. This repository ships no model
+labeler, so an adopter writes one.
 
 ### Who owns each blocker
 
-| Blocker | Owner |
-|---|---|
-| DEC-13 binds | Cleared. DEC-41 carries the amendment, and DEC-13 now names the trigger as its own bound |
-| The trigger cannot fire | Cleared on the shipped corpus, which holds 8200 cases. An adopter clears it by labelling their own history |
-| The trigger fires and fits nothing | Cleared. The Zipf shape gives rank 1 1074 fit cases, so four intents clear the 253 the shipped target needs |
+The adopter, who labels their own history or writes a model labeler for it.
 
 ### What has shipped toward it
 
-`434db94d-bbba-4977-805a-e9d83cb0b6c5.md` specifies the mechanism. Below
-the trigger the calibration job fits the global threshold and records an empty
-per-intent map. At or above it, the job fits a threshold for each intent above
-the data floor. Either way the artifact records the trigger and the count, so a
-reader can tell which path ran.
+The mechanism ships. `434db94d-bbba-4977-805a-e9d83cb0b6c5.md` specifies it.
+DEC-13 names the trigger as its own bound, and DEC-41 governs above it.
 
-That document carries a dated note, and the note is itself out of date. Its
-corrections were written against a corpus of 2124 cases, which this repository
-no longer ships. Read the register and this item for the current figures.
+Below the trigger the calibration job fits the global threshold and records an
+empty per-intent map. At or above it, the job fits a threshold for each intent
+that holds enough cases. The policy engine reads that map. Either way the
+artifact records the trigger and the count, so a reader can tell which path
+runs.
+
+The figures in that design document do not describe the shipped corpus. Read
+the register and this item instead.
+
+The shipped corpus holds 8,200 synthetic cases, which clears the trigger. Its
+intent frequencies follow the Zipf shape at exponent 1 that section 3.3
+assumes. So the per-intent path runs end to end on synthetic data, and the stub
+labeler labels the cases (DEC-18).
+
+The fit refuses a threshold whose 95 percent lower bound cannot hold the
+target precision. The shipped target precision is 0.985, and
+`CALIBRATION_TARGET_PRECISION` overrides it. A perfect sample needs 253 cases
+to hold 0.985.
+
+On the shipped fit half, the four most frequent intents hold that many, and
+the other 21 do not. So the fit sets four thresholds of 25, and the other 21
+keep the global threshold. The case count settles each refusal before the fit
+reads precision.
 
 ### The next step
 
-The mechanism has shipped and the item does not close. Both halves of that
-are worth stating plainly.
+The mechanism ships, and the item does not close. The item asks for a
+threshold for each intent on an adopter's own traffic.
 
-The shipped corpus clears the trigger, so the per-intent path runs. It fits
-four thresholds of 25. A run of the shipped fit half refuses the other 21.
+The shipped corpus cannot show what a real classifier reaches. The offline stub
+classifier answers every sample of one case alike. Agreement is then one
+value, and a fitted threshold has one place to sit. So the fitted count is a
+statement about the sample minimum, and never about accuracy.
 
-Two things decide that, and a reader needs both. One is the corpus. The Zipf
-shape at exponent 1 gives rank 1 1074 fit cases and rank 25 only 43.
-
-The other is the target precision. Its shipped value is 0.985, and
-`CALIBRATION_TARGET_PRECISION` overrides it. The fit refuses a threshold whose
-95 per cent lower bound cannot hold the target.
-
-A perfect sample needs 253 cases to hold 0.985. Four intents hold that many
-and 21 do not, so the count settles each refusal whatever the answers were.
-Those 21 keep the global threshold.
-
-So this corpus still cannot show whether precision alone would refuse an
-intent. The count decides every refusal before precision is read.
-
-It also cannot show that the mechanism selects anything. A run at a target of
-0.9 fits all 25 intents, each at a threshold of 1.0.
+It also cannot show that the mechanism selects anything. A run at a target
+precision of 0.9 fits all 25 intents, each at a threshold of 1.0.
 
 No fitted threshold gates the shipped gold report either. That report records
 a gate source of `seed`, which names the section 4.5 seed. It records no
-calibration version. So the number it publishes is the seed and not a fitted threshold.
-
-A stand-in labels the cases, and the artifact says so. So the mechanism runs
-end to end on synthetic data, and it selects nothing.
-
-It is not the item. The item asks for a threshold for each intent on an
-adopter's own traffic, and two things stand between.
-
-The trigger counts labelled cases, and DEC-41 requires each one to record what
-labelled it. The history carries no tags (DEC-02), so something applies each
-one. Section 5 calls that labelling the largest single cost in the whole plan,
-and it means labelling by a person.
-
-So an adopter still waits on labelled data that costs real money to produce.
-A model may label the cases, and the artifact then says so. It also states
-how often that model agreed with a known answer. This repository ships no
-model labeller; an adopter writes one.
-
-The second was the shape of the corpus, and that half is closed. Section
-3.3's arithmetic assumes Zipf-distributed intent frequencies and sizes the
-trigger from the intent at rank 20. The shipped corpus now carries that shape
-at exponent 1.
-
-The fit reads it. Four intents of 25 clear the 253-sample floor and 21 keep
-the global threshold. So the fixture exercises both routes, rather than unit
-cases alone.
-
-What the fixture still cannot show is what a real classifier reaches. The
-offline stand-in answers every sample of one ticket alike. Agreement is then
-one value, and a fitted threshold has one place to sit. So the fitted count is
-a statement about the sample floor, and never about accuracy.
+calibration version, so the number it publishes rests on no fitted threshold.
 
 ---
 
@@ -321,79 +263,40 @@ The adopter. The choice depends on their traffic, and the data comes from it.
 partition falling behind is visible beside the ones that are not. That is the
 measurement a correction rests on.
 
-A synthetic history of 2397 runs over 45 days gave the first loaded reading.
-It reported 1.37 per cent utilisation and a depth ratio of 1.14 across four
-partitions. That is at 53 tickets a day. The mean wait was 2.78 s against a
-poll floor of 2.50 s. So the wait was the consumer's own sleep rather than a
-queue. None of the design document's four rules fires at that load.
-
-The sleep is gone. Intake signals the consumer inside the enqueue transaction,
-and the loop wakes on that signal. Wait `p50` and `p95` fall from seconds to
-a figure the poll no longer sets.
+Intake signals the consumer inside the enqueue transaction, and the loop wakes
+on that signal. So the poll interval does not set the queue wait.
 
 ### The next step
 
-That change removes the poll floor and corrects at most a small part of the
-head-of-line delay. The maximum wait barely moves, from 2.3 minutes to 2.2
-minutes on the deepest partition. About one run in a hundred still waits
-behind the batch ahead of it. That share never rises with the signal and
-never falls by half. Those runs are what this item names.
+The shipped synthetic history runs at about 1.4 percent of the capacity of two
+consumers. The four rules R1 to R4 in the design document do not fire at that
+load. About one run in a hundred still waits behind the batch ahead of it.
+Those runs are what this item names.
 
-The question reopens on volume. The history runs at 53 tickets a day
-against two consumers, which is 1.37 per cent of their capacity. So
-saturating them needs about 3 900 a day. Run the report through a Phase 2
-deployment near that volume, and read the four rules again. Then choose a
-correction against that reading.
+The question reopens on volume. Run the report through a Phase 2 deployment
+near the capacity of its consumers, and read the four rules again. Then choose
+a correction against that reading.
 
-The register marked this item closed until 2026-09-04. The measurement shipped
-and the correction did not, so it now reads open. The test is whether the
-item's own words describe what shipped. Item 6 asks for a schema migration
-procedure, and the migration runner is that procedure. Item 7 asks for a
-correction, and no correction exists.
+The item is open. The measurement exists, and the correction does not.
 
 ---
 
 ## The reviewer console
 
-### What it asks
+DEC-44 to DEC-51 govern the review tool. They cover an authenticated reviewer,
+a reservation, a product and the ways a case ends. They also cover a new
+attempt, knowledge written from a case and a hold period before a send.
+`c8b2e42f-b76d-43ef-8010-f7e8932bde48.md` under `docs/design/` records the
+reasoning.
 
-A small team of part-time engineers reviews every case the system hands to a
-person. The operator console becomes their working tool. A reviewer takes a
-case, edits the reply there and sends it.
+The console ships each of them. A roster of reviewers decides who may use the
+console. The console refuses a request with no active roster identity. The
+ledger records where each approver's name came from. A maintainer changes the
+roster with `pnpm run reviewers`.
 
-### Where it stands
-
-The register gained DEC-44 to DEC-51 on 2026-09-14. They cover the review
-tool, an authenticated reviewer, a reservation, a product and the ways a case
-ends. They also cover a new attempt, knowledge written from a case and a held
-send. `c8b2e42f-b76d-43ef-8010-f7e8932bde48.md` under `docs/design/` records
-the reasoning.
-
-The reviewed identity has shipped. A roster of reviewers decides who may use
-the console. A request with no active roster identity is refused. The ledger
-records where each approver's name came from. A maintainer changes the roster
-with `pnpm run reviewers`.
-
-### What blocks it
-
-Nothing on the fencing side. Issue 113 recorded one defect. A consumer
-start, or a later run on the same ticket, raised the fence over a reply
-already parked. No approval then accepted it.
-
-The fence now governs a run that is still in flight. A parked reply and a
-finished run keep their fence,
-so the rows that move a parked reply can proceed. What remains is their own
-work.
-
-### The next step
-
-Work the register already permitted proceeds: the visual design, the grouped
-queue and the case screen. Each row ships in its own change, and that change
-corrects the statements the proposal lists for it.
-
-One part of DEC-45 remains. The development stack publishes a console with no
-proxy in front of it. Such a console now serves nothing. So an operator puts a
-proxy in front and adds that proxy's reviewer to the roster.
+One part of DEC-45 remains for an operator. The development stack publishes a
+console with no proxy in front of it, and such a console serves nothing. So an
+operator puts a proxy in front and adds that proxy's reviewer to the roster.
 
 ---
 

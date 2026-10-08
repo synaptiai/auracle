@@ -1,6 +1,6 @@
 // Unit tests for the real IMAP fetcher. The imapflow client is replaced by
 // a fake speaking the same structural surface (see ImapClientLike), so the
-// mapping, flag and reconnection behaviour is checked without sockets.
+// mapping, flag and reconnection behavior is checked without sockets.
 // Synthetic data only (DEC-18).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

@@ -1086,6 +1086,113 @@ def case_map_coverage_reads_no_rows(root):
     return "map-coverage", FAIL, "scanned nothing"
 
 
+def rows_repo(root, rows, dirs, console=False):
+    for name in dirs:
+        write(root, f"src/{name}/index.ts", "export {};\n")
+    if console:
+        write(root, "console/src/main.ts", "export {};\n")
+    write(root, "docs/quick-map.md",
+          "# Quick map\n\n| Directory | Decisions | Key test | Runbook |\n|---|---|---|---|\n"
+          + "\n".join(f"| `{name}` | none | `src/x.test.ts` | none |" for name in rows) + "\n")
+
+
+def case_map_rows_match(root):
+    rows_repo(root, ["alpha", "beta", "console"], ["alpha", "beta"], console=True)
+    return "map-rows", PASS, None
+
+
+def case_map_rows_miss_a_directory(root):
+    # The defect: four source directories had no row, and nothing said so.
+    rows_repo(root, ["alpha", "beta"], ["alpha", "beta", "gamma"])
+    return "map-rows", FAIL, "gamma"
+
+
+def case_map_rows_miss_the_console(root):
+    rows_repo(root, ["alpha", "beta"], ["alpha", "beta"], console=True)
+    return "map-rows", FAIL, "console"
+
+
+def case_map_rows_name_a_removed_directory(root):
+    rows_repo(root, ["alpha", "beta", "gone"], ["alpha", "beta"])
+    return "map-rows", FAIL, "gone"
+
+
+def case_map_rows_ignore_what_is_not_source(root):
+    # A cache, a hidden directory and a leftover holding no source file are
+    # not directories a reader can open in the map, so none needs a row.
+    rows_repo(root, ["alpha"], ["alpha"])
+    write(root, "src/__pycache__/x.pyc", "")
+    write(root, "src/.cache/state.json", "{}\n")
+    write(root, "src/leftover/run.actual.json", "{}\n")
+    return "map-rows", PASS, None
+
+
+def case_map_rows_count_source_below_the_top(root):
+    # A directory whose only source sits in a subdirectory is still one a
+    # reader opens.
+    rows_repo(root, ["alpha"], ["alpha"])
+    write(root, "src/deep/a/b/x.ts", "export {};\n")
+    return "map-rows", FAIL, "deep"
+
+
+def map_rows_extension_case(suffix):
+    def case(root):
+        # Each TypeScript extension makes a source directory on its own.
+        rows_repo(root, ["alpha"], ["alpha"])
+        write(root, f"src/only{suffix[1:]}/m{suffix}", "export {};\n")
+        return "map-rows", FAIL, f"only{suffix[1:]}"
+    return case
+
+
+def case_map_rows_count_a_double_underscore_directory(root):
+    # Only a hidden directory is skipped by name. A directory that opens with
+    # two underscores and holds source needs a row like any other.
+    rows_repo(root, ["alpha"], ["alpha"])
+    write(root, "src/__fixtures__/x.ts", "export {};\n")
+    return "map-rows", FAIL, "__fixtures__"
+
+
+def case_map_rows_skip_a_hidden_directory_with_source(root):
+    # A hidden directory is local state even when it holds source, so the map
+    # needs no row for it.
+    rows_repo(root, ["alpha"], ["alpha"])
+    write(root, "src/.hidden/x.ts", "export {};\n")
+    return "map-rows", PASS, None
+
+
+def case_map_rows_read_an_unreadable_directory(root):
+    # A subtree the walk cannot read is a fault to name, by its path from the
+    # root, and not a directory with no source.
+    rows_repo(root, ["alpha", "sealed"], ["alpha"])
+    write(root, "src/sealed/inner/x.ts", "export {};\n")
+    os.chmod(os.path.join(root, "src/sealed/inner"), 0o000)
+    return ("map-rows", FAIL, "docs/quick-map.md: cannot read `src/sealed/inner`",
+            "has a row for `sealed`")
+
+
+def case_map_rows_read_only_unreadable_directories(root):
+    # Every directory found and none read is not "no source directories".
+    rows_repo(root, ["sealed"], [])
+    write(root, "src/sealed/inner/x.ts", "export {};\n")
+    os.chmod(os.path.join(root, "src/sealed/inner"), 0o000)
+    return "map-rows", FAIL, "could not read the directories it found under src/"
+
+
+def case_map_rows_read_an_unreadable_source_root(root):
+    # An unreadable `src/` itself is a finding, not a crash of the check.
+    rows_repo(root, ["alpha"], ["alpha"])
+    os.chmod(os.path.join(root, "src"), 0o000)
+    return "map-rows", FAIL, "docs/quick-map.md: cannot read `src`"
+
+
+def case_map_rows_read_no_source_tree(root):
+    # A tree with no `src/` at all is a scan that read nothing, not a match.
+    write(root, "docs/quick-map.md",
+          "# Quick map\n\n| Directory | Decisions | Key test | Runbook |\n|---|---|---|---|\n"
+          "| `alpha` | none | `src/x.test.ts` | none |\n| `beta` | none | `src/x.test.ts` | none |\n")
+    return "map-rows", FAIL, "no source directories"
+
+
 # The repository's own licence file, so a case passes only on the full text.
 with open(os.path.join(os.path.dirname(CHECKER), "..", "LICENSE")) as _handle:
     APACHE = _handle.read()
@@ -1589,6 +1696,21 @@ CASES = [
      case_map_coverage_names_a_covered_decision),
     ("a quick map with no uncovered section fails", case_map_coverage_section_absent),
     ("a quick map with no rows fails", case_map_coverage_reads_no_rows),
+    ("a quick map with a row for every directory passes", case_map_rows_match),
+    ("a quick map that misses a directory fails", case_map_rows_miss_a_directory),
+    ("a quick map that misses the console fails", case_map_rows_miss_the_console),
+    ("a quick map that names a removed directory fails", case_map_rows_name_a_removed_directory),
+    ("a quick map ignores directories that hold no source", case_map_rows_ignore_what_is_not_source),
+    ("a quick map misses source below the top of a directory", case_map_rows_count_source_below_the_top),
+    ("a quick map misses a directory of .tsx source", map_rows_extension_case(".tsx")),
+    ("a quick map misses a directory of .mts source", map_rows_extension_case(".mts")),
+    ("a quick map misses a directory of .cts source", map_rows_extension_case(".cts")),
+    ("a quick map needs no row for a hidden directory with source", case_map_rows_skip_a_hidden_directory_with_source),
+    ("a quick map misses a double-underscore directory that holds source", case_map_rows_count_a_double_underscore_directory),
+    ("a quick map names a source directory it cannot read", case_map_rows_read_an_unreadable_directory, NEEDS_DENIAL),
+    ("a quick map whose every directory is unreadable says so", case_map_rows_read_only_unreadable_directories, NEEDS_DENIAL),
+    ("a quick map over an unreadable src names it", case_map_rows_read_an_unreadable_source_root, NEEDS_DENIAL),
+    ("a quick map over no source tree fails", case_map_rows_read_no_source_tree),
     ("a stale DEC range fails", case_dec_range_stale),
     ("a stale DEC count fails", case_dec_count_stale),
     ("a DEC count that matches passes", case_dec_count_matches),
@@ -1781,7 +1903,10 @@ def main() -> int:
             print(f"skip {name}: running as root, where a mode bit denies nothing")
             continue
         with tempfile.TemporaryDirectory() as root:
-            check, want, wanted_text = build(root)
+            # A case may name text the output must not hold, for a rule that
+            # stops a finding rather than raising one.
+            check, want, wanted_text, *rest = build(root)
+            unwanted_text = rest[0] if rest else None
             got = run(root, check)
             output = (got.stdout + got.stderr).strip()
             if got.returncode != want:
@@ -1793,6 +1918,10 @@ def main() -> int:
                 # how a rule stays deleted while its case still goes green.
                 failures += 1
                 print(f"FAIL {name}: wanted the finding to say {wanted_text!r}")
+                print(output[:400])
+            elif unwanted_text and unwanted_text in output:
+                failures += 1
+                print(f"FAIL {name}: the output must not say {unwanted_text!r}")
                 print(output[:400])
     failures += check_crash_guard()
 
@@ -1816,12 +1945,15 @@ def main() -> int:
         write(root, "docs/quick-map.md",
               "| `a` | DEC-01 | `x.test.ts` | 1 |\n| `b` | DEC-02 | `x.test.ts` | 1 |\n"
               "\n## Decisions no row names\n\nnone.\n")
+        # `map-rows` compares the rows with the source tree.
+        write(root, "src/a/index.ts", "export {};\n")
+        write(root, "src/b/index.ts", "export {};\n")
         failures += check_cli("an unknown check is a usage error",
                               ["--root", root, "--only", "nonsense"], 2,
                               "unknown check 'nonsense'")
         failures += check_cli("a blank --only runs every check",
                               ["--root", root, "--only", " , , "], 0,
-                              "docs clean: 14 check(s)")
+                              "docs clean: 15 check(s)")
         failures += check_cli("a repeated --only runs once",
                               ["--root", root, "--only", "links,links,links"], 0,
                               "docs clean: 1 check(s)")

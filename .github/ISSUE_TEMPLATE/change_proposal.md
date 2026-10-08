@@ -1,6 +1,6 @@
 ---
 name: Change proposal
-about: Propose new behaviour, or a change to behaviour that exists
+about: Propose new behavior, or a change to behavior that exists
 labels: enhancement
 ---
 
@@ -14,7 +14,7 @@ This issue is public. Redact every credential before you paste any output.
 
 ## Current state
 
-<!-- What happens today. Describe behaviour, not files. -->
+<!-- What happens today. Describe behavior, not files. -->
 
 ## Objective
 
@@ -37,7 +37,7 @@ more, for what the finished change actually cites.
 
 ## Acceptance criteria
 
-<!-- Each line an observable behaviour a person can check without reading the diff. -->
+<!-- Each line an observable behavior a person can check without reading the diff. -->
 
 - [ ]
 - [ ]

@@ -1,6 +1,6 @@
 // What a run is, and what one may be told to do (section 4.3).
 //
-// The state machine's vocabulary, with no behaviour beside it. The step
+// The state machine's vocabulary, with no behavior beside it. The step
 // modules under `steps/` read these types and `coordinator.ts` sequences
 // them, so neither has to import the other to agree on what a run is
 // (issue #75). `coordinator.ts` re-exports every name here, because callers
@@ -42,7 +42,7 @@ export type TerminalRunState =
  *
  * The key is the conversation id for a V2 turn, so every turn of one
  * conversation lands on one consumer. A V1-era run and a replay run have no
- * conversation, and pass the ticket id instead (DEC-27 behaviour).
+ * conversation, and pass the ticket id instead (DEC-27 behavior).
  */
 export function partitionOf(partitionKey: string, partitionCount: number): number {
   let hash = 0x811c9dc5;

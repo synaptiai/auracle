@@ -18,8 +18,9 @@ Postgres, with no orchestration framework.
 **What it is not.** It is not a hosted product, and nothing publishes it to
 npm. It is a working system to study, run on your own infrastructure and adapt.
 
-**Status.** Version 0.1, the first public release. Every number this
-repository publishes comes from a synthetic corpus. So the numbers test the
+**Status.** Version 0.1.0, the first public version, which is not yet released.
+[CHANGELOG.md](CHANGELOG.md) records each release. Every number
+this repository publishes comes from a synthetic corpus. So the numbers test the
 pipeline, not the quality of the answers.
 
 **License.** Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
@@ -35,20 +36,20 @@ pipeline, not the quality of the answers.
 | Temperature | The model setting that lets repeated samples of one question differ. Above zero, they can. |
 | Retriever | The step that finds the documents that may answer a turn. |
 | Composer | The step that drafts a reply from the retrieved documents, or abstains. |
-| Run | One pass of the pipeline over one turn. |
-| Case | One turn that someone judges: a reviewer in the console, or a scorer in the gold set. |
+| Run | One pass of the pipeline over one turn, or over a ticket that has no conversation. |
+| Case | An item a person examines: a turn to label, or the runs of one ticket a reviewer takes. Each turn of the gold set is a case. |
 | Ledger | The Postgres database that records every ticket, turn, run and action. |
 | Step journal | The ledger table where a run records each step before it acts. |
 | Coverage | The share of a draft's claims that the retrieved documents support. Higher is better. |
 | Agreement | The share of the nine classifier samples that name the same intent. Higher is better. |
 | Policy engine | The code that decides, from the evidence and the rules, whether the system acts alone. It calls no model. |
-| Gate | A rule the policy engine applies before the system acts alone. The agreement gate reads agreement, and the groundedness gate reads coverage. |
+| Gate | A test that a run must pass before it continues. The agreement gate reads agreement, and the groundedness gate reads coverage. |
 | Agreement threshold | Agreement below it escalates the turn. |
 | Block threshold, review threshold | The groundedness gate's two thresholds. Coverage below the block threshold escalates the turn, and coverage below the review threshold parks it. |
 | Internal write | An action that changes a helpdesk ticket and sends nothing to the customer, such as closing or routing it. |
 | Automatic path | The route where the system acts alone, with no person. Only an internal write can take it. |
 | Abstain | The composer's answer when no retrieved document supports a reply. |
-| Park | Keep an action waiting until a person approves it. A customer reply waits as a helpdesk draft, and an internal write waits in the ledger. |
+| Park | Keep an action waiting until a person approves it. A customer reply waits as a helpdesk draft. It waits in the ledger when the helpdesk cannot send that copy (DEC-44). An internal write waits in the ledger. |
 | Escalate | Hand the turn to a person, with no action for them to approve. A parked turn has an action ready, and an escalated turn has none. |
 | Outbox | The table an action waits in until the relay sends it. It commits with the state change that caused it. |
 | Adapter | The code that connects the system to one helpdesk or mailbox. It declares what it supports. |
@@ -59,14 +60,15 @@ pipeline, not the quality of the answers.
 | Daemon | A long-running process: the webhook, the IMAP poller, the consumer, the relay or the console. |
 | Gold set | The labeled synthetic turns that fit and measure the gate thresholds. Each turn in it is a case. |
 | Fit half, report half | The gold set's two halves. A threshold comes from the fit half, and a published rate comes from the report half. |
-| Risk tier | The risk class of an intent: low, medium or high. A high-tier intent always goes to a person. |
+| Risk tier | The cost of an error for one intent: low, medium or high. A person sets it, and a high-tier intent always goes to a person. |
 | Control band | A daily metric with the range it should stay inside. |
 | Containment | The share of cases the policy engine sends down the automatic path. Neither direction is better in itself: read it beside action match. |
 | Routing decision | The policy engine's answer for a turn: act alone, park or escalate. |
 | Action match | The share of cases whose routing decision matches the recorded outcome. Higher is better. |
 | Stub model | A deterministic stand-in for the model. It returns a fixed answer and costs nothing. |
+| Artifact | The JSON file an offline job writes, with its inputs and its result. |
 | Corpus | The synthetic tickets, documents and gold set under `fixtures/`. The generator, `scripts/generate-fixtures.mjs`, writes all of it. |
-| Replay | An offline run of the classifier and the policy engine over the gold set's tickets. Action match scores it against each ticket's recorded outcome. |
+| Replay | An offline run of the classifier and the policy engine over the gold set's cases. Action match scores it against each case's recorded outcome. |
 | Interval | A 95 percent confidence interval around a rate. A narrower interval is more certain. |
 | Register | The [decision register](docs/v1-architecture.md), which holds every design decision. |
 | DEC | A numbered decision in the register. DEC-01 to DEC-51 are the design authority. |
@@ -144,17 +146,19 @@ pnpm run verify:fast
 - The compose stack starts Postgres with pgvector, its vector-search
   extension, on port 5433. It also starts GreenMail, a test mail server, on
   ports 3025 and 3143. Every port binds `127.0.0.1`. `--wait` returns once
-  both answer, so the migration never meets a database that is still starting.
+  both answer, so the migration never meets a database that does not answer.
 - The three variables point every command at that stack. Some commands read
   no `.env` file, so export them in your shell.
 - `pnpm run db:migrate` creates the schema and `auracle_reader`, the
-  read-only database role the console connects as.
-- `pnpm run verify:fast` runs the type check, the lint and the unit tests. It
+  read-only database role the console's readers connect as.
+- `pnpm run verify:fast` runs the type check, the lint and the unit suites. It
   also runs the documentation, style and guard checks and the fixtures diff.
-  It needs no database.
+  It skips the database and mail suites and the console's tests.
+  [CONTRIBUTING.md](CONTRIBUTING.md) lists what each verify command covers.
 
 `pnpm run verify` is the full check a pull request must pass. It adds the
-database and mail suites, so it needs both services:
+database and mail suites and the console's own tests, so it needs both
+services:
 
 ```sh
 pnpm run verify
@@ -197,7 +201,7 @@ The offline jobs that call a model need the key too, and some need more:
 | Command | Also needs |
 |---|---|
 | `pnpm run induce` | Nothing more |
-| `pnpm run load-docs -- <dir>` | A directory of markdown documents to embed |
+| `pnpm run load-docs -- <dir>` | A directory of markdown documents to embed, and `DATABASE_URL` |
 | `pnpm run calibrate` | `CALIBRATION_MODEL_VER`, the classifier model to calibrate |
 | `pnpm run fit-groundedness` | `GROUNDEDNESS_MODEL_VER`, the model that checks each claim |
 | `pnpm run report-groundedness` | `GROUNDEDNESS_MODEL_VER`, and a pair from `fit-groundedness` |
@@ -214,7 +218,7 @@ container image.
 
 | Document | What it gives you |
 |---|---|
-| [The architecture map](docs/architecture-map.md) | Three diagrams of the system, with a legend for every box |
+| [The architecture map](docs/architecture-map.md) | Diagrams of the system, with a legend for every box |
 | [The quick map](docs/quick-map.md) | Which decisions each source directory answers to |
 | [The decision register](docs/v1-architecture.md) | DEC-01 to DEC-51, the only design authority |
 | [The runbook](docs/operations.md) | Every daemon, command and variable an operator uses |
@@ -247,7 +251,9 @@ it implies.
 
 **The ledger stores customer message text (DEC-17, DEC-19).**
 `turn.body_text` holds each inbound message. `turn.approved_reply_text` holds
-the reply a person approves. Both live for the life of the conversation.
+the reply a person approves, and `turn.saved_reply_text` holds a reply a
+reviewer saves. `outbox.reply` holds the reply text the relay sends from a
+record, when the ledger holds it. Each lives for the life of its row.
 
 **The step journal stores drafted replies and cited documents (DEC-17,
 DEC-19).** `step_journal.result` holds the claims of each draft, on every run
@@ -258,7 +264,9 @@ The journal also holds the body of each document a claim cited. It holds the
 title, owner and review date of every document the run retrieved. A run that
 parks holds the draft a second time, under the park step. A closed case holds
 the reason its reviewer records, beside that reviewer's name. An erasure path
-that clears only the `turn` columns leaves all of this behind.
+that clears only the `turn` columns leaves all of this behind. The runbook
+table "What the ledger stores about a customer" names each place that keeps
+that text.
 
 **The console shows each reviewer's figures to every reviewer (DEC-45,
 DEC-46).** The team screen has a row for each active reviewer. The row gives
@@ -282,10 +290,10 @@ ignored.
 An artifact fitted on such a half records `gold_source: "real"` and belongs to
 your deployment alone. You own its retention and its erasure.
 
-**The prompt-log path is off by default (section 6).** It needs an explicit
-override. If you turn it on, the provider gains irrevocable commercial
-rights to the inputs and the outputs. In return, the provider lowers its price
-by 1 percent.
+**Prompt logging stays off (section 6).** It is a setting in your provider
+account, and this repository never turns it on. If you turn it on there, the
+provider gains irrevocable commercial rights to the inputs and the outputs. In
+return, the provider lowers its price by 1 percent.
 
 **No standard yet verifies Article 50(2) text marking (section 4.9).** The
 register records that EU AI Act Article 50(1) applies now. It records that
@@ -293,9 +301,9 @@ Article 50(2) applies from 2 December 2026, after a grace period of four
 months. That grace period covers only systems on the market before 2 August
 2026. This system is not one of them.
 
-So on the register's reading, Article 50(2) applies to this system now. Its
-date is 2 August 2026, which is past. Confirm the date that applies to your
-deployment with legal advice.
+So on the register's reading, Article 50(2) applies to this system from 2
+August 2026. Confirm the date that applies to your deployment with legal
+advice.
 
 The system adds provenance metadata to each generated text (DEC-33). The
 metadata is structured, so a machine can read it after export. A line of
@@ -316,15 +324,15 @@ The published numbers live in `gold-report/v9.json`. They exercise the
 pipeline, and they do not measure answer quality. The artifact says so
 itself: `scored_by` reads `stub`.
 
-The offline stub model returns one fixed label for each ticket text. So the
+The offline stub model returns one fixed label for each case text. So the
 classifier agrees with itself on every sample, and the agreement gate never
 fires. The report also pins coverage at 1.0, so the groundedness gate never
 fires either. What remains is the routing decision over synthetic turns.
 
 The artifact scores the report half of the gold set, and first turns only
-(DEC-31, DEC-39). The report half holds 4100 cases, and 3074 of them open a
-conversation. A later turn carries the outcome of the whole conversation, so
-it grades no single decision. The numbers below cover those 3074 cases:
+(DEC-31, DEC-39). A later turn carries the outcome of the whole conversation,
+so it grades no single decision. The numbers below cover the first turns of
+the report half:
 
 - Containment: 0.9424. Interval 0.9336 to 0.9501. 3074 cases.
 - Action match: 0.8630. Interval 0.8504 to 0.8747. 3074 cases.
@@ -344,7 +352,7 @@ again, so both halves change together. Run `pnpm run gold-report` to score the
 current corpus.
 
 The artifact records an agreement threshold of 0.60, and its source. A
-`gate_source` of `seed` names the seed in section 4.5 of the register. A
+`gate_source` of `seed` names the default in section 4.5 of the register. A
 `gate_source` of `calibration` names the calibration artifact that fits it.
 Read the two fields together, because a fitted gate and a seeded gate publish
 different numbers. `gate_calibration_scope` names the turns a calibration
@@ -361,21 +369,19 @@ no earlier rule holds back and that clears the agreement gate. Coverage below
 the block threshold escalates the turn, and the write never runs. Coverage
 below the review threshold parks the write for a person.
 
-Neither threshold decides a customer reply (DEC-12) or a
-high-tier intent (DEC-13). Neither decides an irreversible write (DEC-34) or a
-write through an adapter that lacks idempotency or read-back (DEC-06). Each of
-those already waits for a person.
+Each rule of step 7 that parks an action holds it before this gate. So
+neither threshold decides a customer reply or a high-tier intent. Neither
+decides an irreversible write, or a write through an adapter that lacks a
+guarantee.
 
 `pnpm run fit-groundedness` fits the pair on the fit half, which publishes
 nothing (DEC-31). The reference fit holds block 0.67 and review 0.83, from
 `z-ai/glm-5.3-flash`. It records a spend of at least 0.1484 US dollars.
 
-**Read this pair as a pilot.** The reference fit uses
-`GROUNDEDNESS_LIMIT=1100`, so it reads the drafts of the first 1100 cases.
-That is 26.8 percent of a half that holds 4100 cases. The model scores 1098
-drafts and returns no verdict for 2. The corpus orders its intents, so that
-slice covers 10 intents of 25. It holds every high-tier draft and no low-tier
-draft.
+**Read this pair as a pilot.** The reference fit uses `GROUNDEDNESS_LIMIT`,
+so it reads a prefix of the fit half: about a quarter of its drafts. The
+corpus orders its intents, so that slice covers fewer than half of them. It
+holds every high-tier draft and no low-tier draft.
 
 The slice shows that supported and unsupported drafts separate, and that the
 job selects a pair rather than refusing. It is not a fit of the whole half.
@@ -402,7 +408,7 @@ tracked copy you can read, and no loader finds it.
 
 To measure that pair, copy `groundedness/reference-v3.json` to
 `groundedness/v3.json` and set `GROUNDEDNESS_MODEL_VER=z-ai/glm-5.3-flash`.
-The copy also moves the gate of every process in that checkout. The loader
+The copy also moves the thresholds of every process in that checkout. The loader
 reads the highest version, so move any fit of your own out of `groundedness/`
 first. Otherwise fit your own.
 

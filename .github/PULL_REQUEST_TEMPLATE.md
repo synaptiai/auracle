@@ -2,8 +2,8 @@
 CONTRIBUTING.md section 7 asks for these headings. A pull request without them
 waits for a person to ask.
 
-The first three carry what an intent file used to carry. A change that affects
-no decision writes no file, so this is where its rationale lives.
+The first three hold the rationale. A change that affects no decision writes
+no file, so its rationale lives here.
 -->
 
 ## Problem
@@ -63,9 +63,9 @@ If not, write "unchanged".
 
 ## Checklist
 
-- [ ] `pnpm run verify` ran, and its output is pasted above with the exit code. For prose only, `verify:fast` ran instead.
+- [ ] The description holds the output of `pnpm run verify` and its exit code. For a change to markdown alone, it holds `verify:fast` instead.
 - [ ] Every behavior change cites a DEC or declares itself an implementation detail.
 - [ ] A design record under `docs/decisions/` accompanies this change, or it cites no DEC.
 - [ ] No real email, phone number, name or account identifier enters the repository (DEC-18).
 - [ ] No API key, token or database password appears in the pasted output.
-- [ ] The three-pass review in `REVIEW.md` ran: bugs, security, compliance.
+- [ ] You ran the three-pass review in `REVIEW.md`: bugs, security, compliance.

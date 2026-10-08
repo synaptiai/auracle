@@ -15,9 +15,10 @@ export interface OpenRouterConfig {
   /** DEC-17 defaults applied when a call does not pass its own guarantee. */
   dataGuarantee?: DataGuarantee;
   /**
-   * Section 6: the prompt-log path is off by default and needs this explicit
-   * override. When true, every call hands the raw prompt to onPromptLog;
-   * the caller owns storage. Nothing is logged when the flag is absent.
+   * A local hook, separate from the provider-side prompt log of section 6,
+   * which is an account setting this repository never turns on. When true,
+   * every call hands the raw prompt to onPromptLog; the caller owns storage.
+   * Nothing is logged when the flag is absent, and no entry point sets it.
    */
   promptLogging?: boolean;
   onPromptLog?: (entry: { kind: 'chat' | 'embed'; payload: unknown }) => void;
@@ -218,8 +219,8 @@ async function postJson(
 /**
  * The one model provider (DEC-16). Speaks OpenRouter's OpenAI-compatible
  * HTTP API directly. Every result records the served model id next to the
- * pinned versions the caller supplied (DEC-26) and the cost in integer
- * cents for the DEC-25 limits.
+ * pinned versions the caller supplied (DEC-26) and the cost in
+ * micro-dollars for the DEC-25 limits.
  */
 export class OpenRouterProvider implements ModelProvider {
   constructor(private readonly config: OpenRouterConfig) {}

@@ -3,6 +3,7 @@
 // Every row is synthetic (DEC-18), and every address is a reserved test name.
 // Each case seeds a turn, runs a publish, and asks the ledger what it holds.
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { Pool } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
@@ -300,6 +301,161 @@ describe('publishing a document from a case (DEC-50)', () => {
     expect(await documents()).toBe(2);
   });
 
+  // The runbook's removal block can delete the document while a repeat post
+  // reads it. A person removed it, so a post written before that act must not
+  // write it back (DEC-50). The repeat waits for the removal, then refuses.
+  const setStatus = {
+    ended: "UPDATE document_rerun SET status = 'dropped', reason = 'ended', ended_at = now(), started_attempt = NULL WHERE doc_id = $1",
+    dropped: "UPDATE document_rerun SET status = 'dropped', reason = 'copy_could_send', ended_at = now(), started_attempt = NULL WHERE doc_id = $1",
+    started: "UPDATE document_rerun SET status = 'started', reason = NULL, ended_at = now(), started_attempt = 2 WHERE doc_id = $1",
+    waiting: "UPDATE document_rerun SET status = 'waiting', reason = NULL, ended_at = NULL, started_attempt = NULL WHERE doc_id = $1",
+    failed: "UPDATE document_rerun SET status = 'failed', reason = NULL, ended_at = now(), started_attempt = NULL WHERE doc_id = $1",
+  } as const;
+
+  /** Waits until a publish in this database waits on the request's row lock. */
+  async function publishWaitsOnRequest(): Promise<boolean> {
+    for (let tries = 0; tries < 200; tries += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      // This database only: the db project runs other files beside this one.
+      const { rows } = await pool.query(
+        `SELECT 1 FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'
+            AND query LIKE '%FROM document_rerun WHERE doc_id = $1 FOR UPDATE%'`,
+      );
+      if (rows.length > 0) return true;
+    }
+    return false;
+  }
+
+  // A post that differs from the first refuses too: the case already
+  // published that answer, and a person removed it.
+  for (const [status, differs] of [
+    ['ended', false], ['dropped', false], ['started', false], ['waiting', false], ['failed', false],
+    ['waiting', true],
+  ] as const) {
+    it(`refuses a ${differs ? 'differing' : 'repeat'} post whose first document a person removes while it waits, its re-run ${status}`, async () => {
+      const c = await caseOf('closed');
+      const first = await publishDocument(pool, input(c.runId));
+      const firstId = (first as { docId: string }).docId;
+      await pool.query(setStatus[status], [firstId]);
+      const remover = await pool.connect();
+      let publishing: Promise<unknown> | undefined;
+      let broken = false;
+      try {
+        await remover.query('BEGIN');
+        await remover.query('DELETE FROM document_rerun WHERE doc_id = $1', [firstId]);
+        await remover.query('DELETE FROM document WHERE doc_id = $1', [firstId]);
+        publishing = publishDocument(pool, input(c.runId, differs ? { owner: 'another-team' } : {}))
+          .then((v) => v, (error: unknown) => error);
+        expect(await publishWaitsOnRequest(), 'the repeat never waited on the removal').toBe(true);
+        await remover.query('COMMIT');
+        // The repeat read the first document before the removal committed, so
+        // only a post that waited on it can answer this.
+        expect(await publishing).toEqual({ outcome: 'removed' });
+      } finally {
+        await remover.query('ROLLBACK').catch(() => { broken = true; });
+        remover.release(broken);
+        await publishing;
+      }
+      expect(await documents()).toBe(0);
+    });
+  }
+
+  // The repeat answers with the request as it stands once it holds the lock.
+  // A consumer that starts the request meanwhile is the one it reports.
+  it('answers a repeat with the status the request holds once its lock is free', async () => {
+    const c = await caseOf('closed');
+    const first = await publishDocument(pool, input(c.runId));
+    const firstId = (first as { docId: string }).docId;
+    const consumer = await pool.connect();
+    let publishing: Promise<unknown> | undefined;
+    let broken = false;
+    try {
+      await consumer.query('BEGIN');
+      await consumer.query('SELECT 1 FROM document_rerun WHERE doc_id = $1 FOR UPDATE', [firstId]);
+      await consumer.query(setStatus.started, [firstId]);
+      publishing = publishDocument(pool, input(c.runId)).then((v) => v, (error: unknown) => error);
+      expect(await publishWaitsOnRequest(), 'the repeat never waited on the request').toBe(true);
+      await consumer.query('COMMIT');
+      expect(await publishing).toMatchObject({ outcome: 'published', docId: firstId, repeated: true, rerun: { status: 'started' } });
+    } finally {
+      await consumer.query('ROLLBACK').catch(() => { broken = true; });
+      consumer.release(broken);
+      await publishing;
+    }
+  });
+
+  // Every lock a publish takes has a bound. When a removal holds the request
+  // past it, the post answers busy and publishes nothing. The runbook states
+  // what follows.
+  it('answers busy when a removal holds the request past the bound', async () => {
+    const c = await caseOf('closed');
+    const first = await publishDocument(pool, input(c.runId));
+    const firstId = (first as { docId: string }).docId;
+    const remover = await pool.connect();
+    let broken = false;
+    try {
+      await remover.query('BEGIN');
+      await remover.query('SELECT 1 FROM document_rerun WHERE doc_id = $1 FOR UPDATE', [firstId]);
+      expect(await publishDocument(pool, input(c.runId, { timeoutMs: 300 }))).toEqual({ outcome: 'busy' });
+    } finally {
+      await remover.query('ROLLBACK').catch(() => { broken = true; });
+      remover.release(broken);
+    }
+    expect(await documents()).toBe(1);
+  });
+
+  // The runbook's removal block clears the journal first and locks the
+  // request last. A repeat post therefore waits only for the deletes, not for
+  // journal statements that can scan a large journal past the publish bound.
+  it('answers a repeat at once while the removal block is still clearing the journal', async () => {
+    const runbook = readFileSync(new URL('../../docs/operations.md', import.meta.url), 'utf8');
+    const at = runbook.indexOf('#### Removing a document written from a case');
+    const block = /```sql\n([\s\S]*?)```/.exec(runbook.slice(at))![1]!;
+    const c = await caseOf('closed');
+    const first = await publishDocument(pool, input(c.runId));
+    const firstId = (first as { docId: string }).docId;
+    // A compose row that cites the document, held by another session, so the
+    // block stops at its journal statements.
+    await pool.query(
+      `INSERT INTO step_journal (run_id, step_id, status, result, prompt_ver, model_ver, cost_micros)
+       VALUES ($1, 'compose', 'done', $2::jsonb, 'p1', 'm1', 0)`,
+      [c.runId, JSON.stringify({ citedBodies: { [firstId]: 'the body' } })],
+    );
+    const holder = await pool.connect();
+    const remover = await pool.connect();
+    let removal: Promise<unknown> | undefined;
+    const broken = { holder: false, remover: false };
+    try {
+      await holder.query('BEGIN');
+      await holder.query(`SELECT 1 FROM step_journal WHERE run_id = $1 AND step_id = 'compose' FOR UPDATE`, [c.runId]);
+      const pid = (await remover.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+      removal = remover.query(block.replaceAll('<doc-id>', firstId)).then(() => null, (error: unknown) => error);
+      let stopped = false;
+      for (let tries = 0; tries < 200 && !stopped; tries += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        // Match the remover by its process id, because the server keeps
+        // only the first part of a long statement's text.
+        const { rows } = await pool.query(
+          `SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock'`, [pid],
+        );
+        stopped = rows.length > 0;
+      }
+      expect(stopped, 'the block never waited on the held journal row').toBe(true);
+      expect(await publishDocument(pool, input(c.runId, { timeoutMs: 3000 })))
+        .toMatchObject({ outcome: 'published', docId: firstId, repeated: true });
+      await holder.query('COMMIT');
+      expect(await removal).toBeNull();
+    } finally {
+      await holder.query('ROLLBACK').catch(() => { broken.holder = true; });
+      holder.release(broken.holder);
+      await removal;
+      await remover.query('ROLLBACK').catch(() => { broken.remover = true; });
+      remover.release(broken.remover);
+    }
+    expect(await documents()).toBe(0);
+  });
+
   it('rejects, and ends no process, when the ledger ends its session mid-publish', async () => {
     const guarded = guardLedgerPool(new Pool({ connectionString: dbUrl(), max: 1 }), () => undefined);
     const holder = await pool.connect();
@@ -318,7 +474,8 @@ describe('publishing a document from a case (DEC-50)', () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
         const { rows } = await pool.query<{ pid: number }>(
           `SELECT pid FROM pg_stat_activity
-            WHERE wait_event_type = 'Lock' AND query LIKE '%FROM run WHERE run_id = $1 FOR UPDATE%'
+            WHERE datname = current_database() AND wait_event_type = 'Lock'
+              AND query LIKE '%FROM run WHERE run_id = $1 FOR UPDATE%'
               AND pid <> $1::int`,
           [(await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid],
         );

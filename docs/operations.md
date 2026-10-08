@@ -9,6 +9,19 @@ Read `docs/architecture-map.md` first if you have not seen the system before.
 It draws the processes, the jobs and the tables this runbook operates.
 `docs/v2-roadmap.md` says what is left in V2 and what blocks each item.
 
+## Contents
+
+1. [Local setup](#1-local-setup)
+2. [Schema migrations](#2-schema-migrations)
+3. [Running the processes](#3-running-the-processes)
+4. [The approval workflow](#4-the-approval-workflow)
+5. [Offline jobs](#5-offline-jobs)
+6. [The real-corpus curation loop](#6-the-real-corpus-curation-loop)
+7. [Observability](#7-observability)
+8. [The operator console](#8-the-operator-console)
+9. [The phase model](#9-the-phase-model)
+10. [Every command this repository defines](#10-every-command-this-repository-defines)
+
 ## 1. Local setup
 
 The [Quickstart](../README.md#quickstart) in the README is the only full setup
@@ -16,44 +29,18 @@ sequence. It takes a fresh clone to passing tests and a running console. This
 runbook starts where it ends.
 
 `pnpm run bootstrap` runs the same script as `./scripts/bootstrap.sh`. It does
-the steps that need no choice from you, and it starts no container and runs no
+the steps that need no choice from you. It starts no container and runs no
 migration.
 
-Compose starts Postgres 16 with pgvector on host port 5433. Host port 5432
-stays free for another local stack. `pnpm run db:migrate` applies every pending
-migration under `db/` to the database `DATABASE_URL` names.
+Compose publishes Postgres on host port 5433, and `AURACLE_DB_PORT` moves it.
+GreenMail sits behind the `test` profile on 3025 and 3143, moved by
+`AURACLE_SMTP_PORT` and `AURACLE_IMAP_PORT`. That server accepts any
+credentials, so the profile keeps it out of a deployed stack. A plain
+`docker compose up -d` starts the ledger alone.
 
-A test run with `DATABASE_URL` exported targets that server. Each database
-suite clones a database of its own there, from a migrated template. The run
-also restates `auracle_reader` on that server, with a known password. Without
-`DATABASE_URL` the suites start a throwaway container instead.
-
-## Configuration files
-
-Most CLIs and daemons load a `.env` file at startup, when one exists in the
-working directory. The section below names the exceptions. Node reads the file
-natively, so no extra dependency exists. A variable set in the shell always
-wins over the same variable in `.env`. `OPENROUTER_API_KEY` normally lives in
-`.env`. Never commit that file.
-
-Set `OPENROUTER_BASE_URL` to send model calls somewhere else. Every job that
-calls a model reads it, so a gateway or a proxy applies to all of them.
-
-A variable set to an empty string is a fault, not an absence. `PARTITION_COUNT=`
-refuses the start rather than taking the default. Unset the variable to get
-the default. DEC-27 gives each partition one owner, so two daemons reading the
-same variable differently would break that ownership.
-
-Four commands read no `.env` file: `pnpm run escalations`,
-`pnpm run triage`, `pnpm run export-corpus` and `pnpm run seed-history`. The
-operator console reads none either. Export what they need in the shell.
-
-Example `.env`:
-
-```sh
-DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle
-OPENROUTER_API_KEY=<your-key>
-```
+The compose Postgres reads a `pg_hba.conf` rule from `docker-compose.yml`. It
+lets `auracle_reader` log in to the ledger and the test databases only. The
+section "The readers' role" explains why.
 
 Check the setup:
 
@@ -62,11 +49,57 @@ docker compose ps
 psql "$DATABASE_URL" -c '\dt'
 ```
 
-The second command lists the tables. You should see `run`, `ticket_epoch`,
-`step_journal`, `outbox`, `document`, `intake`, `conversation`, `turn` and
-`schema_version`.
+The second command lists the tables `docs/architecture-map.md` draws.
 
-## 1.1 The dev host
+### Configuration files
+
+Most CLIs and daemons load a `.env` file at startup, when one exists in the
+working directory. Node reads the file natively, so no extra dependency
+exists. A variable set in the shell always wins over the same variable in
+`.env`. `OPENROUTER_API_KEY` normally lives in `.env`. Never commit that file.
+`.env.example` names every variable, with a comment on each.
+
+These commands read no `.env` file: `pnpm run escalations`,
+`pnpm run triage`, `pnpm run export-corpus` and `pnpm run seed-history`. The
+operator console reads none either. Export what they need in the shell.
+
+Set `OPENROUTER_BASE_URL` to send model calls somewhere else. Every job that
+calls a model reads it, so a gateway or a proxy applies to all of them.
+
+An integer setting set to an empty string is a fault, not an absence.
+`PARTITION_COUNT=` refuses the start rather than taking the default. Unset the
+variable to get the default. DEC-27 gives each partition one owner, so two
+daemons that read the same variable differently break that ownership.
+
+### Running the image
+
+One image holds every process, and its command picks one:
+
+```sh
+docker build -t auracle:local .
+docker run --rm auracle:local            # prints the commands it accepts
+cp .env.example .env                     # OPENROUTER_API_KEY at least
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+```
+
+The overlay sets `DATABASE_URL` and `READER_DATABASE_URL` itself, and ignores
+both in `.env`. That file names `localhost:5433`, which is right for a
+checkout. Inside a container, that address is the container's own loopback.
+
+The stack runs the migration first, as a service the daemons depend on. So no
+process opens a connection to a ledger that lacks a table. `AURACLE_IMAGE`
+selects the tag, and defaults to a local build.
+
+Every published port binds `127.0.0.1`. The webhook accepts every request
+while `WEBHOOK_SECRET` is empty. The console serves only an active reviewer,
+and a trusted proxy authenticates that reviewer (DEC-45). So put an
+authenticating proxy in front of anything another machine reaches.
+
+A merge to `main` runs `.github/workflows/release.yml`. It builds the image
+and pushes it to GHCR, tagged with the commit SHA and never `latest`. Nobody
+can roll back to a tag that moves.
+
+### The dev host
 
 The `dev` GitHub environment names a host, and
 `.github/workflows/release.yml` deploys the image to it on a merge to
@@ -97,11 +130,9 @@ missing rather than failing:
 Two optional repository variables: `DEV_APP_DIR` and
 `DEV_COMPOSE_PROFILES`. Set the second to `mail` to run the IMAP intake.
 
-Every published port binds the loopback of the host. The webhook accepts
-every request while `WEBHOOK_SECRET` is empty.
-
-So a proxy authenticates anything that reaches the console or the webhook from
-another machine. That proxy sets the header `CONSOLE_IDENTITY_HEADER` names,
+The ports bind as "Running the image" describes. So put a proxy that
+authenticates in front of the console and the webhook before another machine
+reaches them. That proxy sets the header `CONSOLE_IDENTITY_HEADER` names,
 and strips any copy a client sent (DEC-42). `CONSOLE_ALLOWED_HOSTS` must then
 name the host. Without it the console refuses the `Host` the browser sends.
 
@@ -114,25 +145,14 @@ pnpm run reviewers -- --add reviewer@example.com
 
 ## 2. Schema migrations
 
-The ledger schema evolves through numbered SQL files under `db/`. Each file is
-named `NNN_description.sql`. The runner is `src/ledger/migrate.ts`, and you run
-it with `pnpm run db:migrate`. There is no migration framework. Plain SQL stays
-reviewable, and the architecture keeps its stance against orchestration layers.
+The ledger schema evolves through numbered SQL files under `db/`. The runner
+is `src/ledger/migrate.ts`, and you run it with `pnpm run db:migrate`. There is
+no migration framework. Plain SQL stays reviewable, and the architecture keeps
+its stance against orchestration layers.
 
-The runner creates a `schema_version` table. It records the version number and
-file name of every applied migration. On each run it applies the files that the
-table does not list yet. Each file runs in one transaction together with its
-record insert. A failure or a crash leaves no half-applied file and no false
-record.
-
-The runner refuses a file whose version sits below the highest recorded
-version. An out-of-order apply can break later migrations.
-
-Rules for a new migration:
-
-- Copy the next free number. Two files never share one number.
-- Never edit a file that any database has already applied.
-- Write plain SQL that works inside one transaction.
+`db/README.md` states what the runner guarantees and the rules for a new file.
+One rule matters most to an operator: never edit a file that any database has
+already applied.
 
 ### Rollback story
 
@@ -157,9 +177,9 @@ diverge from what the forward step really did. A snapshot cannot diverge,
 because it is the database itself. For a small schema change on an empty dev database, drop the schema.
 Then run `db:migrate` again instead of restoring a snapshot.
 
-A v1 database predates `schema_version`. Its tables already exist, and the v1
-files are idempotent. The first `db:migrate` run on such a database re-runs
-those files as no-ops and records their versions. No manual step exists.
+On a database with no `schema_version` table, `db:migrate` applies the files
+from 001 onward. Those files are idempotent, so the tables that already exist
+stay as they are. No manual step exists.
 
 ### The readers' role
 
@@ -169,8 +189,9 @@ The console's readers and `pnpm run latency` connect as a role of their own,
 read.
 
 The role is the barrier against code that holds the readers' URL or pool. It
-is not a barrier against a superuser who grants the role more by hand. The
-restate takes back attributes, settings and memberships. It does not look for
+is not a barrier against a superuser who grants the role more by hand. Each
+`db:migrate` restates the role, as described below. The restate takes back
+attributes, settings and memberships. It does not look for
 every other right a person can grant.
 
 In the ledger's database the role cannot end or cancel a session, or call
@@ -313,8 +334,8 @@ repository knows the default.
 
 The role belongs to the whole server, as every Postgres role does. Two ledgers
 on one server share the readers' role and its password, and each keeps its own
-CONNECT grant. They also share its limit of 10 connections. Two consoles of four
-each and two latency reports fill it, and the migrator's own login then fails.
+CONNECT grant. They also share its connection limit. When the consoles and latency reports
+fill it, the login of the migrator fails.
 
 Two migrations on one ledger at once run in turn. The second waits up to 30
 seconds for the migration lock while the first applies its files. It waits
@@ -323,22 +344,22 @@ second run, and the message names the migration lock and what applied. Two
 migrations from two ledgers on one server can fail with "tuple concurrently
 updated". A rerun is safe, so run it again.
 
-A test run sets that password to the default and the connection limit to 200.
+A test run sets that password to the default and raises the connection limit.
 It does so only on a server on this machine, unless you set
-`AURACLE_TEST_ALLOW_REMOTE_DB=1`. The next `db:migrate` restates
-the limit of 10.
+`AURACLE_TEST_ALLOW_REMOTE_DB=1`. The next `db:migrate` restates the limit of
+the role.
 
 ## 3. Running the processes
 
-The system runs as separate processes. Each process but the latency report
-reads `DATABASE_URL`.
+The system runs as separate processes. Each process in this section reads
+`DATABASE_URL`.
 Start each process in its own terminal.
 
 ### Start order
 
 Bring a stack up from a checkout in this order. Each step needs the one
 before it. For local development, follow the README's Quickstart instead. A
-deployed stack runs the image, as section 1.1, The dev host, describes.
+deployed stack runs the image, as "The dev host" in section 1 describes.
 
 ```sh
 docker compose up -d --wait             # 1. Postgres with pgvector
@@ -367,7 +388,7 @@ pnpm run consumer
 ```
 
 The consumer runs the coordinator state machine. It polls the `intake` table
-for tickets in its own partitions. A message enters a partition through
+for messages in its own partitions. A message enters a partition through
 `hash(conversation_id)` at enqueue time (DEC-36). A message with no
 conversation keys on the ticket id instead, which is the DEC-27 form.
 
@@ -387,8 +408,6 @@ A reply parked for a person and a record whose run has finished keep their fence
 A restart therefore leaves both alone: the reply stays approvable, and the relay still sends the record.
 When the relay refuses a record, it moves the run to `escalated` with the reason, so an operator sees it.
 
-Optional settings: `CONSUMER_INTERVAL_MS` (default 5000) and
-`TICKET_DEADLINE_MS` (default 60000).
 A run that reaches a limit goes to `escalated` and keeps its partial work.
 This is not an error.
 The limit makes a high cost visible in operations, not a surprise in the invoice.
@@ -401,7 +420,7 @@ The consumer reads this configuration:
 | `CONSUMER_INTERVAL_MS` | Ceiling on the wait between scans, in milliseconds. Intake signals an arrival and the consumer wakes on it, so this bounds the wait when a signal is lost. | 5000 |
 | `TICKET_DEADLINE_MS` | Per-ticket clock budget (DEC-25). | 60000 |
 | `PARTITION_COUNT` | Partition count for hashing (DEC-27). | 8 |
-| `MODEL_VER` | Chat model pin. Overridable at any time. | `z-ai/glm-5.3-flash` |
+| `MODEL_VER` | Chat model pin. The consumer reads it at startup, so a change takes effect at the next start. | `z-ai/glm-5.3-flash` |
 | `EMBED_MODEL_VER` | Embedding model pin for retrieval. The chat model does not embed, so this pin is separate. | `openai/text-embedding-3-small` |
 | `EMBEDDINGS_USD_PER_MTOK` | Embedding price in US dollars per million tokens, for a gateway whose answer carries no cost (DEC-25). OpenRouter reports the cost itself. | none |
 | `PROMPT_VER` | Prompt version pin (DEC-26). | `consumer-prompt-v1` |
@@ -446,6 +465,174 @@ another adapter, because the relay keeps the adapter it names itself. A refusal
 of a visible class offers to hide it only where `EGRESS_ADAPTER` runs that
 class.
 
+### Document embedding
+
+A document written in the console waits for its embedding, because the console
+calls no model. Every consumer embeds waiting documents on each scan, with
+`EMBED_MODEL_VER`. Both retrieval channels ignore a document until a consumer
+embeds it. The constants in `src/kb/embed-pending.ts` set each figure in this
+part.
+
+A consumer leases a few documents at a time and holds each lease for three
+minutes. So two consumers never embed one document, and a consumer that stops
+leaves its lease for the next one.
+
+The ledger keeps each failed embedding try and its reason. Only a refusal of
+the input uses one of the three tries of a document. That is an HTTP 400, 413
+or 422. The
+provider also answers 400 for a model pin that names no model. So after a
+refusal the consumer embeds a short fixed text with the same model. The
+refusal counts only when the model takes that text.
+
+A later scan tries a refused document again after one minute, and after five
+more minutes for the third try. After three refusals the document is
+`failed`, and it stays out of retrieval.
+
+Any other fault uses no try: an outage, a rate limit, a key, a timeout or a
+model pin. The document waits five minutes, and the log carries the reason.
+So an outage fails no document, and it needs no step from you afterward.
+
+After its first refusal or deferral, a document goes to the model on its own.
+So a document the model refuses costs another document one try at most. A
+fault that one document causes, such as a short answer, stops failing its
+batch after one call. Of the documents that go alone, the one whose delay ends
+first goes first. So a document that keeps failing never blocks the others.
+
+A scan makes two embedding calls. One call is for a document that goes alone,
+and one is for up to four new documents. A refusal adds the
+probe call after it, so a scan makes four calls at most. The scan waits for its
+calls, and the queue waits for the scan. Each call has a deadline of 15
+seconds, so a stalled model delays customer messages by one minute at most.
+
+A consumer that stops also waits for its calls. If the process ends first,
+its lease holds for three minutes, and then another consumer takes the
+document.
+
+A consumer writes no vector, and records no failure, when its lease runs out
+during the call. It writes no vector when the text changes during the call. It
+never waits for a row another writer holds. A later scan leases that document
+once its lease runs out.
+
+The consumer logs these events:
+
+| Event | Fields |
+|---|---|
+| `documents_embedded` | `docIds` |
+| `documents_embedding_retrying` | `failures`, each with `docId` and `reason`: the model refuses the input |
+| `documents_embedding_deferred` | `failures`, each with `docId` and `reason`: a fault that uses no try |
+| `documents_embedding_failed` | `failures`, each with `docId` and `reason`: the third refusal |
+| `documents_embedding_lost` | `failures`, each with `docId` and `reason`: nothing written. The lease runs out or passes on, another writer holds the row, or the text changes |
+| `documents_embedding_unrecorded` | `failures`, each with `docId` and `reason`: the ledger does not record the outcome, and the lease runs out |
+| `document_embedding_cost` | `costMicros` for the scan's calls, and `costUnknown` when an answer carries no cost it can read |
+| `document_embedding_scan_failed` | `error`, a fault of the ledger that costs no document a try |
+
+Read the reasons of all documents that are not embedded:
+
+```sh
+psql "$DATABASE_URL" -c \
+  "SELECT doc_id, embedding_status, embedding_failures, embedding_error FROM document WHERE embedding_status <> 'embedded';"
+```
+
+A `documents_embedding_deferred` event that repeats names a fault to fix,
+often the key or the model pin. A `failed` document is one the model refuses.
+A body longer than the model accepts fails each time, so shorten the document.
+Then return the document to the queue, and the next scan embeds it:
+
+```sh
+psql "$DATABASE_URL" -c \
+  "UPDATE document SET embedding_status = 'pending', embedding_failures = 0, embedding_error = NULL WHERE doc_id = '<doc-id>' AND embedding_status = 'failed';"
+```
+
+A change of embedding model can accept inputs the old one refused. After such
+a change, return every failed document at once:
+
+```sh
+psql "$DATABASE_URL" -c \
+  "UPDATE document SET embedding_status = 'pending', embedding_failures = 0, embedding_error = NULL WHERE embedding_status = 'failed';"
+```
+
+### Re-runs from a published document
+
+A document a reviewer publishes from a case also asks for a new attempt of
+that case (DEC-50, DEC-49). This runbook calls that request a re-run. It waits
+in `document_rerun` until a consumer embeds the document. Each scan then reads
+the waiting re-runs of its own partitions, after it embeds documents.
+
+The scan starts the attempt only while the case is as the reviewer left it. A
+re-run ends when a person approves, closes or snoozes the case first. A turn
+whose reply or action the relay sends, or holds to send, ends it too.
+So does another attempt that somebody asks for first, or a later message from
+the customer. An automatic write that resolves the case ends it as well.
+
+A person may save or rewrite a reply on the turn after the publish. The re-run
+then ends too, so a new attempt never throws their work away (DEC-46). A
+failed embedding never starts the attempt. A re-run on a run the system still
+walks waits for a person. After `RERUN_STALE_HOURS` in the system's hands,
+three hours, the scan takes the run as dead and ends the re-run. The case page draws the same
+answer, from the same rule, before the scan records it.
+
+The same post from the case then asks for that re-run again. The new request
+keeps the time and the replies of the first one. So a reply that a person
+saved since then still ends it. A re-run that a person's act ends stays ended.
+
+Two documents from one case wait for each other. The scan starts one attempt
+once a consumer embeds both, and marks both re-runs started.
+
+A case that waits for a person ends `superseded`, as a send-back ends it, with
+no note. An escalated case keeps its state and its finish time. So its service
+time stays the system's work in `pnpm run latency`. Either way the turn moves
+to the next attempt. The scan clears a reply saved on the turn and journals
+it. The send-back scan then walks the attempt, with the published document in
+reach.
+
+`pnpm run bands` counts a case whose final attempt is above one as assisted.
+A send-back note and a published document both raise the attempt. So a case a
+published document answers counts as assisted: a person writes the answer.
+
+Bands also counts a case once, on the day of its final attempt. So a re-run of
+an older case moves it to the day of its new attempt, as a send-back does. The
+figures of that earlier day and the baseline change with it.
+
+A publish on a case that the system cannot attempt again still publishes, and
+records the reason at once. A run with no turn gives that reason. So does a
+case with a helpdesk copy a person could send, or a case that already ended.
+
+The escalation reasons of an attempt that a document asks for begin `rerun_`,
+as a send-back's begin `send_back_`. The console and every consumer must
+declare the same egress adapter. The page reads the console's declaration,
+and the scan reads the consumer's.
+
+A scan reads ten waiting re-runs per pass, the ones it read longest ago first.
+`RERUN_BATCH` in `src/knowledge/rerun-start.ts` sets that count, and no
+variable changes it.
+So a re-run that waits or faults cannot hold the others up. After a fault, no
+scan reads the re-run again for a minute per fault, ten at most. The case page
+says how often the consumer fails to start it.
+
+A publish waits five seconds at most for a lock or a statement.
+`PUBLISH_TIMEOUT_MS` in `src/knowledge/publish.ts` sets that bound. Past that it
+writes nothing, and the page says to publish again. The same post twice from
+one case publishes once, and the console logs the second as
+`console_publish_repeated`. The console refuses a post with the same title and
+answer that differs otherwise. Such a post is a second copy of one answer.
+
+The consumer logs these events:
+
+| Event | Fields |
+|---|---|
+| `reruns_started` | `requests`: the documents whose attempt started |
+| `reruns_dropped` | `requests`, each with `docId` and `reason` |
+| `reruns_failed` | `requests`: the documents whose embedding failed |
+| `reruns_unsettled` | `requests`, each with `docId` and `error`. The request waits for the next scan |
+| `rerun_scan_failed` | `error`, a fault of the ledger that settles no request |
+
+Read the requests that are still waiting:
+
+```sh
+psql "$DATABASE_URL" -c \
+  "SELECT doc_id, run_id, attempt, requested_at FROM document_rerun WHERE status = 'waiting';"
+```
+
 ### Relay daemon
 
 ```sh
@@ -453,7 +640,7 @@ pnpm run relay
 ```
 
 This command runs `dist/relay/main.js`. The relay scans the `outbox` table for
-records with the `pending` status. It sends first and sets the status to `sent` second (section 4.4). A crash
+records with the `pending` status. It sends first and sets the status to `sent` second (architecture section 4.4). A crash
 between the send and the status write can send an action twice.
 
 Each record carries its own delivery rule.
@@ -504,7 +691,7 @@ The process drains the in-flight record on SIGTERM or SIGINT before it exits.
 The relay reads no action configuration. Every record carries its own delivery
 rule in `outbox.delivery`, and the relay reads that rule per record (DEC-29).
 
-#### The `imap-smtp` egress adapter
+### The `imap-smtp` egress adapter
 
 The `imap-smtp` adapter sends mail through one IMAP/SMTP account.
 It parks each gated reply as a draft in the Drafts mailbox and sends it over
@@ -532,7 +719,7 @@ Every process that selects the adapter reads the same variables:
 | `SMTP_SECURE` | Use implicit TLS on connect. | `true` |
 | `EMAIL_FROM_ADDRESS` | Address the replies are sent from. Required. | none |
 
-#### The `freescout` egress adapter
+### The `freescout` egress adapter
 
 The `freescout` adapter talks to a FreeScout instance over its REST API.
 It parks each gated reply as a draft thread and posts the approved text after
@@ -559,7 +746,48 @@ Remove the draft in the FreeScout UI after the send.
 | `FREESCOUT_USER_ID` | FreeScout user the threads belong to. Required. | none |
 | `FREESCOUT_INTERNAL_NOTE` | `true` once the proof below passes. | `false` |
 
-##### The internal-note mode, and the proof it needs
+#### The API needs a module that this repository cannot ship
+
+A stock FreeScout install answers `404` to every `/api/` route.
+The REST API lives in the `API & Webhooks` module, and a person buys and
+installs that module.
+A stock FreeScout image ships an empty `Modules` directory.
+
+So the adapter cannot reach a stock instance, and no automated test in this
+repository claims it can.
+Install the module, mint a key under `Manage`, then check the route by hand.
+A person does both in the FreeScout UI:
+
+```sh
+curl -H "X-FreeScout-API-Key: $FREESCOUT_API_KEY" \
+  http://localhost:8088/api/conversations
+```
+
+A `404` means the module is absent. A JSON body means the adapter can run.
+
+#### Bringing an instance up
+
+`docker-compose.freescout.yml` carries a FreeScout service and its database.
+It is a separate file, so a bare `docker compose up -d` starts the ledger
+database alone and reads none of it.
+
+Set `FREESCOUT_ADMIN_EMAIL` and `FREESCOUT_ADMIN_PASSWORD` in `./.env` first.
+This repository commits no FreeScout admin credential.
+Compose refuses to start without both and names the missing one.
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.freescout.yml up -d
+```
+
+Never weaken those two references so that an empty value passes.
+The image reads the admin password with a shell default.
+That default applies to an empty value as well as to an absent one.
+So an empty value becomes a published default password.
+
+FreeScout answers on `127.0.0.1:8088`. It takes no route from the network,
+because the adapter runs on the host. Its database publishes no port at all.
+
+#### The internal-note mode, and the proof it needs
 
 DEC-44 lets the ledger hold the reply instead of the helpdesk.
 The adapter declares that capability only where the helpdesk cannot send the
@@ -570,8 +798,7 @@ Set `FREESCOUT_INTERNAL_NOTE=true` only after proving that your own instance
 accepts one.
 With it set, the park posts a note instead of a draft thread. The ledger then
 holds the approved reply, and a reviewer edits that reply on the console.
-Without it, the adapter behaves as it always did: the draft thread is what
-sends. The declaration reads the variable, so the console offers no editor
+Without it, the draft thread is what sends. The declaration reads the variable, so the console offers no editor
 until an operator sets it.
 
 Every process that reads the variable must agree.
@@ -581,8 +808,8 @@ A relay that reads it as false cannot send a reply the console recorded.
 It escalates that record instead of posting a copy a person edited.
 So the run reaches a person, and no text leaves the ledger unseen.
 
-The proof needs the `API & Webhooks` module from the section below.
-Open a real conversation, mint a key, then post one note through the API:
+The proof needs the `API & Webhooks` module, which "The API needs a module
+that this repository cannot ship" describes. Open a real conversation, mint a key, then post one note through the API:
 
 ```sh
 curl -X POST -H "X-FreeScout-API-Key: $FREESCOUT_API_KEY" \
@@ -600,51 +827,10 @@ A `404` means the module is absent, and the adapter cannot take this mode.
 No test in this repository covers that proof.
 It needs a paid module and a live instance, and this repository ships neither.
 
-##### Bringing an instance up
-
-`docker-compose.freescout.yml` carries a FreeScout service and its database.
-It is a separate file, so a bare `docker compose up -d` starts the ledger
-database alone and reads none of it.
-
-Set `FREESCOUT_ADMIN_EMAIL` and `FREESCOUT_ADMIN_PASSWORD` in `./.env` first.
-This repository commits no credential.
-Compose refuses to start without both and names the missing one.
-
-```sh
-docker compose -f docker-compose.yml -f docker-compose.freescout.yml up -d
-```
-
-Never weaken those two references so that an empty value passes.
-The image reads the admin password with a shell default.
-That default applies to an empty value as well as to an absent one.
-So an empty value becomes a published default password.
-
-FreeScout answers on `127.0.0.1:8088`. It takes no route from the network,
-because the adapter runs on the host. Its database publishes no port at all.
-
-##### The API needs a module that this repository cannot ship
-
-A stock FreeScout install answers `404` to every `/api/` route.
-The REST API lives in the `API & Webhooks` module, and a person buys and
-installs that module.
-FreeScout 1.8.239 ships an empty `Modules` directory.
-
-So the adapter cannot reach a stock instance, and no automated test in this
-repository claims it can.
-Install the module, mint a key under `Manage`, then check the route by hand.
-A person does both in the FreeScout UI:
-
-```sh
-curl -H "X-FreeScout-API-Key: $FREESCOUT_API_KEY" \
-  http://localhost:8088/api/conversations
-```
-
-A `404` means the module is absent. A JSON body means the adapter can run.
-
 ### Ingress drivers
 
 Ingress turns an inbound event into a ticket and a message. Two adapters take
-messages in: IMAP with SMTP, and the webhook. The helpdesk adapter is egress
+messages in: the IMAP poller and the webhook. The helpdesk adapter is egress
 only and runs no daemon. A driver calls `enqueueTicket` on the intake table.
 The partition consumer picks the ticket up from there.
 
@@ -686,7 +872,7 @@ pnpm run imap
 The poller requires `IMAP_HOST`, `IMAP_USER` and `IMAP_PASS`.
 Optional settings: `IMAP_PORT` (default 993), `IMAP_SECURE` (default `true`)
 and `IMAP_INTERVAL_MS` (default 60000).
-These ingress defaults differ from the egress `imap-smtp` table in section 3.
+These ingress defaults differ from the table in "The `imap-smtp` egress adapter".
 That egress adapter defaults `IMAP_SECURE` to `false`.
 The variable names overlap, but the two configs stay separate.
 
@@ -699,11 +885,12 @@ The flow has these steps:
 
 1. The policy engine sends each customer-visible action to the gated path.
 2. The coordinator parks the reply in the draft state of its egress adapter
-   (DEC-11). With the helpdesk adapter, reviewers act in the helpdesk they
-   already use. With the mail adapter, reviewers act in the Drafts mailbox.
+   (DEC-11). The default `helpdesk` adapter is a reference adapter that holds
+   drafts in memory. The `imap-smtp` adapter parks them in the Drafts mailbox.
 3. The run waits in the `awaiting_approval` state.
-4. A person reviews the draft in the helpdesk or in the Drafts mailbox.
-5. A person approves with `pnpm run approve -- --run <run-id>`.
+4. A person reviews the case in the operator console (DEC-44).
+5. A person approves in the console, or with
+   `pnpm run approve -- --run <run-id>`.
 6. The approval writes a record to the outbox. The idempotency key comes from
    the action semantics (DEC-24). Two runs of one request then produce the
    same key, so a retry cannot deliver the reply twice.
@@ -711,7 +898,7 @@ The flow has these steps:
 
 Each customer reply carries a non-empty `disclosure` field (DEC-14).
 The disclosure tells the customer that a machine produced the text.
-The bridge refuses a reply without it.
+The approval refuses a reply without it.
 
 The approval also records the approval-edit distance on the run.
 This value shows how much the person changed the draft before sending it.
@@ -720,14 +907,14 @@ Add `--read-back` to measure the real edit.
 The CLI then fetches the current draft body from the adapter before the approval commits.
 It reads the adapter named by `APPROVE_ADAPTER`.
 Known values are `helpdesk`, `imap-smtp` and `freescout`.
-The console reads the same variable, as section 7.0 says.
+The console reads the same variable, as "The operator console" says.
 The default is `helpdesk`.
 
 Read-back refuses the approval when the adapter holds no draft.
 Approving a missing draft would fabricate the metric.
 Reconcile the draft by hand, then approve again.
 The CLI prints the outcome as JSON on stdout.
-It exits non-zero when the run was not approved.
+It exits non-zero when the approval does not commit.
 
 ### The email flow end to end
 
@@ -753,7 +940,8 @@ APPROVE_ADAPTER=imap-smtp pnpm run approve -- --run <run-id> --read-back
 7. The relay sends the approved draft over SMTP. The customer receives it.
 
 The default `helpdesk` adapter parks drafts in memory instead. Read-back
-across processes therefore works only over the mail account. Keep the three
+across processes therefore works over the `imap-smtp` and `freescout` adapters
+only. Keep the three
 adapter variables aligned when you use the mail flow.
 
 ### The escalations command
@@ -810,7 +998,8 @@ Set `EMBED_MODEL_VER` to pin the embedding model. A model outside the price
 table needs `EMBEDDINGS_USD_PER_MTOK`, or the loader refuses to run.
 
 Each file needs a frontmatter block at the top. The loader rejects unknown
-fields. These fields are required:
+fields. One field is optional: `products`, the products the document serves
+(DEC-47). Each file needs these fields:
 
 ```yaml
 ---
@@ -834,173 +1023,6 @@ never rewrites one. A file with the same `doc_id` fails, and the report names
 the file and the id. Give the file another `doc_id`, or leave the console
 document as it is.
 
-A document written in the console waits for its embedding, because the console
-calls no model. Every consumer embeds waiting documents on each scan, with
-`EMBED_MODEL_VER`. Both retrieval channels ignore a document until a consumer
-embeds it. A consumer claims a few documents at a time and holds each claim for
-three minutes. So two consumers never embed one document, and a consumer that
-stops leaves its claim for the next one.
-
-The ledger keeps each failed attempt and its reason. Only a refusal of the
-input uses one of the document's three attempts: an HTTP 400, 413 or 422. The
-provider also answers 400 for a model pin that names no model. So after a
-refusal the consumer embeds a short fixed text with the same model. The
-refusal counts only when the model takes that text.
-
-A later scan tries a refused document again after one minute, and after five
-more minutes for the third attempt. After three refusals the document is
-`failed`, and it stays out of retrieval.
-
-Any other fault uses no attempt: an outage, a rate limit, a key, a timeout or
-a model pin. The document waits five minutes, and the log carries the reason.
-So an outage fails no document, and it needs no step from you afterwards.
-
-After its first refusal or deferral, a document goes to the model on its own.
-So a document the model refuses costs another document one attempt at most. A
-fault that one document causes, such as a short answer, stops failing its
-batch after one call. Of the documents that go alone, the one whose delay ends
-first goes first. So a document that keeps failing never blocks the others.
-
-A scan makes two embedding calls. One call is for a document that goes alone,
-and one is for up to four new documents. A refusal adds the
-probe call after it, so a scan makes four calls at most. The scan waits for its
-calls, and the queue waits for the scan. Each call has a deadline of 15
-seconds, so a stalled model delays customer messages by one minute at most.
-
-A consumer that stops also waits for its calls. If the process ends first,
-its claim holds for three minutes, and then another consumer takes the
-document.
-
-A consumer writes no vector, and records no failure, when its claim runs out
-during the call. It writes no vector when the text changes during the call. It
-never waits for a row another writer holds. A later scan claims that document
-once its three-minute claim runs out.
-
-The consumer logs these events:
-
-| Event | Fields |
-|---|---|
-| `documents_embedded` | `docIds` |
-| `documents_embedding_retrying` | `failures`, each with `docId` and `reason`: the model refuses the input |
-| `documents_embedding_deferred` | `failures`, each with `docId` and `reason`: a fault that uses no attempt |
-| `documents_embedding_failed` | `failures`, each with `docId` and `reason`: the third refusal |
-| `documents_embedding_lost` | `failures`, each with `docId` and `reason`: nothing written. The claim runs out or passes on, another writer holds the row, or the text changes |
-| `documents_embedding_unrecorded` | `failures`, each with `docId` and `reason`: the ledger does not record the outcome, and the claim runs out |
-| `document_embedding_cost` | `costMicros` for the scan's calls, and `costUnknown` when an answer carries no cost it can read |
-| `document_embedding_scan_failed` | `error`, a fault of the ledger that costs no document an attempt |
-
-Read the reasons of all documents that are not embedded:
-
-```sh
-psql "$DATABASE_URL" -c \
-  "SELECT doc_id, embedding_status, embedding_failures, embedding_error FROM document WHERE embedding_status <> 'embedded';"
-```
-
-A `documents_embedding_deferred` event that repeats names a fault to fix,
-often the key or the model pin. A `failed` document is one the model refuses.
-A body longer than the model accepts fails each time, so shorten the document.
-Then return the document to the queue, and the next scan embeds it:
-
-```sh
-psql "$DATABASE_URL" -c \
-  "UPDATE document SET embedding_status = 'pending', embedding_failures = 0, embedding_error = NULL WHERE doc_id = '<doc-id>' AND embedding_status = 'failed';"
-```
-
-A change of embedding model can accept inputs the old one refused. After such
-a change, return every failed document at once:
-
-```sh
-psql "$DATABASE_URL" -c \
-  "UPDATE document SET embedding_status = 'pending', embedding_failures = 0, embedding_error = NULL WHERE embedding_status = 'failed';"
-```
-
-A document a reviewer publishes from a case also asks for a new attempt of
-that case (DEC-50, DEC-49). This runbook calls that request a re-run. It waits
-in `document_rerun` until a consumer embeds the document. Each scan then reads
-the waiting re-runs of its own partitions, after it embeds documents.
-
-The scan starts the attempt only while the case is as the reviewer left it. A
-re-run ends when a person approves, closes or snoozes the case first. A turn
-whose reply or action the relay sends, or holds to send, ends it too.
-So does another attempt that somebody asks for first, or a later message from
-the customer. An automatic write that resolves the case ends it as well.
-
-A person may save or rewrite a reply on the turn after the publish. The re-run
-then ends too, so a new attempt never throws their work away (DEC-46). A
-failed embedding never starts the attempt. A re-run on a run the system still
-walks waits for a person. After three hours in the system's hands, the scan
-takes the run as dead and ends the re-run. The case page draws the same
-answer, from the same rule, before the scan records it.
-
-The same post from the case then asks for that re-run again. The new request
-keeps the time and the replies of the first one. So a reply that a person
-saved since then still ends it. A re-run that a person's act ends stays ended.
-
-Two documents from one case wait for each other. The scan starts one attempt
-once a consumer embeds both, and marks both re-runs started.
-
-A case that waits for a person ends `superseded`, as a send-back ends it, with
-no note. An escalated case keeps its state and its finish time. So its service
-time stays the system's work in `pnpm run latency`. Either way the turn moves
-to the next attempt. The scan clears a reply saved on the turn and journals
-it. The send-back scan then walks the attempt, with the published document in
-reach.
-
-`pnpm run bands` counts a case whose final attempt is above one as assisted.
-A send-back note and a published document both raise the attempt. So a case a
-published document answers counts as assisted: a person writes the answer.
-
-Bands also counts a case once, on the day of its final attempt. So a re-run of
-an older case moves it to the day of its new attempt, as a send-back does. The
-figures of that earlier day and the baseline change with it.
-
-A publish on a case that the system cannot attempt again still publishes, and
-records the reason at once. A run with no turn gives that reason. So does a
-case with a helpdesk copy a person could send, or a case that already ended.
-
-The escalation reasons of an attempt that a document asks for begin `rerun_`,
-as a send-back's begin `send_back_`. The console and every consumer must
-declare the same egress adapter. The page reads the console's declaration,
-and the scan reads the consumer's.
-
-A scan reads ten waiting re-runs per pass, the ones it read longest ago first.
-So a re-run that waits or faults cannot hold the others up. After a fault, no
-scan reads the re-run again for a minute per fault, ten at most. The case page
-says how often the consumer fails to start it.
-
-A publish waits five seconds at most for a lock or a statement. Past that it
-writes nothing, and the page says to publish again. The same post twice from
-one case publishes once, and the console logs the second as
-`console_publish_repeated`. The console refuses a post with the same title and
-answer that differs otherwise. Such a post is a second copy of one answer.
-
-The consumer logs these events:
-
-| Event | Fields |
-|---|---|
-| `reruns_started` | `requests`: the documents whose attempt started |
-| `reruns_dropped` | `requests`, each with `docId` and `reason` |
-| `reruns_failed` | `requests`: the documents whose embedding failed |
-| `reruns_unsettled` | `requests`, each with `docId` and `error`. The request waits for the next scan |
-| `rerun_scan_failed` | `error`, a fault of the ledger that settles no request |
-
-Read the requests that are still waiting:
-
-```sh
-psql "$DATABASE_URL" -c \
-  "SELECT doc_id, run_id, attempt, requested_at FROM document_rerun WHERE status = 'waiting';"
-```
-
-Every process listens on each connection to the ledger, and on its pool. A
-connection can fail when the ledger restarts, fails over or ends the session.
-A statement it was running fails as usual, and that failure is the report.
-The process also logs `db_client_failed` once the connection is gone. That
-line can follow the statement's own failure. It holds the process, the reason,
-and `held`: whether a caller had the connection when the event arrived.
-
-Without the listeners Node ends the process. That ends the console with every
-page, or a consumer in the middle of a scan.
-
 The split discipline holds (DEC-31). Calibration reads only the fit half. The
 gold report reads only the report half. A threshold picked on the report cases
 inflates every published number. Never fit and publish on the same cases.
@@ -1010,8 +1032,8 @@ history each job also opens the other file, to prove the two are disjoint. It
 reads identifiers from that file and never a case. So a case-level leak still
 needs a code change and cannot happen by accident.
 
-Calibration needs `OPENROUTER_API_KEY`. It classifies each fit-half ticket
-through the classifier port. Replay needs no network access. The induction job
+Calibration needs `OPENROUTER_API_KEY`. It classifies each case of the fit
+half through the classifier port. Replay needs no network access. The induction job
 also needs the key. It accepts optional `CHAT_MODEL_VER` (default
 `openai/gpt-4o-mini`) and `EMBED_MODEL_VER`
 values.
@@ -1025,8 +1047,72 @@ Confidence measures how sure the classifier is.
 It does not measure what a mistake costs.
 So a person assigns the tier from the cost of an error, not from a score.
 
-Rerun `pnpm run gold-report` after a change to a gate or to the model. Rerun it
-only when the change should move a published number.
+Run `pnpm run gold-report` again after a change to a gate or to the model. Run
+it again only when the change should move a published number.
+
+### Artifacts on disk
+
+A corrupt artifact stops the process. It does not fall back to the seeds. A
+truncated write must not read as "not calibrated yet" behind a gate that still
+looks healthy.
+
+Artifacts under `calibration/` are run output and the repository ignores them.
+Never commit one. A committed artifact reaches every checkout and moves each
+adopter's gates to numbers fitted on somebody else's corpus. Each deployment
+runs `pnpm run calibrate` against its own fit half.
+
+Never rename an artifact by hand. The loader picks the file by its name and
+reads the version from inside it. It refuses a file where the two disagree.
+Copy the whole `calibration/` directory instead.
+
+Keep one file per version. A case-sensitive filesystem holds `v1.json` and
+`V1.json` as two files, and both name version 1. The loader refuses that
+directory, because nothing records which file a gate read.
+
+A file the loader refuses also stops `pnpm run calibrate`. The job cannot
+write its way out of the fault, so remove the file the message names. The job
+reads the directory before it samples, so a fault costs no model call.
+
+The gold report, the triage job and the coverage fit apply the same rules.
+Each reads its own directory before its own loop.
+One scan and one pre-check serve them all.
+
+### When the coverage fit refuses
+
+`pnpm run fit-groundedness` makes one model call per claim, so a full fit half
+takes hours. It can refuse, and a refusal is a result.
+
+The job refuses when the measured coverage of a grounded draft and an
+ungrounded one do not separate. Any candidate would satisfy a threshold
+there, so the message names the coverage values both classes share. Read
+that as a fault in the judge or the corpus, not in the job.
+
+It also refuses when the two thresholds land on one value. Architecture
+section 4.7 needs three outcomes, and a single value gives two. The gate then
+escalates everything or runs everything automatically, and no draft reaches a
+person. That happens when the judge scores no draft as ambiguous. Widen the
+corpus, or keep the seeds.
+
+The block value is the lowest that holds its floor, not the highest. The groundedness gate escalates a draft
+under it. That draft never reaches a person as a draft to approve. A person still handles the escalation, and
+`pnpm run escalations` lists it.
+
+The thresholds decide the automatic path only.
+DEC-12 gates a customer reply before the gate reads either one. It reaches a
+person whatever its coverage. The review band is what puts an internal draft
+in front of a person. A larger blocked band leaves fewer drafts a person
+can approve. That is the opposite of what the band is for.
+
+The artifact reports coverage for each grade of unsupported claim. An
+`unstated_detail` names a specific the document gestures at and never states,
+and it is the grade that matters. A fit whose separation comes from the easy
+grades alone protects nothing. The per-grade figures are how you see it.
+
+A job creates and reads the directory before it spends, and reads it again to
+mint the version it writes. The first step creates the directory the way the
+writer does. So a revoked permission on the parent faults before the first
+model call. A file dropped in during a run still costs that run. The check
+removes a directory that is unusable before the run, not every fault.
 
 ## 6. The real-corpus curation loop
 
@@ -1042,7 +1128,7 @@ Set `CORPUS_FETCH_CMD` to a mailbox reader command. It prints one JSON
 object per line. Each object holds a `sourceId` and the full RFC 5322 text
 in `rfc5322Text`.
 
-Emit both sides of each thread. The export models turns now, so an agent
+Emit both sides of each conversation. The export models turns, so an agent
 reply becomes the reply to the turn it answered (DEC-37). Set
 `CORPUS_AGENT_ADDRESSES` to your support addresses, separated by commas.
 Mail ingress marks every inbound message as the customer. Without this list
@@ -1057,7 +1143,7 @@ pnpm run export-corpus
 The command feeds every message through the IMAP poller path. It writes one
 record per customer turn to `corpus/history-<date>.json`. It refuses any other
 output directory, because the file holds real customer text (DEC-18). Records of one
-thread share a `conversation_id` and count from turn 1. Each record carries
+conversation share a `conversation_id` and count from turn 1. Each record carries
 `intent: 'unlabeled'` until you label it.
 
 Turn order comes from each message's own Date header. The header must state a
@@ -1065,7 +1151,7 @@ zone. A date without one resolves against the clock of the machine you run the
 export on. That is a fact about the machine and not about the message, so it
 counts as unreadable.
 
-A thread where one message states no readable date falls back to delivery
+A conversation where one message states no readable date falls back to delivery
 order. The export reports every fallback, and it reports every message it
 dropped. A dropped message may have no body text or come from neither
 party. It may also be an agent message that precedes every customer turn.
@@ -1086,20 +1172,18 @@ pnpm run induce -- corpus/taxonomy-candidates-real.json
 The job embeds each first turn and clusters the embeddings. A model gives
 each cluster a name. Its output is a candidate list only.
 
-Later turns are excluded. A follow-up names no topic of its own. A cluster of
+The job excludes later turns. A follow-up names no topic of its own. A cluster of
 follow-ups therefore spends one of the 25 intents on a group no person can
 name (DEC-10). The job prints how many turns it excluded.
 
-A corpus file written before the export modeled turns fails to load. The
-message says a record names no conversation. Run Step 1 again to replace the
-file. Older exports hold no turn structure and nothing can add it after the
-fact.
+A corpus file with no `conversation_id` fails to load, and the message says a
+record names no conversation. Run Step 1 again to replace the file.
 
 ### Step 3: Review the candidate clusters (human)
 
-Open the candidate file. Read the sample threads of each cluster. Decide for
+Open the candidate file. Read the sample conversations of each cluster. Decide for
 each cluster: keep, merge with another cluster, or fold into `other`. Examine
-the `other` group before you decide. A thread that fits no cluster goes there.
+the `other` group before you decide. A conversation that fits no cluster goes there.
 
 ### Step 4: Curate the taxonomy (human)
 
@@ -1109,9 +1193,9 @@ intent (DEC-13). Keep the total at or below 25 intents including `other`
 
 ### Step 5: Label the stratified sample (human)
 
-Draw a stratified sample over the risk tiers. For each sampled thread,
+Draw a stratified sample over the risk tiers. For each sampled conversation,
 record the intent from the curated taxonomy. Record also the queue that
-handled the thread. Then record the `escalated`, `macro_applied`,
+handled the conversation. Then record the `escalated`, `macro_applied`,
 `refund_issued` and `first_reply_minutes` values.
 
 These labels replace the placeholders that the exporter wrote. Split the
@@ -1146,18 +1230,14 @@ pair to the half that chose nothing, which is what makes the number publishable
 (DEC-31). It refuses the fit half outright.
 
 The two coverage jobs cost about the same. Each makes one model call per
-claim. So a half of this size is some four thousand calls across several
-hours.
+claim, so a half takes hours.
 
 Each job appends every scored draft to a resume file under `groundedness/`.
 A run that dies continues from where it stopped when you start it again.
-Three runs died before this existed, and each discarded every draft it had
-paid for. The causes were a provider having a bad hour, a connect timeout
-that outlasted every retry, and a killed shell.
 
 The file records a hash of each case identifier, never the identifier (DEC-18).
-Its header names the model, the prompt and the half. A file describing any
-other run is refused rather than mixed in. Samples from two runs would
+Its header names the model, the prompt and the half. The job refuses a file
+that describes any other run, rather than mix it in. Samples from two runs would
 publish a number from neither. Delete the file to start over, and set
 `GROUNDEDNESS_RESUME` to put it elsewhere.
 
@@ -1184,7 +1264,7 @@ The jobs also do not check where you keep the two halves. The export refuses
 to write outside `corpus/`; reading is your own path to name.
 
 The jobs refuse an overlap. Two halves that share a case fail, and so do two
-that share a conversation. A thread split across the halves would fit and
+that share a conversation. A conversation split across the halves would fit and
 publish on one customer's problem.
 
 The size rule of the shipped corpus does not apply here. Your halves hold
@@ -1204,7 +1284,6 @@ between runs passes every check and invalidates the pair.
 
 The published numbers in this repository stay synthetic. Your artifacts
 describe your deployment and nobody else's. Never commit one.
-
 
 ## 7. Observability
 
@@ -1248,7 +1327,7 @@ Read that line before you trust a gate number.
 ```
 
 A `gate_thresholds_seeded` line means no fit has run. The documented seeds of
-section 4.5 and section 4.7 apply. This is the ordinary state of a fresh
+architecture sections 4.5 and 4.7 apply. This is the ordinary state of a fresh
 checkout and it is not a fault.
 
 A `gate_thresholds_fitted` line names the artifact version behind the number.
@@ -1257,14 +1336,14 @@ A running process never re-reads the artifact, so a fit takes effect at the
 next start.
 
 Both gates have a job that fits them: `pnpm run calibrate` and
-`pnpm run fit-groundedness`. Both numbers now reach the runtime. Each gate
+`pnpm run fit-groundedness`. Both numbers reach the runtime. Each gate
 reads its own artifact and keeps its own seed when that artifact is absent.
 So one gate can run fitted beside a gate that runs seeded.
 
 Each gate logs a line of its own at startup. Read `gate_thresholds_fitted` or
 `gate_thresholds_seeded` for the agreement number. Read
 `coverage_thresholds_fitted` or `coverage_thresholds_seeded` for the pair.
-One line covering both gates could not report a mixed state.
+One line that covers both gates cannot report a mixed state.
 
 The gates stay independent. Neither artifact supplies a number to the other
 gate. No path joins a coverage value to an agreement value (DEC-05).
@@ -1277,77 +1356,15 @@ under.
 Read those two. The consumer checks the model behind a fitted coverage pair.
 It refuses to start when that model is not the one `MODEL_VER` names.
 
-A threshold is one model's judgement of what coverage means. A model that
+A threshold is one model's judgment of what coverage means. A model that
 reads claims more generously reaches the same number on weaker evidence.
 So a pair fitted under another pin runs a gate nobody measured (DEC-26).
 
 The refusal does not fall back to the seeds, and that is deliberate.
-The shipped seeds are looser than this repository's own fit.
-Falling back would open the gate wider at the moment it became unjustified.
+The shipped review seed is looser than this repository's own fit.
+Falling back opens the gate wider than the evidence supports.
 Re-fit with `pnpm run fit-groundedness`, or set `MODEL_VER` to the fitted pin.
 `pnpm run report-groundedness` refuses a pin mismatch for the same reason.
-
-A corrupt artifact stops the process. It does not fall back to the seeds. A
-truncated write must not read as "not calibrated yet" behind a gate that still
-looks healthy.
-
-Artifacts under `calibration/` are run output and the repository ignores them.
-Never commit one. A committed artifact reaches every checkout and moves each
-adopter's gates to numbers fitted on somebody else's corpus. Each deployment
-runs `pnpm run calibrate` against its own fit half.
-
-Never rename an artifact by hand. The loader picks the file by its name and
-reads the version from inside it. It refuses a file where the two disagree.
-Copy the whole `calibration/` directory instead.
-
-Keep one file per version. A case-sensitive filesystem holds `v1.json` and
-`V1.json` as two files, and both name version 1. The loader refuses that
-directory, because nothing records which file a gate read.
-
-A file the loader refuses also stops `pnpm run calibrate`. The job cannot
-write its way out of the fault, so remove the file the message names. The job
-reads the directory before it samples, so a fault costs no model call.
-
-The gold report, the triage job and the groundedness fit apply the same rules.
-Each reads its own directory before its own loop.
-One scan and one pre-check serve them all.
-
-### When the groundedness fit refuses
-
-`pnpm run fit-groundedness` makes one model call per claim, so a full fit half
-is roughly a thousand calls. It can refuse, and a refusal is a result.
-
-The job refuses when the measured coverage of a grounded draft and an
-ungrounded one do not separate. A threshold there would be satisfied by any
-candidate, so the message names the coverage values both classes share. Read
-that as a fault in the judge or the corpus, not in the job.
-
-It also refuses when the two thresholds land on one value. Section 4.7 needs three outcomes and a
-single value gives two. Everything is escalated or everything runs
-automatically, and no draft reaches a person. That happens
-when the judge scored no draft ambiguously. Widen the corpus, or keep the
-seeds.
-
-The block value is the lowest that holds its floor, not the highest. The groundedness gate escalates a draft
-under it. That draft never reaches a person as a draft to approve. A person still handles the escalation, and
-`pnpm run escalations` lists it.
-
-The thresholds decide the automatic path only.
-A customer reply is gated before either one is read (DEC-12). It reaches a
-person whatever its coverage. The review band is what puts an internal draft
-in front of a person. A larger blocked band leaves fewer drafts a person
-can approve. That is the opposite of what the band is for.
-
-The artifact reports coverage for each grade of unsupported claim. An
-`unstated_detail` names a specific the document gestures at and never states,
-and it is the grade that matters. A fit whose separation comes from the easy
-grades alone protects nothing. The per-grade figures are how you see it.
-
-A job creates and reads the directory before it spends, and reads it again to
-mint the version it writes. The first step creates the directory the way the
-writer does. So a revoked permission on the parent faults before the first
-model call. A file dropped in during a run still costs that run. The check
-removes a directory that was already unusable, not every fault.
 
 Every gate journal row records the numbers that decided it. A rolling restart
 gives one consumer a new fit while another still holds the old one. So two
@@ -1355,27 +1372,37 @@ identical tickets can decide differently for a legitimate reason. The journal
 row says which numbers each run applied.
 
 The gate row also records the risk tier it judged the intent at (DEC-13). A
-customer reply stops on its own rule before the high-risk rule runs. So the
-rule alone never marks a waiting reply as high risk, and the tier does. A gate
-row written before the gate recorded a tier has none. Its rule alone places
-that reply in the queue.
+customer reply stops on its own rule before the `high_risk` rule runs. So the
+rule alone never marks a waiting reply as high-tier. The tier does. A gate
+row with no tier places its reply in the queue by its rule alone.
 
 `pnpm run gold-report` reads the calibration artifact. A clean checkout carries none,
 so it scores through the seeds and the artifact says `gate_source: seed`. A
 machine that holds a fit publishes different rates. Its artifact names the
 version and the turn population behind them. The gate is part of the number.
 
+### When a connection to the ledger fails
+
+Every process listens on each connection to the ledger, and on its pool. A
+connection can fail when the ledger restarts, fails over or ends the session.
+A statement in progress on it fails as usual, and that failure is the report.
+The process also logs `db_client_failed` once the connection is gone. That
+line can follow the statement's own failure. It holds the process, the reason,
+and `held`: whether a caller has the connection when the event arrives.
+
+Without the listeners Node ends the process. That ends the console with every
+page, or a consumer in the middle of a scan.
 
 ### Control bands
 
-The file `bands.yaml` defines four metrics. The window is 30 days.
+The file `bands.yaml` defines the metrics and the window, in `window_days`.
 
 | Metric | Source | Direction |
 |--------|--------|-----------|
 | `abstain_rate` | composer and groundedness results | high is bad |
 | `gate_pass_rate` | classifier agreement gate | low is bad |
 | `approval_edit_distance` | `run.approval_edit_distance`, set at approval | high is bad |
-| `relay_delivery_unknown_count` | outbox delivery status | any nonzero count needs eyes |
+| `relay_delivery_unknown_count` | outbox delivery status | high is bad. Any count above zero needs a person to look |
 
 The bands define three actions:
 
@@ -1385,7 +1412,7 @@ The bands define three actions:
 
 #### Reading a day
 
-`pnpm run bands` reports all four metrics for one day.
+`pnpm run bands` reports every metric for one day.
 
 ```sh
 DATABASE_URL=... pnpm run bands
@@ -1397,8 +1424,8 @@ a SELECT, so it is safe against a live database. The default day is the most
 recent complete UTC day. A part of today compares against whole days, and
 every morning would then look like an excursion.
 
-The baseline covers the 30 most recent measured days before the day you
-asked for. It never includes that day. A day inside its own baseline pulls
+The baseline covers the most recent measured days of the window before the day
+you asked for. It never includes that day. A day inside its own baseline pulls
 the mean toward itself. So a bad day reads less bad the worse it gets.
 
 `bands.yaml` holds no baseline. `pnpm run bands` computes one from your ledger
@@ -1417,28 +1444,24 @@ The report states a band, or it states why it has none. It never states both.
 | `steady at 0 over 30 days` | The metric held one value all window, and today matches it. | Nothing. This is the healthy reading for the delivery count. |
 | `no spread over 30 days, and today moved to 3` | The metric held one value all window, and today left it. | Look now. There is no sigma to measure the step against. |
 | `the day measured a value that is not a number` | The ledger holds a value no arithmetic can use. | Read the ledger for that day. This needs a person. |
-| `the window spans more than one provider: stub and model` | The days compared did not all run against one model provider. | Wait out the window, or read the days on each side of the change separately. |
+| `the window spans more than one provider: stub and model` | The compared days span more than one model provider. | Wait out the window, or read the days on each side of the change separately. |
 
 Each line has a code in the artifact, in `shortfall_code`. Read that rather
 than the sentence if a tool consumes the file.
 
 The provider line has a cost worth knowing before you meet it. A band
-compares a day against the thirty before it. So a change of provider silences
-every metric until the window clears.
-
-Upgrading this software is such a change. A run records its provider from
-this version onward, and a run written before it recorded none. The first
-day carrying both is a day that disagrees with itself. The window covering
-that day emits no verdict for about a month.
+compares a day against the window before it. So a change of provider silences
+every metric until the window clears. A run with no recorded provider differs
+from every run that has one. So a window that holds both kinds emits no
+verdict until it clears.
 
 The artifact names the day's own provider in `provider`. It reads `mixed` when
 the day's runs disagreed, and null when none of them recorded one. An artifact
-written before the field existed has no `provider` key, and the reader treats
-that as null.
+with no `provider` key reads as null.
 
-The baseline is 30 daily samples, not 30 calendar days. The job reads 60 days
-to find them. A quiet day yields no sample. So demanding 30 consecutive days
-would let one quiet weekend blind the band for a month.
+The baseline counts daily samples, not calendar days. The job reads 60 days,
+`LOOKBACK_DAYS` in `src/bands/metrics.ts`, to find them. A quiet day yields no sample. A rule of consecutive days
+lets one quiet weekend blind the band for a whole window.
 
 #### The counts beside each metric
 
@@ -1452,9 +1475,8 @@ would follow your traffic mix instead of the classifier.
 `still to land` counts runs whose contribution may still arrive. It sits
 beside the two values that settle late, and the next section explains them.
 
-`unrecorded` counts runs whose journal cannot answer. A run written before the
-gate step recorded which rule decided carries no such answer. The count falls
-to zero as the ledger turns over. A high count means the numbers rest on few
+`unrecorded` counts runs whose journal cannot answer. A gate row that names no
+rule carries no such answer. A high count means the numbers rest on few
 runs, so read the `over N runs` figure beside them.
 
 #### Two values that settle late
@@ -1514,10 +1536,7 @@ The `escalate` journal row names the cause.
 The turn stays open to a new attempt. A later message on the conversation parks one.
 A send-back still refuses while the mail adapter's draft is in Drafts.
 
-An image built before migration 040 does not read `not_sent`.
-Before you deploy one, list the `not_sent` records, because its escalations list omits them.
-
-A status of `fenced` means the fence moved past a record whose run was still in flight.
+A status of `fenced` means the fence moves past a record whose run is still in flight.
 The relay sends nothing, and the record keeps the key a re-run would collide with.
 It moves the run to `escalated` with the cause, so a person decides what happens to that action.
 
@@ -1535,7 +1554,7 @@ coordinator can record appears below. A queued message that failed
 | `limit_clock` | The run reached its deadline. | Run `pnpm run latency`. A high service time on one partition is the model; a high queue wait is the partition falling behind. |
 | `composer_abstained` | The composer could not cite every claim. | A knowledge gap. Write or correct the document. |
 | `policy_escalated` | A gate or the policy rules sent the action to a person. | Read the draft and decide. |
-| `park_unresolved` | An approval could not be parked. | Check the egress adapter. |
+| `park_unresolved` | The coordinator could not park the approval. | Check the egress adapter. |
 | `egress_refused` | The egress refused, and a retry can never clear it. | Fix the target system or the action. |
 | `classifier_unreadable` | Every classifier sample came back unreadable, so agreement measured nothing. | An answer budget too small for the model. Check `MODEL_VER` and the budget it needs. |
 | `classifier_no_label` | Samples were readable and named no intent this taxonomy holds. | A taxonomy or prompt fault, not a budget one. Compare the answers against `fixtures/taxonomy.json`. |
@@ -1551,9 +1570,12 @@ rather than record one. `classifier_no_label` is not one of them: those
 samples were readable.
 
 The last reason names this system rather than a model, a limit or a target
-system. Four checks raise it. A step read a value the step before it never
-wrote. A transition addressed a run row the ledger does not hold. The gate met
-an intent the taxonomy does not define. A final step asked the run to go on.
+system. These checks raise it.
+
+A step reads a value the step before it does not
+write. A transition addresses a run row the ledger does not hold. The gate
+meets an intent the taxonomy does not define. A final step asks the run to go
+on. A newer walk cannot hand the turn back to the run that parked its draft.
 
 The escalate row carries a `fault` field beside the reason. It holds the
 message of the check that refused. The reason alone names no step and no
@@ -1562,48 +1584,54 @@ prints it in the JSON output, and under the table with `--pretty`. A retry
 never clears one of these, so the run escalates and the queued message is
 acked.
 
-One of the four reaches no terminal state. It is the check that says the run
-row is gone. The escalation moves that same missing row, so it fails again.
-The escalate row is still written, because the journal holds no foreign key to
-the run. The queue selects runs by state, so it cannot show that row. Read
-`step_journal` directly when a consumer logs this message and the queue shows
-nothing.
+One of them reaches no terminal state. It is the check that says the run
+row is gone. The hand-back says the run "could not hand its turn back". It
+fails the same way when the row of the walking run is gone, and otherwise it
+escalates. Each escalation tries to move that missing row, so it fails
+again.
+
+The journal still records the escalate row, because it holds no foreign key
+to the run. The queue selects runs by state, so it cannot show that row. Read
+`step_journal` directly when a consumer logs either message and the queue
+shows nothing.
 
 The journal entry carries the shape of the fault. It also carries
 `costUnknown` when the provider reported no cost for the call it refused.
 
 The shapes are `truncated` (the answer budget ran out) and `no-content`
-(the response carried no text). `no-cost`, `no-usage`, `no-choices`,
-`no-choice`, `no-message`, `no-data`, `no-item`, `no-vector` and
-`bad-vector` mean the response had a shape this system cannot read.
+(the response carried no text). A third group names a response this system
+cannot read. It holds `no-cost`, `no-usage`, `no-choices`, `no-choice`,
+`no-message`, `no-data`, `no-item`, `no-vector`, `bad-vector` and
+`bad-index`.
 `empty` means the model answered nothing. `no-verdict` and `conflicting`
 mean the judge named no verdict, or two. `no-label` means no sample named
 a known intent.
 
-The coverage fit retries a transport fault five times before it gives up.
-It waits four times longer after each attempt, because the faults arrive in
-clusters. A run over the whole fit half makes some four thousand calls across
-hours.
-An answer the provider will reproduce is not retried. That draft is dropped
-and counted, and the attrition ceiling decides whether the run still means
-anything.
+Both coverage jobs try a draft five times on a transport fault. Then the job
+stops, and a new start continues from the resume file. A retry asks each
+claim of that draft again, so one fault can repeat earlier calls. Each job
+waits four times longer after each try, because the faults arrive in
+clusters.
+The job does not retry an answer the provider reproduces. It drops that
+draft and counts it, and the attrition ceiling decides whether the job's result still
+means anything.
 
 Both coverage jobs write each draft to a resume file as that draft lands.
 A run that dies continues from there instead of starting over.
 The file records the model, the prompt and the half.
-It also records what the judge was asked, so an edited claim retires it.
-A file from another run is refused rather than mixed in.
+It also records what the job asks the judge, so an edited claim retires it.
+The job refuses a file from another run, rather than mix it in.
 A run that cannot write that file stops rather than carry on uncheckpointed.
 
-Four messages come from that file. Each names its own remedy.
+These messages come from that file. Each names its own remedy.
 
 `is held by a running job` means another run already owns the file.
 Both runs would pay for every draft the other has not finished.
 Wait for the first run, or set `GROUNDEDNESS_RESUME` to another path.
-A lock whose owner is gone is taken over, so a crash needs no cleanup.
+The job takes over a lock whose owner is gone, so a crash needs no cleanup.
 
 `ends in a partial line` is the normal message after a killed run.
-The torn line is dropped and every draft before it is kept.
+The job drops the torn line and keeps every draft before it.
 
 `describes a different run` means the model, prompt or half changed.
 `was scored against different claims` means the corpus changed under them.
@@ -1613,8 +1641,16 @@ Delete the file to start over, once you know which run you want.
 `the resume file could not be written` stops the run on a disk fault.
 Fix the disk and start again. The drafts already recorded are still there.
 
+Three messages mean the file is damaged: `does not begin with a run header`,
+`holds a line this job cannot read` and `holds a row whose sample this job
+cannot read`. Delete the file to start over.
+
+An operating-system error that names the file, such as `EACCES`, `ENOSPC` or
+`EIO`, is a disk or permission fault. Fix it and start again. Do not delete
+the file, because it holds drafts that already cost model calls.
+
 Both jobs report what they spent in micro-dollars.
-A faulted draft and a retried attempt cost money nothing can attribute.
+A faulted draft and a retried call cost money nothing can attribute.
 The figure then says it is a floor and not a total.
 
 The classifier samples nine times, so one run can meet several shapes.
@@ -1622,7 +1658,91 @@ It names the shape that the most samples reported.
 A tie breaks on the shape name.
 So the order the provider answered in never decides your remedy.
 
-## 7.0 The operator console
+### Seeing a partition fall behind
+
+One consumer owns each partition (DEC-27). A slow run therefore holds up every
+ticket behind it in that partition. The register calls this head-of-line delay
+and says V1 does not correct it.
+
+Intake signals the consumer when a message arrives, so the consumer does not
+sleep through it. A healthy partition therefore reads a queue wait far below
+`CONSUMER_INTERVAL_MS` at `p50` and at `p95`. What remains is the signal and
+the pickup. No published figure states that number, because no measurement
+here comes from a live deployment.
+
+Read the partitions against each other, as everywhere else in this section.
+An absolute number is not the signal. One partition sitting well above the
+others is.
+
+`CONSUMER_INTERVAL_MS` is the ceiling for a lost signal. A partition whose
+`p50` sits near half that value loses its signal. Every partition
+sitting there means the database refuses the listener. Check the consumer log
+for `arrival_signal_lost` or `arrival_signal_unavailable`.
+
+`pnpm run latency` shows it. The job reads the ledger as the readers' role,
+through `READER_DATABASE_URL`, and writes `latency/vN.json`.
+
+```sh
+pnpm run latency
+pnpm run latency --since 2026-09-01T00:00:00Z
+```
+
+Its one statement is a SELECT, so it is safe against a live database. It
+writes nothing to the ledger. The statement runs alone in one READ ONLY
+transaction, with a 60-second timeout.
+
+It reports two quantities per partition. The queue wait is the time from a
+ticket arriving to a consumer picking it up. The service time is the time from
+pickup to a terminal state. The two separate a slow model from a busy queue.
+
+Read the partitions against each other, not the totals.
+
+| What you see | What it means | What you do |
+|---|---|---|
+| One partition's wait far above the others | Head-of-line delay. A slow run is holding up its queue. | Read `pnpm run escalations` for a run stuck in that partition. |
+| Every partition's wait `p50` near half `CONSUMER_INTERVAL_MS` | The arrival signal is down. Every consumer is back on the poll. | Check the consumer log for `arrival_signal_lost`, then the database. |
+| Every partition's wait rising together, above the poll ceiling | Not head-of-line delay. The system is behind overall. | Add consumers, or look at intake volume. |
+| Wait low and service high | The queue is fine and the work is slow. | Check the provider and the deadline setting. |
+| Service `max` far above `p99` | A few runs are much slower than the rest. | Read the journal for those runs. |
+
+The last row needs a hundred finished runs in the partition before it says
+anything. Below that count `p99` selects the maximum itself, so the two agree
+by construction. `p95` needs twenty for the same reason.
+
+Each figure is a duration some run actually recorded, not an interpolation
+between two of them. Percentiles, never an average: a partition whose every
+hundredth ticket waits an hour has an unremarkable mean.
+
+Read the counts beside the figures. A `p99` over four runs is not a `p99`.
+
+`--since` filters on pickup time, not on arrival. So a run picked up before
+the window and still running falls outside it. That is the run holding up
+a partition. Drop the window when you hunt a stalled one.
+
+#### The counts beside the figures
+
+The job reports six counts rather than folding them into the figures. Each
+names one cause, because each sends you somewhere different.
+
+| Count | What it means | What you do |
+|---|---|---|
+| `unmeasured` | The run carries no arrival time, so it has no wait. | Nothing, unless it grows. A run with no intake row reaches this. |
+| `unordered` | The pickup precedes the arrival, or the finish precedes the pickup, so the figure is not a duration. | Check clock synchronization between the ingress host and the consumer host. |
+| `unfinished` | The run is not in a terminal state. | This separates an idle partition from a stalled one. Both show few finished runs. |
+| `unstamped` | The run carries no finish time. | Nothing, unless it grows. |
+| `never_ran` | The run reaches a terminal state without executing, such as an intake abandonment. | Read `pnpm run escalations`. This count rises when a partition is failing. |
+| `snoozed` | A reviewer puts the case aside (DEC-48). Its duration is the wait, not work. | Nothing. It is the wait the distribution leaves out, and it falls as reviewers answer those cases. |
+
+A run the job cannot measure never enters a figure as a zero. A zero would
+flatter exactly the runs the ledger understands least.
+
+The job observes. It does not correct the delay. V2 open item 7 stays
+open until an adopter chooses a correction on data like this.
+`docs/v2-roadmap.md` states what that choice needs.
+
+## 8. The operator console
+
+### Starting the console
 
 The console reads the ledger and approves a parked draft. It is a separate
 package, so nothing it needs reaches the daemons.
@@ -1630,23 +1750,26 @@ package, so nothing it needs reaches the daemons.
 ```sh
 pnpm install
 pnpm run build
-pnpm --filter @auracle/console build
 DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle \
 READER_DATABASE_URL=postgres://auracle_reader:auracle_reader@localhost:5433/auracle \
+CONSOLE_IDENTITY_HEADER=<header-your-proxy-sets> \
   pnpm --filter @auracle/console start
 ```
 
-The console is its own package, so the root build does not build it. Run both
-build steps.
+`pnpm run build` compiles the core and the console together, because the
+solution references both. Without an identity source, the console refuses
+every request. The README's Quickstart uses `CONSOLE_DEV_REVIEWER` from source
+instead, for a checkout.
 
 It listens on 127.0.0.1:8787. Set `CONSOLE_PORT` and `CONSOLE_HOST` to change
 that.
 
-The console reads no `.env` file, as `pnpm run escalations` and `pnpm run
-triage` do not. Name `DATABASE_URL` and `READER_DATABASE_URL` on the command
-line, as above. It refuses to start without either, or when it cannot reach a
+The console reads no `.env` file. Name `DATABASE_URL` and
+`READER_DATABASE_URL` on the command line, as above. It refuses to start without either, or when it cannot reach a
 ledger through either. So a wrong URL fails at startup rather than one page at
-a time. Section 2 says how the readers' role gets its login.
+a time. "The readers' role" says how the role gets its login.
+
+### Host checks and the trusted proxy
 
 The console answers only the host names it was started for. It refuses a
 form post that did not come from one of its own pages. Those two checks stop
@@ -1668,21 +1791,22 @@ Each entry is a host and a port, exactly as the browser sends it. Omit the
 port only for port 80 or 443. An unnamed proxy gets every request refused,
 and the console still looks healthy from the machine it runs on.
 
-Naming any host replaces the derived names. The variable used to add to them,
-so the console still answered `Host: localhost:8787`. A caller who reached
-the port directly then passed the check and skipped the proxy. Name loopback
-as well if you want it, and the list then says so.
+Naming any host replaces the derived names, so a loopback name no longer
+passes. That stops a browser attack, not a caller who chooses its own `Host`
+header. Only a network that lets nothing but the proxy reach the port keeps a
+caller from skipping the proxy. Name loopback as well if you want it, and the
+list then says so.
 
 A read from a script needs no header. An approval does: send
 `Sec-Fetch-Site: same-origin`, or an `Origin` the console answers to. Every
 browser sends one of the two, and a page that did not come from this console
 can send neither.
 
-Binding to loopback is not a defence. Any page the operator has open can
+Binding to loopback is not a defense. Any page the operator has open can
 post to a loopback port. A name an attacker controls can resolve to
 127.0.0.1. That gives their page a same-origin handle on this console. A
 reverse proxy that authenticates does not help either, because the browser
-it is being used through is already authenticated.
+it acts through is already authenticated.
 
 The console holds no credential of its own. It serves nothing to a request
 with no active reviewer behind it, and a trusted proxy authenticates that
@@ -1695,15 +1819,21 @@ strip any copy a client sent.
 A client that reaches the port directly is served when it sends the header
 itself. The console cannot tell that request from a proxied one.
 
-Eleven surfaces read live data. The queue, one case, the runs and one run in
+### The surfaces and the rail
+
+These surfaces read live data: the queue, one case, the runs and one run in
 detail. One conversation and one document. The knowledge screen, the team
 screen and the routing screen. The control bands and the partition latency.
 
-The rail holds seven of them and the design notes, in three groups. Work holds
-the queue, named Needs a person, which a reviewer comes to clear. Knowledge
+The rail is the navigation column at the left of every page. It holds most of
+the surfaces and the design notes, in groups.
+
+Work holds the queue, named Needs a person, which a reviewer comes to clear. Knowledge
 holds the knowledge screen, named Knowledge base, and the team screen. Admin
 holds the routing screen, the runs, the bands and the latency. Admin also holds
 the design notes. The rail draws no group that has no surface.
+
+### The knowledge screen
 
 The knowledge screen is at `/knowledge`. It counts the cases a gap blocks over
 the last 14 days (DEC-50). A case is a turn, or a run with no turn. A run of it
@@ -1771,13 +1901,17 @@ outcome. Each also holds the lengths of the title and the answer, never their
 text. A fault logs `console_publish_failed` with a tag, and the page names the
 tag.
 
+### The team screen
+
 The team screen is at `/team`. It shows how few cases reach the team, and how
 long a case holds one of its people. Every figure comes from the ledger.
 
 A case is a turn, and its final attempt decides how it ends, as `pnpm run bands`
-counts one. A run with no turn is its own case. One rule differs from bands: a
-run that its twin superseded never stands for its attempt. A stranded walk
-that a new walk hands back leaves such a twin. The screen sorts each case by
+counts one. A run with no turn is its own case.
+
+One rule differs from bands. A run can strand partway, and a newer run of the
+same attempt then hands the turn back to it. The newer run, superseded, never
+stands for its attempt. The screen sorts each case by
 how it ends:
 
 | Ending | The final run |
@@ -1795,11 +1929,11 @@ names it. This is a live figure, and it is not the published
 containment figure. That figure comes from the gold report.
 
 The second card gives the team's time on support over the last seven days. It
-adds the hold intervals from the hold history (DEC-46). An interval runs from a
+adds the reservation intervals from the reservation history (DEC-46). An interval runs from a
 take or a handover to the next event on the case. No interval runs past its
 lapse, so a lapse the console notices late adds no time.
 
-An open hold ends at the lapse its take recorded. An event records no lapse. So
+An open reservation ends at the lapse its take recorded. An event records no lapse. So
 a closed interval ends at most one lapse after it starts, at the console's
 current setting.
 
@@ -1812,7 +1946,8 @@ it. A row for each active reviewer follows. It gives the products they cover,
 their cases, their time, the documents they wrote and what they hold now. The
 roster's products order the queue and grant no access.
 
-A bar for each product then splits its cases into the first three endings. A
+A horizontal bar for each product then splits its cases into the first three
+endings. A
 legend names each part in words, and the row gives each count in words. A
 product with no case draws a sentence and no bar. Every figure with no record
 is a sentence, never a zero.
@@ -1821,6 +1956,8 @@ A fault reading the screen logs `console_team_unread`, and the page names the
 tag. The page gives up on the read after six seconds, as the knowledge screen
 does. The log line then names the wait it gave up on. A fault that arrives
 later logs `console_read_late_fault` with the same wait, and gives the reason.
+
+### The routing screen
 
 The routing screen is at `/routing`. It shows what each product may do without
 a person, and it writes nothing. It offers no toggle, threshold or new product.
@@ -1845,14 +1982,13 @@ the run, the intent and the error code.
 
 Code `55P03` is a wait for a lock. The gate record then catches up at the next
 gate of that product and intent. Any other code repeats at every gate until
-someone fixes it, so treat it as a fault. A consumer on the old image writes no
-gate record either, until the upgrade ends.
+someone fixes it, so treat it as a fault.
 
 The threshold is the one in force for that run. The row says whether the fit
 chose it for the intent (DEC-41). When a rule stops a run, the gate does not
 compare its agreement, and the row says so. A rule that stops an action
 whatever the gates read means the product may not act alone. The rules are a
-customer reply, an irreversible action, a high-risk intent and a missing
+customer reply, an irreversible action, a high-tier intent and a missing
 adapter capability. When no rule stops the run, the gates decide, so the
 product may act when both pass.
 
@@ -1863,7 +1999,7 @@ it can read no journal row of an intent, the row gives the count instead of a
 record. The first row, any reply to a customer, is fixed. Nobody can change
 it, and it names DEC-12 as its reason.
 
-An intent that the gate records and the taxonomy no longer lists has no row.
+An intent that the gate records and the taxonomy does not list has no row.
 The product's list gives the count of those intents.
 
 The backfill keeps each intent in the classifier's spelling. The gate keys it
@@ -1880,9 +2016,13 @@ a consumer retries. A run with no arrival time counts from its start.
 A fault reading the screen logs `console_routing_unread`, and the page names
 the tag.
 
+### The design notes
+
 The design notes are at `/notes`, and the page reads no ledger. Each card states
 one rule the console keeps, and the reason for it. A card joins the page only
 when the console makes it true. So a card ships with the feature it describes.
+
+### Addresses
 
 The console opens on the queue, at `/`. The runs list is at `/runs`. Each case
 has its own page, at `/case/<run>`. `/?state=` redirects to `/runs` and keeps
@@ -1890,6 +2030,8 @@ its query. `/approvals` redirects to `/` and keeps the queue filter.
 
 A queue link that names a run, `/?run=<run>` or `/approvals?run=<run>`, opens
 that case in one redirect. A value that is not a run id opens the queue.
+
+### Reviewers and identity
 
 A reviewer is an operator who approves a reply, and the roster holds the ones
 that may. Every request resolves to one before the console builds any page, a
@@ -1916,9 +2058,10 @@ instance.
 It also refuses a variable holding both that header and a development
 reviewer, because those are two topologies.
 
-Three commands change the roster. `pnpm run reviewers -- --add <identity>`
-adds a reviewer, and reactivates a deactivated one. `--deactivate <identity>`
-deactivates one. `--list` prints the roster with each date.
+Two commands change the roster, and a third prints it.
+`pnpm run reviewers -- --add <identity>` adds a reviewer, and reactivates a
+deactivated one. `--deactivate <identity>` deactivates one. `--list` prints
+the roster with each date.
 
 A console run from source on loopback may serve as one identity instead, named
 by `CONSOLE_DEV_REVIEWER`. It is for working on the surfaces without a proxy.
@@ -1934,23 +2077,27 @@ that decode as UTF-8 as UTF-8, and any other bytes as Latin-1. A Latin-1 name
 whose bytes also form valid UTF-8 therefore reads as UTF-8. Such a name is
 rare.
 
-The queue names the product of each waiting case (DEC-47). A chip per
-product carries the count of the whole queue. The console reads the channel
+### The queue and reservations
+
+The queue names the product of each waiting case (DEC-47). A chip, a small
+filter button, for each product carries the count of the whole queue. The console reads the channel
 map for the product labels, at the path `PRODUCTS_FILE` names. It refuses to
 start when that file is unreadable, as the ingress processes do.
 
-A case holds one reviewer at a time. Taking it marks it held for twenty
-minutes. The queue shows the others who holds it, and how long is left. Set
+One reviewer holds a case at a time. Taking it reserves it for twenty
+minutes. The queue shows the others who holds the reservation, and how long is
+left. Set
 `CONSOLE_HOLD_LAPSE_MS` to another period.
 
-A hold lapses on its own when nobody acts on the case. Any reviewer may still
-approve a case somebody else holds, because the hold refuses no write.
+A reservation lapses on its own when nobody acts on the case. Any reviewer
+may still approve a case somebody else holds, because the reservation refuses
+no write.
 
 A second reviewer takes it over from the case page, after confirming. A holder
 may hand the case to a teammate on the roster, or release it. Taking another
 case releases the first.
 
-The case header shows the hold and the case's place in its queue. That place
+The case header shows the reservation and the case's place in its queue. That place
 counts the cases the queue offers with its filters and its sort. It leaves out
 a case somebody else holds.
 
@@ -1958,13 +2105,16 @@ a case somebody else holds.
 passes over a case somebody holds and a case you hold already. It never takes
 a case over. A row's Take holds that one case.
 
-The case's bar holds one row of controls and the send warning. Close, snooze,
+The action bar at the foot of the case holds one row of controls and the
+send warning. Close, snooze,
 hand over, rewrite and send back each open their form at the head of the case.
 
 A case opens from its row on the queue. A conversation and a document open from
 the run that names them. The ledger orders conversations by when a problem
 opened. That is not when one last needed attention, so a listing would sort by
 the wrong thing.
+
+### Keyboard and the pinned script
 
 The console ships one script, and no more. It lights the document a claim
 cites. On the queue it moves on j and k, and c takes the focused case. Enter
@@ -1984,13 +2134,16 @@ Without the script, the approval still refuses a change nobody saved. The send
 posts the editor's text. The approval refuses a text that differs from the
 one the editor drew, says why, and sends nothing.
 
-The script is pinned by a hash of its own text. So a script the page did not
+A hash of its own text pins the script. So a script the page did not
 ship cannot run, and neither does one injected into a page.
 
-The hash is computed from the script at startup, not written down. So the two
+The console computes the hash from the script at startup. Nobody writes it
+down. So the two
 cannot drift apart. Neither can they catch an edit. A changed script gets a
 changed hash and runs. The bound is what a page may execute, not what a
 build may change.
+
+### The runs list and the queue order
 
 The runs surface filters by state. Each state in the ledger has a link, and
 the link asks the ledger for that state. It does not hide rows after the read.
@@ -2005,7 +2158,7 @@ until the cookie says otherwise.
 The queue sorts by risk first, by age, or by your products first. The sort is
 a cookie too, so a take, a filter and the theme keep it. Risk first keeps the
 groups. The other two list every case nobody else holds in one order, with
-held cases last.
+reserved cases last.
 
 Only risk first draws the clean group. So the batch confirm and its `a` key
 exist under risk first alone. The queue legend names `a` only there.
@@ -2023,7 +2176,7 @@ lists every one.
 
 The queue draws three groups, in the order a reviewer works them. The first
 holds a case that the rule `irreversible` or `high_risk` stopped. It also holds
-a case whose gate row records a high-risk intent, and a parked compensation.
+a case whose gate row records a high-tier intent, and a parked compensation.
 The second, Both gates clean, holds a case whose agreement and coverage each
 cleared their own line. The third holds every other waiting case. The oldest
 case comes first in each group.
@@ -2066,6 +2219,8 @@ The rail also names the ledger the console is bound to. It names the host and
 the database, never the credentials. A refused request gets no rail at all, so
 it learns no database name.
 
+### The run detail and the case page
+
 The run detail surface reads one run's journal. It shows the steps the run
 journals and the documents the retriever returns. It shows the two gate values
 beside the thresholds that judged them.
@@ -2099,8 +2254,8 @@ fault reading the run names a log tag too, and shows no outcome. The
 approval's answer is then on its `console_approved` or `console_approve_failed`
 log line.
 
-The steps are a timeline with no durations. The approval sits in a bar at the
-foot of the window. Its warning says whether the act can be undone. A run that
+The steps are a timeline with no durations. The approval sits in the action
+bar. Its warning says whether an undo can reverse the act. A run that
 is not waiting opens too. Its header says when the run opened, and its bar says
 there is nothing to approve.
 
@@ -2110,8 +2265,8 @@ person. It names how long the run has waited.
 It names the agreement and the coverage as well, and whether each one decided
 anything.
 
-The gate row records both values on every run. A customer reply is gated before
-the engine reads either threshold (DEC-12). So most of a queue carries numbers
+The gate row records both values on every run. DEC-12 gates a customer reply
+before the engine reads either threshold. So most of a queue carries numbers
 that judged nothing, and the row marks each such number `not read`. The
 case's gate panel says the same, so the row and the case agree.
 The rule comes from the gate row, not the escalate row. A run awaiting a
@@ -2131,8 +2286,8 @@ to read. The payload names the amount and the target.
 That payload can name an account. The console serves it to an active reviewer
 only, so put the console behind a proxy that authenticates one (DEC-45).
 
-The warning says whether the act can be undone. A sent reply cannot be
-recalled. A compensation cannot be undone either, because the coordinator
+The warning says whether an undo can reverse the act. Nobody can recall a
+sent reply. No undo reverses a compensation either, because the coordinator
 judges that class irreversible. It sends at most once, so an unconfirmed send
 escalates (DEC-30).
 
@@ -2143,9 +2298,9 @@ can stop on a rule that says nothing about permanence.
 A case reads one journal, for its own run. The queue reads none. Reading one
 for every waiting run would be a statement for each row of an uncapped list.
 
-The reply is drawn sentence by sentence, because those sentences joined are the
-draft. Each claim carries the document it cites. A claim the judge did not
-support is marked, and a claim nobody judged is marked apart from it. Those are
+The page draws the reply sentence by sentence, because those sentences joined
+are the draft. Each claim carries the document it cites. A claim the judge does not
+support carries a mark, and a claim nobody judges carries a different mark. Those are
 different facts, and only the first is a warning.
 
 Each sentence also carries a word: accepted, refused, not judged or courtesy.
@@ -2165,10 +2320,12 @@ The heading says the system drafted this reply. It does not say the reply will
 be sent. The relay sends the helpdesk copy, and a person may have edited it
 since (DEC-11).
 
-The conversation surface reads a thread by turn. Each turn shows its number,
+### The conversation surface
+
+The conversation surface reads a conversation turn by turn. Each turn shows its number,
 the time its message arrived and a chip for what became of it. The chip says
-`auto-answered` for a resolved run with no approver and no reply text. A run
-approved before `db/016` with no reply text reads the same way. A reply with
+`auto-answered` for a resolved run with no approver and no reply text. An
+approved run with no reply text reads the same way. A reply with
 text says `approved`, because every customer reply waits for a person (DEC-12).
 A turn no run joins says `no run`, and a waiting turn says `waiting for you`.
 
@@ -2198,7 +2355,8 @@ already waits with the reply. It stops `superseded`, and its run page names that
 same kind of reason for a waiting run it ends.
 
 Two walks of one message on one ticket can overlap. A rebalance or a crash
-retry causes this. The older walk parks a draft and then stops stale (DEC-28).
+retry causes this. The older walk parks a draft, and then its stale epoch
+stops it (DEC-28).
 
 The newer walk gives the turn back to the older run. That run then waits for a
 person with its own draft. The newer run stops, and its run page says
@@ -2210,8 +2368,8 @@ that write. A stale walk stops there and makes no draft. Its park row records
 `superseded`. A marker the ledger accepted stays until the park records its
 outcome. A newer walk that finds that marker escalates as `park_unresolved`.
 
-A turn can still hold two waiting runs. Runs parked before this rule can do
-so, and so can two tickets of one conversation. The approval and the consumer
+A turn can still hold two waiting runs. Two tickets of one conversation can do
+so. The approval and the consumer
 hold such a turn to one reply. On a helpdesk that takes no idempotency key, the
 second draft stays until a person deletes it.
 
@@ -2219,17 +2377,18 @@ The heading over reply text says what the customer has, and reads the row alone.
 "The system replied" needs approved text and a sent row. A pending row says the
 send is pending. A malformed row says the relay never sent the reply, because
 the relay refuses that row before any send. A `not_sent` row says the same,
-because the adapter shows that no attempt reached the customer. A turn with no row says only that a
-person approved the reply.
+because the adapter shows that no delivery reaches the customer. A turn with
+no row says only that a person approved the reply.
 
 A fenced row or an unknown row says nobody can confirm the delivery. The relay
 can fence a row after a send that timed out (DEC-28). That send may have
 reached the customer.
 
-The surface also names why a turn shows no reply, and ten reasons exist.
+The surface also names why a turn shows no reply. These are the reasons.
 
-An internal write answered, and no reply went to the customer. A person approved
-an action and no reply text was recorded. A run stopped. A run is still running.
+An internal write answers, and no reply goes to the customer. A person approves
+an action, and the ledger holds no reply text. A run stops. A run is still
+running.
 
 Three reasons say a parked run waits for a person, and the park's journal row
 says which. A reply is drafted in the helpdesk (DEC-11). An action waits with no
@@ -2248,9 +2407,11 @@ A reply a person approved with no text gets a sentence too. Two more reasons
 say why a turn shows no message. Nobody kept it, or the customer wrote nothing.
 None of these draws a blank.
 
+### The document surface
+
 The document surface shows one document of the index. A citation is worth
-showing only if a person can check it. The text is today's, because the index is rewritten in
-place. A run detail says whether the body moved since that run read it.
+showing only if a person can check it. The text is today's, because the
+loader rewrites the index in place. A run detail says whether the body moved since that run read it.
 
 One block of the design does not ship. It needs data the ledger does not hold.
 
@@ -2264,6 +2425,8 @@ No document carries a rank. The retriever fuses ranks and keeps no score
 that list, and nothing stored names which order this is. So the surface shows the
 recorded position and calls it that. It names no channel either, because
 naming the fusion would claim the fusion set the order.
+
+### What the console logs and refuses
 
 The console trims an escalation reason at its first colon. The coordinator writes a
 reason from a closed set. The relay and the consumer interpolate a message
@@ -2301,13 +2464,17 @@ The console shows this, so an operator reading it reads what the ledger holds.
 State the position before you carry real traffic (DEC-17, DEC-19).
 
 The table names each place that holds text a customer wrote, would read, or is
-named in. Each lives for the life of its row, and nothing removes any of it.
+named in. Nothing removes any of it by age. A send-back clears the reply a
+person saves on its turn, as described below. An undo clears the approved
+reply and deletes the outbox record that holds the reply.
 
 | Where | What | Written by |
 |---|---|---|
 | `turn.body_text` | the inbound message | intake, on every turn |
 | `turn.approved_reply_text` | the reply an approval dispatched | the approval path alone |
 | `turn.saved_reply_text` | the reply a reviewer edited and saved | the console's save |
+| `outbox.reply` | the reply text the relay sends from a record, when the ledger holds it (DEC-44) | the approval path |
+| `intake.ticket_text` | the inbound message, until the consumer acks or abandons it | intake, on every message |
 | `step_journal.result` on `park` | the drafted reply | every gated run |
 | `step_journal.result` on `park` | the fault an adapter raised | a park the adapter refused |
 | `step_journal.result` on `compose` | the reply, sentence by sentence | every run that composed |
@@ -2320,10 +2487,16 @@ named in. Each lives for the life of its row, and nothing removes any of it.
 | `document.embedding_error` | the provider's message when an embedding call fails, which may quote any document of the same call | every consumer. The knowledge screen and the case page show it to reviewers |
 | `document.title` and `document.body` on a console row | a document a reviewer wrote from a case. The check refuses the case's own identifiers, not a name or other personal data | the console's publish |
 | `step_journal.result` on `send_back` | the title of the document whose publishing asked for the attempt | the consumer's re-run scan |
+| `step_journal.result` on `retrieve` | the title of each document the run read, a reviewer's words when the document comes from a case | every run that retrieved |
 
 A failed call records one message on every document it carries, so a waiting
 document's row can quote another. Removing a document does not clear such a
-quote from the others. Return them to pending, as above, to clear it.
+quote from the others. This statement clears it for one document:
+
+```sh
+psql "$DATABASE_URL" -c \
+  "UPDATE document SET embedding_error = NULL WHERE doc_id = '<doc-id>';"
+```
 
 The knowledge screen shows the message of a failed document only. A document
 fails on its third refused call, and after its first failure it goes to the
@@ -2342,10 +2515,11 @@ The park fault and the escalation reason hold an address rather than a message.
 An adapter builds a fault naming the expected recipient, and an SMTP rejection
 quotes one. Both reach a journal row verbatim.
 
-A close reason is a reviewer's own words, and it can quote the customer. It is
-recorded on the run, and the console draws it on the case.
+A close reason is a reviewer's own words, and it can quote the customer. The
+journal records it on the run, and the console draws it on the case.
 
-A send-back note is a reviewer's own words too. It is written in two places.
+A send-back note is a reviewer's own words too. The console writes it in two
+places.
 The next attempt reads `run.send_back_note` as an instruction. The journal row
 records who asked. Clearing the column stops a later attempt from reading it.
 Clearing the journal row removes the copy a person reads.
@@ -2355,11 +2529,18 @@ what it cleared in `clearedReply`, on the same row. `clearedBy` and
 `clearedBySource` name who saved it. They are an operator's identifier, kept
 as `run.approved_by` is, so the statement below leaves them. The approval
 prefers the saved text over the new attempt's reply, so the save cannot stand.
-The key is in the statement above for that reason.
+The journal statement below clears `clearedReply` for that reason.
 
-`intake.ticket_text` holds the inbound message as well, and is not listed. The
-consumer deletes that row on the ack and on the abandon, so it clears itself.
-A message stuck in retry holds text until one of those happens.
+The consumer deletes the `intake` row on the ack and on the abandon. So the
+row clears itself, and no statement below names it. A message stuck in retry holds
+text until one of those happens.
+
+No statement below removes a document a reviewer writes from a case, either.
+Such a document answers later cases, so it outlives the case it comes from. The
+console refuses one that names the case's own identifiers.
+
+Remove such a document by hand when it holds other personal data. "Removing a
+document written from a case" below gives the steps.
 
 The sentences are the reply. So a run that composed holds a drafted reply,
 whether or not a person saw one. An automatic run holds one although it sent
@@ -2389,10 +2570,12 @@ UPDATE turn
  WHERE created_at < now() - interval '90 days';
 
 -- The drafted reply, the cited document bodies, the adapter fault, the
--- escalation reason, the close reason and the send-back note, past 90 days.
+-- escalation reason, the close reason, the send-back note and the title of
+-- a document written from the case, past 90 days.
 UPDATE step_journal j
    SET result = j.result - 'body' - 'sentences' - 'claims' - 'citedBodies'
                          - 'error' - 'reason' - 'note' - 'clearedReply'
+                         - 'documentTitle'
   FROM run r
  WHERE r.run_id = j.run_id
    AND j.step_id IN ('park', 'compose', 'escalate', 'close', 'send_back')
@@ -2404,43 +2587,372 @@ UPDATE run
    SET send_back_note = NULL
  WHERE created_at < now() - interval '90 days';
 
--- The participant of a conversation nobody will add a turn to.
-UPDATE conversation
+-- The reply a record carried, once the relay is done with it, past 90 days.
+UPDATE outbox o
+   SET reply = NULL
+  FROM run r
+ WHERE r.run_id = o.run_id
+   AND o.status <> 'pending'
+   AND r.created_at < now() - interval '90 days';
+
+-- The participant of a conversation with no turn and no run in 90 days. No
+-- code moves a conversation out of `open`, so the statement reads activity,
+-- not state. It keeps a participant while the conversation holds text or has
+-- open work, as the consumer reads it.
+UPDATE conversation c
    SET customer_address = NULL
- WHERE state <> 'open'
-   AND opened_at < now() - interval '90 days';
+ WHERE c.opened_at < now() - interval '90 days'
+   -- No turn that is recent, holds text, or waits for another attempt.
+   AND NOT EXISTS (
+         SELECT 1 FROM turn t
+          WHERE t.conversation_id = c.conversation_id
+            AND (t.created_at >= now() - interval '90 days'
+                 OR t.body_text IS NOT NULL
+                 OR t.approved_reply_text IS NOT NULL
+                 OR t.saved_reply_text IS NOT NULL
+                 OR (t.attempt > 1
+                     AND NOT EXISTS (
+                           SELECT 1 FROM run e
+                            WHERE e.conversation_id = t.conversation_id
+                              AND e.turn_number = t.turn_number
+                              AND e.attempt >= t.attempt
+                              AND e.state IN ('awaiting_approval', 'snoozed', 'resolved',
+                                              'escalated', 'superseded', 'abandoned', 'closed')))))
+   -- No queued message that holds text.
+   AND NOT EXISTS (
+         SELECT 1 FROM intake i
+          WHERE i.conversation_id = c.conversation_id
+            AND btrim(i.ticket_text) <> '')
+   -- No run that is recent or parked.
+   AND NOT EXISTS (
+         SELECT 1 FROM run r
+          WHERE r.conversation_id = c.conversation_id
+            AND (r.created_at >= now() - interval '90 days'
+                 OR r.state IN ('awaiting_approval', 'snoozed')))
+   -- No document request that waits, or whose attempt has started and not landed.
+   AND NOT EXISTS (
+         SELECT 1 FROM document_rerun q
+          WHERE q.conversation_id = c.conversation_id
+            AND (q.status = 'waiting'
+                 OR (q.status = 'started'
+                     AND NOT EXISTS (
+                           SELECT 1 FROM run s
+                            WHERE s.conversation_id = q.conversation_id
+                              AND s.turn_number = q.turn_number
+                              AND s.attempt >= q.started_attempt
+                              AND s.state IN ('awaiting_approval', 'snoozed', 'resolved',
+                                              'escalated', 'superseded', 'abandoned', 'closed')))));
 ```
 
-Each one leaves the keys a reader joins on. A cleared `turn` keeps its number
-and its ticket, so a conversation still shows the turn and names the absence.
-A cleared `park` row keeps `draftExternalId`, so an approval still derives its
-idempotency key. A cleared `compose` row keeps `claimCount`, so the coverage a
-gate recorded still has a denominator.
+Run the five statements in the order shown, with one retention period for all
+five. The participant statement then finds each turn already cleared.
+
+The participant statement keeps a participant while the conversation holds text
+or has open work. Open work is a parked run or a turn due another attempt. A
+document request that waits, or whose attempt has not landed, is open work too.
+Such a conversation keeps its participant past the retention period, until that
+work ends.
+
+The consumer files a run each time it walks a turn. It walks one for a new
+message, a new attempt or a document's attempt. The retention period then
+starts again from that run. A person who approves or closes a parked run files
+no run, and neither does a request the scan drops. After the five statements
+run, this query lists each conversation that still keeps one:
+
+```sql
+SELECT conversation_id
+  FROM conversation
+ WHERE opened_at < now() - interval '90 days'
+   AND customer_address IS NOT NULL;
+```
+
+Each statement leaves the keys a reader joins on. A cleared `turn` keeps its
+number and its ticket, so a conversation still shows the turn and names the
+absence. A cleared `park` row keeps `draftExternalId`, so an approval still
+derives its idempotency key. A cleared `compose` row keeps `claimCount`, so the
+coverage a gate recorded still has a denominator.
 
 Clearing an escalation reason costs an operator the word that named it. The
 escalations report reads that key, so a cleared run reports no reason. Choose
 the age with that in mind, or leave `reason` and accept the addresses it can
 carry.
 
-Four statements, and one of them reads runs rather than turns. The three
-turn, journal and conversation statements read three clocks: the turn's, the run's and the
-conversation's. A turn older than the window whose run is a recent retry loses
-its message and keeps the drafted reply.
+The five statements read three clocks. The turn statement reads the age of the
+turn. The journal, run and outbox statements read the age of the run. The
+conversation statement reads the age of the conversation, its last turn and its
+last run. Take an old turn whose run is a recent retry. It loses its message
+and keeps the drafted reply.
+
+The outbox statement leaves a pending record alone, because the relay still
+has to send it.
+
+Clearing a participant has a cost. Intake fills an empty participant from the
+next sender who names an address, and never overwrites a recorded one. A
+message joins a conversation when the message names one of the conversation's
+message ids or its ticket. The sender supplies both. The webhook checks
+neither until you set `WEBHOOK_SECRET`, and the mail path checks neither at
+all. So after the purge, these things hold:
+
+- Anyone who names a message id or the ticket of the conversation joins it.
+- A sender with no address joins without claiming it. Further senders can
+  join until one with an address claims it.
+- Before a claim, a reply parks with no recipient check, because the
+  participant is empty. The draft answers the earlier customer. Mail
+  addresses the author of the original thread, and FreeScout addresses the
+  customer of its helpdesk conversation. A person still approves it.
+- The first sender with an address claims it. The earlier customer then
+  writes into a new conversation.
+- After a claim, the recipient check refuses each reply to the claimant on
+  that thread at park. The thread still belongs to the earlier customer.
+
+The participant statement waits until no turn or queued message holds text. So
+the model drafts for whoever claims the conversation, and reads no earlier
+message. Choose the retention period with these costs in mind.
 
 The `retrieve` row keeps the title and owner of each document the run read.
-Those are corpus metadata rather than a customer's words, so no statement here
-removes them.
+For a corpus document those are metadata rather than a customer's words, so no
+statement here removes them. Clear the title of a document written from a case
+when you remove that document, as the next part says.
 
 Clearing a draft does not reach the helpdesk. The draft parks there as well
 (DEC-11), and the adapter's own retention governs that copy.
 
-**The console writes the ledger in twelve places.** Each one is named here.
+#### Removing a document written from a case
+
+Every run that reads such a document keeps copies of it in the journal. The
+`retrieve` row keeps its title, and the `compose` row keeps its whole body
+under `citedBodies`. A `send_back` row keeps its title too. The document's
+re-run request also points at it. This block clears those copies of the
+title and body, and then the document, in one transaction. Replace
+`<doc-id>` with the document's id in every place.
+
+```sql
+BEGIN;
+
+UPDATE step_journal
+   SET result = jsonb_set(result, '{documents}', (
+         SELECT jsonb_agg(CASE WHEN d->>'docId' = '<doc-id>' THEN d - 'title' ELSE d END)
+           FROM jsonb_array_elements(result->'documents') d))
+ WHERE step_id = 'retrieve'
+   AND result->'documents' @> jsonb_build_array(jsonb_build_object('docId', '<doc-id>'));
+
+UPDATE step_journal
+   SET result = jsonb_set(result, '{citedBodies}', (result->'citedBodies') - '<doc-id>')
+ WHERE step_id = 'compose' AND result->'citedBodies' ? '<doc-id>';
+
+UPDATE step_journal
+   SET result = result - 'documentTitle'
+ WHERE step_id = 'send_back' AND result->>'document' = '<doc-id>';
+
+-- Wait for a consumer that is starting this document's request, so the check
+-- below reads the status it commits. The lock comes last, so a repeat post
+-- that waits on it waits only for the deletes.
+SELECT 1 FROM document_rerun WHERE doc_id = '<doc-id>' FOR UPDATE;
+
+DO $$
+BEGIN
+  -- Refuse an id that names no document written from a case.
+  IF NOT EXISTS (SELECT 1 FROM document WHERE doc_id = '<doc-id>' AND source = 'console') THEN
+    RAISE EXCEPTION 'the id names no document written from a case';
+  END IF;
+  -- Refuse while the attempt that the document's re-run request names has
+  -- started and not landed. A run at that attempt lands when it parks or
+  -- ends. Deleting the request before then leaves a turn that no scan walks.
+  -- A waiting request has started nothing, so the block deletes it.
+  IF EXISTS (
+    SELECT 1 FROM document_rerun q
+     WHERE q.doc_id = '<doc-id>' AND q.status = 'started'
+       AND NOT EXISTS (SELECT 1 FROM run r
+                        WHERE r.conversation_id = q.conversation_id
+                          AND r.turn_number = q.turn_number
+                          AND r.attempt >= q.started_attempt
+                          AND r.state IN ('awaiting_approval', 'snoozed', 'resolved',
+                                          'escalated', 'superseded', 'abandoned', 'closed'))
+  ) THEN
+    RAISE EXCEPTION 'the attempt the document''s re-run request names has not landed; run this again once it has';
+  END IF;
+END $$;
+
+-- Clear again any copy that an attempt of the request's own turn writes while
+-- the statements above run. That turn has few runs, so the lock stays short.
+UPDATE step_journal
+   SET result = jsonb_set(result, '{documents}', (
+         SELECT jsonb_agg(CASE WHEN d->>'docId' = '<doc-id>' THEN d - 'title' ELSE d END)
+           FROM jsonb_array_elements(result->'documents') d))
+ WHERE step_id = 'retrieve'
+   AND result->'documents' @> jsonb_build_array(jsonb_build_object('docId', '<doc-id>'))
+   AND run_id IN (SELECT r.run_id FROM run r JOIN document_rerun q
+                    ON r.conversation_id = q.conversation_id AND r.turn_number = q.turn_number
+                  WHERE q.doc_id = '<doc-id>');
+
+UPDATE step_journal
+   SET result = jsonb_set(result, '{citedBodies}', (result->'citedBodies') - '<doc-id>')
+ WHERE step_id = 'compose' AND result->'citedBodies' ? '<doc-id>'
+   AND run_id IN (SELECT r.run_id FROM run r JOIN document_rerun q
+                    ON r.conversation_id = q.conversation_id AND r.turn_number = q.turn_number
+                  WHERE q.doc_id = '<doc-id>');
+
+UPDATE step_journal
+   SET result = result - 'documentTitle'
+ WHERE step_id = 'send_back' AND result->>'document' = '<doc-id>'
+   AND run_id IN (SELECT r.run_id FROM run r JOIN document_rerun q
+                    ON r.conversation_id = q.conversation_id AND r.turn_number = q.turn_number
+                  WHERE q.doc_id = '<doc-id>');
+
+DELETE FROM document_rerun WHERE doc_id = '<doc-id>';
+DELETE FROM document WHERE doc_id = '<doc-id>';
+
+-- The time the block commits, from the database clock. The wait below starts
+-- here. `now()` would give the time the block began.
+SELECT clock_timestamp() AS removed_at;
+
+COMMIT;
+```
+
+Save the block to a file and run it with
+`psql -v ON_ERROR_STOP=1 "$DATABASE_URL" -f <file>`. A refusal raises before
+the block commits, and the transaction rolls back, so nothing changes.
+
+A reviewer can repeat the post of the document while the block runs. While the
+block clears the journal, the console tells such a repeat that the document is
+published. The block then removes the document. Once the block holds the lock,
+a repeat waits, and then refuses, and the console draws no form.
+
+A repeat during the journal pass can also ask an ended request again. If the
+consumer starts that request before the block takes its lock, the block
+refuses, and nothing changes. Run it again once that attempt parks or ends.
+
+The repeat waits five seconds at most, the bound of every publish. The console
+tells a repeat that waits longer that the case is busy. A reviewer whom the
+console tells this can post the same form again at any later time. That post
+writes a new document. So tell the reviewers of the case before you run the
+block.
+
+So note the case before you run the block. This query gives the run that wrote
+the document. No row means the id names no document written from a case, so
+stop. It also means the block has run already. Then skip the query of published
+documents, and still do the wait and the check for late copies below:
+
+```sql
+SELECT q.run_id
+  FROM document_rerun q
+ WHERE q.doc_id = '<doc-id>';
+```
+
+After the block commits, this query lists every document the case publishes. It
+reads that run and every run of the same conversation. Read each one. Remove
+any that holds the removed text, with the block, under its own id. Run the
+query again later, because a reviewer can post again.
+
+```sql
+SELECT d.doc_id, d.title, d.created_at
+  FROM document d JOIN document_rerun q ON q.doc_id = d.doc_id
+ WHERE d.source = 'console'
+   AND (q.run_id = '<run-id>'
+        OR q.conversation_id = (SELECT conversation_id FROM run WHERE run_id = '<run-id>'))
+ ORDER BY d.created_at;
+```
+
+A run that reads the document before the block commits can write a copy after
+it. Its `compose` row keeps the body under `citedBodies`, and its `retrieve`
+and `send_back` rows keep the title. A run that the consumer starts while the
+block clears the journal can write them too.
+
+A run that parks or ends writes no more copies. A run still walking after three
+hours has stopped mid-walk, and writes none either. The consumer's own re-run
+rule reads it the same way. That holds while `TICKET_DEADLINE_MS` stays below
+three hours. This query lists each run that is still walking:
+
+```sql
+SELECT run_id, state, created_at
+  FROM run
+ WHERE state NOT IN ('awaiting_approval', 'snoozed', 'resolved',
+                     'escalated', 'superseded', 'abandoned', 'closed')
+   AND created_at > now() - interval '3 hours'
+ ORDER BY created_at;
+```
+
+The block prints `removed_at`, the time it commits. Wait until the query lists
+no run created before that time. Then run the first three journal statements
+of the block again, with the same id. This query
+lists each journal row that still holds a copy:
+
+```sql
+SELECT run_id, step_id
+  FROM step_journal
+ WHERE (step_id = 'compose' AND result->'citedBodies' ? '<doc-id>')
+    OR (step_id = 'send_back' AND result->>'document' = '<doc-id>' AND result ? 'documentTitle')
+    OR (step_id = 'retrieve' AND EXISTS (
+          SELECT 1 FROM jsonb_array_elements(result->'documents') d
+           WHERE d->>'docId' = '<doc-id>' AND d ? 'title'));
+```
+
+This query shows each request of the document, and the state of each run at the
+attempt it names. A request that is not `started` does not hold the block back.
+A started one holds it back until one of its runs is parked or terminal. An
+empty `state` on a started request means no run at that attempt exists yet.
+
+```sql
+SELECT q.status, q.started_attempt, r.state
+  FROM document_rerun q
+  LEFT JOIN run r ON r.conversation_id = q.conversation_id
+                 AND r.turn_number = q.turn_number
+                 AND r.attempt >= q.started_attempt
+ WHERE q.doc_id = '<doc-id>';
+```
+
+A drafted or sent reply can quote the document, and the block leaves that
+reply. In the journal, the reply lives in the `compose` sentences and the
+`park` draft. In the ledger outside the journal, it lives in `outbox.reply` and
+in the turn's `approved_reply_text` and `saved_reply_text`. The age statements
+above clear each of those once it is past the retention period. The outbox
+statement clears a record only once the relay is done with it.
+
+Some copies stay outside the ledger:
+
+- The draft or sent message in the helpdesk or the mailbox. The adapter's own
+  retention governs it.
+- The five `documents_embedding_*` log events, which keep up to 500
+  characters of the provider's message. The log's own retention governs
+  them.
+- A file `pnpm run export-corpus` has already written. It copies the mailbox
+  it reads, sent replies included when that mailbox holds them. Delete or
+  rewrite it by hand.
+- The model provider. The title and body go to it in each embedding call.
+  They also go in the composer prompt and each groundedness call of every run
+  that retrieves the document. OpenRouter and the model vendor it routes to
+  each keep their own copy, under their own retention. Ask each to delete it
+  where its terms allow.
+- Base backups, archived write-ahead logs and delayed replicas. Each keeps
+  the deleted rows until it expires. A streaming replica replays the deletes.
+- The live database's own pages. A plain `VACUUM` lets later writes reuse the
+  space of the deleted rows, and the old bytes stay until then. `VACUUM FULL`
+  on `document` and `step_journal` rewrites each table without them.
+
+A failed embedding call can quote the document in another document's
+`embedding_error`. This query lists every other document that holds such a
+message. Read each message. Where one quotes the document, run the
+`embedding_error` statement after the table above. Give it the id of the
+document that holds the message.
+
+```sql
+SELECT doc_id, embedding_error
+  FROM document
+ WHERE doc_id <> '<doc-id>' AND embedding_error IS NOT NULL;
+```
+
+`src/conversation/retention.db.test.ts` runs the removal block against a
+seeded ledger.
+
+### What the console writes
+
+**The console writes the ledger in these places.**
 
 It approves a reply, saves an edited reply, and rewrites one from scratch. It
 closes a case with no reply. It puts a case aside for a period, and sends one
 back for a new attempt. It publishes a document written from a case. It takes
 a case, releases a case, and hands a case to a teammate. It also clears every
-hold whose period has run out, and takes a send back inside its hold.
+lapsed reservation, and undoes an approval inside its hold period.
 
 Every other statement it issues is a SELECT. So it is otherwise as safe
 against a live database as `pnpm run bands` and `pnpm run latency`. That
@@ -2448,8 +2960,8 @@ claim is its own, not inherited. `console/src/select-only.test.ts` refuses
 any SQL keyword in the package, and a call to `pool.query`. It holds every
 write to the one module that makes it.
 
-A console read runs read-only when it goes through `boundedRead`. Nine reader
-modules read that way. Four of them are the run journal, the conversation, the
+A console read runs read-only when it goes through `boundedRead`. The reader
+modules read that way, among them the run journal, the conversation, the
 document and the latency report. Each such read runs in one READ ONLY
 transaction, and each statement goes out alone. The helper refuses a statement
 that does not start as a read before it sends one. So the database refuses a
@@ -2458,16 +2970,16 @@ write to a table from these readers.
 Each such read also discards its session state before the pool takes the
 connection back. A console read that does not go through `boundedRead` uses a
 plain connection, with no statement timeout and no discard. One of them
-writes: the case page's hold read clears every hold whose period has run out.
+writes: the case page's reservation read clears every lapsed reservation.
 
 READ ONLY does not refuse every effect. A function can still act on another
 session. A superuser's session can still write to the catalog or create a
 replication slot. The readers' role holds none of those rights, so the
-database refuses them. Section 2 describes that role.
+database refuses them. "The readers' role" describes it.
 
 Each reader that goes through `boundedRead` sets its own statement timeout.
-The latency report uses sixty seconds, and each other one uses two. The statements of
-one read share a client deadline one second longer than that timeout. The end
+The latency report uses sixty seconds, and each other one uses two. The
+statements of one read share a client deadline one second longer than that timeout. The end
 of the read, its commit or rollback and the discard, shares one more deadline
 of that length. Each read waits at most three seconds for a pool connection.
 
@@ -2475,6 +2987,8 @@ A read that outlasts a bound fails, and the console logs the failure with a
 tag. A page that cannot draw without the read answers with an error. A page
 that can draw without it marks that part as not read. The error page, and each
 part marked as not read, names the tag.
+
+### Approving and reading the draft back
 
 Approving in the console calls the same function `pnpm run approve` calls.
 So the transaction and the fencing epoch are the same whichever path an
@@ -2510,15 +3024,15 @@ The command line prints both texts with each hidden character as an escape.
 It also prints each backslash twice, so `C:\files` in a reply appears as
 `C:\\files`. The text the relay sends holds one backslash.
 
-The approval reads the copy once, before its transaction opens. An edit that
-lands after that read is not seen by anything. The relay posts what the outbox
+The approval reads the copy once, before its transaction opens.
+Nothing sees an edit that lands after that read. The relay posts what the outbox
 record holds, and a capable adapter declares no read-back at the send (DEC-30).
 Treat an edit in that window as lost. When two people work one case, edit the
 reply from the console.
 
-On every other adapter the case says the reply is edited in the helpdesk, and
-the console offers no editor. A member of staff who typed there would write
-text that never sends. A sent reply cannot be recalled (DEC-12).
+On every other adapter the case says a person edits the reply in the
+helpdesk. The console offers no editor there. A member of staff who typed there would write
+text that never sends. Nobody can recall a sent reply (DEC-12).
 
 The console reads the draft back when `APPROVE_ADAPTER` names `imap-smtp` or
 `freescout`. That is the path `pnpm run approve --read-back` takes. The approval
@@ -2562,8 +3076,9 @@ reason that is not an edit. So a case that names such a copy says the read
 failed, and the log line carries the size.
 
 Four seconds sits inside the console's five-second shutdown grace. The rest of
-the grace is for the approval's own statements. A transaction that asks for
-a connection after the pool closed is refused, and commits nothing.
+the grace is for the approval's own statements. The pool refuses a
+transaction that asks for a connection after it closes, and that transaction
+commits nothing.
 
 The FreeScout adapter refuses a redirect. Its API key is a header of its own.
 Fetch keeps such a header on a redirect to another host. The refusal names the
@@ -2587,132 +3102,72 @@ request came from.
 The console never parks a draft. A draft parks in the helpdesk and nowhere
 else (DEC-11, DEC-40).
 
-## 7.1 Seeing a partition fall behind
+### Confirming a group, and taking it back (DEC-51)
 
-One consumer owns each partition (DEC-27). A slow run therefore holds up every
-ticket behind it in that partition. The register calls this head-of-line delay
-and says V1 does not correct it.
+The queue's clean group carries a checkbox per case and one confirm button.
+The button posts the picked cases to a confirmation screen, and that screen
+draws every reply in full. Confirming approves each case in turn.
 
-Intake signals the consumer when a message arrives, so the consumer does not
-sleep through it. A healthy partition therefore reads a queue wait far below
-`CONSUMER_INTERVAL_MS` at `p50` and at `p95`. What remains is the signal and
-the pickup. No published figure states that number, because no measurement
-here has taken it from a live deployment.
+The clean group holds customer replies alone. An internal write parks no reply
+and gets no hold period (DEC-34). So it waits in the rest of the queue. A person
+approves it on its own case page. The console refuses a batch that names one.
 
-Read the partitions against each other, as everywhere else in this section.
-An absolute number is not the signal. One partition sitting well above the
-others is.
+Each send waits `CONSOLE_SEND_HOLD_MS` before the relay may post it. The
+default is twelve seconds, and the success panel counts it down on an undo
+button. No reply reaches a customer inside the hold period.
 
-`CONSUMER_INTERVAL_MS` is the ceiling for a lost signal. A partition whose
-`p50` sits near half that value has lost its signal. Every partition
-sitting there means the database refused the listener. Check the consumer log
-for `arrival_signal_lost` or `arrival_signal_unavailable`.
+The panel says what the ledger holds, and not what the approval asked for. The
+panel calls a batch sent only when the ledger shows a send for each record. Otherwise the panel
+says how many records the relay has sent, and that the rest wait for their
+hold period. A hold period the console cannot read
+draws the undo without a countdown.
 
-`pnpm run latency` shows it. The job reads the ledger as the readers' role,
-through `READER_DATABASE_URL`, and writes `latency/vN.json`.
+The console refuses a value above five minutes, and says so at startup. The
+bound keeps a mistyped millisecond count from parking replies with nobody
+told. The relay skips a record in its hold period and sends it later. A record
+with a one-day hold period therefore waits in silence.
 
-```sh
-pnpm run latency
-pnpm run latency --since 2026-09-01T00:00:00Z
-```
+The undo removes every effect of the approval, and returns the run to the
+waiting queue. It refuses after the hold period ends, or once the relay acts
+on the record in any way. It refuses a case that holds no approval too. Each refusal has its
+own words, and names why the undo cannot run. One says the relay has already
+acted on the reply, sent or not.
+Another says the relay may send it at any moment.
 
-Its one statement is a SELECT, so it is safe against a live database. It
-writes nothing to the ledger. The statement runs alone in one READ ONLY
-transaction, with a 60-second timeout.
+A batch and its undo each write one line: `console_confirmed` and
+`console_undone`. A case that failed on its own gets its own line,
+`console_confirm_case_failed` or `console_undo_case_failed`, naming the run.
+A page that cannot read a hold period says so, and logs `console_sendhold_unread`.
 
-It reports two quantities per partition. The queue wait is the time from a
-ticket arriving to a consumer picking it up. The service time is the time from
-pickup to a terminal state. The two separate a slow model from a busy queue.
+A reply on the helpdesk-draft path gets no hold period and no undo. A person can send
+that draft from the helpdesk at any moment. So no undo can promise that no
+reply goes out.
 
-Read the partitions against each other, not the totals.
+Set the period to `0` to send at once. The panel then offers no undo, and it
+says so rather than drawing a button that cannot work.
 
-| What you see | What it means | What you do |
-|---|---|---|
-| One partition's wait far above the others | Head-of-line delay. A slow run is holding up its queue. | Read `pnpm run escalations` for a run stuck in that partition. |
-| Every partition's wait `p50` near half `CONSUMER_INTERVAL_MS` | The arrival signal is down. Every consumer is back on the poll. | Check the consumer log for `arrival_signal_lost`, then the database. |
-| Every partition's wait rising together, above the poll ceiling | Not head-of-line delay. The system is behind overall. | Add consumers, or look at intake volume. |
-| Wait low and service high | The queue is fine and the work is slow. | Check the provider and the deadline setting. |
-| Service `max` far above `p99` | A few runs are much slower than the rest. | Read the journal for those runs. |
+## 9. The phase model
 
-The last row needs a hundred finished runs in the partition before it says
-anything. Below that count `p99` selects the maximum itself, so the two agree
-by construction. `p95` needs twenty for the same reason.
+DEC-20 gives two phases, and section 5 of the register states each one.
+Phase 1 is replay. No ticket reaches a live customer, and you prepare the
+taxonomy, the labels and the fitted thresholds. Phase 2 is live with gates:
+the system does internal writes automatically, and each customer reply parks
+for approval.
 
-Each figure is a duration some run actually recorded, not an interpolation
-between two of them. Percentiles, never an average: a partition whose every
-hundredth ticket waits an hour has an unremarkable mean.
-
-Read the counts beside the figures. A `p99` over four runs is not a `p99`.
-
-`--since` filters on pickup time, not on arrival. So a run picked up before
-the window and still running falls outside it. That is the run holding up
-a partition. Drop the window when you hunt a stalled one.
-
-## 7.2 The counts beside the figures
-
-The job reports five counts rather than folding them into the figures. Each
-names one cause, because each sends you somewhere different.
-
-| Count | What it means | What you do |
-|---|---|---|
-| `unmeasured` | The run carried no arrival time, so it has no wait. | Nothing, unless it grows. A run with no intake row reaches this. |
-| `unordered` | The pickup precedes the arrival, so the wait is not a duration. | Check clock synchronization between the ingress host and the consumer host. |
-| `unfinished` | The run has not reached a terminal state. | This separates an idle partition from a stalled one. Both show few finished runs. |
-| `unstamped` | The run finished before `db/005` added the column. | Nothing. The count falls as the ledger turns over. |
-| `never_ran` | The run reached a terminal state without executing, such as an intake abandonment. | Read `pnpm run escalations`. This count rises when a partition is failing. |
-| `snoozed` | A reviewer put the case aside (DEC-48). Its duration is the wait, not work. | Nothing. It is the wait the distribution leaves out, and it falls as those cases are answered. |
-
-A run the job could not measure never enters a figure as a zero. A zero would
-flatter exactly the runs the ledger understands least.
-
-The job observes. It does not correct the delay. V2 open item 7 stays
-open until an adopter chooses a correction on data like this.
-`docs/v2-roadmap.md` states what that choice needs.
-
-## 8. The phase model
-
-DEC-20 gives two phases.
-There is no separate shadow phase.
-A gated live phase already shows every reply to a person before it ships.
-A shadow phase would add cost and no new signal, so the design skips it.
-The policy engine sends each customer reply to the gated path.
-
-**Phase 1. Replay.** No ticket reaches a live customer, and you prepare
-everything the live system needs.
-Induce the taxonomy and curate it to a maximum of 25 intents.
-Set a risk tier for each intent.
-Label the stratified tickets and split them in two equal halves.
-
-Fit the thresholds on one half and keep the other for the reports.
-The shipped synthetic corpus holds 8200 cases, 4100 to each half.
-A half needs enough drafts to hold the precision floor on its interval.
-`scripts/generate-fixtures.mjs` states the sizes the floors imply.
-
-Then run action match for a baseline (DEC-32).
-Action match compares each routing decision with the disposition people
-actually recorded.
-Careful labeling decides the value of every later number.
-
-**Phase 2. Live with gates.**
-
-The system does internal writes automatically. Each customer reply parks as a
-draft and waits for approval. You measure the approval-edit distance. This
-value is the most useful early signal. It shows how far each draft was from a
-reply a person can send.
-
-`pnpm run bands` computes it, and the other three band metrics, for one day.
-Run it daily. See "Control bands" above for the command and for the lines it
-prints when a day carries no band.
+In Phase 2 the approval-edit distance is the most useful early signal. It
+shows how far each draft is from a reply a person can send.
+`pnpm run bands` computes it, with the other band metrics, for one day. Run it
+daily. "Control bands" gives the command and the lines it prints when a day
+carries no band.
 
 The criteria to leave Phase 2 are undecided. They are open item 1 for V2. Do
 not invent exit criteria. Watch the bands and wait for the decision.
 `docs/v2-roadmap.md` states what blocks that decision and who owns each part.
 
-## 9. Every command this repository defines
+## 10. Every command this repository defines
 
 The tables below index the scripts `package.json` defines, so a reader learns
-of a command without reading the manifest. `seed-history` existed in the
-manifest and in no document at all.
+of a command without reading the manifest.
 
 `scripts/check-docs.py` proves two things. Every script this repository
 defines appears in this runbook. This runbook names no script the manifest has
@@ -2729,7 +3184,7 @@ not the explanation.
 | Command | What it does |
 |---|---|
 | `pnpm run bootstrap` | Brings a fresh clone to a state where `pnpm run verify` can run. Idempotent, and it overwrites nothing. `--check` reports and changes nothing, which is the mode the session hook uses. |
-| `pnpm run build` | Compiles the solution into `dist/`. |
+| `pnpm run build` | Compiles the core into `dist/` and the console into `console/dist/`. |
 | `pnpm run check` | Builds, then type-checks the test files and the console. |
 | `pnpm run check:watch` | The same build, recompiled as files change. |
 
@@ -2747,7 +3202,7 @@ not the explanation.
 
 | Command | What it does |
 |---|---|
-| `pnpm run verify` | The contract. Everything below, in order, plus the console. |
+| `pnpm run verify` | The contract. Runs the build, the check, the lint, all tests and the console, then the four `check:` targets below. |
 | `pnpm run verify:fast` | The inner loop. No Docker, and it proves nothing about a database suite. |
 | `pnpm run verify:db` | The database and mail suites alone. |
 | `pnpm run verify:console` | The console package's own build, check and tests. |
@@ -2757,8 +3212,8 @@ not the explanation.
 | `pnpm run check:guards` | The session hooks and the structural eval layer. |
 | `pnpm run check:fixtures` | Regenerates the corpus and refuses any difference. |
 
-**The four pipeline daemons.** Section 3 explains each one. The console is
-the fifth daemon, and its own section covers it.
+**The pipeline daemons.** "Running the processes" explains each one. The
+console has its own section.
 
 | Command | What it does |
 |---|---|
@@ -2781,61 +3236,21 @@ explains why Node's own type stripping cannot run this tree.
 | `pnpm run approve` | Approves or rejects one parked reply. |
 | `pnpm run reviewers` | Adds, deactivates and lists the reviewers who may use the console. |
 | `pnpm run latency` | Reports queue wait and service time per partition. |
-| `pnpm run bands` | Reports the four `bands.yaml` metrics for one day. |
+| `pnpm run bands` | Reports the `bands.yaml` metrics for one day. |
 | `pnpm run dev:console` | Starts the operator console from source. |
 
-**Offline jobs.** Section 5 explains each one. None touches live traffic.
+**Offline jobs.** "Offline jobs" and "The real-corpus curation loop" explain
+them. None touches live traffic.
 
 | Command | What it does |
 |---|---|
 | `pnpm run calibrate` | Fits the agreement threshold on the fit half. |
 | `pnpm run gold-report` | Reports the gold-set numbers from the report half. |
-| `pnpm run triage` | Selects the tickets a person should label next. |
-| `pnpm run replay` | Scores past runs against observable dispositions. |
+| `pnpm run triage` | Selects the cases a person should label next. |
+| `pnpm run replay` | Scores the first turns of the report half against their observable dispositions. |
 | `pnpm run export-corpus` | Writes the corpus a job reads. |
 | `pnpm run induce` | Induces a taxonomy from the corpus. |
 | `pnpm run load-docs` | Indexes documents for retrieval. |
 | `pnpm run fit-groundedness` | Fits the two coverage thresholds. |
 | `pnpm run report-groundedness` | Reports coverage against the fitted pair. |
 | `pnpm run seed-history` | Writes a backdated synthetic history for a demo. It pins `seed` as the prompt version, so the queue shows which runs it wrote (DEC-18). |
-
-### Confirming a group, and taking it back (DEC-51)
-
-The queue's clean group carries a checkbox per case and one confirm button.
-The button posts the picked cases to a confirmation screen, and that screen
-draws every reply in full. Confirming approves each case in turn.
-
-The clean group holds customer replies alone. An internal write parks no reply
-and takes no hold (DEC-34), so it waits in the rest of the queue. A person
-approves it on its own case page. The console refuses a batch that names one.
-
-Each send waits `CONSOLE_SEND_HOLD_MS` before the relay may post it. The
-default is twelve seconds, and the success panel counts it down on an undo
-button. Nothing has reached a customer inside that window.
-
-The panel says what the ledger holds, and not what the approval asked for. A
-batch is called sent only where the records are sent. Otherwise the panel
-says the relay has sent none of them. A hold the console cannot read draws
-the undo without a countdown.
-
-The console refuses a value above five minutes, and says so at startup. The
-bound keeps a mistyped millisecond count from parking replies with nobody
-told. The relay skips a held record and picks it up later. A record held for
-a day therefore waits in silence.
-
-The undo removes every effect of the approval, and returns the run to the
-waiting queue. It refuses once the window has passed, and once the relay
-has sent. It refuses a case that holds no approval too. Each refusal has its
-own words, and nothing was sent.
-
-A batch and its undo each write one line: `console_confirmed` and
-`console_undone`. A case that failed on its own gets its own line,
-`console_confirm_case_failed` or `console_undo_case_failed`, naming the run.
-A page that could not read a window says so, and logs `console_sendhold_unread`.
-
-A reply on the helpdesk-draft path gets no hold and no undo. A person can send that
-draft from the helpdesk at any moment. So no undo could promise that nothing
-was sent.
-
-Set the period to `0` to send at once. The panel then offers no undo, and it
-says so rather than drawing a button that cannot work.

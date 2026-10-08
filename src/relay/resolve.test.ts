@@ -1,6 +1,6 @@
 // Unit suite for the section 4.4 failure-resolution matrix, pinned as a
 // pure function (resolveSendFailure) so every cell is testable without
-// Postgres. The database-level behaviour of each resolution lives in
+// Postgres. The database-level behavior of each resolution lives in
 // relay.db.test.ts.
 import { describe, expect, it } from 'vitest';
 

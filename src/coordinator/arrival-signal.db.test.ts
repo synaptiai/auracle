@@ -128,7 +128,7 @@ describe('the arrival signal', () => {
   // placement inside the enqueue transaction rests on exactly that, so it is
   // asserted directly rather than assumed.
   //
-  // The redelivery case below does not reach this behaviour. `enqueueTicket`
+  // The redelivery case below does not reach this behavior. `enqueueTicket`
   // returns before the emit on that path, so what it proves is control flow:
   // no notification is ever queued. Both facts matter and neither implies
   // the other — moving the emit above the duplicate check would keep that

@@ -147,7 +147,7 @@ describe('the control-band daily sample', () => {
   // DEC-49. A turn a reviewer sent back is one case however many attempts it
   // took, so the day counts it once, from the attempt that ended it. Counting
   // every attempt would report a day's work as larger than the day's cases,
-  // and every rate over it would move for a reason that is not behaviour.
+  // and every rate over it would move for a reason that is not behavior.
 describe('a turn that took more than one attempt (DEC-49)', () => {
   it('counts a turn once, on the day its final attempt was created', async () => {
     const conversationId = randomUUID();

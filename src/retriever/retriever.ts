@@ -24,8 +24,8 @@ export interface HybridSearchOptions {
   /** Candidates fetched per channel before fusion. */
   channelDepth?: number;
   /**
-   * Automatic path (default): out-of-date documents are excluded (DEC-23).
-   * The approval path passes true; non-fresh results come back with fresh=false.
+   * Default: out-of-date documents are excluded (DEC-23). No runtime caller
+   * passes true; when one does, non-fresh results come back with fresh=false.
    */
   includeStale?: boolean;
   /** DEC-21: applied when at least 50 candidates survive fusion. */

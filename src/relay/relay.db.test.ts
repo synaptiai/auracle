@@ -32,7 +32,7 @@ const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 await pool.query('SELECT 1');
 
 
-/** Egress fake whose send and read-back behaviour a test scripts per case. */
+/** Egress fake whose send and read-back behavior a test scripts per case. */
 class ScriptedEgress implements EgressAdapter {
   readonly name = 'scripted';
 
@@ -94,7 +94,7 @@ class ScriptedEgress implements EgressAdapter {
     const call = { actionClass, payload, idemKey };
     this.performCalls.push(call);
     if (!this.onPerform) {
-      throw new Error('no performAction behaviour scripted for this test');
+      throw new Error('no performAction behavior scripted for this test');
     }
     return this.onPerform(call);
   }

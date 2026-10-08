@@ -77,7 +77,10 @@ export type UndoOutcome =
   | { readonly outcome: 'nothing_to_undo' }
   /** The hold period has passed, so the relay may send at any moment. */
   | { readonly outcome: 'window_passed' }
-  /** The relay sent it. The customer has the reply, so there is no way back. */
+  /**
+   * The relay has acted on the record: sent, fenced, malformed, not sent or
+   * delivery unknown. Nothing is left to hold back, so there is no way back.
+   */
   | { readonly outcome: 'already_sent' }
   /**
    * Something else held the case's row for longer than this console waits.

@@ -75,6 +75,37 @@ describe('the tracked reference fit', () => {
     expect(found.map((f) => f.name)).toEqual(['v1.json', 'v2.json']);
   });
 
+  // The register and the README quote the fit's own figures beside the pair.
+  // Each quotation is pinned as a phrase, derived from the artifact, so a
+  // refit that moves a figure fails here rather than leaving the prose stale.
+  it('is the fit the register and the README quote, figure by figure', () => {
+    const artifact = validateGroundednessArtifact(
+      JSON.parse(readFileSync(REFERENCE, 'utf8')),
+    );
+    const three = (value: number): string => value.toFixed(3);
+    const below = artifact.block_drafts;
+    const above = Math.round(artifact.review_coverage * artifact.fit_drafts);
+    const block = artifact.block_interval;
+    const review = artifact.review_interval;
+    const collapsed = (path: string): string =>
+      readFileSync(new URL(path, ROOT), 'utf8').replace(/\s+/g, ' ');
+
+    expect(collapsed('README.md')).toContain(
+      `- Block: negative predictive value ${three(artifact.block_npv)}. `
+        + `Interval ${three(block.lower)} to ${three(block.upper)}. ${below} drafts. `
+        + `- Review: precision ${three(artifact.review_precision)}. `
+        + `Interval ${three(review.lower)} to ${three(review.upper)}. ${above} drafts.`,
+    );
+    expect(collapsed('docs/v1-architecture.md')).toContain(
+      `The shipped fit scores ${artifact.fit_drafts} drafts and drops ${artifact.faulted_drafts}. `
+        + `Its block threshold holds a negative predictive value of ${three(artifact.block_npv)} `
+        + `over the ${below} drafts below it. That interval runs from ${three(block.lower)} `
+        + `to ${three(block.upper)}. Its review threshold holds a precision of `
+        + `${three(artifact.review_precision)} over the ${above} drafts at or above it. `
+        + `That interval runs from ${three(review.lower)} to ${three(review.upper)}.`,
+    );
+  });
+
   // And it is not merely un-preferred: a directory holding the reference and
   // nothing else must read as no artifact at all, not as version 1.
   it('is invisible to the loader that installs a fitted gate', async () => {
@@ -165,10 +196,8 @@ describe('the tracked reference fit', () => {
   //
   // `GROUNDEDNESS_LIMIT` makes the job read a PREFIX, not a sample. The
   // corpus orders its intents, so a prefix is systematically unrepresentative
-  // — the shipped run covered 10 intents of 25 and no low-tier draft at all.
-  // The shipped pair was published as "one pass over the fit half" until a
-  // reviewer measured it. Nothing in the suite tied the drafts read to the
-  // size of the half, so this does.
+  // — the shipped run covers fewer than half of the intents and no low-tier
+  // draft at all. So the suite ties the drafts read to the size of the half.
   it('says so in the documents when the fit read a slice of the half', () => {
     const artifact = validateGroundednessArtifact(
       JSON.parse(readFileSync(REFERENCE, 'utf8')),

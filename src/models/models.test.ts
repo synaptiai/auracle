@@ -301,7 +301,7 @@ describe('OpenRouterProvider (injected fetch, no live calls)', () => {
   });
 
   it('types a missing cost on a finish reason that is not length (DEC-25, DEC-30)', async () => {
-    // The two tests named for this behaviour both set finish_reason 'length',
+    // The two tests named for this behavior both set finish_reason 'length',
     // which returns at the truncated branch above and never reaches this code.
     // Reverting this throw to an untyped Error left the whole suite green.
     const { usage: _drop, ...noUsage } = chatResponse;

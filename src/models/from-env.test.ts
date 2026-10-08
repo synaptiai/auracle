@@ -1,6 +1,6 @@
 // One construction of the model provider (issue #72).
 //
-// The provider keeps its config private, so these assert the behaviour an
+// The provider keeps its config private, so these assert the behavior an
 // adopter actually observes: which host the call goes to, what the
 // Authorization header carries, and whether DEC-17's zero-retention flag is
 // on the request body.

@@ -3,7 +3,7 @@
 // Three jobs carried a copy of this block. Only `bands` set the exit code on
 // a failed close; `latency` and `seed-history` logged the failure and exited
 // 0, which told a supervisor the run had succeeded. These cases pin the
-// corrected behaviour.
+// corrected behavior.
 //
 // A database suite, not a pure one: `src/db/config.ts` is on the purity
 // guard's list of modules that open a connection, so no `*.test.ts` may

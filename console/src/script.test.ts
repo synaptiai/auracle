@@ -1,7 +1,7 @@
 // The console's one script, run against the pages it binds to (issue #154).
 //
 // The script decides whether a key press sends a customer reply, so its
-// behaviour is tested by running it, not by reading its text. It runs in a
+// behavior is tested by running it, not by reading its text. It runs in a
 // Node `vm` against a document that answers each selector the script asks
 // for with the elements a test placed there. A selector the test did not
 // name throws, so a renamed selector fails here rather than going quiet.

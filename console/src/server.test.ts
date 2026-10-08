@@ -7344,7 +7344,8 @@ describe('DEC-51: the batch confirm and its undo', () => {
       unknown_run: 'That run is not in the ledger.',
       nothing_to_undo: 'That case holds no approval to undo.',
       busy: 'Another write holds that case, so nothing was undone. Try again in a moment.',
-      already_sent: 'The reply was sent, so there is nothing to undo.',
+      // Any status but pending: sent, fenced, malformed, not sent or unknown.
+      already_sent: 'The relay has already acted on this reply, sent or not, so there is nothing to undo.',
     } as const;
     for (const [outcome, says] of Object.entries(SAYS) as [keyof typeof SAYS, string][]) {
       const undo = vi.fn().mockResolvedValue({ outcome });
@@ -9010,6 +9011,20 @@ describe('DEC-50: a reviewer writes the missing document from the case', () => {
     expect(html).toContain(`<div class="prose">${now}</div>`);
     expect(html).toContain(`<input type="hidden" name="shown" value="${createHash('sha256').update(now).digest('hex')}">`);
     expect(html).not.toContain(`value="${DRAWN}"`);
+  });
+
+  // A person removed the document this post repeats, perhaps because it held
+  // personal data. The page says so, and draws what the reviewer wrote
+  // without a form, so one click cannot write the removed text back.
+  it('draws a removed repeat without a form, and asks the reviewer to check first', async () => {
+    const base = await startGuarded(deps({ publish: async () => ({ outcome: 'removed' }) }));
+    const res = await postPublish(base, { ...FIELDS, title: 'A <b>title</b>' });
+    expect(res.status).toBe(422);
+    const html = await res.text();
+    expect(html).toContain('data-publish="removed">While this post ran, a person removed the document it repeats,'
+      + ' so nothing was published. Ask whoever administers the ledger before you write it again.');
+    expect(html).not.toContain('class="composer"');
+    expect(html).toContain('<p><strong>A &lt;b&gt;title&lt;/b&gt;</strong></p><div class="prose">A plan may be paused once a year.</div>');
   });
 
   it('draws what the reviewer wrote when no form can be drawn', async () => {

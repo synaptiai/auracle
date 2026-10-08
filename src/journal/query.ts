@@ -864,7 +864,7 @@ export function readGateThresholds(raw: unknown): GateThresholds | null {
  *
  * The intent id is passed through unnormalised on purpose:
  * `agreementThresholdFor` normalises it itself, and normalising here would
- * re-encode half of the behaviour this module imports it to avoid.
+ * re-encode half of the behavior this module imports it to avoid.
  */
 export function agreementThresholdFromJournal(
   intentId: string | null,

@@ -3,7 +3,7 @@
 // Four concerns:
 // 1. selection semantics: the stub judge flags uncertainty and high risk,
 //    and every selection carries a reason;
-// 2. run behaviour: the job reviews every case, records provenance per
+// 2. run behavior: the job reviews every case, records provenance per
 //    selection, and pins prompt and model versions;
 // 3. selection-only discipline: the artifact may not carry a score — the
 //    key whitelist in validation rejects any metric field (DEC-09);

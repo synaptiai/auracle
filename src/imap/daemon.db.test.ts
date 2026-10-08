@@ -1,6 +1,6 @@
 // End-to-end suite for the IMAP ingress daemon against the ephemeral test
 // Postgres: real ImapSmtpAdapter normalization, real intake-table writes,
-// a fake IMAP mailbox behind the fetcher seam. Covers the three behaviours
+// a fake IMAP mailbox behind the fetcher seam. Covers the three behaviors
 // the card requires: mail in -> intake row, per-message failure isolation,
 // redeliver-on-crash (mail stays UNSEEN until intake resolved AND \Seen was
 // written). Synthetic data only (DEC-18).

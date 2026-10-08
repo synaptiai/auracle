@@ -60,7 +60,7 @@ statement is an implementation detail. You can change it.
 | DEC-10 | Clusters give the taxonomy. A person curates it to 25 intents | An imposed taxonomy; open codes |
 | DEC-11 | The helpdesk shows gated actions in its own draft state | A Slack queue; a new web queue |
 | DEC-12 | Internal writes are automatic. Customer replies need approval | All reversible writes are automatic |
-| DEC-13 | Below the labelled-case trigger, one global threshold. A person sets the risk tier for each intent, at every corpus size | A threshold the system learns below the trigger; a risk tier the system learns at any size |
+| DEC-13 | Below the labeled-case trigger, one global threshold. A person sets the risk tier for each intent, at every corpus size | A threshold the system learns below the trigger; a risk tier the system learns at any size |
 | DEC-14 | The disclosure field is mandatory on each customer reply | A configuration flag; documentation only |
 | DEC-15 | Do not remove personal data in the runtime path. Use a DPA | Remove personal data everywhere |
 | DEC-16 | OpenRouter supplies the models | Vercel AI SDK; one provider only |
@@ -86,9 +86,9 @@ statement is an implementation detail. You can change it.
 | DEC-36 | The partition key is the conversation id. A V1-era run and a replay run keep the ticket id | Cross-partition locks; one global conversation queue |
 | DEC-37 | Conversation history enters the classifier and composer prompts. The gates read retrieved documents alone | History in the composer only; history as retrieved documents |
 | DEC-38 | The idempotency key derives from action semantics plus the turn that requests the action | The conversation id alone; the run id, which DEC-24 forbids |
-| DEC-39 | Replay scores first turns only. Multi-turn quality uses online metrics and a human-labelled cohort | Simulated customers; a judge scoring later turns |
+| DEC-39 | Replay scores first turns only. Multi-turn quality uses online metrics and a human-labeled cohort | Simulated customers; a judge scoring later turns |
 | DEC-40 | Gated actions park in the helpdesk draft state. A read-only operator console may also approve one | A console that parks its own drafts; a console that is the only approval path |
-| DEC-41 | Above the labelled-case trigger the system fits a threshold for each intent. Each case records what labelled it, and the artifact records the count and the accuracy of each kind | One global threshold above the trigger; per-intent thresholds with no record of what labelled the cases |
+| DEC-41 | Above the labeled-case trigger the system fits a threshold for each intent. Each case records what labeled it, and the artifact records the count and the accuracy of each kind | One global threshold above the trigger; per-intent thresholds with no record of what labeled the cases |
 | DEC-42 | The ledger records an approver, and names it unverified. A trusted proxy supplies the identity. Without one the approval records `unattributed` | An authenticating console; no record of who approved; a header trusted on any bind |
 | DEC-43 | The composer writes the reply a support person would send, and labels each sentence a claim or a courtesy. Coverage counts claims alone | A draft that is its claims joined; a second model call that rewrites claims into prose |
 | DEC-44 | A reviewer console is the primary place a person reviews a gated action, and it writes on every adapter. Some helpdesks cannot send a parked copy. For their adapters, the ledger holds the approved reply, and every approval path sends it. Other adapters keep the DEC-40 draft path | Edit the helpdesk draft in place; a sendable draft beside the ledger text; two copies that both may send |
@@ -98,7 +98,7 @@ statement is an implementation detail. You can change it.
 | DEC-48 | A reviewer may close a case with no reply, snooze it or hand it over. A reviewer may rewrite a reply the ledger holds. Each job counts each outcome for what it is | Approve as the only outcome; outcomes that reuse `resolved`; a snooze that looks resolved or counts as service time |
 | DEC-49 | A reviewer may send a case back for a new attempt. No helpdesk copy of its reply may exist that a person could send. The attempt is part of every key of its turn | The run id in a key; a digest of the composed body; a new attempt that reuses the old key |
 | DEC-50 | A reviewer may write a document from a case with a mapped product. It declares an owner, a review date and at least one product, and it carries no identifier of the case. Retrieval ignores it until it is embedded | The console calls the embedding model; a separate authoring tool; a document with no owner or review date |
-| DEC-51 | A console send of a reply the ledger holds waits for a hold period. An undo inside the hold returns the run to approval and removes every effect of the approval | An undo after the send; a delay in the browser; an undo that keeps the outbox row |
+| DEC-51 | A console send of a reply the ledger holds waits for a hold period. An undo inside the hold period returns the run to approval and removes every effect of the approval | An undo after the send; a delay in the browser; an undo that keeps the outbox row |
 
 ### Rows replaced in part
 
@@ -113,13 +113,13 @@ row replaces, and the earlier row governs the rest.
 | The draft state, where a helpdesk cannot send its parked copy | DEC-40 | DEC-44 |
 | The rejection of "a console that parks its own drafts", for those helpdesks | DEC-40 | DEC-44 |
 | The approval from the console. The command-line approval keeps DEC-42 | DEC-42 | DEC-45 |
-| The key, which now also carries the attempt a person requested | DEC-38 | DEC-49 |
+| The key, which also carries the attempt a person requested | DEC-38 | DEC-49 |
 
 ---
 
 ## 3. What the evidence showed
 
-Six results changed the design. The architecture is not clear without them.
+Six results shape the design. The architecture is not clear without them.
 
 ### 3.1 A model cannot report its own confidence
 
@@ -143,12 +143,12 @@ This result is the reason for a second and independent gate.
 
 ### 3.3 A threshold for each intent is not possible below the trigger
 
-One global threshold needs 385 labelled tickets for an interval of 5 percent.
-A threshold for each of 25 intents needs approximately 2 400 tickets. Intent
+One global threshold needs 385 labeled cases for an interval of 5 percent.
+A threshold for each of 25 intents needs approximately 2 400 cases. Intent
 frequencies obey a Zipf distribution. Therefore the intent at rank 20 needs a
-corpus of approximately 7 700 tickets. DEC-13 exists because of this result.
+corpus of approximately 7 700 cases. DEC-13 exists because of this result.
 
-Above that corpus size the result no longer holds, and DEC-41 governs. DEC-13
+Above that corpus size the result does not hold, and DEC-41 governs. DEC-13
 keeps the risk tier, which no corpus size changes.
 
 ### 3.4 A correct idempotency key is not a concurrency design
@@ -209,13 +209,14 @@ The policy engine reads these capabilities. If `supportsIdempotencyKey` is
 false, all write actions go to the approval path. The risk tier does not change
 this. The intent does not change this. Autonomy decreases to agree with the guarantee that the target system gives.
 
- The system declares this decrease. An
+The system declares this decrease. An
 operator does not find it in production.
 
-Supply three reference adapters: IMAP and SMTP, a webhook, and one
-helpdesk. Three adapters are sufficient to show that the contract is general.
-The helpdesk adapter is fixture-backed. It holds its state in memory and
-reaches no network, so the repository ships no credentials (DEC-18).
+The repository supplies reference adapters for IMAP and SMTP, a webhook, a
+fixture-backed helpdesk and FreeScout. Together they show that the contract is
+general. The fixture-backed helpdesk holds its state in memory and reaches no
+network (DEC-18). The FreeScout adapter reaches a running helpdesk, and its
+operator supplies the API key.
 
 ### 4.2 Ledger
 
@@ -316,9 +317,8 @@ fencing epoch gives safety during a rebalance.
 
 **Limits.** DEC-25 sets a limit on the cost, on the number of steps and on
 the clock time. The ledger holds cost in micro-dollars, which are millionths
-of a US dollar. A model call costs a fraction of a cent.
-Cents rounded almost every call to zero.
-The limit then compared a sum of zeros.
+of a US dollar. A model call costs a fraction of a cent. A unit of one cent
+rounds almost every call to zero. A limit over cents compares a sum of zeros.
 
 If the run reaches a limit, this is not an error. The run
 goes to `escalated` and keeps its partial work. A high cost then becomes visible
@@ -352,7 +352,7 @@ setting.
 
 If the adapter has no idempotency support and the relay cannot find the delivery
 state, the relay must not retry. It sets the record to `delivery_unknown`. It
-sends the record to the approval queue and states the uncertainty. A retry can
+escalates the run and states the uncertainty. A retry can
 pay a second refund. A silent abandon can leave a customer with no answer.
 Escalation is the only action that does not select a failure for the operator.
 
@@ -442,10 +442,9 @@ candidates. At 20 candidates it is worse than no reranker. On a small corpus,
 inexpensive.
 
 **Freshness.** Each indexed document declares an `owner` and a `review_by` date.
-The system removes each document that is out of date from the automatic path.
-The document stays available for an answer that a person approves. The abstain
-signal then reports the documents that need a review. This report costs nothing
-more.
+Retrieval reads no document past its review date, on any path. The console's
+knowledge screen counts those documents and lists them for a person to review.
+This report costs nothing more.
 
 **Index contents.** Index the documents and the canonical resolutions that a
 person approved. Do not index the raw resolved tickets. Raw tickets put personal
@@ -516,10 +515,10 @@ The claims come from the composer. The composer already proved that each one
 cites a retrieved span, so it owns the claim boundaries. This component does
 not derive them again.
 
-An earlier build split the draft with a second model call. That made the
-denominator of the fraction a model's choice. A split that returned one line
-scored 1.0 and passed both thresholds. The composer's partition removes that
-failure and costs one model call less.
+A second model call that split the draft would make the denominator of the
+fraction a model's choice. A split that returned one line would score 1.0 and
+pass both thresholds. The composer's partition prevents that failure and saves
+one model call.
 
 Use two thresholds, a block and a review:
 
@@ -530,15 +529,15 @@ Use two thresholds, a block and a review:
 
 The seeds are 0.80 and 0.70. They are seeds and not the operative pair. `pnpm
 run fit-groundedness` fits the pair on the fit half, and a process holding a
-coverage artifact runs the fitted values. It says which it took at startup. So
-a seeded run and a fitted run are never confused.
+coverage artifact runs the fitted values. It logs at startup which values it runs. So
+a reader never confuses a seeded run with a fitted run.
 
-The two thresholds decide the automatic path only. A customer reply is
-gated by DEC-12 before the policy engine reads either one.
+The two thresholds decide the automatic path only. DEC-12 gates a customer
+reply before the policy engine reads either one.
 
 This component is the second gate. It is independent of the first gate by
-design. It is the only defence against a confident error, because agreement
-cannot find a confident error. See paragraph 3.2.
+design. It is the only defense against a confident error, because agreement
+cannot find a confident error. See section 3.2.
 
 ### 4.8 Policy engine
 
@@ -546,8 +545,8 @@ cannot find a confident error. See paragraph 3.2.
 
 This component is a pure function. It does not call a model.
 
-Inputs: the risk tier of the intent, the agreement value, the groundedness
-value, the adapter capabilities and the action class.
+Inputs: the risk tier of the intent, the agreement value, the coverage value,
+the adapter capabilities and the action class.
 Output: `auto`, `gated` or `escalate`.
 
 ```
@@ -556,11 +555,16 @@ if (!capabilities.supportsReadBack && action.isWrite)       return 'gated';
 if (action.isCustomerVisible)                                return 'gated';
 if (action.isWrite && action.isIrreversible)                 return 'gated';
 if (intent.riskTier === 'high')                              return 'gated';
-if (agreement    < thresholds.agreement)                     return 'escalate';
+if (agreement    < agreementThresholdFor(intent))            return 'escalate';
 if (groundedness < thresholds.groundednessBlock)             return 'escalate';
 if (groundedness < thresholds.groundednessReview)            return 'gated';
 return 'auto';
 ```
+
+The agreement threshold is the intent's fitted value where one exists, and the
+global value otherwise (DEC-41).
+`groundedness` in the sketch is the coverage value, under the name the code
+gives it.
 
 An automatic write needs two capability guarantees, and the engine reads both.
 An idempotency key makes a retry safe. Read-back makes the result knowable.
@@ -569,7 +573,7 @@ Without read-back the relay escalates a failed send instead of retrying it.
 See DEC-30. So autonomy decreases for that adapter as well. See DEC-06.
 
 A person sets the risk tier for each intent. The system does not learn the tier.
-See DEC-13. A high-risk intent never goes to the automatic path. The gate values
+See DEC-13. A high-tier intent never goes to the automatic path. The gate values
 do not change this. Confidence measures the accuracy of the classification.
 
 It does not measure the cost of an error. These are different quantities.
@@ -600,10 +604,10 @@ The bridge refuses to send a reply that does not have all three items.
 
 **Who approved it.** Obeys DEC-42, and DEC-45 on the console.
 
-The ledger records that a person approved a reply. It recorded no source for
-the name it kept. An incident could not then separate the operator from anyone
-else who reached the port. The source is a column now. It says whether the
-roster, a header claim or nobody named the approver.
+The ledger records that a person approved a reply, and the source of the
+approver's name. The source says whether the roster, a header claim or nobody
+named the approver. So an incident can separate the operator from anyone else
+who reached the port.
 
 The approval records an approver. Off the console the value is a claim, not an
 authentication. A caller supplies it, and the approval bounds what it keeps.
@@ -624,17 +628,17 @@ proxy sets. The console then checks that name against a roster of reviewers
 before it builds a page. A request with no active roster identity is refused.
 An approval there records the source `roster`.
 
-DEC-42 grants no authority, and it changes no gate. DEC-45 moves the console to
+DEC-42 grants no authority, and it changes no gate. DEC-45 puts the console behind
 a roster a trusted proxy authenticates, and that roster decides who may review
 there. DEC-12 still puts a person on every customer reply. DEC-40 still permits
 the console to be that person's interface.
 
 **Why the park needs a key.**
 
-The adapter creates the draft before the ledger can record its handle. A crash
-between the two used to leave a draft that no row named. The next run then
-parked a second one. The customer then saw two replies. The key travels with
-the reply, so the adapter recognises the repeat and returns the first draft.
+The adapter creates the draft before the ledger can record its handle. Without
+a key, a crash between the two leaves a draft that no row names. The next run
+then parks a second one, and the customer sees two replies. The key travels
+with the reply, so the adapter recognizes the repeat and returns the first draft.
 The mail adapter carries the key in a header, because a mailbox gives an
 appended message no other stable handle.
 
@@ -686,45 +690,35 @@ This method gives the numbers for the README. The gold set is split in two. Fit
 the thresholds on one half. Report each published number from the other half.
 See DEC-31.
 
-DEC-31 governs the split, not the size. The maintainer ruled the size an
-implementation detail of it, so a corpus may grow and the discipline still
-holds. The set held 770 cases, then 2124, and now holds 8200. The first growth
-answered a precision floor read against an interval. 0.985 asks for 253 drafts
-above the review threshold, and 770 cases offered 172. So the corpus could
-never fit the gate it exists to fit.
-
-The second answers the labelled-case trigger of DEC-41, which section 3.3 puts
-near 7 700.
+DEC-31 governs the split, not the size. The size is an implementation detail,
+so a corpus may grow and the discipline still holds. Two needs set a minimum
+size. The coverage fit needs enough drafts above the review threshold to hold
+its precision floor at the lower bound. The per-intent fit of DEC-41 needs a
+corpus at the labeled-case trigger or above it.
 
 Do not use one set of cases for both tasks. That method is selection on the test
 data. A simulation of 2 000 trials shows the effect. If you select the best of 13
 thresholds on 385 cases, the reported precision increases by approximately
-2.5 points. That simulation ran at the earlier half size. The effect shrinks as
-a half grows, and the split removes it at any size.
+2.5 points. The effect shrinks as a half grows, and the split removes it at
+any size.
 
-The cost is a wider interval than an undivided set gives. At the current half
-size that cost is approximately 1.8 points at p=0.9.
+The cost is a wider interval than an undivided set gives. Each half holds half
+the cases, so its interval is about 1.4 times as wide.
 
-The strata need care. DEC-39 scores first turns only, so the report half of
-4100 cases yields 3074 scored cases. The low tier holds 1834 of them, the
-medium tier 1063 and the high tier 177.
+The strata need care. DEC-39 scores first turns only, so the report half
+yields fewer scored cases than it holds. The Zipf shape puts the high-tier
+intents in the tail, so the high tier is the thin one.
 
-The Zipf shape put the high-risk intents in the tail, so that tier is now the
-thin one. Containment there runs 2.1 points wide and the other two tiers under
-half a point. Widths here are full widths, lower bound to upper bound.
-
-Read those widths with the rates beside them. The low and medium tiers contain
-every case and the high tier contains none. Each containment rate therefore
-sits on a boundary, where a Wilson interval is narrow. A narrow interval here
-reports no spread, not a precise measurement.
+Read each containment width with the rate beside it. In the shipped gold report
+the low and medium tiers contain every case, and the high tier contains none.
+Each containment rate therefore sits on a boundary, where a Wilson interval is
+narrow. A narrow interval there reports no spread, not a precise measurement.
 
 Action match sits away from those boundaries, and its intervals are wide. The
-high tier reads 0.458 over 177 cases, across 14.5 points. The medium tier runs
-4.9 points wide and the low tier 2.1. That is the widest spread the artifact
-carries, and no boundary explains it away.
+high tier carries the widest, and no boundary explains it away.
 
-Treat the strata as an indication only and read the counts from the artifact,
-not from this paragraph.
+Treat the strata as an indication only. Read each count and each interval from
+the gold report artifact.
 
 **Method 3. Judge triage.** A model selects the cases that go to a person. It
 does not give the published number. A judge has the same failures as the system
@@ -741,9 +735,7 @@ a person changed a draft before the person sent it. It is available from the
 first day of Phase 2. It needs no labels. It has no counterfactual problem.
 
 `pnpm run bands` reads it from the ledger, with the other three metrics
-`bands.yaml` defines. It reports one UTC day against the 30 most recent
-measured days before it. The baseline excludes the day it judges. A window too
-thin or too flat to carry a band says so instead of stating one.
+`bands.yaml` defines. Section 4.11 states how it judges a day.
 
 **Sensitivity.** To find a change of 5 percent in containment you need
 approximately 470 cases. To find a change of 2 percent you need approximately
@@ -761,24 +753,27 @@ The public repository contains synthetic fixtures only. See DEC-18.
 4. Let a person curate the list to a maximum of 25 intents.
 5. Keep an `other` group and examine it.
 
-The limit of 25 comes from the Zipf result in paragraph 3.3. Above 25 intents,
+The limit of 25 comes from the Zipf result in section 3.3. Above 25 intents,
 the rare intents never collect sufficient examples. More intents give an
 appearance of accuracy and nothing more.
 
 **`calibration`**. Obeys DEC-13, DEC-31, DEC-41.
 
-This job fits the agreement threshold on the fit half of the gold set. It
-operates each month. It does not operate for each ticket.
+This job fits the agreement threshold on the fit half of the gold set. Run it
+each month, not for each ticket.
 
-Below the labelled-case trigger the job fits one global threshold. At or above
+Below the labeled-case trigger the job fits one global threshold. At or above
 it, the job fits a threshold for each intent that clears the data floor
 (DEC-41). An intent below that floor keeps the global threshold.
+`TRIGGER_MIN_LABELLED` sets the trigger from the arithmetic of section 3.3.
 
 **`bands`**. Obeys DEC-18, DEC-19.
 
-This job reports the four control-band metrics for one day. It judges that day
-against a baseline of the 30 most recent measured days before it. It reads the
-ledger and writes an artifact. It issues only SELECT statements, and it opens
+This job reports the control-band metrics for one day. It judges that day
+against a baseline of the most recent measured days before it. The baseline
+excludes the day it judges. A window too thin or too flat to carry a band says
+so instead of stating one. It reads the ledger and writes an artifact. It
+issues only SELECT statements, and it opens
 its connection read-only, so it is safe against a live database.
 
 The artifact stays with the adopter. It describes their own traffic, so the
@@ -788,8 +783,10 @@ runbook states that position (DEC-19).
 It observes and it does not correct. The three-sigma action is a pull request,
 and the job states that one is warranted rather than opening it.
 
-TypeScript has no mature library for isotonic regression or HDBSCAN. This is
-acceptable. These are offline jobs. You can write them in a different language.
+The induction and calibration jobs ship in TypeScript. Induction clusters with
+k-means, and calibration searches the observed agreement values. Both are
+offline jobs, so an adopter may replace either one with another method or
+another language.
 
 ---
 
@@ -804,9 +801,10 @@ gated live phase are almost the same system.
 1. Run the induction job on the history.
 2. Curate the taxonomy to 25 intents.
 3. Set a risk tier for each intent.
-4. Label 8200 tickets, stratified by intent and Zipf-distributed by frequency.
-5. Fit the threshold on 4100 of them.
-6. Keep 4100 for the reports.
+4. Label a gold set of cases, stratified by intent and Zipf-distributed by
+   frequency. Section 3.3 states the size each threshold needs.
+5. Split the set into two equal halves (DEC-31). Fit the threshold on one half.
+6. Keep the other half for the reports.
 7. Run action match to get a baseline.
 
 This phase has no risk to a customer. It gives each number that the live system
@@ -819,7 +817,7 @@ needs.
 
 1. The system does internal writes automatically.
 2. Each customer reply goes to the draft state.
-3. Measure the approval-edit distance. `pnpm run bands` reports it daily.
+3. Measure the approval-edit distance. Run `pnpm run bands` each day to report it.
 
 The approval-edit distance is the most useful early signal. It shows how far the
 draft was from a reply that a person can send.
@@ -843,20 +841,19 @@ support.
 
 **Partitions exchange one failure for another.**
 
-Partitions remove concurrent runs on one ticket. They add head-of-line delay in
+Partitions remove concurrent runs on one conversation. They add head-of-line delay in
 each partition. They also add a rebalance period where two consumers can
 overlap. The fencing epoch covers the rebalance period. V1 does not correct the
-head-of-line delay. It will appear as latency on busy partitions.
+head-of-line delay. It appears as latency on busy partitions.
 
-That prediction is now checkable. `pnpm run latency` reports queue wait and
-service time per partition. It reports percentiles rather than an average,
-because an average is where a tail hides. The limit stands: this measures the
-delay and does not correct it.
+`pnpm run latency` checks that prediction. It reports queue wait and service
+time per partition. It reports percentiles rather than an average, because an
+average is where a tail hides. The limit stands: this measures the delay and
+does not correct it.
 
-The consumer no longer sleeps through an arrival, because intake signals it.
-That removes the poll interval from the wait. It leaves the head-of-line
-delay: a message queued behind a batch still waits for the batch. Section 7
-item 7 carries the figures and their bounds.
+Intake signals the consumer on each arrival, so the poll interval sets no floor
+on the wait. The head-of-line delay remains: a message queued behind a batch
+still waits for the batch. Section 7 item 7 carries the figures and their bounds.
 
 **Fencing needs the target to agree.**
 
@@ -872,7 +869,7 @@ write limit makes V1 safe. The check does not. If DEC-12 changes, this
 component is not sufficient alone.
 
 **Replay cannot measure a counterfactual.** It is correct for routing only. See
-paragraph 4.10.
+section 4.10.
 
 **Action match scores routing only.** It controls merges. It does not measure
 answer quality. Do not use it as a quality measurement.
@@ -880,130 +877,108 @@ answer quality. Do not use it as a quality measurement.
 **The model data position is configurable.**
 
 See DEC-17 and DEC-19. The adopter is the data controller. One exception
-applies. The prompt-log path is off by default and needs an explicit override.
-If you make it active, you give irrevocable commercial rights to the inputs and
-the outputs. The discount is 1 percent.
+applies. Prompt logging is a setting in the provider account, and this
+repository never turns it on. If you turn it on there, the provider gains
+irrevocable commercial rights to the inputs and the outputs. In return, the
+provider lowers its price by 1 percent.
 
-**One gate has a fit. The other does not.** `pnpm run calibrate` fits the
-agreement threshold and `pnpm run fit-groundedness` fits the two coverage
+**Only the groundedness gate has a fit on the shipped corpus.**
+`pnpm run calibrate` fits the agreement threshold and `pnpm run fit-groundedness` fits the two coverage
 thresholds. Each writes its own artifact, and nothing joins the two. DEC-05
 keeps the gates independent, and the second artifact refuses to carry an
 agreement value.
 
-The coverage pair has been fitted once on the corpus this repository ships.
-A run against `z-ai/glm-5.3-flash` chose it. The block threshold is 0.67 and
-the review threshold is 0.83. The run cost 0.1484 US dollars. The job reports
-that as a floor, because 2 faulted drafts carry spend nothing can attribute
+The tracked reference artifact holds a fit of the coverage pair on the corpus
+this repository ships, against `z-ai/glm-5.3-flash`. The block threshold is
+0.67 and the review threshold is 0.83. The artifact records a cost of 0.1484
+US dollars. The job reports that as a floor, because 2 faulted drafts carry spend nothing can attribute
 (DEC-25).
 
-**That run read a slice, not the half.** `GROUNDEDNESS_LIMIT` was 1100, and
-the job takes a prefix rather than a sample. The fit half holds 4100 drafts,
-so the run read 26.8 percent of it.
+**That fit covers a slice, not the half.** It holds 1100 drafts under
+`GROUNDEDNESS_LIMIT`, and the job takes a prefix rather than a sample. So the
+fit covers about a quarter of the fit half.
 
 The prefix is not representative, because the corpus orders its intents. The
-scored drafts cover 10 intents of 25. They hold every high-tier draft and no
-low-tier draft at all.
+scored drafts cover fewer than half of the intents. They hold every high-tier
+draft and no low-tier draft at all.
 
 So this pair is a pilot. It shows that the classes separate and that the job
 selects rather than refuses. It is not a fit of the half, and no adopter
 should read it as one. `pnpm run fit-groundedness` with no limit reads the
 whole half.
 
-The shipped fit read 1098 drafts and dropped 2. Its block threshold holds a
+The shipped fit scores 1098 drafts and drops 2. Its block threshold holds a
 negative predictive value of 0.958 over the 192 drafts below it. That interval
 runs from 0.920 to 0.979. Its review threshold holds a precision of 0.998 over
 the 539 drafts at or above it. That interval runs from 0.990 to 1.000. Both
-floors are read against the lower bound, so neither rests on a point estimate.
+floors read the lower bound, so neither rests on a point estimate.
 
-An earlier pair of 0.75 and 1.00 stood here, and two passes reproduced it.
-Both passes read the uniform corpus, which no longer exists. So they are
-withdrawn rather than compared against this one.
-
-The pair moved, and this change does not establish why. The class mix did not
-move with it. Each half holds 2050 fully grounded drafts of 4100, before the
-reshape and after it.
-
-The two runs scored different drafts, and coverage takes few distinct values.
-So each run chose from a different grid of candidates. That describes the
-move and does not explain it.
-
-Read no quality claim into the new pair. Nothing here says the judge improved,
-and the risk tier of an intent is not an input to this fit.
+Read no quality claim into this pair. The risk tier of an intent is not an
+input to this fit.
 
 A review threshold of 0.83 means five claims in six must carry a citation.
 Below that value a person reads the draft. That is the value the evidence
 produced, not a value chosen for strictness. It is the lowest threshold whose
 interval still holds the 0.985 precision floor.
 
-It costs coverage. Of the drafts this gate scored, 49.1 percent clear review.
-A further 33.4 percent land in the review band, and 17.5 percent fall below
-block.
+It costs automation. About half of the drafts this gate scores clear review. The
+artifact records the shares in the review band and below block.
 
 Read those as this gate's own pass rates and not as system dispositions. The
-policy engine gates a customer reply, a high-risk intent, an irreversible
+policy engine gates a customer reply, a high-tier intent, an irreversible
 write or a missing capability first. It decides those before it reads either
 threshold (DEC-12, DEC-03). So clearing review is necessary for the automatic path and
 never sufficient.
 
 A draft below block is escalated, and a person handles the escalation.
 
-**The report half is not measured at this pair.** DEC-31 exists for this. The
-numbers above chose the threshold, so they carry a selection effect. Only the
-report half can check them, and it has not been run at this pair.
+**No run measures the report half at this pair yet.** DEC-31 exists for this.
+The numbers above choose the threshold, so they carry a selection effect. Only
+the report half can check them. DEC-31 forbids fit-half figures in that place.
 
-A measurement stood here before. It read the earlier pair over the uniform
-corpus, and both are withdrawn. So the section is removed rather than
-restated. Substituting the fit-half figures would defeat DEC-31.
+So this register states no residual error figure for an adopter to plan around.
+It also makes no claim about whether the review threshold of 0.83 can tighten.
+A run of `pnpm run report-groundedness` on the report half at this pair answers
+both. The job costs one model call per claim (DEC-25).
 
-Two things went with it. The first is any claim that the review threshold
-cannot be tightened. That argument rested on a review value of 1.00, and the
-value is now 0.83. The second is the residual error figure an adopter plans
-around. No current measurement supports one, so this register states none.
+The artifact does not travel. Git ignores `groundedness/`. A committed fit
+would move every adopter's second gate to a number fitted on this repository's
+synthetic corpus. One tracked copy, `groundedness/reference-v<n>.json`, lets a
+reader check these numbers against the file that produced them. Its name sits
+outside the `v<n>.json` shape the version scanner reads. So no loader finds it,
+and no checkout adopts it.
 
-Recover both by running `pnpm run report-groundedness` on the report half at
-this pair. The job costs one model call per claim (DEC-25).
-
-The artifact does not travel. `groundedness/` is ignored. A committed fit would
-move every adopter's second gate to a number fitted on this repository's
-synthetic corpus. `groundedness/reference-v3.json` is a tracked copy so a
-reader can check these numbers against the file that produced them. Its name
-sits outside the `v<n>.json` shape the version scanner reads. So no loader
-finds it, and no checkout adopts it.
-
-The agreement threshold is still the paragraph 4.5 seed. The synthetic corpus
+The agreement threshold is the section 4.5 seed. The synthetic corpus
 cannot fit it. The offline stub answers every sample of one ticket alike, so
 agreement is 1.0 on every case. No threshold below 1.0 changes a decision.
 
-Both halves once drew their claims from one table of 56 sentences over 14
-documents. The corpus now carries 312 sentences over 39 documents, 156 to each
-half. Every sentence the report half asked also appeared in the fit half.
-The split removed a selection effect, which is what DEC-31 asks of it. It gave
-no protection against a judge that mis-read one sentence, because that sentence
-depressed both halves alike.
+The generator holds two claim sets for each document, one for each half. The
+two halves share no sentence. A shared sentence protects nothing against a
+judge that misreads it, because it moves both halves alike. With no shared
+sentence, a judge that misreads one wording moves one half only, and the
+disagreement is visible.
 
-Each document now carries a fit block and a report block. The two halves share
-no sentence. So a judge that mis-reads one wording moves one half only, and the
-disagreement is visible. The report sentence paraphrases its fit counterpart
-rather than testing a new fact. So the halves stay matched in difficulty, and a
-precision gap between them means the judge disagreed. It does not mean one pool
-was harder.
+The report sentence paraphrases its fit counterpart rather than testing a new
+fact. So the halves stay matched in difficulty, and a precision gap between
+them means the judge disagrees. It does not mean one pool is harder.
 
-The loader refuses a corpus that breaks either rule. A sentence reaching both halves is named by digest and never printed. That is
-because a sentence on a real half is the customer's own text.
+The loader refuses a corpus that breaks either rule. It names a sentence that
+reaches both halves by its digest and never prints it. A sentence on a real
+half is the customer's own text.
 
-The two halves also held different shares of grounded drafts, 43 percent
-against 51 percent. Precision counts grounded drafts above a threshold against
-all drafts above it. So the report half was the easier one, and a published
-precision read high. Both halves now hold 2050 fully grounded drafts of 4100.
+The two halves must also hold close shares of grounded drafts. Precision
+counts grounded drafts above a threshold against all drafts above it. So a
+half with a larger grounded share is the easier one, and a precision published
+from it reads high.
 
 The loader tests that gap with an equivalence test, and not with a significance
 test. The two answer different questions. A significance test asks whether a
 gap is real; the question here is whether a gap is small. They come apart in
 both directions.
 
-A gap of 5.5 points over 600 drafts a side is not significant, and it would
-have passed. By contrast the 7.3 point gap that motivated this check is
-significant over 385, and it is refused. A larger corpus was allowed a larger gap.
+A significance test passes a 5.5 point gap over 600 drafts a side, since that
+gap is not significant. Over fewer drafts it passes a larger gap, which is the
+wrong way round.
 
 So the halves must show the gap is small. Two one-sided tests at 5 percent put
 the whole 90 percent interval inside a margin of 5 points.
@@ -1013,14 +988,13 @@ one failure to each half before the standard error.
 
 At a share of exactly 0 or exactly 1 the textbook standard error is zero. The
 interval then collapses to a point, and any sample size passes. One draft a
-side would then demonstrate closeness. That is the trivial pass this guard
-replaced a significance test to remove. Away from the boundary the two agree to
-four decimal places.
+side would then demonstrate closeness. The correction prevents that trivial
+pass. Away from the boundary the two agree to four decimal places.
 
-Sample size now works the right way round. A half too small to demonstrate
-closeness is refused rather than passed by default. Such a half is already too
-small to hold the precision floor. The margin is a stated judgement: 5 points
-is where this repository stops asking a reader to compensate.
+Sample size works the right way round. The loader refuses a half too small to
+demonstrate closeness, rather than passing it by default. Such a half is
+already too small to hold the precision floor. The margin is a stated judgment:
+5 points is where this repository stops asking a reader to compensate.
 
 One limit remains, and it is not a fault of the job. A paraphrase pair tests
 one fact twice. So a judge that mis-reads the fact itself, rather than one
@@ -1028,31 +1002,29 @@ wording of it, still moves both halves together.
 
 The two floors the coverage fit holds have reasons of their own. The review
 floor is 0.985. One minus that floor is the rate at which an internal write
-acts on an unsupported claim. No person reads it. This gate is the only defence
+acts on an unsupported claim. No person reads it. This gate is the only defense
 against a confident error, so it backstops the agreement gate.
 
-A backstop must be at least as strict as the gate it backs. The agreement gate
-operates at 0.985. The value once matched paragraph 4.5 by coincidence. DEC-05
-keeps the two gates independent, so a borrowed number justified nothing.
+A backstop must be at least as strict as the gate it backs. The agreement fit
+targets 0.985, so the review floor is 0.985 too. Section 4.5 states the same
+figure for its simulation, and that match carries no weight. DEC-05 keeps the
+two gates independent, so neither borrows a number from the other.
 
 The block floor is 0.9. Below block this gate escalates rather than drafting,
 so no person reads that draft as something to approve. A person still handles
 the escalation. So the cost of a miss there is work and not correctness.
 
-The agreement fit reads its floor the same way, and for the same reason. Both
-searches computed an interval, recorded it, and chose on a point estimate. The
-agreement search maximises coverage, so it prefers a wide band and the fault is
-rarer there. It is not absent.
+The agreement fit also reads its floor against the lower bound, for the same
+reason. A search that chooses on a point estimate admits a band however few
+samples it holds. The agreement search maximizes the share of cases inside its band. So it
+prefers a wide band, and the fault is rarer there. It is not absent: sometimes the only band
+that clears the floor is a narrow one at the top. Sharing the rule joins no
+value between the gates, so DEC-05 stands.
 
-Sometimes the only band clearing the floor is a narrow one at the top. That
-band won however few samples it held. Sharing the rule joins no value between
-the gates, so DEC-05 stands.
-
-Each floor is read against the lower bound of a 95 percent interval, never a
-point estimate. A point estimate carries no sample size: three drafts that
-agree read 1.000 and clear any floor. The first run of this job fitted the
-block threshold on exactly three drafts. Its own recorded interval read 0.4385
-to 1. So a floor also sets a minimum support, which is 253 drafts for 0.985 and
+Each fit reads its floor against the lower bound of a 95 percent interval,
+never a point estimate. A point estimate carries no sample size: three drafts
+that agree read 1.000 and clear any floor. Their interval runs from 0.4385 to
+one. So a floor also sets a minimum support, which is 253 drafts for 0.985 and
 35 for 0.9.
 
 The coverage job refuses when the measured classes do not separate. A gold set
@@ -1071,15 +1043,13 @@ the version. The coverage pair logs `coverage_thresholds_seeded` or
 The gold report records the agreement provenance beside its gate value. So a
 published number names the gate that produced it.
 
-The coverage artifact once had no reader. The two coverage numbers stayed at
-their seeds however often the job ran. That was the same open loop this
-resolver closed for the other gate, and it is closed now. The gates stay
-independent: two artifacts, read separately, and neither supplies a number to
-the other (DEC-05).
+The resolver reads the coverage artifact as it reads the agreement artifact.
+The gates stay independent: two artifacts, read separately, and neither
+supplies a number to the other (DEC-05).
 
 **A fitted threshold cannot move the published numbers.** The gold report runs against the offline stub, which answers each sample by matching a phrase.
 Every sample of one ticket therefore agrees, and agreement is 1.0 on every
-scored case. DEC-39 scores the 3074 first turns of the report half. No
+scored case. DEC-39 scores the first turns of the report half alone. No
 threshold below 1.0 changes a decision.
 
 A run at 0.60 and a run at 0.75 publish the same rates. Only the recorded provenance differs.
@@ -1089,18 +1059,19 @@ exercise it, because a deterministic stub has no disagreement to measure.
 Treat the published rates as a measure of routing under a gate that never
 binds. A real model on real history is the first case where the number moves.
 
-The gold set now holds later turns, so the calibration job fits on prompts that
+The gold set holds later turns, so the calibration job fits on prompts that
 carry history, per DEC-37. Its artifact records the turn population as `scope`.
-The replay and the gold report still score first turns only, per DEC-39.
+The replay and the gold report score first turns only, per DEC-39.
 
 Two caveats stand on the synthetic corpus. An invented agent reply names the
-topic of its own thread. So a follow-up turn is easier to label than a real
-one. A follow-up body is also drawn from five fixed strings, so later turns
+topic of its own conversation. So a follow-up turn is easier to label than a real
+one. The generator also draws a follow-up body from five fixed strings, so later turns
 repeat each other. Treat a multi-turn number from synthetic data as an upper
-bound. Re-fit on real labelled history before you publish one.
+bound. Re-fit on real labeled history before you publish one.
 
-Real labelled history now reaches all three jobs (DEC-18, DEC-31). A gold
-half declares its provenance, and the set is closed: `synthetic` or `real`.
+Real labeled history reaches the agreement fit, the coverage fit and the gold
+report (DEC-18, DEC-31). A gold half declares its provenance, and the set is
+closed: `synthetic` or `real`.
 Each artifact records the provenance of the half it consumed, and each
 process logs it at startup beside the version. So a reader never infers which
 data a gate number covers.
@@ -1118,8 +1089,8 @@ That keeps the structural guarantee: a leak needs a code change.
 The check refuses a shared conversation as well as a shared case. Two turns of
 one thread carry two identifiers.
 
-The export models turns now. It emits one record per customer turn and orders
-them by each message's own stated time. A thread whose messages state no
+The export models turns. It emits one record per customer turn and orders
+them by each message's own stated time. A conversation whose messages state no
 readable time falls back to delivery order, and the export reports every
 fallback. An agent reply hangs off the turn it answered, as the ledger does.
 
@@ -1130,9 +1101,10 @@ an export records the customer's half of each conversation and says so.
 
 Each artifact records the two case sets a run proved disjoint, as a digest of
 their identifiers. The proof happens once inside one run and nothing else
-would remember it. An operator fits against one report half. That operator
-then publishes against a pruned fit half that no longer overlaps. Every check
-passes, and the gate in force came from a fit that did overlap. A reader
+would remember it. Suppose an operator fits against one report half. The
+operator then prunes the fit half until the two do not overlap, and publishes.
+Every check passes, yet the gate in force comes from a fit that overlaps. A
+reader
 compares the two artifacts and sees which sets each run used.
 
 The check refuses halves of different sizes, of different provenance, or of
@@ -1148,12 +1120,13 @@ One gate reaches real history further than the other. The agreement fit and
 the gold report read a real half end to end. The coverage fit reads a real
 half, but it resolves every cited document against the shipped fixture set.
 An adopter's claims cite their own documents, so the job refuses them. It
-names the case and the document by digest. Loading a real knowledge base into that job is not in this work.
+names the case and the document by digest. That job loads no real knowledge
+base.
 
-This repository still publishes synthetic numbers only. Nothing real is
-committed, and no run here has produced an artifact from real history.
+This repository publishes synthetic numbers only. It commits nothing real, and
+no artifact here comes from real history.
 
-**Article 50(2) for text is not verified.** See paragraph 4.9.
+**No check verifies Article 50(2) for text.** See section 4.9.
 
 **Feedback clusters are manual in V1.** At test-bed volume, automatic clusters
 of a few hundred tickets each month give noise. The interval is wider than the
@@ -1167,70 +1140,56 @@ signal.
 2. Compensation for actions that you cannot reverse. **Closed.** See DEC-34.
 3. Conversation state for more than one turn. **Closed.** See DEC-35 to DEC-39.
 4. Automatic feedback clusters when the volume is sufficient.
-5. A threshold for each intent above approximately 8 000 labelled tickets.
+5. A threshold for each intent above the labeled-case trigger.
 6. A schema migration procedure for adopters. **Closed.** See below.
 7. A correction for head-of-line delay in a partition. **Open.** See below.
 
-Three items now close. The numbers stay, because other documents cite them.
+Items 2, 3 and 6 are closed. They keep their numbers, because other documents
+cite them.
 
-Item 3 was conversation state. DEC-35 to DEC-39 ratify it, and `db/008` and
-`db/009` carry the ledger entities.
-
-Item 2 was compensation. DEC-34 ratifies it, and `src/policy/policy.ts` gates
+Item 2 is compensation. DEC-34 ratifies it, and `src/policy/policy.ts` gates
 every irreversible write.
 
-Item 6 was a schema migration procedure for adopters.
-`src/ledger/migrate.ts` applies each file under `db/` and records the version
-in `schema_version`.
+Item 3 is conversation state. DEC-35 to DEC-39 ratify it, and
+`db/008_conversation.sql` creates the conversation and turn tables.
+
+Item 6 is a schema migration procedure for adopters. `src/ledger/migrate.ts`
+applies each file under `db/` and records the version in `schema_version`.
 
 Item 7 asks for a correction for head-of-line delay in a partition. It stays
-open, and the measurement now says why. `db/005_run_timing.sql` adds the timing
-columns. The service time of a run is the difference between its finish and its
-creation. The wait is the difference between its pickup and its arrival. `pnpm
-run latency` reads both per partition (DEC-27).
+open. `db/005_run_timing.sql` adds the timing columns. The service time of a
+run is the difference between its finish and its creation. The wait is the
+difference between its pickup and its arrival. `pnpm run latency` reads both
+per partition (DEC-27).
 
-The first loaded reading came from a synthetic history of 2397 runs over 45
-days. It reported 1.37 per cent utilisation across two consumers. Depth ran
-567 to 646 runs per partition, a ratio of 1.14, which is what a hash gives.
-The mean wait was 2.78 s against a poll floor of 2.50 s. Arrivals ran at
-53 tickets a day, and the mean service time was 20.4 s.
+The seeder's synthetic history is the only reading. It runs far below the
+capacity of its two consumers, and the depth per partition varies as a hash
+gives.
 
-So the wait was the consumer's own sleep and not a queue. The design
-document gives four rules, and none of them fires at this load. R1 needs
-waits that are high and uniform. R2 needs skew. R3 needs a heavy tail
+The design document gives four rules, and none of them fires at this load. R1
+needs waits that are high and uniform. R2 needs skew. R3 needs a heavy tail
 causing most of the wait. R4 needs one harmed class.
 
-The sleep is now gone. Intake signals the consumer inside the enqueue
-transaction, and the loop wakes on that signal. `CONSUMER_INTERVAL_MS` remains
-as a ceiling for a lost signal. Wait p50 and p95 fall to a figure the poll no longer sets. Before the signal
-they were 2.4 to 2.6 s and 4.7 to 4.8 s.
+Intake signals the consumer inside the enqueue transaction, and the loop wakes
+on that signal. `CONSUMER_INTERVAL_MS` remains as a ceiling for a lost signal.
+So the poll interval sets no floor on the wait. The seeder models the signal and
+the pickup as zero, so the register quotes no number for them. Nothing here
+measures a live notification.
 
-What remains is the signal and the pickup. The seeder models that as zero, so
-the register quotes no number for it: nothing here measures a live
-notification.
+The signal does not correct the head-of-line delay. About one run in a hundred
+waits longer than one poll period, behind the batch ahead of it. That share
+never rises with the signal, and it never falls by half, across the six seeds
+`src/seed/plan.test.ts` sweeps. The maximum wait keeps at least nine tenths of
+its polled value across those seeds. A signal cannot shorten a run already
+under way.
 
-The correction this item asks for is still unchosen. Removing the sleep
-removes the floor, and it corrects at most a small part of the head-of-line
-delay. Two figures bound that part.
+Service time is where the hours are, and it is not the consumer. DEC-12 puts a
+person on every customer reply, and the run row resolves when that person
+answers. So most of a run's service time is human time.
 
-The maximum wait barely moves, from 2.3 minutes to 2.2 minutes on the
-deepest partition. About one run in a hundred still waits longer than one
-poll period. That share never rises with the signal, and it never falls by
-half, across the six seeds `src/seed/plan.test.ts` sweeps.
-
-Those runs wait behind the batch ahead of them. That wait is the delay this
-item names, and a signal cannot shorten a run already under way.
-
-Service time is where the hours are, and it is not the consumer. The median
-runs 30 to 48 s and the 95th percentile 2.5 to 3 hours. Model calls take about
-14 s. DEC-12 puts a person on every customer reply, and the run row resolves
-when that person answers. So most of that figure is human time.
-
-The question reopens on volume. This history runs at 53 tickets a day and
-two consumers, which is 1.37 per cent of their capacity. Saturating those two
-consumers therefore needs about 3 900 tickets a day, and the figure scales
-with the consumer count. An adopter near that volume reads the four rules
-again and picks from the five options the design document maps.
+The question reopens on volume, as arrivals approach the capacity of the
+consumers. An adopter near that volume reads the four rules again and picks
+from the five options the design document maps.
 
 Read the measurement as progress and not as closure. `docs/operations.md`
 states the same position. The test for every item here is whether the item's
@@ -1240,21 +1199,21 @@ own words describe what shipped.
 
 The table below accounts for every open item above. Most have a design
 document under `docs/design/`, and the table names the one item that
-needed none. The register stays the only authority. A document becomes a
+needs none. The register stays the only authority. A document becomes a
 decision only when a row enters the table in section 2.
 
 | Item | Document | Status |
 |---|---|---|
 | 1. Phase 2 exit criteria | `899a1565-de05-44ce-8693-ed6dd4cb97e3.md` | proposed, blocked |
 | 2. Compensation | `649c439e-afec-4bba-90d7-c14f78fd372d.md` | accepted, ratified as DEC-34 |
-| 3. Conversation state | `8bd63fe0-8567-44f9-b6cf-ae3d83918381.md` | ratified as DEC-35 to DEC-39, renumbered from its DEC-34 to DEC-38 |
+| 3. Conversation state | `8bd63fe0-8567-44f9-b6cf-ae3d83918381.md` | ratified as DEC-35 to DEC-39 |
 | 4. Automatic feedback clusters | `f4c1a90e-7d3b-4c2a-9e15-3b8d6f0a5c47.md` | blocked on volume |
-| 5. A threshold for each intent | `434db94d-bbba-4977-805a-e9d83cb0b6c5.md` | blocked on the trigger |
+| 5. A threshold for each intent | `434db94d-bbba-4977-805a-e9d83cb0b6c5.md` | open. The mechanism ships, and the item waits on an adopter's labeled history |
 | 6. Schema migration procedure | none needed | closed by `src/ledger/migrate.ts` |
-| 7. Head-of-line delay | `99dc14d7-da9d-4a92-a9dc-d7c0685c6992.md` | proposed. The measurement shipped, the poll floor is gone, and the correction is unchosen |
+| 7. Head-of-line delay | `99dc14d7-da9d-4a92-a9dc-d7c0685c6992.md` | proposed. The measurement ships, and the correction is unchosen |
 | (none) | `8dcb8fcb-39dc-4911-a695-2282b6081f07.md` operator console | ratified as DEC-40 |
 | (none) | `38f6dcea-8473-4cf4-9aef-c13936a0442f.md` a threshold for each intent | ratified as DEC-41 |
-| (none) | issue #49 the approver a reply carries | ratified as DEC-42 |
+| (none) | no document: the approver a reply carries | ratified as DEC-42 |
 | (none) | `ab98fd60-4327-4891-bb4e-00e51e66bdbd.md` partition concurrency | a trace. No row needed |
 | (none) | `bbc657f2-8083-47be-84e9-672825e2158d.md` online A/B tests | proposed, blocked |
 | (none) | `af2c0364-dc11-4547-a0b0-90f51592ae2b.md` ledger implementation | V1 background |
@@ -1279,23 +1238,23 @@ same thing.
 | attempt | One run of a turn, with its crash retries. The first run is attempt 1, and only a person's request starts another |
 | case | An item a person examines. It is a turn to label, or the runs of one ticket a reviewer takes |
 | compensation | A second action that repairs a write the system cannot reverse |
-| coverage | The result of the groundedness check |
+| coverage | The fraction of claims that the retrieved text supports. It is the result of the groundedness check |
 | disposition | An observable result of how a person handled a ticket |
 | fencing epoch | A number that increases and that makes an old write invalid |
 | gate | A test that a run must pass before it continues |
-| gold set | The labelled cases that fit the threshold and give the reports |
-| groundedness | The fraction of claims that the retrieved text supports |
+| gold set | The labeled cases that fit the threshold and give the reports |
+| groundedness | The check that tests each claim against the retrieved text. Its result is coverage |
 | hold period | The time a console send waits in the outbox before the relay may send it |
 | idempotency key | A value that lets a target system find a repeated request |
 | intent | One category in the taxonomy |
 | ledger | The Postgres tables that hold all state |
 | outbox | The table that holds actions before the relay sends them |
-| partition | A group of tickets that one consumer owns |
+| partition | A group of conversations that one consumer owns. A run with no conversation joins one through its ticket id |
 | product | What a channel serves. A run records its channel's product |
 | relay | The process that sends the outbox records |
 | reservation | A lapsing claim one reviewer holds on a case |
 | risk tier | The cost of an error for one intent. A person sets it |
 | roster | The list of reviewers a trusted proxy can name |
 | routing | The choice of which queue or component receives a ticket |
-| run | One pass of the coordinator over one ticket |
+| run | One pass of the coordinator over one turn, or over a ticket that has no conversation |
 | taxonomy | The curated list of a maximum of 25 intents |

@@ -386,9 +386,9 @@ describe('the queue wait the serial walk produces', () => {
   //
   // The pair is what makes each number evidence. A wake that did nothing
   // would leave the two columns equal, and every assertion below that names
-  // a difference would fail. The figures the shipped documents quote are
-  // pinned separately, in `pins the figures the register and the roadmap
-  // quote` — a bound loose enough to survive any draw pins no document.
+  // a difference would fail. The load the shipped documents describe is
+  // pinned separately, in `pins the load the register and the roadmap
+  // describe` — a bound loose enough to survive any draw pins no document.
   it('removes the poll floor from the wait when it wakes on arrival', () => {
     const polled = waitsOf({ ...OPTIONS, wakeOnArrival: false });
     const woken = waitsOf({ ...OPTIONS, wakeOnArrival: true });
@@ -450,31 +450,29 @@ describe('the queue wait the serial walk produces', () => {
     expect(Math.max(...wokenWaits)).toBeGreaterThan(Math.max(...polledWaits) - 5_000);
   });
 
-  // Every figure the shipped documents quote, pinned to the value they
-  // quote.
+  // The load the shipped documents describe, pinned to bounds.
   //
-  // This case exists because the suite claimed the numbers were pinned and
-  // they were not. `docs/v1-architecture.md` and `docs/v2-roadmap.md` name a
-  // utilisation of 1.37 per cent, a depth ratio of 1.14 and a prior wait of
-  // 2.4 to 2.7 s at the median. Loose bounds like "under two per cent" and
-  // "above two seconds" let every one of those move in silence, which is the
-  // failure the surrounding comments say the suite prevents.
-  it('pins the figures the register and the roadmap quote', () => {
+  // The shipped history runs at about 1.37 percent utilization, with a depth
+  // ratio near 1.14, and a polled median wait of 2.4 to 2.7 s. The register
+  // and the roadmap describe that load in words, so these bounds hold the
+  // words true. Loose bounds like "under two percent" would let it move in
+  // silence.
+  it('pins the load the register and the roadmap describe', () => {
     const totalWork = plan.reduce((sum, r) => sum + r.serviceMs, 0);
     const utilisation = totalWork / (2 * OPTIONS.days * 11 * 3_600_000);
-    // "1.37 per cent utilisation".
+    // About 1.37 percent utilization.
     expect(utilisation).toBeGreaterThan(0.0130);
     expect(utilisation).toBeLessThan(0.0145);
 
     const depth = new Map<number, number>();
     for (const run of plan) depth.set(run.partition, (depth.get(run.partition) ?? 0) + 1);
     const counts = [...depth.values()];
-    // "a depth ratio of 1.14, which is what a hash gives".
+    // A depth ratio near 1.14, which is what a hash gives.
     expect(counts).toHaveLength(OPTIONS.partitions);
     expect(Math.max(...counts) / Math.min(...counts)).toBeLessThan(1.2);
 
-    // "2.4 to 2.7 s and 4.7 to 4.8 s before", per partition, on the loop
-    // this change replaced.
+    // 2.4 to 2.7 s at the median and 4.7 to 4.9 s at p95, per partition, on
+    // the polled loop the arrival signal replaces.
     const polled = planHistory({ ...OPTIONS, wakeOnArrival: false });
     for (const partition of counts.keys()) {
       const waits = polled

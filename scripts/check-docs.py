@@ -13,7 +13,8 @@ into commands.
   configured-path
                 The path back to the customer stays a broken line, because it
                 needs a configuration choice.
-  er-unenforced Each entity diagram says the database enforces no relationship.
+  er-unenforced Each entity diagram's legend says which tables declare no
+                foreign key. A database test checks the drawing itself.
   links         Every relative link in a shipped document resolves.
   design-index  The register's design table accounts for every open item it
                 lists, and every file it names exists.
@@ -28,6 +29,8 @@ into commands.
                 spelling, including one a line break splits.
   map-coverage  The quick map's list of decisions no row names is exactly the
                 set no row names.
+  map-rows      The quick map has a row for every source directory and the
+                console, and no row for a directory that is gone.
   licence       The repository root holds the Apache License 2.0, and every
                 workspace package declares that licence.
   cooldown      Every Dependabot ecosystem waits at least a day, so no update
@@ -548,9 +551,7 @@ def shipped_markdown(root: str, findings: list[str]) -> Iterator[str]:
     """
     skip = {"node_modules", "dist", ".git", "corpus", "__pycache__", ".trail",
             ".claude", ".decisions", ".flow"}
-    walked = os.walk(
-        root, onerror=lambda error: findings.append(
-            f"{error.filename}: {error.strerror or error}"))
+    walked = os.walk(root, onerror=walk_errors(findings, root))
     for base, dirs, files in walked:
         dirs[:] = [d for d in dirs if d not in skip]
         for name in files:
@@ -736,9 +737,7 @@ def markdown_under(root: str, directory: str, findings: list[str],
         findings.append(f"{directory}/: not a directory")
         return []
     found = []
-    for base, dirs, files in os.walk(
-            where, onerror=lambda error: findings.append(
-                f"{error.filename}: {error.strerror or error}")):
+    for base, dirs, files in os.walk(where, onerror=walk_errors(findings, root)):
         dirs.sort()
         for name in sorted(files):
             if not name.endswith(".md") or name == "README.md":
@@ -1031,6 +1030,88 @@ def check_map_coverage(root: str, findings: list[str]) -> None:
             f"by a row: {extra}. Covered by no row and not named: {missing}")
 
 
+SOURCE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts")
+
+
+def holds_source(root: str, directory: str, findings: list[str]) -> bool | None:
+    """True when a TypeScript file sits anywhere under `directory`.
+
+    A subtree it cannot read is a finding, not an absence of source. With no
+    source found and a subtree unread, the answer is None: the check cannot
+    tell, so it names neither a missing row nor an extra one.
+    """
+    unread: list[OSError] = []
+    record = walk_errors(findings, root, f"{QUICK_MAP}: cannot read ", quote=True)
+
+    def unreadable(error: OSError) -> None:
+        unread.append(error)
+        record(error)
+
+    for _, _, files in os.walk(directory, onerror=unreadable):
+        if any(name.endswith(SOURCE_SUFFIXES) for name in files):
+            return True
+    return None if unread else False
+
+
+def walk_errors(findings: list[str], root: str, label: str = "", quote: bool = False):
+    """An `os.walk` error handler that records each unreadable path.
+
+    The path is given from `root`, so a finding reads the same in any checkout.
+    """
+    def record(error: OSError) -> None:
+        where = os.path.relpath(error.filename, root) if error.filename else root
+        if quote:
+            where = f"`{where}`"
+        findings.append(f"{label}{where}: {error.strerror or error}")
+    return record
+
+
+def check_map_rows(root: str, findings: list[str]) -> None:
+    """The quick map has one row for each directory a reader can open.
+
+    The directories on disk decide: each one under `src/` that holds a
+    TypeScript file, and `console` when `console/src` exists. A hidden
+    directory is not one, and neither is a cache or a leftover that holds no
+    source. So a checkout with such a directory reads the same as a clean
+    clone.
+    """
+    text = read_repo_file(root, QUICK_MAP, findings)
+    if text is None:
+        return
+    rows = {name for name, _ in MAP_ROW.findall(prose_text(text))}
+    source = os.path.join(root, "src")
+    on_disk: set[str] = set()
+    unknown: set[str] = set()
+    entries: list[os.DirEntry] = []
+    if os.path.isdir(source):
+        try:
+            entries = list(os.scandir(source))
+        except OSError as error:
+            findings.append(f"{QUICK_MAP}: cannot read `src`: {error.strerror or error}")
+            return
+    if entries:
+        for entry in entries:
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            verdict = holds_source(root, entry.path, findings)
+            if verdict is None:
+                unknown.add(entry.name)
+            elif verdict:
+                on_disk.add(entry.name)
+    if not on_disk and unknown:
+        findings.append(f"{QUICK_MAP}: could not read the directories it found under src/, so it compared nothing")
+        return
+    if not on_disk:
+        findings.append(f"{QUICK_MAP}: found no source directories under src/, so it compared nothing")
+        return
+    if os.path.isdir(os.path.join(root, "console", "src")):
+        on_disk.add("console")
+    for name in sorted(on_disk - rows):
+        findings.append(f"{QUICK_MAP}: has no row for the directory `{name}`")
+    for name in sorted(rows - on_disk - unknown):
+        findings.append(f"{QUICK_MAP}: has a row for `{name}`, which is not a source directory")
+
+
 def check_script_claim(root: str, findings: list[str]) -> None:
     """The runbook never claims the console ships no script.
 
@@ -1315,6 +1396,7 @@ CHECKS = {
     "script-index": check_script_index,
     "script-claim": check_script_claim,
     "map-coverage": check_map_coverage,
+    "map-rows": check_map_rows,
     "licence": check_licence,
     "cooldown": check_cooldown,
 }

@@ -7,7 +7,7 @@
  * `Resource-ID` header on thread create, `embed=threads` on conversation
  * read, and `404` for a conversation that is gone. Every request in this
  * file crosses a TCP connection and every response is parsed from real HTTP,
- * so the client's own behaviour is exercised. What it cannot prove is that
+ * so the client's own behavior is exercised. What it cannot prove is that
  * FreeScout answers this way; that pass is a person opening the instance
  * `docker compose` brings up, and the pull request records it separately.
  *
@@ -859,7 +859,7 @@ describe('DEC-44: the reply the ledger holds, where the operator proved the note
     expect(instance.threadsOf('41')[0]?.type).toBe('message');
     expect(instance.threadsOf('41')[0]?.state).toBe('draft');
 
-    // The draft path sends the parked copy, which is the DEC-40 behaviour
+    // The draft path sends the parked copy, which is the DEC-40 behavior
     // this change does not touch. What was sent, and not merely that
     // something resolved: this assertion read `resolves.toBeDefined()`, which
     // passes for a publish of any text at all.

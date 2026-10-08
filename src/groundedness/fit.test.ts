@@ -213,7 +213,7 @@ describe('fitCoverageThresholds (DEC-05, section 4.7)', () => {
     // Grades in a stable order, with their own counts. The mean is compared
     // with a tolerance: summing many 0.1 values drifts from 0.1, and
     // an exact match here would pin a floating-point artefact rather than the
-    // behaviour. The job reports the raw mean, as the other artifacts do.
+    // behavior. The job reports the raw mean, as the other artifacts do.
     expect(fit.byGrade.map((g) => [g.grade, g.drafts])).toEqual([
       ['absent', 100],
       ['off_topic', 100],

@@ -101,7 +101,7 @@ describe('the deployments that must not name the development reviewer', () => {
     }
   });
 
-  // The behavioural check reads the module URL, so the image must hold no
+  // The behavioral check reads the module URL, so the image must hold no
   // console source for it to pass there. It copies `dist` and the core's
   // package files, and nothing under `console/src`.
   //

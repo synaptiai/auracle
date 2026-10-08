@@ -5,8 +5,8 @@ description: Applies Simplified Technical English to any markdown this repositor
 
 # STE Documentation
 
-This skill is advisory. The deterministic backstop is the compliance pass in
-`REVIEW.md`, which runs the same sentence-length check before a review closes.
+This skill is advisory. The deterministic backstop is `scripts/ste-check.py`,
+which CI runs on the shipped documents.
 
 Documentation that ships to adopters follows ASD-STE100 Simplified Technical
 English. Prompts, scripts and configuration do not.

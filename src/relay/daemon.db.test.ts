@@ -31,7 +31,7 @@ const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 await pool.query('SELECT 1');
 
 
-/** Egress fake whose send and read-back behaviour a test scripts per case. */
+/** Egress fake whose send and read-back behavior a test scripts per case. */
 class ScriptedEgress implements EgressAdapter {
   readonly name = 'scripted';
 

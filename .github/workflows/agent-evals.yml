@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       behaviour:
-        description: "Run the behaviour layer. It spends model calls."
+        description: "Run the behavior layer. It spends model calls."
         type: boolean
         default: false
 
@@ -29,7 +29,7 @@ jobs:
       - name: Structural validation of the eval suite
         run: python3 evals/run.py
 
-  # The behaviour layer spends model calls, and it greps the agent's stdout
+  # The behavior layer spends model calls, and it greps the agent's stdout
   # rather than the repository. The fixture-PII case therefore passes when an
   # agent writes the file and prints "Done." A nightly cron paid for that.
   # It stays opt-in until the cases assert against the tree; evals/run.py
@@ -54,7 +54,7 @@ jobs:
       # key is not in this step's environment, so no install script sees it.
       - name: Install Claude CLI
         run: npm install -g @anthropic-ai/claude-code@2.1.289
-      - name: Run behaviour cases
+      - name: Run behavior cases
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python3 evals/run.py

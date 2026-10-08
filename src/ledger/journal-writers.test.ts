@@ -2,7 +2,7 @@
 //
 // Two rules that the review found nothing holding. Both are properties of
 // the source rather than of a run, so both are parsed here rather than
-// exercised: a behavioural case would need a second relay process for one
+// exercised: a behavioral case would need a second relay process for one
 // and a deadlock for the other.
 //
 // Rule 1: one module writes the table. `journal-statement.test.ts` pins the

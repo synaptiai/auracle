@@ -4,10 +4,10 @@ Every change passes three reviews before merge. Run them in this order.
 
 ## Pass 1. Bugs
 
-Check correctness against the claimed behaviour.
+Check correctness against the claimed behavior.
 
-- Run the build, the tests and the lint. Paste the output.
-- Read the concurrency rules in section 3.4. Check outbox inserts, epochs and
+- Run `pnpm run verify`. Paste its output, the exit code and the skip count.
+- Read the concurrency rules in section 3.4 of `docs/v1-architecture.md`. Check outbox inserts, epochs and
   idempotency keys against them. The epoch is a number that increases. It makes
   a write from a stale owner fail instead of corrupt the state. The
   idempotency key comes from the action data, not the run identity. Two runs of
@@ -27,24 +27,24 @@ Check data exposure and injection surface.
 - Adapter payloads stay inside the declared capability manifest (DEC-06). Each
   adapter declares the actions and payload fields that it supports. A payload
   outside that declaration means the adapter acts beyond its promise.
-- The prompt-log path stays off unless an override exists (section 6).
-  Activating it grants commercial rights to every prompt and completion.
+- Prompt logging stays off in the provider account (section 6 of
+  `docs/v1-architecture.md`). No code here turns it on. Turning it on grants
+  the provider commercial rights to every prompt and completion.
 
 ## Pass 3. Compliance
 
 Check the change against `docs/v1-architecture.md`.
 
-- Every behaviour change cites a DEC or states that it is an implementation
+- Every behavior change cites a DEC or states that it is an implementation
   detail.
-- A change that cites a DEC commits a design record under `docs/decisions/`,
-  declaring those DECs on its `Affects:` line. A change that cites none commits
-  no record. CI proves a record is well formed. Only a reader can tell that a
-  change needing one wrote it.
+- A change that cites a DEC commits a design record, as `CONTRIBUTING.md`
+  section 4 says. CI proves a record is well formed. Only a reader can tell
+  whether a change needs a record and has one.
 - No change blends the two gates into one score (DEC-05). Each gate catches a
   failure the other cannot see. A blend lets one strong signal mask one failed
   gate.
 - Customer replies keep approval and a non-empty disclosure field
-  (DEC-12, DEC-14). A sent reply cannot be recalled. The disclosure tells the
+  (DEC-12, DEC-14). Nobody can recall a sent reply. The disclosure tells the
   customer that a machine produced the text.
 - Shipped markdown follows Simplified Technical English.
 
@@ -52,7 +52,7 @@ Check the change against `docs/v1-architecture.md`.
 
 Important means one of these:
 
-- The change breaks behaviour that a test claims to prove.
+- The change breaks behavior that a test claims to prove.
 - The change exposes data or writes real customer data into the repository.
 - The change contradicts a DEC without a decision that changes the DEC.
 
@@ -68,12 +68,12 @@ that runs still answers to the checklist below.
 
 ### Verification checklist
 
-- The build, the tests and the lint ran. The output is pasted above.
-- Each command states its exit code.
+- The description holds the output of `pnpm run verify`.
+- The output states the exit code and the skip count.
 
 ### Adversarial checklist
 
-Run on any behavioural change to ledger, coordinator, relay, classifier,
+Run on any behavioral change to ledger, coordinator, relay, classifier,
 gates or policy engine.
 
 1. Concurrency, section 3.4. Two runs on one ticket. An outbox insert that
@@ -89,8 +89,8 @@ gates or policy engine.
 4. Attack the proving test as hard as the change. A test that cannot fail
    proves nothing.
 
-Record each attack outcome in the card review feedback. Name the section or
-DEC that motivated each attack.
+Record each attack outcome in the review. Name the section or DEC that
+motivates each attack.
 
 ## Backstop coverage
 
@@ -104,28 +104,23 @@ DEC that motivated each attack.
 | A design record cites a defined DEC | none | yes | yes |
 | Fixtures match the generator | none | yes | n/a |
 
-Two columns exist because they differ. A job that runs a guard's own cases
+The last two columns differ on purpose. A job that runs a guard's own tests
 proves the guard works. It does not apply the rule to the pull request.
 
-One rule is not enforced on a pull request. It depends on context that exists
-only inside a session. State this when it matters. Do not pretend coverage
-exists.
+CI applies two rules to no pull request. The test-edit rule is a review duty.
+The live-database rule depends on context that exists only inside a session.
+State this when it matters. Do not claim that CI checks these rules.
 
-The design-record rule is half enforced, and the half matters. CI proves that
-every record under `docs/decisions/` declares a decision section 2 of the
-register defines. It proves that `intent/` holds the template alone, and that
-no archived record declares one. It cannot prove that a change which needed a
-record wrote one, because that depends on the diff. Pass 3 above owns that
+CI enforces half of the design-record rule. It runs every refusal that
+`CONTRIBUTING.md` section 4 lists. It cannot prove whether a change needs a
+record and has one, because that depends on the diff. Pass 3 above owns that
 reading.
 
-The test-edit rule has no checker by decision (issue #74).
-A session hook used to block any test-file edit on a `fix/` branch.
-CONTRIBUTING.md requires that prefix for a defect.
-So a bug fix could not carry its own regression test. The rule survives as a review
-duty: the bugs pass above owns it. A fix adds a failing-first test and never
-relaxes an existing assertion.
+The test-edit rule has no checker. A checker would block the regression test
+that a bug fix adds. The bugs pass owns the rule. A fix adds a failing-first
+test and never relaxes an existing assertion.
 
 The PII guard has no clause for a person's name. It never reads an image.
 It matches an email address, a phone number and a customer identifier.
-So the DEC-18 checkbox promises more than the guard decides.
-The compliance pass owns the rest.
+So the DEC-18 box in the pull request template promises more than the guard
+decides. The compliance pass owns the rest.

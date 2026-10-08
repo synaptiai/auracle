@@ -13,11 +13,11 @@ register already names.
 
 `scripts/check-docs.py` reads this file. It proves that each diagram declares
 every box it draws an edge to. It also proves that every box has a legend
-row. And it proves that three of the four rules in section 1 survive an
-edit.
+row. And it proves that parts of three rules in section 1 survive an edit.
 
 The checker decides structure and reference. It does not decide whether a
-diagram is true. Only a reader does that.
+diagram is true. A database test checks the entity diagram against the
+migrated ledger, as section 3 says. A reader checks the other two.
 
 ## 1. One message, end to end
 
@@ -46,12 +46,12 @@ flowchart TB
   end
 
   subgraph INGRESS["Ingress: two daemons take messages in"]
-    WH["webhook<br/>signed HTTP"]
+    WH["webhook<br/>HTTP, signed when a secret is set"]
     IMAPD["imap<br/>polls unseen mail"]
   end
 
   ENQ["intake<br/>one message becomes one turn<br/>of one conversation"]
-  Q[("intake table<br/>the queue, one partition per consumer")]
+  Q[("intake table<br/>the queue, one consumer per partition")]
 
   subgraph CONS["consumer: one daemon owns each partition"]
     SM["The run coordinator<br/>a plain state machine"]
@@ -65,6 +65,7 @@ flowchart TB
   subgraph ADAPT["Adapters: the only code that reaches a target system"]
     HD["Helpdesk adapter, the default<br/>reference only: in memory, no network"]
     SMTP["Mail adapter<br/>sends real mail, once configured"]
+    FS["FreeScout adapter<br/>posts to a FreeScout instance"]
   end
 
   PERSON(["A person<br/>reads the parked draft,<br/>then approves or rejects it"])
@@ -110,9 +111,9 @@ flowchart TB
 | WH | A daemon. It accepts an HTTP request from another system. It checks the signature when an adopter sets a secret, and accepts every caller when nobody does. |
 | IMAPD | A daemon. It polls the mailbox for unread mail. |
 | ENQ | The step that turns one arriving message into one queue row. |
-| Q | The queue. A partition is a group of tickets one consumer owns. |
+| Q | The queue. A partition is a group of conversations one consumer owns. |
 | CONS | The daemon that does the work. One consumer owns each partition. |
-| SM | The run coordinator. It walks each ticket through fixed steps. |
+| SM | The run coordinator. It walks each run through fixed steps. |
 | KB | The stored answers the system may cite. |
 | LGR | The tables that hold all state. The system writes here before it acts. |
 | ESCQ | A read-only report. It lists the runs that need a person, with the reason. |
@@ -120,6 +121,7 @@ flowchart TB
 | ADAPT | The components that connect the system to one external system. |
 | HD | The reference helpdesk adapter. It holds fixtures and reaches no network. |
 | SMTP | The mail adapter. An adopter chooses it, and then real mail leaves. |
+| FS | The FreeScout adapter. An adopter chooses it, and it posts through the FreeScout API. |
 | PERSON | A reviewer. For a customer reply they read the draft in the helpdesk or the operator console. |
 | APPR | The command a reviewer runs to approve one parked action. |
 | RELAYD | The daemon that drains the outbox. |
@@ -150,6 +152,7 @@ flowchart LR
     IMAPPOLL["imap"]
     CONSUMERD["consumer"]
     RELAYD2["relay"]
+    CONSOLED["console"]
   end
 
   subgraph RUNTIME["The path one ticket takes"]
@@ -166,7 +169,7 @@ flowchart LR
   end
 
   subgraph FITTING["Run when you set the numbers"]
-    CALIBRATE["calibrate<br/>fits the agreement threshold"]
+    CALIBRATE["calibrate<br/>fits the agreement thresholds,<br/>global and per intent"]
     FITGROUND["fit-groundedness<br/>fits the two coverage thresholds"]
     REPORTGROUND["report-groundedness<br/>measures the fitted pair"]
     GOLDREPORT["gold-report<br/>publishes the headline numbers"]
@@ -178,7 +181,7 @@ flowchart LR
   subgraph WATCH["Run to see how the system is doing"]
     ESCALATIONS["escalations<br/>what needs a person now"]
     LATENCY["latency<br/>which partition falls behind"]
-    BANDS["bands<br/>the four control-band metrics"]
+    BANDS["bands<br/>the control-band metrics"]
   end
 
   subgraph SETUP["Run once, or when the inputs change"]
@@ -202,17 +205,20 @@ flowchart LR
   POLICY --> BRIDGE2
   BRIDGE2 --> ADAPTERS2
   RELAYD2 --> ADAPTERS2
-  FITTING -.->|"writes the numbers the<br/>consumer reads at startup"| CONSUMERD
+  CONSOLED -->|"approves through<br/>the approve path"| LEDGER
+  CALIBRATE -.->|"writes the numbers the<br/>consumer reads at startup"| CONSUMERD
+  FITGROUND -.-> CONSUMERD
   WATCH -.->|"reads only"| LEDGER
 ```
 
 | Name | What it means |
 |---|---|
-| DAEMONS | The four processes that run without stopping. |
+| DAEMONS | The processes that run without stopping. |
 | WEBHOOKD | Accepts messages over HTTP. It checks the signature only when an adopter sets a secret. |
 | IMAPPOLL | Accepts messages from a mailbox. |
-| CONSUMERD | Walks each ticket through the steps. |
+| CONSUMERD | Walks each run through the steps. |
 | RELAYD2 | Sends the actions the outbox holds. |
+| CONSOLED | Serves the operator console, where a reviewer approves or rejects a parked action. It approves through the same path as the approve command. |
 | RUNTIME | The components that handle one ticket. The consumer calls all but the first. |
 | ENQ2 | Turns one arriving message into one queue row, and routes it to its conversation. |
 | CLASSIFY | Picks the intent. It samples nine times, so disagreement is visible. |
@@ -224,22 +230,22 @@ flowchart LR
 | BRIDGE2 | Puts a customer reply in front of a person as a draft. It calls the adapter. |
 | ADAPTERS2 | The code that talks to a helpdesk or a mail server. The drawing shows two callers. The approve command and the imap daemon call it too. |
 | MODELS2 | The model port, and the one provider behind it. |
-| FITTING | Jobs that choose or publish a number. None touches live traffic. |
-| CALIBRATE | Chooses the threshold the first gate compares against. |
+| FITTING | Offline jobs that fit, measure or select. None touches live traffic. |
+| CALIBRATE | Chooses the thresholds the first gate compares against: one global, and one for each intent with enough cases. |
 | FITGROUND | Chooses the two thresholds the second gate compares against. |
 | REPORTGROUND | Measures those two thresholds on cases that chose nothing. |
 | GOLDREPORT | Produces the numbers the README publishes. |
-| REPLAY | Replays labelled cases with no network and no database. |
+| REPLAY | Replays labeled cases with no network and no database. |
 | TRIAGE | Selects cases for review. It never gives a published number. |
 | INDUCE | Groups past tickets and proposes a name for each group. |
 | WATCH | Reports that read the ledger and write nothing to it. |
 | ESCALATIONS | Lists the runs that need a person, with the reason. |
 | LATENCY | Reports queue wait and service time for each partition. |
-| BANDS | Reports the four control-band metrics for one day. |
+| BANDS | Reports the control-band metrics for one day. |
 | SETUP | Jobs an operator runs before or between runs. |
 | MIGRATE | Applies each schema file in order and records the version. |
 | LOADDOCS | Reads a directory of documents into the knowledge base. |
-| EXPORT | Pulls real threads out of a mailbox. That output never enters the repository. |
+| EXPORT | Pulls real conversations out of a mailbox. That output never enters the repository. |
 
 The two gates stay apart on purpose (DEC-05). One catches a classifier that
 answers inconsistently. The other catches an answer that no source supports. A
@@ -247,8 +253,9 @@ single blended score can pass while one of them has failed.
 
 ## 3. The stored state
 
-The drawing below shows the tables and how the code joins them. Every line is
-broken, and the paragraph under the drawing says why.
+The drawing below shows every table and how they join. A solid line is a
+foreign key, and a broken line is a join only the code makes. The paragraph
+under the drawing names the foreign keys.
 
 ```mermaid
 erDiagram
@@ -293,34 +300,70 @@ erDiagram
   SCHEMA_VERSION {
     int version
   }
+  REVIEWER {
+    text identity
+    boolean active
+  }
+  CASE_HOLD {
+    uuid run_id
+    text reviewer
+    timestamptz lapses_at
+  }
+  CASE_HOLD_EVENT {
+    bigint event_id
+    uuid run_id
+    text kind
+  }
+  DOCUMENT_RERUN {
+    text doc_id
+    uuid run_id
+    text status
+  }
+  GATE_LATEST {
+    text product
+    text intent_id
+    uuid run_id
+  }
   CONVERSATION ||..o{ TURN : "holds"
   CONVERSATION ||..o{ INTAKE : "queues"
   CONVERSATION ||..o{ RUN : "owns"
   RUN ||..o{ STEP_JOURNAL : "journals"
   RUN ||..o{ OUTBOX : "queues"
   TICKET_EPOCH ||..o{ RUN : "fences"
+  RUN ||..o| CASE_HOLD : "is taken by"
+  RUN ||..o{ CASE_HOLD_EVENT : "records"
+  REVIEWER ||..o{ CASE_HOLD : "takes"
+  DOCUMENT ||--o| DOCUMENT_RERUN : "asks again"
+  RUN ||--o{ DOCUMENT_RERUN : "starts"
+  RUN ||..o{ GATE_LATEST : "is the latest gate of"
 ```
 
 | Name | What it means |
 |---|---|
-| CONVERSATION | One thread with one customer. It counts the turns it holds. |
-| TURN | One message in a thread, and the reply a person approved for it. |
+| CONVERSATION | One exchange with one customer. It counts the turns it holds. |
+| TURN | One message in a conversation, and the reply a person approves for it. |
 | INTAKE | The queue. One row waits for a consumer to pick it up. |
-| RUN | One pass of the coordinator over one ticket. |
+| RUN | One pass of the coordinator over one turn, or over a ticket that has no conversation. |
 | TICKET_EPOCH | The highest fencing epoch a ticket accepts. It stops a stale writer. |
 | STEP_JOURNAL | One row for each step. The system writes here before it acts. |
 | OUTBOX | One row for each action the relay has yet to send. |
-| DOCUMENT | The knowledge base. It joins nothing else, by design. |
-| SCHEMA_VERSION | Each migration the runner applied. `src/ledger/migrate.ts` creates this one. |
+| DOCUMENT | The knowledge base. The retriever searches it by words and by meaning. |
+| SCHEMA_VERSION | Each migration the runner applies. `src/ledger/migrate.ts` creates this one. |
+| REVIEWER | The roster of people the console serves. |
+| CASE_HOLD | The reviewer who holds the reservation of a parked run now, and when the reservation lapses. |
+| CASE_HOLD_EVENT | Each take, handover, release, send and lapse of a reservation. |
+| DOCUMENT_RERUN | A document a reviewer writes from a case, and the new attempt it asks for. |
+| GATE_LATEST | The most recent gate reading for each product and intent. |
 
-**The database declares no foreign key.** All fourteen schema files declare
-none, and `SCHEMA_VERSION` is not among them because the migration runner
-creates it. So every line above is a join the application makes and the
-database does not enforce. A broken line says so. Delete a conversation row
-and no row disappears with it.
+**The solid lines are foreign keys.** A solid line is one the database enforces.
+`DOCUMENT_RERUN` declares a foreign key to `DOCUMENT` and one to `RUN`. Every
+other table declares no foreign key. So every broken line is a join the
+application makes and the database does not enforce. Delete a conversation
+row and no row disappears with it.
 
-`DOCUMENT` stands alone. The retriever searches it by words and by meaning, and
-no ledger row points at it.
+`src/db/architecture-map.db.test.ts` compares this drawing with the migrated
+ledger. A table the drawing leaves out, or a foreign key it draws as a broken
+line, fails the test.
 
 Read `TICKET_EPOCH` beside `RUN`. The epoch is a number that increases. It
 makes a write from an old owner fail rather than corrupt the state.

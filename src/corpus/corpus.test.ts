@@ -563,7 +563,7 @@ describe('buildCorpusTickets turn structure', () => {
   // The dedup set is file wide, because the validator's uniqueness rule is.
   // The earlier version of this case added a References header to a copy, but
   // both events still landed under one root — so moving the set back inside
-  // the thread loop left it green, and the only new behaviour of the hoist
+  // the thread loop left it green, and the only new behavior of the hoist
   // was untested. These events are built with two genuinely different roots.
   it('drops a repeat delivery that arrives under a different thread root', async () => {
     const { events } = await collectEvents([{ sourceId: '1', rfc5322Text: SIMPLE_TEXT_EMAIL }]);

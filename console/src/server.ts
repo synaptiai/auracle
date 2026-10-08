@@ -3042,8 +3042,9 @@ async function publishRoute(
     from,
   }));
   if (outcome.outcome !== 'published') {
-    // The composer comes back holding what the reviewer wrote, with the
-    // refusal above it. The case is read again for its product, which the
+    // What the reviewer wrote comes back below the refusal: in the composer,
+    // or as text when the case maps no product or a person removed the
+    // document. The route reads the case again for its product, which the
     // form fixes, and for its reply: a reply that changed is drawn, and the
     // form carries its digest, so the reviewer reads it and publishes again
     // without writing the document twice. A case that cannot be read keeps

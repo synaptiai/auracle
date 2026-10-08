@@ -22,8 +22,8 @@ export interface IndexedDoc {
 
 export interface RetrievedDoc extends IndexedDoc {
   /**
-   * False when `review_by` is past. A non-fresh document never reaches the
-   * automatic path; it stays available for an answer that a person approves.
+   * False when `review_by` is past. Retrieval excludes such a document unless
+   * a caller passes `includeStale`, and no runtime caller does (DEC-23).
    */
   fresh: boolean;
 }

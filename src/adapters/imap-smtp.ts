@@ -381,7 +381,7 @@ interface ThreadOriginator {
  */
 // The lookups need three imapflow calls and the selected mailbox, and ignore
 // what mailboxOpen answers. Naming them structurally keeps the fault
-// behaviour of `search` and `fetch` under the compiler's eye: both answer
+// behavior of `search` and `fetch` under the compiler's eye: both answer
 // short rather than throwing.
 export type ImapReadClient = Pick<ImapFlow, 'search' | 'fetch' | 'mailbox'> & {
   mailboxOpen(path: string): Promise<unknown>;

@@ -24,9 +24,10 @@ error.
    assertion in the code, not a comment.
 4. RRF combines BM25 and dense results by rank only. No code averages BM25
    scores with cosine scores.
-5. The groundedness thresholds stay at 0.70 (block) and 0.80 (send to a
-   person). A change to a threshold cites the DEC that permits it. Both
-   thresholds apply to the automatic path. A customer reply is gated by
-   DEC-12 before the policy engine reads either one.
+5. 0.70 (block) and 0.80 (send to a person) are the coverage seeds. A
+   process that holds a coverage artifact runs the fitted pair instead. A
+   change to the seeds or to the fit cites the DEC that permits it. Both
+   thresholds apply to the automatic path. DEC-12 gates a customer reply
+   before the policy engine reads either one.
 
 If any check fails, name the DEC that the change violates and stop.

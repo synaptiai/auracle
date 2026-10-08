@@ -514,7 +514,7 @@ describe('fencedTransition and the runs the fence still governs', () => {
   // The boundary of the escape, at its other end: a run that has finished is
   // not parked either, so the fence still governs it. No production caller
   // moves a terminal run today, which is why this is the fail-closed half of
-  // the pair rather than a behaviour any path relies on.
+  // the pair rather than a behavior any path relies on.
   it('refuses a finished run at the raised fence (DEC-28)', async () => {
     const runId = await runBehindARaisedFence('resolved');
     const moved = await fencedTransition(pool, {

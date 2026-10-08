@@ -12,7 +12,7 @@
 //                           labelled halves, in place of the committed corpus.
 //
 // Needs OPENROUTER_API_KEY. One model call per claim, so a full fit half is
-// roughly a thousand calls.
+// about a thousand drafts and some four thousand calls.
 //
 // Argv, printing and the exit code live here and nowhere else. `job.ts` holds
 // the fit itself. Before the split they shared one file, and `scoring.ts`

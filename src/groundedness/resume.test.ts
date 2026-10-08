@@ -1,5 +1,5 @@
 // The resume file that lets a five-hour scoring pass survive an outage.
-import { appendFile, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -97,6 +97,154 @@ describe('openResume (DEC-18)', () => {
   it('refuses a file it cannot parse rather than starting over', async () => {
     await writeFile(file, 'not json\n');
     await expect(openResume(file, key)).rejects.toThrow(/resume file/);
+  });
+
+  // JSON that parses to something other than an object is no header and no
+  // row. Read as one, it raised a TypeError that named no file, and the
+  // runbook sends that operator nowhere.
+  for (const line of ['null', '[]', '1', '"x"']) {
+    it(`refuses a header that is valid JSON but no object, by name: ${line}`, async () => {
+      await writeFile(file, `${line}\n`);
+      await expect(openResume(file, key)).rejects.toThrow(/does not begin with a run header/);
+    });
+
+    it(`refuses a row that is valid JSON but no object, by name: ${line}`, async () => {
+      const store = await openResume(file, key);
+      await store.record('SYN-000001', { coverage: 1, grounded: true, grade: null }, FREE);
+      await appendFile(file, `${line}\n`);
+      await store.record('SYN-000002', { coverage: 1, grounded: true, grade: null }, FREE);
+      await expect(openResume(file, key)).rejects.toThrow(/holds a line this job cannot read/);
+    });
+  }
+
+  // An object row with no draft id is damage too. Skipped, it would hide a
+  // lost draft behind a run that looks complete.
+  it('refuses an object row that names no draft', async () => {
+    const store = await openResume(file, key);
+    await store.record('SYN-000001', { coverage: 1, grounded: true, grade: null }, FREE);
+    await appendFile(file, '{"id": 5}\n');
+    await store.record('SYN-000002', { coverage: 1, grounded: true, grade: null }, FREE);
+    await expect(openResume(file, key)).rejects.toThrow(/holds a line this job cannot read/);
+  });
+
+  // The job writes a header only to a missing or empty file. A second one is
+  // left by an earlier job that read a file it could not open as a fresh
+  // start. It counts only when it describes this run, or the samples after it
+  // mix two runs.
+  it('resumes past a second header that describes this run', async () => {
+    const store = await openResume(file, key);
+    await store.record('SYN-000001', { coverage: 1, grounded: true, grade: null }, FREE);
+    await appendFile(file, JSON.stringify({ header: true, ...key }) + '\n');
+    await store.record('SYN-000002', { coverage: 0.5, grounded: false, grade: null }, FREE);
+    expect((await openResume(file, key)).done.size).toBe(2);
+  });
+
+  const digested = { ...key, inputDigest: 'aaaa1111bbbb2222' };
+  for (const [field, value] of [
+    ['modelVer', 'm2'], ['promptVer', 'p2'], ['split', 'report'], ['halfDigest', 'ffff0000ffff0000'],
+    ['inputDigest', 'another-input'],
+  ] as const) {
+    it(`refuses a second header with another ${field}`, async () => {
+      const store = await openResume(file, digested);
+      await store.record('SYN-000001', { coverage: 1, grounded: true, grade: null }, FREE);
+      await appendFile(file, JSON.stringify({ header: true, ...digested, [field]: value }) + '\n');
+      await store.record('SYN-000002', { coverage: 0.1, grounded: false, grade: null }, FREE);
+      await expect(openResume(file, digested)).rejects.toThrow(/second run header that describes a different run/);
+    });
+  }
+
+  // The first header may predate the input digest, and the file then resumes
+  // with a warning. A second header that carries this run's digest describes
+  // the same run, so it resumes too. One that carries another digest does not.
+  it('resumes past a second header that adds this run\'s digest to an older file', async () => {
+    const store = await openResume(file, key);
+    await store.record('SYN-000001', { coverage: 1, grounded: true, grade: null }, FREE);
+    await appendFile(file, JSON.stringify({ header: true, ...digested }) + '\n');
+    await store.record('SYN-000002', { coverage: 0.5, grounded: false, grade: null }, FREE);
+    const original = console.warn;
+    console.warn = () => {};
+    try {
+      expect((await openResume(file, digested)).done.size).toBe(2);
+      await expect(openResume(file, { ...key, inputDigest: 'cccc3333dddd4444' }))
+        .rejects.toThrow(/second run header that describes a different run/);
+    } finally {
+      console.warn = original;
+    }
+  });
+
+  // The first header's digest counts too, when this run carries none.
+  it('refuses a second header whose digest differs from the first header\'s', async () => {
+    const store = await openResume(file, digested);
+    await store.record('SYN-000001', { coverage: 1, grounded: true, grade: null }, FREE);
+    await appendFile(file, JSON.stringify({ header: true, ...key, inputDigest: 'cccc3333dddd4444' }) + '\n');
+    await expect(openResume(file, key)).rejects.toThrow(/second run header that describes a different run/);
+  });
+
+  // A second header with no digest came from a job that could not check its
+  // inputs. It resumes, as a first header with none does, and says so.
+  it('resumes past a second header with no digest, and says so', async () => {
+    const store = await openResume(file, digested);
+    await store.record('SYN-000001', { coverage: 1, grounded: true, grade: null }, FREE);
+    await appendFile(file, JSON.stringify({ header: true, ...key }) + '\n');
+    await store.record('SYN-000002', { coverage: 0.5, grounded: false, grade: null }, FREE);
+    const warned: string[] = [];
+    const original = console.warn;
+    console.warn = (msg: string) => { warned.push(msg); };
+    try {
+      expect((await openResume(file, digested)).done.size).toBe(2);
+    } finally {
+      console.warn = original;
+    }
+    expect(warned.join(' ')).toContain('second run header was written before the input digest existed');
+  });
+
+  // A second header means an earlier job started over and scored drafts
+  // again. Both scorings were paid for, so the spend of a repeated draft is
+  // the sum, and an unknown part keeps the sum a floor.
+  it('adds the spend of a draft the file records twice', async () => {
+    const store = await openResume(file, key);
+    await store.record('SYN-000001', { coverage: 1, grounded: true, grade: null }, { costMicros: 120, costUnknown: false });
+    await appendFile(file, JSON.stringify({ header: true, ...key }) + '\n');
+    await store.record('SYN-000001', { coverage: 0.5, grounded: false, grade: null }, { costMicros: 30, costUnknown: true });
+    const resumed = await openResume(file, key);
+    expect(resumed.cost.get(resumed.idKey('SYN-000001'))).toEqual({ costMicros: 150, costUnknown: true });
+    expect(resumed.done.get(resumed.idKey('SYN-000001'))).toEqual({ coverage: 0.5, grounded: false, grade: null });
+  });
+
+  // Any scoring of unknown spend keeps the sum a floor, whichever came first.
+  it('keeps the spend of a draft scored twice a floor when either scoring is unknown', async () => {
+    const sample = { coverage: 1, grounded: true, grade: null };
+    const id = (await openResume(file, key)).idKey('SYN-000001');
+    const header = JSON.stringify({ header: true, ...key });
+    const cases: [string, { costMicros: number; costUnknown: boolean }][] = [
+      // Unknown first, then known.
+      [JSON.stringify({ id, sample, cost_micros: 30, cost_unknown: true }) + '\n'
+        + JSON.stringify({ id, sample, cost_micros: 120, cost_unknown: false }), { costMicros: 150, costUnknown: true }],
+      // No spend recorded first, as before the field existed, then known.
+      [JSON.stringify({ id, sample }) + '\n'
+        + JSON.stringify({ id, sample, cost_micros: 120, cost_unknown: false }), { costMicros: 120, costUnknown: true }],
+      // Known first, then no spend recorded.
+      [JSON.stringify({ id, sample, cost_micros: 120, cost_unknown: false }) + '\n'
+        + JSON.stringify({ id, sample }), { costMicros: 120, costUnknown: true }],
+    ];
+    for (const [rows, spent] of cases) {
+      const [one, two] = rows.split('\n');
+      await writeFile(file, [header, one, header, two].join('\n') + '\n');
+      expect((await openResume(file, key)).cost.get(id), rows).toEqual(spent);
+    }
+  });
+
+  // Only a missing file is a fresh start. Read as one, a file the job cannot
+  // read discarded every draft it held and wrote a second header after them.
+  it.skipIf(process.getuid?.() === 0)('refuses a file it cannot read, by name, rather than starting over', async () => {
+    const store = await openResume(file, key);
+    await store.record('SYN-000001', { coverage: 1, grounded: true, grade: null }, FREE);
+    await chmod(file, 0o200);
+    try {
+      await expect(openResume(file, key)).rejects.toThrow(new RegExp(file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    } finally {
+      await chmod(file, 0o600);
+    }
   });
 
   // A killed shell is one of the three deaths this file exists to survive, and

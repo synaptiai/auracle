@@ -13,7 +13,7 @@
  * Each refusal sends the reviewer somewhere different, so each is its own
  * answer.
  *
- * The scan is the other half of one behaviour, so it is tested here: the
+ * The scan is the other half of one behavior, so it is tested here: the
  * console writes the request, and the consumer that owns the conversation
  * starts the attempt.
  */

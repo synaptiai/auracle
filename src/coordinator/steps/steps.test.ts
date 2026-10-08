@@ -193,7 +193,7 @@ describe('a step answers without a ledger behind it', () => {
     expect(ctx.meter.cost()).toBe(0);
   });
 
-  // The asymmetry, as behaviour. Park runs after the reply is composed and
+  // The asymmetry, as behavior. Park runs after the reply is composed and
   // the money is spent; stopping here would leave a person with no draft to
   // approve and a run that paid for one. A future edit that folds the limit
   // check into the sequencer fails this case.
@@ -535,7 +535,7 @@ describe('a fault inside the walk', () => {
 /**
  * Which steps call the DEC-25 limit check, read from the source.
  *
- * A behavioural case can say park does not check; it cannot say the other
+ * A behavioral case can say park does not check; it cannot say the other
  * five still do without five more model stubs. This reads the call itself,
  * parsed rather than matched.
  */

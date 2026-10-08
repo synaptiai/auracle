@@ -11,7 +11,8 @@ insert. So a failure leaves no half-applied file and no false record.
 The runner refuses a file whose version is below the highest recorded version.
 Applying it out of order could break a later one.
 
-It also refuses a recorded version whose file now has another name. A row
+It also refuses a recorded version whose file has a name other than the
+recorded one. A row
 inserted by hand can name the file wrongly. Or the ledger comes from another
 history of this directory, such as a number that a branch reuses. To skip the
 file leaves its schema missing with no error.
@@ -19,23 +20,18 @@ file leaves its schema missing with no error.
 ## Rules for a new file
 
 1. Name it `NNN_short_title.sql`, with `NNN` above every existing number.
-2. Write it to run once. The runner never re-applies a file it has recorded.
+2. Write it so that a second run changes nothing. The runner applies it once,
+   but one suite runs every file again on a migrated ledger. So each file
+   keeps `IF NOT EXISTS`, or a guard of the same effect.
 3. Keep it in one transaction. The runner opens one for you.
 4. Do not clear `schema_version`. It is how the runner knows what ran.
-
-Rule 2 is the one that changed. Suites used to re-apply the schema between
-cases. So every migration also had to be safe to re-apply, and each file
-carried `IF NOT EXISTS` for that reason.
-
-Tests now clone an already migrated template. Nothing re-applies a file, so
-the rule the runner states is the only rule. Existing `IF NOT EXISTS` clauses
-are harmless and stay.
 
 ## The CONCURRENTLY caveat
 
 An index build takes a lock that queues every write to the table behind it.
 On a large ledger that stalls production even when the build is quick.
-So `db/014_run_created_at_index.sql` sets `lock_timeout`. It fails rather than
+So an index migration such as `db/014_run_created_at_index.sql` sets
+`lock_timeout`. It fails rather than
 hold an outage open.
 
 A lock timeout bounds only the wait for the lock. So
@@ -91,5 +87,5 @@ A shared database is a flake that passes most of the time.
 A suite clears its tables with `truncateLedger` from
 `src/test-support/schema.ts`. That helper reads the table list from
 `information_schema`, not from a list someone wrote down.
-A table added here is cleared by every suite from the moment it exists.
+Every suite clears a table that a file here adds, from the moment it exists.
 No test needs an edit.

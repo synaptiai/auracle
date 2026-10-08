@@ -208,8 +208,8 @@ export async function runGoldReportJob(
   const reportHalf = options.reportHalf ?? loadGoldHalf('report');
   // DEC-39: replay scores first turns only. A later turn's disposition
   // reflects the whole conversation, not the decision being scored. The
-  // committed report half holds 4100 cases and 3128 first turns, so `scope`
-  // and `report_tickets` below are what a reader must go by.
+  // report half holds fewer first turns than cases, so `scope` and
+  // `report_tickets` below are what a reader must go by.
   const firstTurns = reportHalf.tickets.filter(isFirstTurn);
   const promptVer = options.promptVer ?? DEFAULT_PROMPT_VER;
   const modelVer = options.modelVer;

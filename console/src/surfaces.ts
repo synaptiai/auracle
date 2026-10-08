@@ -2329,7 +2329,8 @@ export const UNDO_SAYS = {
   nothing_to_undo: 'That case holds no approval to undo.',
   window_passed: 'The hold period has passed, so the relay may post the reply at any moment.'
     + ' Nothing was undone.',
-  already_sent: 'The reply was sent, so there is nothing to undo.',
+  // Any status but pending: the relay sent the record, or acted on it otherwise.
+  already_sent: 'The relay has already acted on this reply, sent or not, so there is nothing to undo.',
   busy: 'Another write holds that case, so nothing was undone. Try again in a moment.',
 } as const satisfies Record<UndoOutcome['outcome'], string>;
 
@@ -3089,6 +3090,9 @@ function publishRefusalSays(
 ): string {
   switch (outcome.outcome) {
     case 'unknown_run': return 'The ledger holds no such run, so nothing was published.';
+    case 'removed':
+      return 'While this post ran, a person removed the document it repeats,'
+        + ' so nothing was published. Ask whoever administers the ledger before you write it again.';
     case 'busy': return 'Another write held this case, so nothing was published. Publish again.';
     case 'already_published':
       return 'This case already published a document with this title and answer, so nothing was published.'
@@ -3125,9 +3129,10 @@ function publishRefusalSays(
 }
 
 /**
- * A publish the ledger refused, with the composer drawn again holding what
- * the reviewer wrote. A refusal that dropped a document would ask a person to
- * write it twice.
+ * A publish the ledger refused, with what the reviewer wrote drawn again. It
+ * comes back in the composer, or as text when the case maps no product or a
+ * person removed the document. A refusal that dropped a document would ask a
+ * person to write it twice.
  */
 export function renderPublishRefused(
   runId: string,
@@ -3157,8 +3162,10 @@ export function renderPublishRefused(
       : '<div class="card"><header><span class="lbl">The reply the case holds now</span></header>'
         + `<div class="body"><div class="prose">${isolated(options.current)}</div>`
         + '<p class="mut">Publishing again asks for a new attempt against this reply.</p></div></div>',
-    caseProduct === null
-      // No form can be drawn without the case's product. What the reviewer
+    caseProduct === null || outcome.outcome === 'removed'
+      // No form can be drawn without the case's product. A removed document
+      // gets none either: a person removed it, perhaps for the personal data
+      // it held, and one click must not write it back. What the reviewer
       // wrote is still drawn, so it can be copied rather than lost.
       ? '<div class="card"><header><span class="lbl">What you wrote</span></header><div class="body">'
         + `<p><strong>${isolated(fields.title)}</strong></p><div class="prose">${isolated(fields.body)}</div>`

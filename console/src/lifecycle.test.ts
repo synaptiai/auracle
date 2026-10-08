@@ -87,7 +87,7 @@ describe('the console as a long-running process', () => {
   });
 
   // DEC-46: the entry point reads the hold period from the environment. The
-  // default and the refusals are `hold-lapse.test.ts`'s, behaviourally; what
+  // default and the refusals are `hold-lapse.test.ts`'s, behaviorally; what
   // only this file can check is that the wiring reads it at startup, before
   // the pool or any page exists.
   it('reads the hold period from the environment', () => {

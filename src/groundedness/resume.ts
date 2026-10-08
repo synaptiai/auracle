@@ -140,7 +140,17 @@ export async function openResume(file: string, key: ResumeKey): Promise<ResumeSt
   let text: string | null = null;
   try {
     text = await readFile(file, 'utf8');
-  } catch {
+  } catch (error) {
+    // Only a missing file is a fresh start. Any other fault, a permission or
+    // a disk error, would discard every draft the file holds and append a
+    // second header after them.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw new Error(
+        `resume file ${file} cannot be read: ${(error as Error).message}. `
+          + 'Fix the disk or the permission and start again; the file still holds the drafts it recorded',
+        { cause: error },
+      );
+    }
     text = null;
   }
 
@@ -174,6 +184,7 @@ export async function openResume(file: string, key: ResumeKey): Promise<ResumeSt
       let header: unknown;
       try {
         header = JSON.parse(lines[0] as string);
+        if (header === null || typeof header !== 'object' || Array.isArray(header)) throw new Error('no object');
       } catch {
         throw new Error(
           `resume file ${file} does not begin with a run header this job wrote. `
@@ -216,13 +227,50 @@ export async function openResume(file: string, key: ResumeKey): Promise<ResumeSt
           cost_unknown?: boolean;
         };
         try {
-          row = JSON.parse(line) as typeof row;
+          const parsed: unknown = JSON.parse(line);
+          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('no object');
+          row = parsed as typeof row;
         } catch {
           throw new Error(
             `resume file ${file} holds a line this job cannot read. Delete it to start over`,
           );
         }
-        if (typeof row.id !== 'string') continue;
+        // A second header comes from an earlier job that read a file it could
+        // not open as a fresh start, and wrote its own header after the drafts.
+        // It counts only when it describes the run the first header does:
+        // otherwise the samples after it come from another run. The check
+        // compares its input digest with each digest that exists, as it does
+        // for the first header, so a file whose header has no input digest
+        // still resumes, with the same warning. Any other row without
+        // a draft id is damage, and skipping it would hide a lost draft behind
+        // a run that looks complete.
+        if ((row as { header?: unknown }).header === true) {
+          const later = row as Partial<ResumeKey>;
+          const fields = ['modelVer', 'promptVer', 'split', 'halfDigest'] as const;
+          const digestDiffers = later.inputDigest !== undefined
+            && [h.inputDigest, key.inputDigest].some(
+              (digest) => digest !== undefined && digest !== later.inputDigest,
+            );
+          if (digestDiffers || fields.some((field) => later[field] !== h[field])) {
+            throw new Error(
+              `resume file ${file} holds a second run header that describes a different run. `
+                + "Mixing two runs' samples would publish a number from neither. Delete it to start over",
+            );
+          }
+          if (later.inputDigest === undefined && (h.inputDigest ?? key.inputDigest) !== undefined) {
+            console.warn(
+              `resume file ${file}: its second run header was written before the input digest existed, `
+                + 'so this run cannot check the claims and documents of the drafts after it. '
+                + 'It resumes on that assumption',
+            );
+          }
+          continue;
+        }
+        if (typeof row.id !== 'string') {
+          throw new Error(
+            `resume file ${file} holds a line this job cannot read. Delete it to start over`,
+          );
+        }
         // The sample's shape is checked here, at the one place a value re-enters
         // the run from disk. The fit job validates its samples; the report job
         // reads them straight out of this map, so a JSON-valid row holding a
@@ -234,12 +282,19 @@ export async function openResume(file: string, key: ResumeKey): Promise<ResumeSt
               + 'Delete it to start over',
           );
         }
+        // A draft that the file records twice, after a second header, has
+        // two scorings, and the job pays for each. So its spend is the sum,
+        // and a scoring of unknown spend keeps the sum a floor.
+        const seen = done.has(row.id);
+        const earlier = cost.get(row.id);
         done.set(row.id, held);
         if (typeof row.cost_micros === 'number' && Number.isFinite(row.cost_micros)) {
           cost.set(row.id, {
-            costMicros: row.cost_micros,
-            costUnknown: row.cost_unknown === true,
+            costMicros: (earlier?.costMicros ?? 0) + row.cost_micros,
+            costUnknown: (earlier?.costUnknown ?? seen) || row.cost_unknown === true,
           });
+        } else if (earlier !== undefined) {
+          cost.set(row.id, { ...earlier, costUnknown: true });
         }
       }
     }

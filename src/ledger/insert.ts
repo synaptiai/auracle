@@ -323,7 +323,7 @@ export async function fencedInsert(
       // the only chance to stamp its finish. Without this the clock's finish
       // was dropped in silence, the column stayed null, and the latency
       // reader labelled the row `unstamped` and dropped it from the service
-      // distribution. A clockless insert keeps its old behaviour: the column
+      // distribution. A clockless insert keeps its old behavior: the column
       // stays null, which is the honest answer when nobody said.
       // assertInsertClock refused a finish on a state that has not finished,
       // so this is exactly the terminal case.
@@ -365,7 +365,7 @@ export async function fencedInsert(
         // 'superseded' is terminal, so this commit also stamps the finish.
         //
         // Three cases, and they are not one statement, because the third
-        // must write null rather than a value. With no clock the behaviour
+        // must write null rather than a value. With no clock the behavior
         // is the old one: now(). With a finish on the clock, that finish.
         //
         // With a clock and no finish the column stays null, and the latency

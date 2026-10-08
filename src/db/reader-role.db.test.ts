@@ -83,7 +83,29 @@ afterAll(async () => {
   await step("SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = 'reader_role_probe'");
   await step("SELECT pg_replication_origin_drop(roname) FROM pg_replication_origin WHERE roname = 'reader_role_probe'");
   await step("SELECT lo_unlink(oid) FROM pg_largeobject_metadata WHERE lomowner = 'auracle_reader'::regrole");
-  for (const database of scratchDatabases) await step(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+  // At once, each on a connection of its own. Under a parallel run one
+  // DROP DATABASE took 39 s, and a probe showed each drop raise the server's
+  // requested-checkpoint count by one. Serial drops paid that per database
+  // and overran the hook, which then leaked every database and skipped the
+  // role steps below. Concurrent drops wait on one checkpoint together. No
+  // statement timeout: a drop cancelled partway leaves an invalid database
+  // that no one can connect to until a person drops it again.
+  const dropper = new Pool({ connectionString: dbUrl(), max: Math.max(1, scratchDatabases.length) });
+  await Promise.all(scratchDatabases.map((database) =>
+    dropper.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`)
+      .catch((error: unknown) => faults.push(error))));
+  await dropper.end().catch((error: unknown) => faults.push(error));
+  // A drop that issues no error can still leave a name, so the result is read.
+  if (scratchDatabases.length > 0) {
+    const names = scratchDatabases.map((database) => database.replace(/^"|"$/g, ''));
+    await writer.query<{ datname: string }>(
+      'SELECT datname FROM pg_database WHERE datname = ANY($1)', [names],
+    ).then((result) => {
+      if (result.rows.length > 0) {
+        faults.push(new Error(`scratch databases left behind: ${result.rows.map((row) => row.datname).join(', ')}`));
+      }
+    }, (error: unknown) => faults.push(error));
+  }
   // A restated scratch role holds grants in this database, so they go first.
   // One statement each for every role, not one round trip per role: the file
   // makes some 25 of them, and 50 serial catalog scans overran the hook's
@@ -128,7 +150,10 @@ afterAll(async () => {
   await readers.end().catch((error: unknown) => faults.push(error));
   await writer.end().catch((error: unknown) => faults.push(error));
   if (faults.length > 0) throw new AggregateError(faults, 'the role suite could not clean up');
-});
+  // Its own budget, three times the project's hook timeout. The drops are not
+  // cancelled, and the role steps after them must still run: a role that owns
+  // objects in a scratch database cannot be dropped until that database is.
+}, 180_000);
 
 function scratchName(kind: string): string {
   return `${kind}_${randomUUID().replace(/-/g, '').slice(0, 12)}`;

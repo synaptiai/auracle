@@ -72,7 +72,7 @@ const SELECT_BY_DAY = `
        -- attempts it took, and the day counts it once — from the attempt
        -- that ended it. Counting every attempt would report a day's work as
        -- larger than the day's cases, and every rate over it would move for
-       -- a reason that is not behaviour.
+       -- a reason that is not behavior.
        --
        -- A newer attempt anywhere counts, including one outside this window:
        -- the turn belongs to the day that ended it, so a day whose runs were

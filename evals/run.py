@@ -4,7 +4,7 @@
 Two layers:
 
 1. Structural checks. Always run. No model needed.
-2. Behaviour checks. Opt in with EVAL_BEHAVIOUR=1. Each case then runs
+2. Behavior checks. Opt in with EVAL_BEHAVIOUR=1. Each case then runs
    through a configurable agent CLI, which costs real model calls.
    Set EVAL_AGENT_CMD to an argv template. The literal token {prompt}
    receives the case prompt. Default: claude -p {prompt} --output-format text
@@ -96,7 +96,7 @@ def main():
     template = os.environ.get("EVAL_AGENT_CMD") or DEFAULT_AGENT_CMD
     argv = shlex.split(template)
     if os.environ.get("EVAL_BEHAVIOUR") != "1":
-        print("SKIP behaviour layer: set EVAL_BEHAVIOUR=1 to run it (costs model calls)")
+        print("SKIP behavior layer: set EVAL_BEHAVIOUR=1 to run it (costs model calls)")
     elif shutil.which(argv[0]) is None:
         die(f"EVAL_BEHAVIOUR=1 but runner binary {argv[0]!r} is not on PATH")
     else:

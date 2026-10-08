@@ -2,7 +2,7 @@
 
 This guide takes you from a clean checkout to a merged pull request.
 Read it once before you write code.
-The design authority is `docs/v1-architecture.md`.
+The design authority is `docs/v1-architecture.md`, the register.
 That document holds decisions DEC-01 to DEC-51.
 A statement that does not trace to a DEC is an implementation detail.
 
@@ -20,13 +20,14 @@ pnpm run verify
 ```
 
 It runs the build and the types. It runs the lint and every test project.
-It runs the console's three targets. It runs the documentation checks,
-the style check and the guard self-tests. It ends with the fixtures diff.
+It runs the console's build, check and tests. It runs the documentation
+checks, the style check and the guard self-tests. It ends with the fixtures
+diff.
 
-The Tests workflow covers the same ground in three parallel jobs.
-`fast` needs no service. `db` runs against Postgres and a mail server.
-`console` builds the core first. Each job names one of the targets below.
-So a green run here and a green run there mean the same thing.
+The Tests workflow covers the same ground in parallel jobs. `fast` needs no
+service. `db` runs against Postgres and a mail server. `console` builds the
+core first. Each job runs targets from `package.json`, and nothing else. So a
+green run here and a green run there mean the same thing.
 
 One gap to know about. `verify` runs the evals' structural layer only.
 The behavior layer spends model calls and stays opt-in behind
@@ -35,9 +36,18 @@ The behavior layer spends model calls and stays opt-in behind
 | Command | Task |
 |---------|------|
 | `pnpm run verify` | The contract. Everything below, in one command. |
-| `pnpm run verify:fast` | No Docker. Omits the database and mail projects, and the console's own tests. It does type-check the console, because `check` builds the solution. |
+| `pnpm run verify:fast` | The inner loop, with no Docker. Omits the database and mail projects, and the console's own tests. It still builds the solution, so it type-checks the console. |
 | `pnpm run verify:db` | The database and mail suites alone. Needs both services. |
-| `pnpm run verify:console` | The console package's three targets. |
+| `pnpm run verify:console` | The console's build, check and tests. |
+
+`pnpm run check` runs the compiler alone and is faster still. Neither it nor
+`verify:fast` is the contract. Each target also runs alone while you work:
+`pnpm run build`, `pnpm run lint`, `pnpm test`, `pnpm run test:unit`,
+`pnpm run test:db`, `pnpm run test:mail` and `pnpm run test:watch`.
+
+`AGENTS.md` holds the rules for what test you write, in "How to test a
+change". Its "Running one test" section shows how to run one file or one test.
+A `*.test.ts` file needs no database. A `*.db.test.ts` file needs Postgres.
 
 A job that calls a model reads `MODEL_VER`, and the default is
 `z-ai/glm-5.3-flash`. That model reasons before it answers, and the provider
@@ -49,47 +59,17 @@ Paste its output into the pull request description, with the exit code.
 Report the skip count from the test run, not only the pass count.
 A suite that skips itself proves nothing, and the count is how you see it.
 A pull request without this evidence waits for a person to ask for it.
-
-`pnpm run verify:fast` needs no Docker and answers in about half a minute.
-Use it as the inner loop. It is not the contract. It runs no database suite,
-and it also skips the build and the console.
-
-`pnpm run check` runs the compiler alone and is faster still.
-To run one file or one case, see the "Running one test" section of `AGENTS.md`.
-A `*.test.ts` file needs no database. A `*.db.test.ts` file needs Postgres.
+Section 10 gives the one exception.
 
 [The runbook](docs/operations.md) tells you what each process and job does.
 
 ## 2. Where the code lives
 
-[The architecture map](docs/architecture-map.md) draws the system in three
-diagrams. This table names the directories a first change is most likely to
-touch. It is not the whole tree.
+[The architecture map](docs/architecture-map.md) draws the system.
+[The quick map](docs/quick-map.md) gives each directory one row. The row names
+the decisions it implements, its proving test and its runbook section.
 
-| Directory | What it holds |
-|---|---|
-| `src/coordinator/` | The run state machine, the queue seam and the partition consumer |
-| `src/ledger/` | The Postgres writes, the fencing epoch and the idempotency keys |
-| `src/policy/` | The policy engine. A pure function that calls no model |
-| `src/classifier/` | Gate one. It samples the label nine times |
-| `src/groundedness/` | Gate two, and the jobs that fit and measure its thresholds |
-| `src/retriever/` | Word search and meaning search. It fuses ranks only |
-| `src/composer/` | Cite-or-abstain drafting |
-| `src/relay/` | The outbox relay daemon |
-| `src/adapters/` | One component per external system, and the ports they implement |
-| `src/approval/` | The approval bridge, the approve command and the edit distance |
-| `src/ingress/`, `src/intake/`, `src/imap/` | How a message arrives and becomes a queue row |
-| `src/calibration/`, `src/goldreport/`, `src/replay/`, `src/triage/` | Offline jobs that fit or publish a number |
-| `src/escalations/`, `src/latency/`, `src/bands/` | Read-only reports. Every statement is a SELECT |
-| `src/models/` | The model port and the one provider behind it |
-| `src/jobs/` | Taxonomy induction. It proposes the list of intents |
-| `src/kb/` | The knowledge-base loader |
-| `src/fixtures/` | Loaders and validators for the committed corpus |
-| `db/` | The schema files. The migration runner applies them in order |
-| `fixtures/` | The committed synthetic corpus |
-| `scripts/` | The generator, the style checker and the documentation checker |
-
-Five processes run without stopping: `webhook`, `imap`, `consumer`, `relay`
+These processes run without stopping: `webhook`, `imap`, `consumer`, `relay`
 and the operator console.
 Everything else runs when you ask it to.
 
@@ -105,7 +85,7 @@ See `.claude/skills/decision-tracing` for the full rule set.
 
 ## 4. Write a design record, if your change affects a decision
 
-Step 3 asked you the question this step acts on.
+Step 3 asks the question that this step acts on.
 If your change cites a DEC, it leaves a design record beside the register.
 If it affects no decision, it leaves its rationale in the pull request alone.
 
@@ -118,14 +98,24 @@ Commit the record with your change.
 Reviewers read it first.
 
 Write no file when the answer is none.
-The declaration is a line, not a sentence, because a sentence cannot be read.
+The declaration is a line, not a sentence, because no script can parse a
+sentence.
 "None. DEC-05 governs this" and "DEC-05 governs this, and none changes" say
 one thing and open with opposite words.
 
-`scripts/check-docs.py` refuses a record declaring `Affects: none`.
-It refuses a DEC section 2 does not define.
-It refuses any file left in `intent/` but the template.
-`intent/archive/` holds the records written before this rule, frozen.
+`scripts/check-docs.py` refuses each of these:
+
+- a record with no `Decisions affected` section, or with no `Affects:` line
+  in it, or with more than one;
+- a record that declares `Affects: none`, or an `Affects:` line that names
+  no DEC;
+- a DEC that section 2 of the register does not define;
+- a record in a subdirectory of `docs/decisions/`, because the style checker
+  reads one level;
+- a `docs/decisions/` directory that holds no record;
+- any file in `intent/` except the template;
+- a record under `intent/archive/` that declares `Affects:`. The archive holds
+  frozen records that declare no decision.
 
 ## 5. Fixtures stay synthetic
 
@@ -153,18 +143,8 @@ Each half has a job of its own, and neither does the other's work.
 `pnpm run report-groundedness` measures that pair and refuses the fit half.
 One job that could do both would let a single run choose and publish.
 
-The split covers claim sentences too, not only cases.
-Each document carries a fit block and a report block of claims.
-The report sentence paraphrases its fit counterpart and never repeats it.
-So a judge that mis-reads one wording moves one half, and you can see it.
-The loader refuses a corpus where one sentence reaches both halves.
-
-Keep the two halves equally hard.
-They must hold the same share of fully grounded drafts.
-A half with more grounded drafts is the easier one, and its precision reads high.
-The loader runs an equivalence test, and not a significance test.
-The halves must show the gap is small, not merely fail to prove it real.
-A half too small to show that is refused rather than passed by default.
+The split covers claim sentences too, and the two halves must stay equally
+hard. [The fixtures guide](fixtures/README.md) states both rules and the check the loader runs.
 
 Both coverage jobs checkpoint each draft as it lands.
 A run that dies continues from the file instead of paying for the half again.
@@ -172,7 +152,7 @@ The file is keyed on the model, the prompt, the half and the claims themselves.
 Change any of those and it retires, because its samples answer another question.
 Both jobs report what they spent, and say when that figure is a floor.
 
-A gate number now travels as data, not as a constant in the policy engine.
+A gate number travels as data. It is not a constant in the policy engine.
 
 Never read a threshold inside the engine. It stays a pure synchronous
 function. A process resolves its numbers once at startup and passes them down.
@@ -189,37 +169,47 @@ A committed fixture file must match the generator output byte for byte.
 
 ## 6. Install the hooks
 
-`pnpm run bootstrap` installs the commit hook. By hand:
+`pnpm run bootstrap` installs the commit hook. In a worktree, `.git` is a file
+rather than a directory. Ask git where the hooks live:
+`git rev-parse --git-path hooks`. The bootstrap does that itself.
 
-```sh
-cp hooks/commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
-```
+The commit hook blocks a change to `docs/v1-architecture.md` that carries no
+DEC citation. CI runs the same check through `.github/workflows/guardrails.yml`.
+Both read the whole message, and both accept only a DEC the register defines.
 
-In a worktree, `.git` is a file rather than a directory. Ask git where the
-hooks live: `git rev-parse --git-path hooks`. The bootstrap does that itself.
+### The `.claude/` directory
 
-The commit hook blocks a change to `docs/v1-architecture.md` that carries no DEC
-citation.
-CI runs the same check through `.github/workflows/guardrails.yml`.
-Both modes read the whole message and both accept only a DEC the register defines.
+The `.claude/` directory holds files for Claude Code, an AI coding tool. Keep
+it in your checkout even if you never use that tool.
 
-If you use Claude Code, the session hooks in `.claude/settings.json` also block
-three things while you work:
+Git tracks these parts of it. `hooks/` holds the Python guards and their
+self-tests. `agents/` and `skills/` hold the instructions that section 3 and
+`REVIEW.md` cite. `settings.json` connects the guards to a Claude Code session.
 
-- Real customer data in fixtures. The PII guard inspects writes under
-  `fixtures/` (DEC-18).
-- Test edits during a bug fix. You prove a bug fix with a new test, not by
-  weakening an old one.
-- Live database commands without approval. Destructive commands against a real
-  database need a person first.
+The guards also run outside a session. `pnpm run verify` and
+`pnpm run verify:fast` run their self-tests through `pnpm run check:guards`.
+The commit hook calls the DEC citation guard on every commit. CI runs the PII
+guard and the citation guard on every pull request.
 
-The live-database rule has no CI surface. Its context exists only inside a
-session. Do not assume CI catches it.
+Do not delete, move or rename the directory. Without it, `verify` fails, and
+the commit hook refuses every commit.
 
-No hook enforces the test-edit rule. One did, and it blocked any test-file
-edit on a `fix/` branch, which section 7 requires for a defect. A bug fix
-could not carry its regression test. The rule is now a review duty, and
-`REVIEW.md` records that.
+In a Claude Code session, these hooks run before a tool call:
+
+- The PII guard blocks real customer data in a fixture. It covers any
+  `fixtures/` directory, `evals/cases/` and any file named for fixtures
+  (DEC-18).
+- The citation guard blocks a commit that edits `docs/v1-architecture.md` with
+  no DEC.
+- The live-database guard blocks a database client or migration that can
+  reach a database other than a local one. A person approves it first.
+
+One more hook runs `scripts/bootstrap.sh --check` when a session starts. It
+reports and changes nothing. `REVIEW.md` states which of these rules CI also
+enforces.
+
+A session also writes local state there, such as `worktrees/` and
+`agent-memory/`. Git ignores both, so they never enter a commit.
 
 ## 7. Branch, commit and open the pull request
 
@@ -229,8 +219,7 @@ Name your branch for the issue it closes.
 git checkout -b feature/issue-42-short-description origin/main
 ```
 
-Use `feature/` for new work and `fix/` for a defect. Branches named
-`creatumo/card-<id>` are historical. Do not add more.
+Use `feature/` for new work and `fix/` for a defect.
 
 Write each commit subject as a sentence in the present tense that says what
 is now true. End it with the issue number in parentheses, as in
@@ -240,47 +229,22 @@ explain the reason in the body.
 A pull request merges as one squashed commit. Its title becomes that commit's
 subject, so the title follows the same rule.
 
-A commit that edits `docs/v1-architecture.md` must cite a DEC in its message.
-The commit hook blocks it otherwise, and CI runs the same check.
+The pull request template asks for these headings:
 
-Include these items in the description:
-
-1. The problem, the outcome and the constraints your change respects.
-2. The pasted output of `pnpm run verify`, with its exit code and the skip
-   count from the test run. A change to markdown alone may paste
-   `pnpm run verify:fast` instead, as the section below on prose describes.
-3. One sentence per behavior change that names the DEC it cites, or states
-   that it is an implementation detail. Link your design record here when the
-   change cites a DEC. This is the only place the description asks.
-4. Regenerated fixtures if you changed `scripts/generate-fixtures.mjs`.
+- **Problem**, **Outcome** and **Constraints**: what is wrong, what is true
+  after the change, and the limits it respects.
+- **1. Verify**: the pasted output of `pnpm run verify`, as section 1 says.
+- **2. Decisions**: one sentence per behavior change that names the DEC it
+  cites, or states that it is an implementation detail. Link your design
+  record here when the change cites a DEC.
+- **3. Fixtures**: the regenerated fixtures, if you changed
+  `scripts/generate-fixtures.mjs`.
 
 ## 8. The three-pass review
 
-Every change passes three reviews before merge.
-Run them yourself before a reviewer does.
-The full procedure lives in `REVIEW.md`.
-
-1. **Bugs.** Correctness against the claimed behavior. Check outbox inserts,
-   epochs and idempotency keys against section 3.4. The epoch makes a write from
-   a stale owner fail instead of corrupt the state. The idempotency key makes a
-   retry of one action land once on the target system. Check liveness and the
-   relay order: the relay sends first and sets the status second. If it set the
-   status first, a crash before the send would lose an action that looks sent.
-2. **Security.** Data exposure and injection surface. No real customer data, no
-   secrets, adapter payloads inside the capability manifest (DEC-06). Each
-   adapter declares the actions and payload fields that it supports. A payload
-   outside the declaration means the adapter acts beyond its promise.
-3. **Compliance.** The change against `docs/v1-architecture.md`. Every
-   behavior change cites a DEC or states that it is an implementation detail.
-
-The severity bar has three levels of "important":
-
-- The change breaks behavior that a test claims to prove.
-- The change exposes data or writes real customer data into the repository.
-- The change contradicts a DEC without a decision that changes the DEC.
-
-Everything else is a nit.
-A review reports at most five nits.
+Every change passes three reviews before merge: bugs, security and
+compliance. Run them yourself before a reviewer does. `REVIEW.md` holds the
+passes, the severity bar and the checklists.
 
 ## 9. Documentation follows Simplified Technical English
 
@@ -309,7 +273,12 @@ python3 scripts/ste-check.py README.md
 ```
 
 The script decides rules 1 and 2. Rules 3 to 5 need a reader, so a clean exit
-is not coverage of those three.
+does not prove those three.
+
+`ste-check.py` strips markdown structure first. Headings, list items and table
+cells each count as their own unit. A non-zero exit means a sentence or a
+paragraph is above its limit. Rewrite the sentence as two sentences. Do not
+split it with a semicolon.
 
 The shipped set is `SHIPPED_GLOBS` in `scripts/ste-check.py`, and it is the
 only copy. `.github/workflows/guardrails.yml` runs the script with no file
@@ -323,35 +292,29 @@ python3 scripts/check-docs.py
 ```
 
 It proves that each diagram declares and explains every box it draws an edge
-to. It also proves that every relative link resolves. And it proves that the
-register's design table accounts for every open item. It proves that each
-design record cites a decision the register defines, and that each archived
-record cites none.
+to. It proves that every relative link resolves. It proves that the register's
+design table accounts for every open item. It proves that each design record
+cites a decision the register defines, and that each archived record cites
+none.
 
 CI runs it and its cases on every pull request. It decides structure and
 reference. It does not decide whether a document is true.
 
-The script strips markdown structure first.
-Headings and list items count as their own units.
-A table cell counts as its own unit.
-
-A non-zero exit means a sentence is above the limit.
-Rewrite the sentence as two sentences.
-Do not split it with a semicolon.
-
-## A change to prose alone
+## 10. A change to markdown alone
 
 A change to markdown alone can run `pnpm run verify:fast` instead of the full
-`verify`. It needs no Docker, and it runs the prose checks and the unit
-suites. Several unit suites read shipped prose, so a reworded sentence can
-fail one. Paste its output into the pull request.
+`verify`. It needs no Docker, and it runs the documentation checks and the
+unit suites. Several unit suites read shipped markdown, so a reworded sentence
+can fail one. Paste its output into the pull request.
 
-CI still runs every job on such a pull request. Some database suites read the
-runbook, and CI runs those for you.
+The Tests and Guardrails workflows still run every job on such a pull
+request. Some database suites read the runbook, and CI runs those for you.
 
-A change to `docs/v1-architecture.md` or to `docs/decisions/` is prose too, but
-it is never "prose only". Section 2 of the pull request still names the DEC it
-cites. The commit hook still asks for that citation too.
+A change to `docs/v1-architecture.md` or to `docs/decisions/` is markdown
+too, but it never takes this path alone. The Decisions section of the pull
+request still names the DEC it cites. The commit hook asks for that citation
+on a change to `docs/v1-architecture.md`. `scripts/check-docs.py` checks a
+record under `docs/decisions/`.
 
 ## License and conduct
 
