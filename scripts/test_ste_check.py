@@ -13,6 +13,8 @@ CHECKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ste-check.py
 PASS, FAIL = 0, 1
 
 LONG = "word " * 25
+# Twenty words and a full stop: exactly the limit, so one more word fails.
+TWENTY = ("word " * 19) + "word.\n"
 SEVEN = " ".join(f"Sentence number {n} here." for n in range(7))
 
 CASES = [
@@ -430,6 +432,89 @@ CASES = [
      "running well past the twenty-word limit before it finally ends.\n"),
     ("the prose under a declaration is still measured", FAIL,
      "Affects: DEC-44\n\n" + LONG.strip() + ".\n"),
+    # A link reference definition is a label and a URL, and a reader never
+    # reads it as a sentence. A long URL counts as many words, so it is not
+    # measured. The exemption covers one plain shape that is always a
+    # definition, and every other line is measured as prose.
+    ("link reference definitions are not measured", PASS,
+     "[tests-badge]: https://github.com/synaptiai/auracle/actions/workflows/tests.yml/badge.svg\n"
+     "[tests]: https://github.com/synaptiai/auracle/actions/workflows/tests.yml\n"
+     "[license-badge]: https://img.shields.io/badge/license-Apache--2.0-blue.svg\n"),
+    # Each passing case carries 20 words after the definition. Measured as
+    # prose, its paragraph would be 21 words or more, and the case would fail.
+    ("consecutive definitions are all definitions", PASS,
+     "[a]: https://example.test/a\n[b]: https://example.test/b\n" + TWENTY),
+    ("a relative destination is a definition", PASS,
+     "[license]: LICENSE\n" + TWENTY),
+    ("a one-word label of 64 characters is a definition", PASS,
+     "[" + "a" * 64 + "]: https://example.test/a\n" + TWENTY),
+    ("a definition with spaces around it is a definition", PASS,
+     "  [a]: https://example.test/a \n" + TWENTY),
+    ("a definition with a tab after it is a definition", PASS,
+     "[a]: https://example.test/a\t\n" + TWENTY),
+    # GitHub's table extension turns a definition above a delimiter row into
+    # a header cell a reader sees. A label is one word, so at most one word
+    # can show that way. A label of many words is measured.
+    ("a label of many words is measured", FAIL,
+     "[" + "a " * 31 + "a]: https://example.test/a\n| --- |\n"),
+    # A renderer turns a character reference into the character it names, so
+    # `&#32;` is a space a reader sees. The count reads the text as rendered.
+    ("words joined by character references are counted", FAIL,
+     "&#32;".join(["word"] * 25) + ".\n"),
+    ("words joined by named references are counted", FAIL,
+     "&nbsp;".join(["word"] * 25) + ".\n"),
+    ("a character reference inside a code span stays code", PASS,
+     "One `" + "&#32;".join(["word"] * 25) + "` span.\n"),
+    ("a destination with a character reference is measured", FAIL,
+     "[a]: https://" + "&#32;".join(["word"] * 25) + "\n| --- |\n"),
+    ("a label with a full stop is measured", FAIL,
+     "[a.b]: one\n" + TWENTY),
+    # Each failing case is a line the plain shape refuses. Most are no
+    # definition at all, and GitHub renders them as text. The rest carry text
+    # a reader can see, or a shape the checker does not need to accept.
+    ("a definition with a title is measured", FAIL,
+     "[tests]: https://example.test/a \"" + LONG.strip() + "\"\n"),
+    ("a definition-shaped line inside a paragraph is prose", FAIL,
+     "This paragraph opens with an ordinary sentence that runs on for a while and then\n"
+     "[continues on the next line as part of it]: here.\n"),
+    ("prose after a bracket and a colon is prose", FAIL,
+     "[note]: " + LONG.strip() + ".\n"),
+    ("an empty label is measured", FAIL,
+     "[ ]: one\n" + TWENTY),
+    ("a footnote is measured", FAIL,
+     "[^1]: one\n" + TWENTY),
+    ("a label of 65 characters is measured", FAIL,
+     "[" + "a" * 65 + "]: one\n" + TWENTY),
+    ("a label of 1000 characters is measured", FAIL,
+     "[" + "a" * 1000 + "]: one\n" + TWENTY),
+    ("a label with an unescaped bracket is measured", FAIL,
+     "[a[b]: one\n" + TWENTY),
+    ("a label with an escaped bracket is measured", FAIL,
+     "[a\\[b]: one\n" + TWENTY),
+    ("a label of escape pairs is measured", FAIL,
+     "[" + "\\a" * 999 + "]: one\n" + TWENTY),
+    ("an angle-bracket destination is measured", FAIL,
+     "[a]: <https://example.test/a>\n" + TWENTY),
+    ("an unclosed angle-bracket destination is measured", FAIL,
+     "[a]: <x\n" + TWENTY),
+    ("a destination with parentheses is measured", FAIL,
+     "[a]: https://example.test/a_(b)\n" + TWENTY),
+    ("an unbalanced parenthesis in a destination is measured", FAIL,
+     "[a]: one)two\n" + TWENTY),
+    ("a backslash and a space in a destination is measured", FAIL,
+     "[a]: a\\ b\n" + TWENTY),
+    ("a line that opens with a non-breaking space is measured", FAIL,
+     " [a]: https://example.test/a\n" + TWENTY),
+    ("a definition-shaped line after a refused one is measured", FAIL,
+     "[a]: a\\ b\n[b]: https://example.test/b\n" + TWENTY),
+    # A definition opens a paragraph, so an indented line after it continues
+    # that paragraph. It is prose, not indented code.
+    ("an indented line after a definition is prose", FAIL,
+     "[a]: https://example.test/a\n    " + LONG.strip() + ".\n"),
+    # A declaration is paragraph text, so the line after it continues the
+    # paragraph and cannot open a definition.
+    ("a definition-shaped line after a declaration is prose", FAIL,
+     "Affects: DEC-44\n[note]: one\n" + TWENTY),
 ]
 
 

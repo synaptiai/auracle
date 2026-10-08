@@ -85,12 +85,48 @@ afterAll(async () => {
   await step("SELECT lo_unlink(oid) FROM pg_largeobject_metadata WHERE lomowner = 'auracle_reader'::regrole");
   for (const database of scratchDatabases) await step(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
   // A restated scratch role holds grants in this database, so they go first.
-  for (const role of scratchRoles) {
-    await writer.query(`DROP OWNED BY ${role}`).catch(() => undefined);
-    await step(`DROP ROLE IF EXISTS ${role}`);
+  // One statement each for every role, not one round trip per role: the file
+  // makes some 25 of them, and 50 serial catalog scans overran the hook's
+  // budget on a loaded machine. A statement over many roles drops all of them
+  // or none, so a failed batch falls back to one role at a time. Only a role
+  // that cannot be dropped then stays behind, and its own fault says why.
+  if (scratchRoles.length > 0) {
+    // A name joins the list before CREATE ROLE runs, and DROP OWNED has no
+    // IF EXISTS. A role that was never created would fail the whole batch.
+    const existing = await writer.query<{ rolname: string }>(
+      'SELECT rolname FROM pg_roles WHERE rolname = ANY($1)', [scratchRoles],
+    ).then((result) => result.rows.map((row) => row.rolname), (error: unknown) => {
+      faults.push(error);
+      return scratchRoles;
+    });
+    if (existing.length > 0) {
+      const batchError = await writer.query(`DROP OWNED BY ${existing.join(', ')}`)
+        .then(() => writer.query(`DROP ROLE IF EXISTS ${existing.join(', ')}`))
+        .then(() => null, (error: unknown) => error);
+      if (batchError !== null) {
+        const before = faults.length;
+        for (const role of existing) {
+          await writer.query(`DROP OWNED BY ${role}`)
+            .then(() => writer.query(`DROP ROLE IF EXISTS ${role}`))
+            .catch((error: unknown) => faults.push(error));
+        }
+        // The batch failed for the same reason a single role did, so its
+        // error explains the faults that follow it.
+        if (faults.length > before) faults.splice(before, 0, batchError);
+      }
+    }
+    // A cleanup that issues no drop raises no error, so the result is read.
+    // A role left behind can log in to the shared server.
+    await writer.query<{ rolname: string }>(
+      'SELECT rolname FROM pg_roles WHERE rolname = ANY($1)', [scratchRoles],
+    ).then((result) => {
+      if (result.rows.length > 0) {
+        faults.push(new Error(`scratch roles left behind: ${result.rows.map((row) => row.rolname).join(', ')}`));
+      }
+    }, (error: unknown) => faults.push(error));
   }
-  await readers.end();
-  await writer.end();
+  await readers.end().catch((error: unknown) => faults.push(error));
+  await writer.end().catch((error: unknown) => faults.push(error));
   if (faults.length > 0) throw new AggregateError(faults, 'the role suite could not clean up');
 });
 

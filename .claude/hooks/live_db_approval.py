@@ -4,8 +4,9 @@
 The rule is about touching a database, not about naming one. Two ways an
 earlier version confused the two, both measured:
 
-  - `pnpm run db:migrate`, the setup command in AGENTS.md and README.md, was
-    blocked. Both documents carried a paragraph teaching the workaround.
+  - `pnpm run db:migrate`, the setup command in README.md's Quickstart, was
+    blocked. README.md and AGENTS.md each carried a paragraph that taught the
+    workaround.
   - `git commit -m "migrate the ledger schema"` was blocked, because the bare
     English word matched anywhere on the line.
 

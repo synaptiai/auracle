@@ -31,8 +31,11 @@ services:
     configs:
       - source: pg_hba
         target: /etc/postgresql/pg_hba.conf
+    # Over TCP. On a new volume the image first runs a setup server that
+    # listens on the socket alone, then stops it. A socket probe passes during
+    # setup, and a migration then meets a server that is shutting down.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U auracle -d auracle"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U auracle -d auracle"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -66,7 +69,7 @@ services:
     #
     # So the local test command names the profile:
     #
-    #   docker compose --profile test up -d
+    #   docker compose --profile test up -d --wait
     #
     # `db` carries no profile, so it starts either way.
     profiles: [test]

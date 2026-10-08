@@ -96,19 +96,14 @@ Two watch modes exist: `pnpm run check:watch` recompiles the solution, and
 
 ## Setup
 
-You need Node 22.13 or later and Docker.
-
-```sh
-./scripts/bootstrap.sh
-docker compose --profile test up -d
-export DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle
-export MAIL_HOST=127.0.0.1
-pnpm run db:migrate
-```
+The [README's Quickstart](README.md#quickstart) is the only full setup
+sequence. Follow it first. This section adds what an agent working in the tree
+needs to know.
 
 `scripts/bootstrap.sh` does the steps that need no choice from you. It enables
-corepack, installs from the frozen lockfile, installs the commit hook and
-copies `.env.example` to `.env`. It is idempotent, and it overwrites nothing.
+corepack where it exists, installs from the frozen lockfile, installs the
+commit hook and copies `.env.example` to `.env`. It is idempotent, and it
+overwrites nothing.
 
 It starts no container and runs no migration. Both write, and it cannot know
 which database you meant. It prints whatever is left, including the API key
@@ -130,11 +125,11 @@ it out of the stack `.github/workflows/release.yml` deploys. A plain
 The compose Postgres reads a `pg_hba.conf` rule from `docker-compose.yml`.
 It lets `auracle_reader` log in to the ledger and the test databases only.
 
-**The two variables are the local test path.** With `DATABASE_URL` and
-`MAIL_HOST` set, no suite starts a throwaway container and no test opens a
-Docker socket. Without them the suites fall back to `testcontainers`, which 95
-packages hang off. It loads through a dynamic import. A tree that lacks it
-gets a sentence naming both ways out, rather than a resolution error.
+**`DATABASE_URL` and `MAIL_HOST` are the local test path.** With both set, no
+suite starts a throwaway container and no test opens a Docker socket. Without
+them the suites fall back to `testcontainers`, a large dependency tree. It
+loads through a dynamic import. A tree that lacks it gets a sentence naming
+both ways out, rather than a resolution error.
 
 `testcontainers` stays a development dependency. `optionalDependencies` puts
 it in the production graph, and the runtime image installs with `--prod`.
@@ -142,8 +137,10 @@ it in the production graph, and the runtime image installs with `--prod`.
 drops rollup's platform-native package. Every vitest project then fails to
 collect.
 
-Every CLI and daemon loads `./.env` through `process.loadEnvFile`. A shell variable always wins.
-Three commands read no `.env` file: `pnpm run escalations`, `pnpm run triage` and `pnpm run export-corpus`.
+Most CLIs and daemons load `./.env` through `process.loadEnvFile`. A shell
+variable always wins.
+Four commands read no `.env` file: `pnpm run escalations`, `pnpm run triage`,
+`pnpm run export-corpus` and `pnpm run seed-history`.
 The operator console reads none either, so its variables must be exported.
 Never commit `.env`. It holds `OPENROUTER_API_KEY`.
 
@@ -346,11 +343,12 @@ So two runs on one conversation never race. The epoch covers the rebalance
 overlap, and it is keyed on the ticket. So it still fences two conversations
 that share one.
 
-Four long-running processes exist:
+Five long-running processes exist:
 
 - `pnpm run webhook` and `pnpm run imap` take messages in.
 - `pnpm run consumer` walks the state machine for its partitions.
 - `pnpm run relay` drains the outbox to the adapters.
+- `pnpm --filter @auracle/console start` serves the operator console.
 
 Offline jobs write artifacts and never touch live traffic:
 `pnpm run calibrate`, `pnpm run gold-report`, `pnpm run triage`, `pnpm run replay`, `pnpm run export-corpus`.
@@ -378,7 +376,10 @@ It decides structure and reference. It does not decide whether a diagram is true
 - The idempotency key comes from the action semantics. It never comes from the run identity (DEC-24, section 3.4).
 - Commit the state change and the outbox insert in one transaction. Treat an insert of zero rows as a distinct result (section 4.2).
 - The relay sends first and sets the status second (section 4.4).
-- Groundedness below the block threshold stops an automatic write. Below the review threshold a person sees it (DEC-07).
+- The coverage thresholds decide an internal write that no earlier rule holds back and that clears the
+  agreement gate. Below the block threshold the run escalates. Below the review threshold the write parks
+  for a person (DEC-07). A high-risk intent and an irreversible write park first (DEC-13, DEC-34). So
+  does a write through an adapter that lacks idempotency or read-back (DEC-06).
   0.70 and 0.80 are the section 4.7 seeds, not the operative pair. `pnpm run fit-groundedness` fits one,
   and a process holding a coverage artifact runs the fitted pair and logs `coverage_thresholds_fitted`.
   The thresholds never decide a customer reply. Such a reply already needs approval (DEC-12), and the

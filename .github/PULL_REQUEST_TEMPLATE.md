@@ -44,7 +44,7 @@ $ pnpm run verify
 ## 2. Decisions
 
 <!--
-Asked once, here. One sentence per behaviour change: name the DEC it cites, or
+Asked once, here. One sentence per behavior change: name the DEC it cites, or
 state that it is an implementation detail. A change that contradicts a DEC
 needs a decision first, not a pull request.
 
@@ -64,7 +64,7 @@ If not, write "unchanged".
 ## Checklist
 
 - [ ] `pnpm run verify` ran, and its output is pasted above with the exit code. For prose only, `verify:fast` ran instead.
-- [ ] Every behaviour change cites a DEC or declares itself an implementation detail.
+- [ ] Every behavior change cites a DEC or declares itself an implementation detail.
 - [ ] A design record under `docs/decisions/` accompanies this change, or it cites no DEC.
 - [ ] No real email, phone number, name or account identifier enters the repository (DEC-18).
 - [ ] No API key, token or database password appears in the pasted output.

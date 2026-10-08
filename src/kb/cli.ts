@@ -12,6 +12,11 @@
 //                            refuses to report cost and DEC-25 accounting
 //                            would go dark.
 //   OPENROUTER_BASE_URL      optional override of the API base URL
+//   DATABASE_URL             the ledger the documents load into
+//   AURACLE_ALLOW_COMPOSE_DEFAULT  1 lets a local run use the compose ledger
+//                            when DATABASE_URL is unset
+//   PRODUCTS_FILE            the channel map (DEC-47). A document's
+//                            product must be one the map names
 //
 // Exit code is non-zero when any file failed validation.
 
@@ -22,6 +27,7 @@ import { productCatalogueFromEnv } from '../config/products.js';
 import { requireDbUrl } from '../db/config.js';
 import { embeddingPriceFromEnv, openRouterFromEnv } from '../models/from-env.js';
 import { DEFAULT_EMBED_MODEL, loadKbDirectory } from './loader.js';
+import { directoryFault } from './directory.js';
 import { runEntry } from '../cli/entry.js';
 import { guardLedgerPool, logLedgerPoolError } from '../db/client-errors.js';
 
@@ -33,9 +39,22 @@ const USD_PER_MTOK: Readonly<Record<string, number>> = {
 
 async function main(): Promise<void> {
   loadDotEnv();
-  const dir = process.argv[2];
-  if (!dir) {
+  // pnpm 11.20.0 forwards the `--` in `pnpm run load-docs -- <dir>`, and a
+  // direct `node dist/kb/cli.js -- <dir>` keeps it too, so it is dropped.
+  // Exactly one directory remains, or the run would index one and drop the
+  // rest unsaid.
+  const words = process.argv.slice(2).filter((arg) => arg !== '--');
+  if (words.length !== 1) {
     console.error('usage: pnpm run load-docs -- <dir-of-markdown>');
+    process.exitCode = 1;
+    return;
+  }
+  const dir = words[0]!;
+  // Named here, before a model or the ledger is touched. Found later, the
+  // fault surfaced after the ledger pool had opened.
+  const fault = await directoryFault(dir);
+  if (fault !== null) {
+    console.error(`load-docs: ${fault}`);
     process.exitCode = 1;
     return;
   }

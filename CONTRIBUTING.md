@@ -8,16 +8,10 @@ A statement that does not trace to a DEC is an implementation detail.
 
 ## 1. Set up and verify your checkout
 
-You need Node 22.13 or later and Docker.
-
-```sh
-pnpm run bootstrap
-```
-
-That installs from the frozen lockfile, installs the commit hook of section 6,
-and copies `.env.example` to `.env`. It is idempotent and overwrites nothing.
-It starts no container and runs no migration, and it prints what is left.
-Follow the "Run it" section of `README.md` for the database setup.
+Follow the [Quickstart](README.md#quickstart) in the README first. It is the
+only full setup sequence. It takes a fresh clone to passing tests and a
+running console.
+Its bootstrap step also installs the commit hook of section 6.
 
 One command defines the contract. It must exit 0.
 
@@ -35,7 +29,7 @@ The Tests workflow covers the same ground in three parallel jobs.
 So a green run here and a green run there mean the same thing.
 
 One gap to know about. `verify` runs the evals' structural layer only.
-The behaviour layer spends model calls and stays opt-in behind
+The behavior layer spends model calls and stays opt-in behind
 `EVAL_BEHAVIOUR=1`. A green `verify` is not evidence about it.
 
 | Command | Task |
@@ -95,12 +89,13 @@ touch. It is not the whole tree.
 | `fixtures/` | The committed synthetic corpus |
 | `scripts/` | The generator, the style checker and the documentation checker |
 
-Four processes run without stopping: `webhook`, `imap`, `consumer` and `relay`.
+Five processes run without stopping: `webhook`, `imap`, `consumer`, `relay`
+and the operator console.
 Everything else runs when you ask it to.
 
 ## 3. Trace your change to a decision
 
-Every change to behaviour cites a DEC from `docs/v1-architecture.md`, or states
+Every change to behavior cites a DEC from `docs/v1-architecture.md`, or states
 that it is an implementation detail.
 Implementation details can change freely.
 Decisions cannot.
@@ -254,7 +249,7 @@ Include these items in the description:
 2. The pasted output of `pnpm run verify`, with its exit code and the skip
    count from the test run. A change to markdown alone may paste
    `pnpm run verify:fast` instead, as the section below on prose describes.
-3. One sentence per behaviour change that names the DEC it cites, or states
+3. One sentence per behavior change that names the DEC it cites, or states
    that it is an implementation detail. Link your design record here when the
    change cites a DEC. This is the only place the description asks.
 4. Regenerated fixtures if you changed `scripts/generate-fixtures.mjs`.
@@ -265,7 +260,7 @@ Every change passes three reviews before merge.
 Run them yourself before a reviewer does.
 The full procedure lives in `REVIEW.md`.
 
-1. **Bugs.** Correctness against the claimed behaviour. Check outbox inserts,
+1. **Bugs.** Correctness against the claimed behavior. Check outbox inserts,
    epochs and idempotency keys against section 3.4. The epoch makes a write from
    a stale owner fail instead of corrupt the state. The idempotency key makes a
    retry of one action land once on the target system. Check liveness and the
@@ -276,11 +271,11 @@ The full procedure lives in `REVIEW.md`.
    adapter declares the actions and payload fields that it supports. A payload
    outside the declaration means the adapter acts beyond its promise.
 3. **Compliance.** The change against `docs/v1-architecture.md`. Every
-   behaviour change cites a DEC or states that it is an implementation detail.
+   behavior change cites a DEC or states that it is an implementation detail.
 
 The severity bar has three levels of "important":
 
-- The change breaks behaviour that a test claims to prove.
+- The change breaks behavior that a test claims to prove.
 - The change exposes data or writes real customer data into the repository.
 - The change contradicts a DEC without a decision that changes the DEC.
 
@@ -358,7 +353,7 @@ A change to `docs/v1-architecture.md` or to `docs/decisions/` is prose too, but
 it is never "prose only". Section 2 of the pull request still names the DEC it
 cites. The commit hook still asks for that citation too.
 
-## Licence and conduct
+## License and conduct
 
 Synapti licenses this repository under the Apache License 2.0. See `LICENSE`.
 You license your contribution under the same terms when you contribute it.

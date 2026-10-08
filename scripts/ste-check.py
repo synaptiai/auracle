@@ -66,6 +66,9 @@ its paragraph is still one. Raw HTML, an autolink and a link's destination
 bind as tightly as a span, so a backtick inside one opens nothing. A comment's
 text is measured, since a writer reads it, but a span in it closes inside it.
 
+A link reference definition with no title drops out too. It is a label and a
+URL, and a long URL counts as many words although nobody reads it as prose.
+
 A design record's declaration drops out too. `Affects: DEC-06, DEC-07` names
 the decisions a change cites, `check-docs.py` reads it, and a reader reads a
 list rather than a sentence. The list grows with the change, and 20 decisions
@@ -154,6 +157,30 @@ WORD = re.compile(r"[A-Za-z0-9_-]+")
 # refuses a second declaration line and reads the first physical one, so a
 # wrapped list declares less than it looks like it declares.
 DECLARATION = re.compile(r"^Affects:\s*(?:DEC-\d{2,})(?:\s*,\s*DEC-\d{2,})*\.?$")
+# A link reference definition in one plain shape: a one-word label, a colon
+# and one plain URL or path. A reader never reads it as a sentence, and a long
+# URL would count as many words. The shape is narrower than CommonMark on
+# purpose. Every line it accepts is a definition. GitHub's table extension
+# can still show one above a delimiter row as a header cell. So the label is
+# one word, and the destination holds no `&`: a character reference such as
+# `&#32;` would turn into a space a reader sees, and no sentence can form
+# without one. A definition outside the shape, with
+# a title, an angle bracket, a parenthesis or an escape, is measured as
+# prose, which is the stricter mistake.
+LINK_DEFINITION = re.compile(
+    r"^\[[A-Za-z0-9][A-Za-z0-9_-]{0,63}\]:[ \t]+"
+    r"(?:https?://[A-Za-z0-9._~:/?#@!$'*+,;=%-]+|[A-Za-z0-9._/#-]+)$")
+
+
+def is_link_definition(leaf: str) -> bool:
+    """Whether the line is a definition in the plain shape.
+
+    CommonMark indents with ASCII spaces only, so only spaces and tabs are
+    stripped. Any other whitespace stays, and the pattern refuses it.
+    """
+    return LINK_DEFINITION.match(leaf.strip(" \t")) is not None
+
+
 CELL_SPLIT = re.compile(r"(?<!\\)\|")
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])[*_'\")\]]*\s+")
 # A full stop that ends a word rather than a sentence. `No.` is absent on
@@ -489,6 +516,9 @@ def units_of(text: str) -> list[tuple[str, str]]:
     # paragraph takes a lazy continuation line, and indented code cannot
     # interrupt one.
     in_paragraph = False
+    # Whether the paragraph open now holds link definitions and nothing else.
+    # Another definition may follow them, and no other line may.
+    definitions_only = False
     # The markers of an item just opened. The item's first paragraph is its
     # unit, and it carries the markers the way the line does.
     pending: str | None = None
@@ -513,20 +543,33 @@ def units_of(text: str) -> list[tuple[str, str]]:
         paragraph ends, so no lazy line joins it, and an item's markers that
         no paragraph took are dropped, so they cannot label the next unit.
         """
-        nonlocal pending, in_paragraph, table
+        nonlocal pending, in_paragraph, table, definitions_only
         flush()
         pending = None
         in_paragraph = False
+        definitions_only = False
         table = None
 
     def add(leaf: str) -> None:
-        nonlocal kind, pending, in_paragraph
+        nonlocal kind, pending, in_paragraph, definitions_only
         stripped = leaf.strip()
         # A declaration is a list, not a sentence, and no rewriting makes 21
         # decisions fit 20 words. It is dropped before the unit is measured,
         # so the prose beside it is still prose.
+        # The declaration is still paragraph text, so the paragraph stays open.
         if DECLARATION.match(stripped):
+            in_paragraph = True
+            definitions_only = False
             return
+        # A definition cannot interrupt a paragraph. Inside one, the line is
+        # prose a reader sees, so only a line that opens a unit drops out, or
+        # one that follows other definitions alone. The definitions open a
+        # paragraph, so an indented line after them is prose, not code.
+        if is_link_definition(leaf) and not buffer and (not in_paragraph or definitions_only):
+            in_paragraph = True
+            definitions_only = True
+            return
+        definitions_only = False
         if not buffer and pending is not None:
             kind = "item"
             buffer.append(pending)

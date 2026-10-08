@@ -11,32 +11,30 @@ It draws the processes, the jobs and the tables this runbook operates.
 
 ## 1. Local setup
 
-You need Node 22.13 or later and Docker.
+The [Quickstart](../README.md#quickstart) in the README is the only full setup
+sequence. It takes a fresh clone to passing tests and a running console. This
+runbook starts where it ends.
 
-`pnpm run bootstrap` does the steps that need no choice from you. It installs
-from the frozen lockfile, installs the commit hook and copies `.env.example`.
-It starts no container and runs no migration. It prints whatever is left.
-
-```sh
-docker compose --profile test up -d
-export DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle
-pnpm install
-pnpm run build
-pnpm run db:migrate
-```
+`pnpm run bootstrap` runs the same script as `./scripts/bootstrap.sh`. It does
+the steps that need no choice from you, and it starts no container and runs no
+migration.
 
 Compose starts Postgres 16 with pgvector on host port 5433. Host port 5432
 stays free for another local stack. `pnpm run db:migrate` applies every pending
-migration under `db/` to that database. The test suite starts its own throwaway
-database and does not touch this one.
+migration under `db/` to the database `DATABASE_URL` names.
+
+A test run with `DATABASE_URL` exported targets that server. Each database
+suite clones a database of its own there, from a migrated template. The run
+also restates `auracle_reader` on that server, with a known password. Without
+`DATABASE_URL` the suites start a throwaway container instead.
 
 ## Configuration files
 
-Every CLI and daemon loads a `.env` file at startup, when one exists in
-the working directory. Node reads it natively, so no extra dependency
-exists. A variable set in the shell always wins over the same variable in
-`.env`. `OPENROUTER_API_KEY` normally lives in `.env`. Never commit that
-file.
+Most CLIs and daemons load a `.env` file at startup, when one exists in the
+working directory. The section below names the exceptions. Node reads the file
+natively, so no extra dependency exists. A variable set in the shell always
+wins over the same variable in `.env`. `OPENROUTER_API_KEY` normally lives in
+`.env`. Never commit that file.
 
 Set `OPENROUTER_BASE_URL` to send model calls somewhere else. Every job that
 calls a model reads it, so a gateway or a proxy applies to all of them.
@@ -46,8 +44,9 @@ refuses the start rather than taking the default. Unset the variable to get
 the default. DEC-27 gives each partition one owner, so two daemons reading the
 same variable differently would break that ownership.
 
-Three commands read no `.env` file: `pnpm run escalations`, `pnpm run triage`
-and `pnpm run export-corpus`.
+Four commands read no `.env` file: `pnpm run escalations`,
+`pnpm run triage`, `pnpm run export-corpus` and `pnpm run seed-history`. The
+operator console reads none either. Export what they need in the shell.
 
 Example `.env`:
 
@@ -337,12 +336,13 @@ Start each process in its own terminal.
 
 ### Start order
 
-Bring the internal deployment up in this order. Each step needs the one
-before it.
+Bring a stack up from a checkout in this order. Each step needs the one
+before it. For local development, follow the README's Quickstart instead. A
+deployed stack runs the image, as section 1.1, The dev host, describes.
 
 ```sh
-docker compose up -d                    # 1. Postgres with pgvector
-DATABASE_URL=$DATABASE_URL pnpm run db:migrate   # 2. ledger schema
+docker compose up -d --wait             # 1. Postgres with pgvector
+pnpm run db:migrate                     # 2. ledger schema
 pnpm run load-docs -- <dir-of-markdown>  # 3. knowledge base for retrieval
 pnpm run consumer                        # 4. runs the state machine
 pnpm run relay                           # 5. delivers approved actions
@@ -352,7 +352,7 @@ pnpm run webhook                         # 7. listens for webhook events
 
 Steps 1 and 2 prepare the database. Step 3 fills the knowledge base before
 the first run retrieves from it. Steps 4 and 5 process what ingress creates.
-Steps 6 and 7 turn the deployment towards the customers.
+Steps 6 and 7 turn the stack toward the customers.
 
 Export the variables from the subsections below before you start. The
 consumer needs `CONSUMER_PARTITIONS` and `OPENROUTER_API_KEY`. Use the
@@ -782,14 +782,19 @@ that you pass.
 
 | Command | Task |
 |---------|------|
-| `pnpm run calibrate` | Fits the global agreement threshold on the fit half of the gold set. Writes `calibration/vN.json`, the next version. |
+| `pnpm run calibrate` | Fits the global agreement threshold on the fit half of the gold set. Writes `calibration/vN.json`, the next version. Needs `OPENROUTER_API_KEY` and `CALIBRATION_MODEL_VER`. |
 | `pnpm run fit-groundedness` | Fits the two coverage thresholds on the fit half. Writes `groundedness/vN.json`. Needs `OPENROUTER_API_KEY` and `GROUNDEDNESS_MODEL_VER`. |
 | `pnpm run report-groundedness` | Measures the fitted coverage pair on the report half. Prints precision and negative predictive value with their intervals. Selects nothing and writes no artifact. Needs the same two variables. |
 | `pnpm run replay` | Runs the action-match replay over the fixture corpus. Uses the offline stub model. Needs no network and no database. Prints the report as JSON. |
 | `pnpm run gold-report` | Scores the report half of the gold set. Writes `gold-report/vN.json`, the next version. |
 | `pnpm run triage` | Selects cases for human review with the offline judge. Writes `triage/vN.json`, the next version. |
 | `pnpm run load-docs -- <dir>` | Embeds each markdown file into the `document` table for retrieval. Needs `OPENROUTER_API_KEY`. |
-| `pnpm run induce [-- output.json]` | Clusters the history and names each cluster. Writes a candidate list for a person. |
+| `pnpm run induce [-- output.json]` | Clusters the history and names each cluster. Writes a candidate list for a person. Needs `OPENROUTER_API_KEY`. |
+
+`pnpm run triage` reads the synthetic gold set. To triage live cases, call
+`runTriageJob` from `src/triage/run.ts` with `cases` and `goldSource`. The job
+refuses injected cases that name no source, because the artifact records
+where its cases came from (DEC-18).
 
 Each fitting artifact states how much of its half it could not read.
 `groundedness/vN.json` carries `faulted_drafts`, the drafts it dropped.
@@ -1014,7 +1019,7 @@ values.
 The induction output is a candidate list only.
 A person curates the list to a maximum of 25 intents and sets a risk tier for
 each intent (DEC-13).
-Rare intents never collect enough labelled examples, so more intents add no
+Rare intents never collect enough labeled examples, so more intents add no
 accuracy.
 Confidence measures how sure the classifier is.
 It does not measure what a mistake costs.
@@ -1323,8 +1328,8 @@ automatically, and no draft reaches a person. That happens
 when the judge scored no draft ambiguously. Widen the corpus, or keep the
 seeds.
 
-The block value is the lowest that holds its floor, not the highest. A draft under it is escalated by the
-coverage gate. That draft never reaches a person as a draft to approve. A person still handles the escalation, and
+The block value is the lowest that holds its floor, not the highest. The groundedness gate escalates a draft
+under it. That draft never reaches a person as a draft to approve. A person still handles the escalation, and
 `pnpm run escalations` lists it.
 
 The thresholds decide the automatic path only.
@@ -2144,7 +2149,7 @@ support is marked, and a claim nobody judged is marked apart from it. Those are
 different facts, and only the first is a warning.
 
 Each sentence also carries a word: accepted, refused, not judged or courtesy.
-Colour marks the verdict as well, but a reader who cannot see the colour reads
+Color marks the verdict as well, but a reader who cannot see the color reads
 the word.
 
 Each cited document carries one of three flags: unchanged, changed since this
@@ -2168,7 +2173,7 @@ text says `approved`, because every customer reply waits for a person (DEC-12).
 A turn no run joins says `no run`, and a waiting turn says `waiting for you`.
 
 A resolved run commits its outbox row and does not send it. So only the relay's
-`sent` status draws a chip in the success colour. Any other status joins the
+`sent` status draws a chip in the success color. Any other status joins the
 chip, as in `approved · pending`.
 
 A turn shows its newest run and reads the newest outbox row of any of its runs.
@@ -2566,7 +2571,7 @@ status and `FREESCOUT_BASE_URL`, and a retry does not repeat it. Set the
 variable to the address the helpdesk redirects to.
 
 After an approval the console returns to the case, with the ledger's answer
-above it. Only an approval draws in the success colour. Every refusal draws in
+above it. Only an approval draws in the success color. Every refusal draws in
 another, and says nothing was sent.
 
 A link can carry any outcome, so the case checks each against the run. It shows
@@ -2651,7 +2656,7 @@ names one cause, because each sends you somewhere different.
 | Count | What it means | What you do |
 |---|---|---|
 | `unmeasured` | The run carried no arrival time, so it has no wait. | Nothing, unless it grows. A run with no intake row reaches this. |
-| `unordered` | The pickup precedes the arrival, so the wait is not a duration. | Check clock synchronisation between the ingress host and the consumer host. |
+| `unordered` | The pickup precedes the arrival, so the wait is not a duration. | Check clock synchronization between the ingress host and the consumer host. |
 | `unfinished` | The run has not reached a terminal state. | This separates an idle partition from a stalled one. Both show few finished runs. |
 | `unstamped` | The run finished before `db/005` added the column. | Nothing. The count falls as the ledger turns over. |
 | `never_ran` | The run reached a terminal state without executing, such as an intake abandonment. | Read `pnpm run escalations`. This count rises when a partition is failing. |
@@ -2686,7 +2691,7 @@ A half needs enough drafts to hold the precision floor on its interval.
 Then run action match for a baseline (DEC-32).
 Action match compares each routing decision with the disposition people
 actually recorded.
-Careful labelling decides the value of every later number.
+Careful labeling decides the value of every later number.
 
 **Phase 2. Live with gates.**
 
@@ -2752,7 +2757,8 @@ not the explanation.
 | `pnpm run check:guards` | The session hooks and the structural eval layer. |
 | `pnpm run check:fixtures` | Regenerates the corpus and refuses any difference. |
 
-**The four daemons.** Section 3 explains each one.
+**The four pipeline daemons.** Section 3 explains each one. The console is
+the fifth daemon, and its own section covers it.
 
 | Command | What it does |
 |---|---|

@@ -9,31 +9,19 @@
 // Each case starts the real entry point from source and reads what the server
 // reports. The unit project's DATABASE_URL refuses connections, which is
 // harmless: the pool opens nothing until a delivery.
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { connect, createServer, type AddressInfo, type Socket } from 'node:net';
+import { connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 
-const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
+import { REPO_ROOT, freePort, startFromSource } from '../test-support/source-process.js';
+
 // The child runs from an empty directory, so it reads no developer's `.env`.
 // The channel map it needs is the repository's own.
 const SCRATCH = mkdtempSync(path.join(tmpdir(), 'auracle-webhook-host-'));
 afterAll(() => rmSync(SCRATCH, { recursive: true, force: true }));
-
-// tsx loaded into one node process, not the tsx command. The command starts a
-// second process, and a SIGKILL to the first left the webhook running.
-const TSX_LOADER = pathToFileURL(`${REPO_ROOT}node_modules/tsx/dist/loader.mjs`).href;
-
-async function freePort(): Promise<number> {
-  const probe = createServer();
-  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
-  const { port } = probe.address() as AddressInfo;
-  await new Promise<void>((resolve) => probe.close(() => resolve()));
-  return port;
-}
 
 interface Webhook {
   readonly child: ChildProcess;
@@ -56,29 +44,12 @@ async function startWebhook(host: string | undefined): Promise<Webhook> {
   };
   delete env['WEBHOOK_HOST'];
   if (host !== undefined) env['WEBHOOK_HOST'] = host;
-  const child = spawn(
-    process.execPath,
-    ['--import', TSX_LOADER, `${REPO_ROOT}src/intake/webhook-main.ts`],
-    { cwd: SCRATCH, env, stdio: ['ignore', 'pipe', 'pipe'] },
-  );
-  let out = '';
-  let err = '';
-  child.stderr!.on('data', (chunk: Buffer) => { err += chunk.toString(); });
-  // 'close' fires once the output streams have drained, unlike 'exit', so
-  // stderr is complete when a refusal is read.
-  const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-    child.once('close', (code, signal) => resolve({ code, signal }));
-  });
+  const { child, closed, stdout, stderr } = startFromSource('src/intake/webhook-main.ts', { cwd: SCRATCH, env });
   const listening = new Promise<string>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`no listening line within 20s: ${err}`)), 20_000);
-    child.once('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.stdout!.on('data', (chunk: Buffer) => {
-      out += chunk.toString();
+    const timer = setTimeout(() => reject(new Error(`no listening line within 20s: ${stderr()}`)), 20_000);
+    child.stdout!.on('data', () => {
       // Only complete lines: a chunk can end inside the one being read.
-      for (const line of out.split('\n').slice(0, -1)) {
+      for (const line of stdout().split('\n').slice(0, -1)) {
         if (!line.includes('"listening"')) continue;
         clearTimeout(timer);
         try {
@@ -91,12 +62,12 @@ async function startWebhook(host: string | undefined): Promise<Webhook> {
     });
     void closed.then(({ code }) => {
       clearTimeout(timer);
-      reject(new Error(`the webhook exited with ${code} before listening: ${err}`));
+      reject(new Error(`the webhook exited with ${code} before listening: ${stderr()}`));
     });
   });
   // A rejection nobody awaits yet must not fail the run on its own.
   listening.catch(() => undefined);
-  return { child, port, closed, listening, stderr: () => err };
+  return { child, port, closed, listening, stderr };
 }
 
 /** Stops the webhook and waits for it, killing it if it ignores SIGTERM. */

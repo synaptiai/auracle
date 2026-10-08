@@ -47,6 +47,17 @@ ROOT="$PWD"
 
 say() { printf '%s\n' "$*"; }
 step() { printf '  %-28s %s\n' "$1" "$2"; }
+# The first line of $1 that is not blank, with every carriage return made a
+# space and the spaces and tabs at either end trimmed. Empty when every line is
+# blank. A reason is read from it, so a blank first line or a stack trace
+# never decides what the step says. A carriage return inside the line would
+# move the cursor back and overwrite the step's label. The C locale reads
+# every byte, so a byte the user's locale cannot decode never drops the
+# reason.
+first_line() {
+  printf '%s\n' "$1" | LC_ALL=C tr '\r' ' ' | LC_ALL=C grep -m1 '[^[:space:]]' \
+    | LC_ALL=C sed 's/^[[:space:]]*//; s/[[:space:]]*$//' || true
+}
 
 if [ "$CHECK_ONLY" -eq 1 ]; then
   say "auracle bootstrap (--check: nothing is changed) — $ROOT"
@@ -71,14 +82,51 @@ step "node" "$(node -v)"
 # 2. pnpm, through corepack. `packageManager` in package.json pins the
 #    version, and corepack is what honours it. An `npm install` here produces
 #    a tree no workflow validates.
-if command -v corepack >/dev/null 2>&1; then
-  corepack enable >/dev/null 2>&1 || step "corepack" "could not enable (not fatal)"
+# `--check` changes nothing, so it enables nothing either. A failed enable
+# says why, and the advice then names only the route left.
+COREPACK_RAN=0
+if [ "$CHECK_ONLY" -eq 0 ] && command -v corepack >/dev/null 2>&1; then
+  COREPACK_RAN=1
+  if ! COREPACK_ERR="$(corepack enable 2>&1)"; then
+    # The first line that holds text: a stack trace would break the column.
+    COREPACK_REASON="$(first_line "$COREPACK_ERR")"
+    step "corepack" "could not enable: ${COREPACK_REASON:-no reason given}"
+  fi
 fi
 if ! command -v pnpm >/dev/null 2>&1; then
-  step "pnpm" "MISSING — run 'corepack enable', or install pnpm, then run this again"
+  # Node 25 and later ship no corepack, so the message names the route that
+  # works on every supported Node: the version `packageManager` pins.
+  # The read never fails, and it takes a plain version or nothing. A missing,
+  # malformed or unusual field names no version, so the message never prints
+  # text from package.json as a command to copy.
+  PNPM_PIN="$(node -p 'try { const m = /^pnpm@([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?)(?:\+[0-9A-Za-z.]+)?$/.exec(require("./package.json").packageManager || ""); m ? m[1] : "" } catch { "" }' 2>/dev/null || true)"
+  if [ -n "$PNPM_PIN" ]; then
+    INSTALL="run 'npm install -g pnpm@$PNPM_PIN'"
+  else
+    INSTALL="install the pnpm version package.json pins"
+  fi
+  # A corepack enable that ran, failed or not, is no advice to repeat.
+  if [ "$COREPACK_RAN" -eq 1 ] || ! command -v corepack >/dev/null 2>&1; then
+    step "pnpm" "MISSING — $INSTALL, then run this again"
+  else
+    step "pnpm" "MISSING — run 'corepack enable' (Node 22 to 24), or $INSTALL, then run this again"
+  fi
   exit 1
 fi
-step "pnpm" "$(pnpm --version)"
+# A pnpm that cannot run is not ready. `set -e` ignores a failure inside an
+# argument, so the version is read on its own line. Its stderr stays on the
+# terminal, so a notice never joins the version. A failure that printed to
+# stdout is named by its first line that holds text. One that printed none
+# there is named by its exit code. Anything it printed to stderr is already
+# above this step.
+PNPM_EXIT=0
+PNPM_VERSION="$(pnpm --version)" || PNPM_EXIT=$?
+if [ "$PNPM_EXIT" -ne 0 ]; then
+  PNPM_REASON="$(first_line "$PNPM_VERSION")"
+  step "pnpm" "present but fails: ${PNPM_REASON:-exit $PNPM_EXIT}"
+  exit 1
+fi
+step "pnpm" "$PNPM_VERSION"
 
 # 3. Dependencies, from the lockfile. Frozen, so a bootstrap never rewrites
 #    it: a lockfile change is a decision, not a side effect of setup.
@@ -87,9 +135,8 @@ if [ -d node_modules ] && [ -f node_modules/.modules.yaml ]; then
 elif [ "$CHECK_ONLY" -eq 1 ]; then
   step "dependencies" "MISSING — run: pnpm install --frozen-lockfile"
 else
-  # Output to a log rather than the terminal: under the hook this text would
-  # be registry strings resolved from the lockfile, appended to an agent's
-  # context at session open.
+  # The install prints to the terminal. The hook runs `--check`, which never
+  # reaches this branch, so no registry text enters an agent's context.
   say "  installing dependencies (pnpm install --frozen-lockfile)…"
   pnpm install --frozen-lockfile
   step "dependencies" "installed"
@@ -164,15 +211,18 @@ fi
 say ""
 say "What is left, and why this script does not do it:"
 if [ "$ENV_MISSING_KEY" -eq 1 ]; then
-  say "  - Put OPENROUTER_API_KEY in .env. This script never invents a credential."
+  say "  - Later, to run the consumer or a model job: put OPENROUTER_API_KEY in .env."
+  say "    The Quickstart needs none, and this script never invents a credential."
 fi
 if [ "$DOCKER_READY" -eq 1 ]; then
-  say "  - docker compose --profile test up -d   Postgres on 5433, GreenMail on 3025/3143"
+  say "  - docker compose --profile test up -d --wait   Postgres on 5433, GreenMail on 3025/3143"
 else
-  say "  - start Docker, then: docker compose --profile test up -d"
+  say "  - start Docker, then: docker compose --profile test up -d --wait"
 fi
 say "  - export DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle"
+say "  - export READER_DATABASE_URL=postgres://auracle_reader:auracle_reader@localhost:5433/auracle"
 say "  - export MAIL_HOST=127.0.0.1     so no suite starts a throwaway container"
 say "  - pnpm run db:migrate            writes to that database, so you choose when"
 say ""
-say "Then: pnpm run verify"
+say "Then: pnpm run verify:fast, and pnpm run verify before a pull request."
+say "README.md, section Quickstart, has the whole path, the console included."
