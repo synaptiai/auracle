@@ -1695,21 +1695,18 @@ describe('the runbook snapshot', () => {
     expect(statement, 'the snapshot block counts the actions left to send').not.toBeNull();
     const left = async (): Promise<number> => Number((await pool.query(statement![1]!)).rows[0]!.count);
 
-    const held = 'idem-' + randomUUID();
-    for (const [key, status, notBefore] of [
-      [held, 'pending', new Date(Date.now() + 600_000)],
-      ['idem-' + randomUUID(), 'sent', null],
-    ] as const) {
-      await pool.query(
-        `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class, delivery, payload, status, not_before)
-         VALUES ($1, 'approve', $2, 1, 'customer_reply', 'at_most_once', '{}', $3, $4)`,
-        [randomUUID(), key, status, notBefore],
-      );
-    }
-    expect(await pendingRows(pool)).toEqual([]);
-    expect(await left()).toBe(1);
+    // Three actions on real runs: one due, one under its hold period, one sent.
+    const due = await seedPending(`T-${randomUUID().slice(0, 8)}`, 1n, 'at_most_once');
+    const held = await seedPending(`T-${randomUUID().slice(0, 8)}`, 1n, 'at_most_once');
+    const sent = await seedPending(`T-${randomUUID().slice(0, 8)}`, 1n, 'at_most_once');
+    await pool.query("UPDATE outbox SET not_before = now() + interval '10 minutes' WHERE idem_key = $1", [held]);
+    await pool.query("UPDATE outbox SET status = 'sent' WHERE idem_key = $1", [sent]);
 
-    await pool.query("UPDATE outbox SET status = 'sent' WHERE idem_key = $1", [held]);
+    // The relay's scan sees the due action alone. The held one waits outside it.
+    expect((await pendingRows(pool)).map((row) => row.idem_key)).toEqual([due]);
+    expect(await left()).toBe(2);
+
+    await pool.query("UPDATE outbox SET status = 'sent' WHERE idem_key IN ($1, $2)", [due, held]);
     expect(await left()).toBe(0);
   });
 });
