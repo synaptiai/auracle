@@ -24,7 +24,8 @@ decide. No decision changes.
 
 ## Affected users and systems
 
-A reader of the register and of the runbook. No code changes with this record.
+A reader of the register and of the runbook. No code changes with this record,
+and the runbook's other changes in the same pull request cite no decision.
 
 ## Constraints
 
