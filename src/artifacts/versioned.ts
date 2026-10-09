@@ -2,12 +2,12 @@
 //
 // Three modules each mint `v<n>.json` and read the highest one back:
 // calibration, the gold report and triage. They carried three copies of the
-// scan, and four review passes hardened one of them. The copies then differed
+// scan, and only one of them was hardened. The copies then differed
 // on every rule that mattered, and the unhardened ones still rebuilt the file
 // name from the parsed number — the defect that made a stray file shadow a
 // real artifact and stop a process with a bare error code.
 //
-// The rules below are each paid for by a defect found on this branch.
+// Each rule below guards against a defect that occurred.
 
 import { constants } from 'node:fs';
 import { access, mkdir, readFile, readdir } from 'node:fs/promises';

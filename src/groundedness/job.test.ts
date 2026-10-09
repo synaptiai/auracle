@@ -237,9 +237,8 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
     }
   }, 30_000);
 
-  // Pre-existing, but this branch made the size rule conditional on a
-  // synthetic half — so on the real path this is now the only check on a
-  // declared count. The calibration twin has a case; these two did not.
+  // The size rule applies to a synthetic half only, so on the real path
+  // this is the only check on a declared count. The calibration twin has a case; these two did not.
   // A four-hour run over the committed fit half died on `fetch failed` after
   // roughly 3900 calls, and every scored draft went with it. The job holds no
   // checkpoint, so a connection that drops once costs the whole run.
@@ -643,7 +642,7 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
     ).rejects.toThrow(/DOC-SYN-999/);
   });
 
-  // Both added by this branch, neither covered: the refusal exists so a half
+  // The refusal exists so a half
   // with no labels names its own cause instead of dying inside the fitter
   // with "needs both classes", and the warning is what tells an operator how
   // much of their half was not scored.

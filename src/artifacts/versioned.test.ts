@@ -1,8 +1,7 @@
 // The shared scan, exercised through the label every module passes it.
 //
-// Three artifact directories used to carry three copies of this logic, and
-// four review passes hardened one of them. These cases hold the other two to
-// the same rules.
+// Three artifact directories read their versions through this one module.
+// These cases hold each of them to the same rules.
 import { describe, expect, it } from 'vitest';
 
 import { existsSync } from 'node:fs';

@@ -204,7 +204,7 @@ describe('the console as a long-running process', () => {
 
   // DEC-45, and the argument the dev-reviewer suite cannot see. Its cases
   // pass `identityHeader` themselves, so deleting the one `main.ts` passes
-  // would restore the fail-open this branch closed — a console that serves
+  // would restore a fail-open console: one that serves
   // as the developer for every request a proxy did not name — while every
   // unit case stayed green.
   it('tells the development reviewer which header a proxy would use', () => {

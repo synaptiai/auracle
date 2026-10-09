@@ -123,7 +123,7 @@ describe('a CLI module does not run when it is imported', () => {
     }
   });
 
-  // The fifth of this class, and the one this branch added. `cli.test.ts`
+  // The fifth of this class. `cli.test.ts`
   // imports this module for its parsers and its outcome sentences, which is
   // the shape this suite's header describes: unguarded, that import opens a
   // pool and queries the roster inside the test process.

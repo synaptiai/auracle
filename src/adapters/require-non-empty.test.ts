@@ -188,8 +188,7 @@ describe('the argument order cannot drift back', () => {
    * value beside it — `requireNonEmpty('reply.body', reply.idemKey)` compiles
    * and is wrong, and the message it produces names the wrong field.
    *
-   * Three things adversarial review broke in the first version of this guard,
-   * all fixed by parsing instead of matching text:
+   * Three gaps this guard closes:
    *
    *   - It read one directory and did not recurse, so a call in
    *     `src/adapters/vendor/` was unscanned. `requireNonEmpty` is exported,

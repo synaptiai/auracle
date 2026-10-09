@@ -356,10 +356,9 @@ describe('buildCorpusTickets turn structure', () => {
     expect(stats.droppedOrphanAgentMessages).toBe(0);
   });
 
-  // M5: the previous fixture put the only agent message between turns 1 and
-  // 2, where "the last emitted turn" and "the first emitted turn" are the
-  // same record. Attaching to emitted[0] passed every case. Three turns
-  // separate the two.
+  // With the only agent message between turns 1 and 2, "the last emitted
+  // turn" and "the first emitted turn" are the same record, and a join that
+  // attached to emitted[0] would pass. Three turns separate the two.
   it('attaches a reply to the turn it answered, not to the first turn', async () => {
     const third = LATE_FOLLOWUP_EMAIL
       .replace('Date: Tue, 7 Jan 2025 10:00:00 +0000', 'Date: Tue, 7 Jan 2025 12:00:00 +0000')
@@ -382,7 +381,7 @@ describe('buildCorpusTickets turn structure', () => {
     expect(byTurn.get(3)?.agent_reply).toBeUndefined();
   });
 
-  // M7: no case used two agent messages, so removing the join was invisible.
+  // Two agent messages, so a case fails when the join is removed.
   it('joins two replies that both precede the next customer turn', async () => {
     const second = AGENT_REPLY_EMAIL
       .replace('Date: Tue, 7 Jan 2025 09:00:00 +0000', 'Date: Tue, 7 Jan 2025 09:30:00 +0000')
@@ -400,8 +399,8 @@ describe('buildCorpusTickets turn structure', () => {
     expect(reply.indexOf('replacement')).toBeLessThan(reply.indexOf('Thursday'));
   });
 
-  // M1: droppedEmptyMessages was never observed non-zero, so a hardcoded 0
-  // satisfied every assertion about it.
+  // droppedEmptyMessages is non-zero here, so a hardcoded 0 cannot satisfy
+  // the assertion about it.
   it('drops a message with no body text and counts it', async () => {
     const empty = LATE_FOLLOWUP_EMAIL.replace('Still nothing. Can you check again?', '   ');
     const { events } = await collectEvents([
@@ -413,7 +412,7 @@ describe('buildCorpusTickets turn structure', () => {
     expect(tickets.map((t) => t.turn_number)).toEqual([1]);
   });
 
-  // M2: mail ingress hardcodes author 'customer', so a system message is
+  // Mail ingress hardcodes author 'customer', so a system message is
   // unreachable through the poller. The port allows one, so the event is
   // built directly against the port's own shape.
   it('drops a message from neither party and counts it', async () => {

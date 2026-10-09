@@ -110,10 +110,8 @@ function defaultLog(entry: Record<string, unknown>): void {
  * process does not run, or null when both gates are safe to adopt.
  *
  * Lives here, beside the resolver that returns the pins, and is exported so
- * the rule has a test. The first version of this check sat inside
- * `consumer-main`'s `main()` behind an `invokedDirectly` guard — untestable,
- * and the exact place this branch had just finished pulling a different rule
- * out of for the same reason.
+ * the rule has a test. Inside `consumer-main`'s `main()`, behind its
+ * `invokedDirectly` guard, no test could reach it.
  *
  * Each gate is judged on its own and reported on its own (DEC-05).
  *

@@ -224,7 +224,7 @@ describe('the arrival signal', () => {
       await pool.query('SELECT pg_terminate_backend($1)', [old]);
       // Wait for the condition, never for a duration. The backoff is 1000
       // to 2000 ms plus a dial, an authentication and a LISTEN, so a fixed
-      // sleep here is the margin pattern this branch already rejected twice.
+      // sleep here would be a margin, and a margin fails on a loaded host.
       // A notification delivered before the listener is back reaches nobody
       // and nothing retries it, so the case would fail on working code.
       await awaitNewListener(old!);

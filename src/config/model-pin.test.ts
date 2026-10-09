@@ -419,8 +419,8 @@ describe('the escalation reasons the runbook explains', () => {
     // The table row, not the file. A mention anywhere satisfied the earlier
     // scan, so prose that named a reason made its own operator-facing row
     // deletable in silence — and the row is what carries "what you do about
-    // it". An adversarial pass deleted the `internal_fault` row with this suite
-    // green, because the paragraph beside the table held the token.
+    // it". A check of the whole text stays green when the `internal_fault` row
+    // is deleted, because the paragraph beside the table holds the token.
     const rows = new Set(
       [...runbook.matchAll(/^\|\s*`([a-z_]+)`\s*\|/gm)].map((m) => m[1] as string),
     );

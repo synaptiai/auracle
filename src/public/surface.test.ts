@@ -35,13 +35,12 @@ function specifiersOf(source: string): string[] {
 /**
  * True when the module starts a process the moment it is imported.
  *
- * Detected, not named. The first version of this rule matched
- * `/\/run\.js$/` and `/-main\.js$/`, which reads like the whole set and is
- * ten of nineteen: `imap/main.ts` and `relay/main.ts` carry no hyphen, and
- * `cli.ts`, `report.ts`, `migrate.ts` and `run-taxonomy-induction.ts` match
- * neither shape. Adversarial review put `export * from '../relay/main.js'`
- * into a barrel and every check in this pull request stayed green while the
- * outbox relay started from the import.
+ * Detected, not named. A name rule such as `/\/run\.js$/` and `/-main\.js$/`
+ * reads like the whole set and is ten of nineteen: `imap/main.ts` and
+ * `relay/main.ts` carry no hyphen, and `cli.ts`, `report.ts`, `migrate.ts`
+ * and `run-taxonomy-induction.ts` match neither shape. With such a rule,
+ * `export * from '../relay/main.js'` in a barrel passes every check while the
+ * outbox relay starts from the import.
  *
  * `runEntry` at the top level is what actually makes a module an entry
  * point, so that is what this looks for. A file renamed tomorrow is still
@@ -230,11 +229,10 @@ describe('the public surface', () => {
 });
 
 describe('the exports map and the barrels agree', () => {
-  // Neither half is checked by the other. Adversarial review restored
-  // `"./dist/*": "./dist/*"` with every guard in this pull request green,
-  // and added a sixth barrel that `package.json` did not publish — also
-  // green. The manifest and the directory are now compared in both
-  // directions, so a wildcard is a failure and an unreachable barrel is too.
+  // Neither half is checked by the other. A `"./dist/*": "./dist/*"` entry, or
+  // a sixth barrel that `package.json` does not publish, passes a check of
+  // either half alone. So the manifest and the directory are compared in both
+  // directions: a wildcard is a failure, and an unreachable barrel is too.
 
   it('publishes no wildcard', () => {
     const wildcards = Object.keys(EXPORTS).filter((key) => key.includes('*'));

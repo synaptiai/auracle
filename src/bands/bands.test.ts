@@ -133,8 +133,8 @@ describe('the definitions the report is pinned to', () => {
     // A whitelist, and not a search for the field that was removed. A search
     // finds `baseline_mean` and misses `"baseline_mean"`, `mean`, `baseline:
     // {mean: 0.3}` and `baseline_mean :`. Every one of those re-declares the
-    // value this file must not hold, and an adversarial pass got all four
-    // past the first version of this case.
+    // value this file must not hold, and all four pass a case that matches
+    // text.
     //
     // The file carried a null baseline for each metric once. Nothing parsed
     // them, and they could never have been filled: a baseline is a
@@ -276,8 +276,8 @@ describe('the documents that cite bands.yaml', () => {
   });
 
   it.each(cites)('%s never says the file holds a baseline', (path) => {
-    // A claim, not a sentence. The first version matched one wording, and an
-    // adversarial pass evaded it five ways: an extra noun, a possessive, `not
+    // A claim, not a sentence. A case that matches one wording misses five
+    // ordinary variants: an extra noun, a possessive, `not
     // set` for `null`, an unbackticked file name, and a sentence split.
     //
     // The denial is read over the clause that carries the number, and the

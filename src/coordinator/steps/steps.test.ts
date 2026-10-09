@@ -447,8 +447,8 @@ describe('a fault inside the walk', () => {
   // back where it was before this guard, with every suite green.
   //
   // The first version asked for a `throw` of a `new Identifier(...)`, which is
-  // a regex with a parser behind it. An adversarial pass walked four ordinary
-  // spellings straight through it — `throw held`, `throw make(msg)`,
+  // a regex with a parser behind it. Four ordinary spellings walk straight
+  // through it — `throw held`, `throw make(msg)`,
   // `throw new globalThis.Error(msg)` and `Promise.reject(new Error(msg))` —
   // with the suite green on each. The repository's rule is to parse source
   // rather than pattern-match it, and parsing the wrong shape is still

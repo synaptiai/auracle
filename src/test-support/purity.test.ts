@@ -191,8 +191,8 @@ export function impurityReasons(
     // The package's own name resolves back into this repository, because
     // `exports` in package.json makes the core self-referential. So
     // `auracle/ledger-read` reaches `db/config` by a spelling that is not
-    // relative and was therefore invisible here — adversarial review wrote a
-    // pure suite importing it and the guard passed. The subpath is the
+    // relative, so a pure suite importing it passed a guard that read only
+    // relative specifiers. The subpath is the
     // barrel's name, so it maps straight onto the module list.
     const selfReference = /^auracle\/([\w-]+)$/.exec(specifier);
     if (selfReference?.[1] !== undefined) {
@@ -399,10 +399,10 @@ describe('the pure-suffix contract is executable', () => {
     // A suite that needs Postgres belongs in the `db` project. Rename it to
     // `*.db.test.ts`; the runner does the rest.
     // The allowlist forgives one named reason per file, never the file.
-    // Filtering the file out of the scan entirely was wider than the grant:
-    // adversarial review added `import { Pool } from 'pg'` to the allowlisted
-    // suite and the guard stayed green, so a listed file could open a live
-    // connection through the one door this rule exists to watch.
+    // Filtering the file out of the scan entirely is wider than the grant:
+    // with `import { Pool } from 'pg'` added to the allowlisted suite, the
+    // guard stays green, so a listed file could open a live connection
+    // through the one door this rule exists to watch.
     const offenders = PURE.map((file) => ({
       file,
       reasons: impurityReasons(read(file), file).filter(

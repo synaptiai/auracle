@@ -55,8 +55,8 @@ describe('the database this file was given', () => {
   it('is recorded, so the run can check the whole set', () => {
     // This case used to truncate and then assert the row count was zero,
     // which is true by construction however many files share the database.
-    // Adversarial review pointed every file at one clone and this file stayed
-    // green while a DEC-28 case broke next door.
+    // With every file pointed at one clone, this file stays green while a
+    // DEC-28 case breaks next door.
     //
     // A file cannot see whether another file shares its database. So each
     // file records the one it was given, and the run's teardown asserts the

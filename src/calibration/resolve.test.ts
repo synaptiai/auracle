@@ -354,9 +354,9 @@ describe('resolveThresholds (DEC-05, DEC-13, DEC-31)', () => {
   });
 });
 
-// Findings from an adversarial pass over the resolver's error posture. Its
-// stated contract is that a missing artifact seeds and a malformed one
-// throws; each case below used to do neither.
+// The resolver's error posture. Its stated contract is that a missing
+// artifact seeds and a malformed one throws, and each case below holds one
+// way to break that.
 describe('resolveThresholds error posture', () => {
   let dir: URL;
   let base: string;
