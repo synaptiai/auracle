@@ -64,24 +64,41 @@ else
   say "auracle bootstrap — $ROOT"
 fi
 
-# 1. Node. vitest runs on release lines 22, 24, and 26 and later, and
+# 1. Node. vitest runs on major versions 22, 24, and 26 and later, and
 #    testcontainers needs 22.22. Any other version fails later and less
 #    clearly, so the engines field and this check name the same set.
 if ! command -v node >/dev/null 2>&1; then
   step "node" "MISSING — install Node 22.22 or later, then run this again"
   exit 1
 fi
-NODE_VERSION="$(node -v)"
+# The version is read on its own line, as pnpm's is below: `set -e` would
+# end the script inside an assignment with nothing said. A version that is not
+# digits is refused, because `[` reads it as neither old nor new.
+NODE_EXIT=0
+NODE_VERSION="$(node -v 2>/dev/null)" || NODE_EXIT=$?
+if [ "$NODE_EXIT" -ne 0 ]; then
+  step "node" "present but fails: exit $NODE_EXIT"
+  exit 1
+fi
 NODE_MAJOR="${NODE_VERSION#v}"
 NODE_MAJOR="${NODE_MAJOR%%.*}"
 NODE_MINOR="${NODE_VERSION#v*.}"
 NODE_MINOR="${NODE_MINOR%%.*}"
+case "$NODE_VERSION" in
+  v*.*) ;;
+  *) NODE_MAJOR=x ;;
+esac
+case "$NODE_MAJOR$NODE_MINOR" in
+  *[!0-9]*|"")
+    step "node" "$(first_line "$NODE_VERSION") — not a version this script can read; install Node 22.22 or later"
+    exit 1 ;;
+esac
 if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 22 ]; }; then
   step "node" "$NODE_VERSION — too old, this repository needs Node 22.22 or later"
   exit 1
 fi
 if [ "$NODE_MAJOR" -eq 23 ] || [ "$NODE_MAJOR" -eq 25 ]; then
-  step "node" "$NODE_VERSION — not supported: use Node 22.22 or later on line 22, or 24, or 26 and later"
+  step "node" "$NODE_VERSION — not supported: use major version 22 (22.22 or later), 24, or 26 and later"
   exit 1
 fi
 step "node" "$NODE_VERSION"
@@ -93,14 +110,23 @@ if ! command -v python3 >/dev/null 2>&1; then
   step "python3" "MISSING — install Python 3.10 or later, then run this again"
   exit 1
 fi
-PY_VERSION="$(python3 --version 2>&1)"
-PY_NUMBER="${PY_VERSION#Python }"
-PY_MAJOR="${PY_NUMBER%%.*}"
-PY_MINOR="${PY_NUMBER#*.}"
-PY_MINOR="${PY_MINOR%%.*}"
-case "$PY_MAJOR$PY_MINOR" in
-  *[!0-9]*|"") PY_MAJOR=0; PY_MINOR=0 ;;
+# Python reports its version as numbers, so no warning it prints joins them.
+# The form runs on Python 2 as well, so an old one is named, not crashed on.
+PY_EXIT=0
+PY_PARTS="$(python3 -c 'import sys; print("%d %d %d" % tuple(sys.version_info[:3]))' 2>/dev/null)" || PY_EXIT=$?
+if [ "$PY_EXIT" -ne 0 ]; then
+  step "python3" "present but fails: exit $PY_EXIT"
+  exit 1
+fi
+read -r PY_MAJOR PY_MINOR PY_PATCH <<EOF_PY || true
+$PY_PARTS
+EOF_PY
+case "${PY_MAJOR:-}${PY_MINOR:-}${PY_PATCH:-}" in
+  *[!0-9]*|"")
+    step "python3" "$(first_line "$PY_PARTS") — not a version this script can read; install Python 3.10 or later"
+    exit 1 ;;
 esac
+PY_VERSION="Python $PY_MAJOR.$PY_MINOR.$PY_PATCH"
 if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }; then
   step "python3" "$PY_VERSION — too old, the documentation and guard checks need Python 3.10 or later"
   exit 1
