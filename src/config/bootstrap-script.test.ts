@@ -45,6 +45,11 @@ function bootstrap(options: {
   readonly locale?: string;
   /** The version `node -v` reports, as `v22.22.0`. Unset, the real one. */
   readonly nodeVersion?: string;
+  /**
+   * What `python3 --version` prints. Unset, a supported version: the host's
+   * own python3 never runs, because macOS ships one that is too old.
+   */
+  readonly python?: string;
 }): { status: number | null; stdout: string; stderr: string; ran: string } {
   caseCount += 1;
   const root = path.join(SCRATCH, `case-${caseCount}`);
@@ -72,13 +77,16 @@ function bootstrap(options: {
     ['corepack', options.corepack === null ? undefined : (options.corepack ?? { exit: 1 })],
     ['pnpm', options.pnpm],
     ['docker', { exit: 1 }],
+    ['python3', { stdout: options.python ?? 'Python 3.12.4', exit: 0 }],
   ];
+  // The log records the tools a case asserts on. A version read is not one.
+  const unlogged = new Set(['python3']);
   for (const [name, tool] of tools) {
     if (tool === undefined) continue;
     const script = path.join(bin, name);
     writeFileSync(script, [
       '#!/bin/sh',
-      `echo "${name} $*" >> '${log}'`,
+      unlogged.has(name) ? '' : `echo "${name} $*" >> '${log}'`,
       tool.stdout === undefined ? '' : `printf '%s\\n' '${tool.stdout}'`,
       tool.stderr === undefined ? '' : `printf '%s\\n' '${tool.stderr}' >&2`,
       tool.stderrFormat === undefined ? '' : `printf '${tool.stderrFormat}' >&2`,
@@ -118,6 +126,19 @@ describe('the bootstrap script', () => {
     const run = bootstrap({ nodeVersion: version });
     expect(run.stdout).toContain(`${version} — not supported: use Node 22.22 or later on line 22, or 24, or 26 and later`);
     expect(run.status).toBe(1);
+  });
+
+  // The documentation and guard checks use syntax Python 3.10 added. macOS
+  // ships 3.9 as python3, and there the check fails with a TypeError.
+  it.each(['Python 3.9.6', 'Python 2.7.18'])('refuses %s, and names the floor', (python) => {
+    const run = bootstrap({ python });
+    expect(run.stdout).toContain(`${python} — too old, the documentation and guard checks need Python 3.10 or later`);
+    expect(run.status).toBe(1);
+  });
+
+  it.each(['Python 3.10.0', 'Python 3.14.2'])('accepts %s', (python) => {
+    const run = bootstrap({ python });
+    expect(run.stdout).toMatch(new RegExp(`python3\\s+${python.replaceAll('.', '\\.')}\\n`));
   });
 
   it.each(['v22.22.0', 'v24.0.0', 'v26.0.0'])('accepts Node %s', (version) => {

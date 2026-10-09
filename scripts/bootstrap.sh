@@ -86,7 +86,28 @@ if [ "$NODE_MAJOR" -eq 23 ] || [ "$NODE_MAJOR" -eq 25 ]; then
 fi
 step "node" "$NODE_VERSION"
 
-# 2. pnpm, through corepack. `packageManager` in package.json pins the
+# 2. Python. The documentation and guard checks use syntax Python 3.10 added.
+#    macOS ships 3.9 as python3, and there the first check stops on a
+#    TypeError that names no version.
+if ! command -v python3 >/dev/null 2>&1; then
+  step "python3" "MISSING — install Python 3.10 or later, then run this again"
+  exit 1
+fi
+PY_VERSION="$(python3 --version 2>&1)"
+PY_NUMBER="${PY_VERSION#Python }"
+PY_MAJOR="${PY_NUMBER%%.*}"
+PY_MINOR="${PY_NUMBER#*.}"
+PY_MINOR="${PY_MINOR%%.*}"
+case "$PY_MAJOR$PY_MINOR" in
+  *[!0-9]*|"") PY_MAJOR=0; PY_MINOR=0 ;;
+esac
+if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }; then
+  step "python3" "$PY_VERSION — too old, the documentation and guard checks need Python 3.10 or later"
+  exit 1
+fi
+step "python3" "$PY_VERSION"
+
+# 3. pnpm, through corepack. `packageManager` in package.json pins the
 #    version, and corepack is what honours it. An `npm install` here produces
 #    a tree no workflow validates.
 # `--check` changes nothing, so it enables nothing either. A failed enable
@@ -135,7 +156,7 @@ if [ "$PNPM_EXIT" -ne 0 ]; then
 fi
 step "pnpm" "$PNPM_VERSION"
 
-# 3. Dependencies, from the lockfile. Frozen, so a bootstrap never rewrites
+# 4. Dependencies, from the lockfile. Frozen, so a bootstrap never rewrites
 #    it: a lockfile change is a decision, not a side effect of setup.
 if [ -d node_modules ] && [ -f node_modules/.modules.yaml ]; then
   step "dependencies" "already installed"
@@ -149,7 +170,7 @@ else
   step "dependencies" "installed"
 fi
 
-# 4. The commit hook. It blocks an edit to docs/v1-architecture.md that cites
+# 5. The commit hook. It blocks an edit to docs/v1-architecture.md that cites
 #    no DEC. CI runs the same check, so skipping it costs a round trip.
 #
 #    Never overwritten. A contributor who wrote their own hook keeps it, and
@@ -179,7 +200,7 @@ else
   step "commit hook" "installed"
 fi
 
-# 5. `.env`. Copied from the example, which names every variable a process
+# 6. `.env`. Copied from the example, which names every variable a process
 #    reads and carries no value for any credential. Never overwritten: that
 #    file holds OPENROUTER_API_KEY once a person fills it in.
 ENV_MISSING_KEY=0
@@ -204,7 +225,7 @@ if [ -e .env ] && ! grep -qE '^\s*OPENROUTER_API_KEY=.+' .env; then
   ENV_MISSING_KEY=1
 fi
 
-# 6. Docker. Reported, never started.
+# 7. Docker. Reported, never started.
 DOCKER_READY=0
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   DOCKER_READY=1
