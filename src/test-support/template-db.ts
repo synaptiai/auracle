@@ -6,7 +6,7 @@
 //
 // So each file gets its own database. `CREATE DATABASE ... TEMPLATE` copies
 // a migrated database at the file-system level, which costs far less than
-// replaying sixteen migrations, so the isolation is nearly free.
+// replaying every migration, so the isolation is nearly free.
 //
 // The template is migrated through the real `migrate()` path rather than by
 // applying the SQL files directly. That matters: `migrate()` records versions
@@ -21,8 +21,9 @@
 // wildcard: that pattern matches `auracle_template`, the template the same
 // run builds, and any bystander database called `auracle_test`,
 // `auracle_tickets` and so on. The teardown would terminate their backends and
-// drop them, so two concurrent runs against one server would destroy each
-// other, and so would a database that belongs to no run.
+// drop them. Two concurrent runs against one server would destroy each
+// other's databases, and a database that belongs to no run would be dropped
+// too.
 //
 // So the names carry a run id, the match is `starts_with` rather than `LIKE`
 // (no wildcard semantics at all), and a run only ever drops what it created.

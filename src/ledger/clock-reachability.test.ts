@@ -13,8 +13,8 @@
 // no daemon closure contains it, and a clock added there would pass. A new
 // entry point would be missed the same way.
 //
-// The daemon closure is asserted too, because the four processes are where
-// a run starts. It is the narrower of the two statements.
+// The daemon closure is asserted too, because those four processes write
+// production rows. It is the narrower of the two statements.
 //
 // The guard reads each module with the TypeScript compiler, not with
 // patterns. A pattern that strips strings and comments can pair two quotes

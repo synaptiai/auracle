@@ -267,9 +267,9 @@ describe('the compose step', () => {
   });
 
   // The field's own contract says null, never the empty list, because an
-  // empty list is a clean bill of health. A member that is not a string is
-  // not filtered out. Filtered, a list of one bad member would read as a run
-  // with no stale cited document.
+  // empty list is a clean bill of health. A member that is not a string makes
+  // the whole list null rather than being filtered out. Filtered, a list of
+  // one bad member would read as a run with no stale cited document.
   it('reads a stale list holding a non-string as unrecorded, not as empty', async () => {
     const runId = await journal([
       {

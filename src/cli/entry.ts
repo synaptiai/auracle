@@ -24,8 +24,8 @@ const MAX_CAUSE_DEPTH = 16;
  * Everything a thrown value has to say, including its cause chain.
  *
  * Returns a string rather than printing the `Error` itself. That is a
- * deliberate trade: Node renders a
- * stack for a thrown object, and a string drops it. The errno survives —
+ * deliberate trade: Node renders a stack for a thrown object, and a string
+ * drops it. The errno survives —
  * a filesystem cause carries it in its own message, as
  * `ENOENT: no such file or directory, open '...'` — and an operator reading
  * a refused configuration gets one sentence instead of six stack frames.
@@ -141,7 +141,7 @@ export async function runEntry(
     //
     // `report` below cannot throw, and that is what closes this hole. So no
     // test can tell this ordering from its reverse. The ordering is a second
-    // defence, and only the first one has a test.
+    // defence. Only the first, that `report` cannot throw, has a test.
     process.exitCode = 1;
     report(error);
     const { onFault } = options;

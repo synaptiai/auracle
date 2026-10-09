@@ -470,9 +470,10 @@ describe('resolveThresholds error posture', () => {
   });
 
   it('checks the artifact directory before the run spends a model call', async () => {
-    // nextVersion runs before the sampling loop. After it, a fault would throw
-    // away a run the operator had already paid for. The listing it reads is
-    // readable before the first call.
+    // `assertCalibrationDirUsable` checks the directory before the sampling
+    // loop. If only `nextVersion` checked it, after the loop, a stray file
+    // would throw away a run the operator has already paid for. The listing
+    // is readable before the first call.
     await write('v0.json', artifact({ version: 0 }));
     const provider = new FakeProvider([]);
 

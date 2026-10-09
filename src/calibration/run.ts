@@ -119,9 +119,9 @@ export async function runCalibrationJob(
 
   // Check the artifact directory before the sampling loop, not after it. The
   // loop makes CLASSIFIER_K model calls per fit-half ticket, and nextVersion
-  // reads the same listing either way; faulting afterwards threw away a run
-  // an operator had already paid for, over a directory state visible before
-  // the first call.
+  // reads the same listing either way. A fault after the loop would throw
+  // away a run the operator has already paid for, over a directory state
+  // visible before the first call.
   const dir = options.artifactDir ?? defaultCalibrationDir();
   await assertCalibrationDirUsable(dir);
 

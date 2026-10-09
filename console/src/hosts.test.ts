@@ -123,9 +123,9 @@ describe('the header a trusted proxy names the approver in (DEC-42)', () => {
   });
 
   // Naming a host in `CONSOLE_ALLOWED_HOSTS` does not say a proxy is in
-  // front. The derived-name comment above lists two reasons an operator names
-  // hosts with no proxy anywhere. A header gated on the hosts would then let
-  // anyone who reaches the port name themselves.
+  // front. The comment on `allowedHosts` in hosts.ts lists two reasons an
+  // operator names hosts with no proxy anywhere. A header gated on the hosts
+  // would then let anyone who reaches the port name themselves.
   //
   // So the variable is not a proxy detector, and this holds that the two are
   // independent — the trust is stated rather than inferred.

@@ -26,11 +26,11 @@ function named(): readonly string[] {
 /**
  * The names this console answers to, derived from the bind or stated outright.
  *
- * The derivation alone was not enough, and each gap refused every request
- * while the console looked healthy:
+ * The derivation alone is not enough, and each gap below would refuse every
+ * request while the console looked healthy:
  *
  *   - a reverse proxy forwards its own name, and the runbook recommends one;
- *   - an IPv6 bind produced `:::8787` where a browser sends `[::1]:8787`;
+ *   - an IPv6 bind produces `:::8787` where a browser sends `[::1]:8787`;
  *   - `0.0.0.0` is a bind address and never a `Host`;
  *   - on port 80 or 443 the browser omits the port entirely.
  *

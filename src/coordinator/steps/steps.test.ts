@@ -1,10 +1,9 @@
 // A step runs, and answers, without a database.
 //
-// The objective this suite exists for. If `coordinateTicket` is one
-// function, reaching the gate branch needs a pool, a provider and an egress
-// adapter. `coordinator.db.test.ts` then grows, because there is no smaller
-// thing to call. Every case here drives a real step module with a recording
-// stub for the ledger.
+// The objective this suite exists for. `coordinateTicket` only sequences
+// step modules, so a case reaches the gate branch without a pool, a provider
+// or an egress adapter. Every case here drives a real step module with a
+// recording stub for the ledger.
 //
 // The stub answers statements; it does not implement the ledger. A case
 // that would need the ledger to behave belongs in a `.db.test.ts` file, and

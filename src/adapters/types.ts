@@ -374,12 +374,9 @@ export class AdapterCapabilityError extends Error {
 /**
  * Rejects an empty or whitespace-only field, and returns it trimmed.
  *
- * One function serves every adapter, because a private copy in each one
- * drifts. Three copies can disagree: a `helpdesk.ts` copy takes `(value,
- * field)`, throws a `TypeError`, does not trim and returns the value. A
- * `freescout.ts` copy takes `(field, value)`, throws an `Error`, trims and
- * returns nothing. An `imap-smtp.ts` copy takes a third signature again.
- * With both parameters typed `string`, a line copied from one adapter into
+ * One function serves every adapter, because private copies drift in
+ * argument order, error type and whitespace rule. With both parameters typed
+ * `string`, a line copied from one adapter into
  * another compiles. The field name is never empty, so the swapped call always
  * passes. An empty `idemKey` can reach the outbox that way, and DEC-24 is the
  * guarantee that key carries.

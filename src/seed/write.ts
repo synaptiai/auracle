@@ -553,13 +553,13 @@ export function approvedReplyFor(
  */
 function outboxFor(run: PlannedRun): FencedOutboxInput | null {
   if (run.outbox.length === 0) return null;
-  // The class the run itself evaluated, not a second one chosen here. An
-  // internal class the automatic path really produces: 'reply' is not the
-  // customer-reply class any adapter declares, so a reader of
-  // outbox.action_class would see a class DEC-29 has no delivery rule for. A
-  // constant here is the same defect one step on: the journal names the
-  // action, and an outbox row naming a different one would contradict it
-  // inside a single run.
+  // The class the run itself evaluated, not a second one chosen here. It is
+  // an internal class the automatic path really produces. A class such as
+  // 'reply' is not the customer-reply class any adapter declares, so writing
+  // it would show readers of outbox.action_class a class DEC-29 has no
+  // delivery rule for. A constant here is the same defect one step on: the
+  // journal names the action, and an outbox row naming a different one would
+  // contradict it inside a single run.
   const { actionClass, delivery, actionPayload: payload } = run;
   return {
     stepId: 'execute',

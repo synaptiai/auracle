@@ -1538,9 +1538,9 @@ describe('DEC-51: the relay and a send the ledger holds back', () => {
   // A connection that is not given back is a pool that empties. The
   // escalation path takes a client of its own, so a release missing from one
   // of its paths leaks one per escalation: the pool here holds ten, and this
-  // walks twelve records through it. A leak does not fail this case. It
-  // hangs on the eleventh `connect()`, which is what the daemon would do in
-  // production.
+  // walks twelve records through it. A leak fails no assertion here: the case
+  // hangs on the eleventh `connect()` until it times out, as the daemon would
+  // hang in production.
   it('gives its connection back on every escalation, so the pool does not empty', async () => {
     const keys: string[] = [];
     for (let i = 0; i < 12; i += 1) {

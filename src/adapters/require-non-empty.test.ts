@@ -1,22 +1,18 @@
 // One validator, one argument order, one whitespace rule.
 //
-// A private `requireNonEmpty` in each adapter drifts. Three such copies can
-// disagree about all three of those:
-//
-//   helpdesk.ts    (value, field)   TypeError, no trim, returns the value
-//   freescout.ts   (field, value)   Error, trims, returns nothing
-//   imap-smtp.ts   (field, value | null | undefined)
-//
-// With both parameters typed `string`, a line copied from one adapter into
-// another compiles. The field name is never empty, so a swapped call always
-// passes and an empty `idemKey` can reach the outbox. DEC-24 is the
+// Private copies of `requireNonEmpty` in each adapter drift on all three:
+// one takes `(value, field)`, throws a `TypeError` and does not trim; another
+// takes `(field, value)`, throws an `Error` and trims; a third also accepts
+// null. With both parameters typed `string`, a line copied from one adapter
+// into another compiles. The field name is never empty, so a swapped call
+// always passes and an empty `idemKey` can reach the outbox. DEC-24 is the
 // guarantee that key carries: the key comes from the action semantics, so two
 // runs of one request produce the same key and land once on the target. A key
 // that is empty carries nothing.
 //
 // The whitespace rule matters on its own. If two adapters reject a single
-// space and the third accepts it, the same reply is valid or invalid. Which
-// one depends on the target system it is bound for.
+// space and the third accepts it, the same reply is valid or invalid
+// depending on the target system it is bound for.
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
@@ -31,7 +27,7 @@ import { requireNonEmpty } from './types.js';
 
 describe('requireNonEmpty', () => {
   it('rejects empty and whitespace-only values', () => {
-    // The case the three copies disagreed on.
+    // The case private copies disagree on.
     for (const empty of ['', ' ', '   ', '\t', '\n', ' \t\n ']) {
       expect(() => requireNonEmpty('reply.idemKey', empty)).toThrow(
         /reply\.idemKey must not be empty/,
@@ -39,7 +35,7 @@ describe('requireNonEmpty', () => {
     }
   });
 
-  it('rejects null and undefined, which imap-smtp needed from its own copy', () => {
+  it('rejects null and undefined, as the mail adapter passes them', () => {
     for (const value of [undefined, null]) {
       expect(() => requireNonEmpty('reply.idemKey', value)).toThrow(/must not be empty/);
     }
