@@ -80,7 +80,7 @@ declare module 'vitest' {
 }
 
 const IMAGE = 'pgvector/pgvector:pg16';
-const MAIL_IMAGE = 'greenmail/standalone:2.1.12';
+const MAIL_IMAGE = 'greenmail/standalone:2.1.14';
 /** GreenMail's in-container ports; the mapped ones are read at start. */
 const MAIL_SMTP_PORT = 3025;
 const MAIL_IMAP_PORT = 3143;
