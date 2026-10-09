@@ -23,7 +23,7 @@
 # cannot read a base image built from build arguments.
 
 # ---------------------------------------------------------------- build ----
-FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS build
+FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS build
 WORKDIR /app
 
 # The version is pinned here and in package.json's `packageManager` field.
@@ -43,7 +43,7 @@ COPY console ./console
 RUN pnpm run build
 
 # -------------------------------------------------------------- runtime ----
-FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS runtime
+FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
