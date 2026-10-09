@@ -31,6 +31,7 @@ import type { AdapterCapabilities } from '../policy/policy.js';
 import { relayPending } from '../relay/relay.js';
 import { indexDocument } from '../retriever/retriever.js';
 import { asIfRacing } from '../test-support/race-twin.js';
+import { lockWaitSeen } from '../test-support/lock-wait.js';
 import { truncateLedger } from '../test-support/schema.js';
 
 import { snoozeRun } from '../outcomes/snooze.js';
@@ -147,22 +148,6 @@ async function sentReplies(ticketId: string): Promise<number> {
     [ticketId],
   );
   return rows[0]!.n;
-}
-
-/**
- * Resolves once some backend of this database waits on a lock, or when
- * `ms` passes. The caller then reads whether the work it started finished.
- */
-async function lockWaitSeen(ms: number): Promise<void> {
-  const until = Date.now() + ms;
-  while (Date.now() < until) {
-    const { rows } = await pool.query<{ waiting: number }>(
-      `SELECT count(*)::int AS waiting FROM pg_stat_activity
-        WHERE datname = current_database() AND wait_event_type = 'Lock'`,
-    );
-    if (rows[0]!.waiting > 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
 }
 
 /** The log lines that parse as objects, as the log reader reads them. */
@@ -612,7 +597,7 @@ describe('a message redelivered on a turn that is answered, or about to be', () 
             // Until the undo waits on a lock, or long enough for one that does
             // not wait to commit. Postgres reports the wait, so a slow host
             // moves the moment and not the result.
-            await lockWaitSeen(3_000);
+            await lockWaitSeen(pool, { withinMs: 3_000 });
             settledInScan = settled;
             const record = await pool.query('SELECT 1 FROM outbox WHERE run_id = $1', [newer!.runId]);
             recordsInScan = record.rowCount;

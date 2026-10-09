@@ -347,7 +347,10 @@ describe('the consumer loop', () => {
           if (key !== 'query') return Reflect.get(target, key, receiver) as unknown;
           return async (...args: unknown[]): Promise<unknown> => {
             const result = await (target.query as (...a: unknown[]) => Promise<unknown>)(...args);
-            if (holdsLeft > 0) {
+            // The intake poll alone: a scan reads due snoozes first, and
+            // holding that read would leave the poll to pick the message up.
+            const isPoll = typeof args[0] === 'string' && args[0].includes('FROM intake i');
+            if (isPoll && holdsLeft > 0) {
               holdsLeft -= 1;
               entered();
               await held;
@@ -359,8 +362,12 @@ describe('the consumer loop', () => {
     };
     const consumer = startConsumer(holding, options({ signal: manual, intervalMs: NO_TICK_MS }));
     try {
-      // The first poll has run and returned nothing, and it is held.
-      await isHeld;
+      // The first poll has run and returned nothing, and it is held. A loop
+      // that never polls fails here, and says so, rather than at the timeout.
+      await Promise.race([
+        isHeld,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('the first poll never ran')), 15_000)),
+      ]);
       await enqueueOne();
       manual.fire(0);
       gate.release();
@@ -514,7 +521,14 @@ describe('the consumer loop', () => {
       options({ partitions: [0], signal: manual, intervalMs: 30_000 }),
     );
     try {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      // The first scan has ended: no query for 300 ms. A slow first scan on a
+      // loaded host then delays the case rather than failing it.
+      let seen = -1;
+      for (let waited = 0; seen !== scans; waited += 300) {
+        if (waited >= 15_000) throw new Error('the first scan never went quiet');
+        seen = scans;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
       const before = scans;
       manual.fire(7);
       await new Promise((resolve) => setTimeout(resolve, 300));

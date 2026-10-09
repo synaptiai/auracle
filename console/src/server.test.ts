@@ -645,9 +645,9 @@ describe('the console routes', () => {
 });
 
 
-// The two attacks a review reproduced against the first version of this
-// server. Both returned success then: a cross-site POST was approved, and a
-// request carrying an attacker's Host was answered.
+// Two attacks a server without these checks answers with success: a
+// cross-site POST that approves a reply, and a request that carries an
+// attacker's Host.
 //
 // Neither is stopped by binding to loopback, which is what the runbook
 // claimed. The approval sends a customer reply and a sent reply cannot be

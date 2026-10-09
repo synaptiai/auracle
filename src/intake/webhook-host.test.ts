@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { REPO_ROOT, freePort, startFromSource } from '../test-support/source-process.js';
+import { REPO_ROOT, startFromSource, startOnFreePort } from '../test-support/source-process.js';
 
 // The child runs from an empty directory, so it reads no developer's `.env`.
 // The channel map it needs is the repository's own.
@@ -34,24 +34,12 @@ interface Webhook {
   stderr(): string;
 }
 
-/**
- * Starts the webhook from source with WEBHOOK_HOST set as given.
- *
- * The port was free when the probe closed, and another process can take it
- * before the child binds. A start that fails on exactly that tries a fresh
- * port. Any other outcome, a refusal included, goes to the case.
- */
+/** Starts the webhook from source with WEBHOOK_HOST set as given. */
 async function startWebhook(host: string | undefined): Promise<Webhook> {
-  for (let attempt = 1; ; attempt += 1) {
-    const webhook = await startWebhookOnce(host);
-    const taken = await webhook.listening.then(() => false, () => webhook.stderr().includes('EADDRINUSE'));
-    if (!taken || attempt === 5) return webhook;
-    await webhook.closed;
-  }
+  return startOnFreePort((port) => startWebhookOn(host, port));
 }
 
-async function startWebhookOnce(host: string | undefined): Promise<Webhook> {
-  const port = await freePort();
+function startWebhookOn(host: string | undefined, port: number): Webhook {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     WEBHOOK_PORT: String(port),

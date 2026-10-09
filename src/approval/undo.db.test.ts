@@ -24,6 +24,7 @@ import type { FakeStep } from '../models/fake.js';
 import type { AdapterCapabilities } from '../policy/policy.js';
 import { relayOne, relayPending } from '../relay/relay.js';
 import { indexDocument } from '../retriever/retriever.js';
+import { lockWaitSeen } from '../test-support/lock-wait.js';
 import { truncateLedger } from '../test-support/schema.js';
 
 import { approveRun } from './approve.js';
@@ -626,32 +627,31 @@ describe('DEC-51: the undo', () => {
     };
 
     const scanning = relayPending(pool, egress);
-    await inFlight;
-
-    // The undo begins while the send is in flight. It waits on the lock, and
-    // it refuses: by the time it reads the record, the send has landed.
-    const undone = undoApproval(pool, runId, { reviewer: 'synthetic-reviewer@example.test' });
-    await waitForALockWait();
-    release();
+    // The send is released whatever happens below, so a failed wait cannot
+    // leave the run row locked for every later case in the file.
+    let undone: ReturnType<typeof undoApproval> | undefined;
+    try {
+      // A scan that settles before it sends fails here, and names its result.
+      await Promise.race([
+        inFlight,
+        scanning.then((result) => {
+          throw new Error(`the relay settled before it sent: ${JSON.stringify(result)}`);
+        }),
+      ]);
+      // The undo begins while the send is in flight. It waits on the lock, and
+      // it refuses: by the time it reads the record, the send has landed.
+      undone = undoApproval(pool, runId, { reviewer: 'synthetic-reviewer@example.test' });
+      undone.catch(() => undefined);
+      expect(await lockWaitSeen(pool), 'the undo waits on the run row lock').toBe(true);
+    } finally {
+      release();
+    }
 
     expect((await scanning).map((result) => result.outcome)).toEqual(['sent']);
     expect(await undone).toEqual({ outcome: 'already_sent' });
     expect(egress.sends).toHaveLength(1);
     expect((await runRow(runId)).state).toBe('resolved');
   });
-
-  /** Resolves once a session on this file's database waits on a lock. */
-  async function waitForALockWait(): Promise<void> {
-    for (let attempt = 0; attempt < 400; attempt += 1) {
-      const waiting = await pool.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE datname = current_database() AND wait_event_type = 'Lock'`,
-      );
-      if ((waiting.rows[0]?.n ?? 0) > 0) return;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    throw new Error('the undo never waited on the run row lock');
-  }
 
   // A scan reads its rows, then walks up to one. If an undo removes the row
   // in between, the send re-reads it under the lock and sends nothing.

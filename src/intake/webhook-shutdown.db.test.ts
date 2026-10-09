@@ -17,8 +17,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { SHUTDOWN_GRACE_MS } from '../cli/shutdown.js';
 import { dbUrl } from '../db/config.js';
 import { WEBHOOK_MINIMAL_PAYLOAD } from '../ingress/fixtures.js';
+import { lockWaitSeen } from '../test-support/lock-wait.js';
 import { truncateLedger } from '../test-support/schema.js';
-import { REPO_ROOT, freePort, startFromSource } from '../test-support/source-process.js';
+import { REPO_ROOT, startFromSource, startOnFreePort } from '../test-support/source-process.js';
 
 const SCRATCH = mkdtempSync(path.join(tmpdir(), 'auracle-webhook-shutdown-'));
 const pool = new Pool({ connectionString: dbUrl(), max: 2 });
@@ -31,17 +32,8 @@ afterAll(async () => {
 describe('the webhook shutdown with a stuck insert', () => {
   it('exits 1 and says so when its pool cannot end in time', async () => {
     await truncateLedger(pool);
-    // The port was free when the probe closed, and another process can take
-    // it before the child binds. A start that fails on exactly that tries a
-    // fresh port.
-    let started: Awaited<ReturnType<typeof startListening>> | undefined;
-    for (let attempt = 1; started === undefined; attempt += 1) {
-      const port = await freePort();
-      const run = startListening(port);
-      const failed = await run.listening.then(() => null, (error: unknown) => error);
-      if (failed === null) started = run;
-      else if (!run.stderr().includes('EADDRINUSE') || attempt === 5) throw failed;
-    }
+    const started = await startOnFreePort(startListening);
+    await started.listening;
     const { child, closed, stderr, port } = started;
     const killer = setTimeout(() => child.kill('SIGKILL'), 40_000);
     const holder = await pool.connect();
@@ -49,13 +41,21 @@ describe('the webhook shutdown with a stuck insert', () => {
       // The lock the delivery's insert waits behind, held for the whole case.
       await holder.query('BEGIN');
       await holder.query('LOCK TABLE intake IN ACCESS EXCLUSIVE MODE');
+      // What the delivery came to, so a refused or failed request names its
+      // cause rather than reading as a lock wait that never began.
+      let delivered = 'still waiting';
       const delivery = fetch(`http://127.0.0.1:${port}/webhooks/support`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(WEBHOOK_MINIMAL_PAYLOAD),
-      }).catch(() => undefined);
-      // The insert has reached the lock and waits there.
-      await waitForALockWait();
+      }).then(
+        (response) => { delivered = `answered ${response.status}`; },
+        (error: unknown) => { delivered = `failed: ${error instanceof Error ? error.message : String(error)}`; },
+      );
+      // The insert has reached the lock the holder takes, and waits there.
+      const holderPid = (await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+      expect(await lockWaitSeen(pool, { blockedBy: holderPid }), `the delivery waits on the intake lock; it ${delivered}`)
+        .toBe(true);
       const asked = Date.now();
       child.kill('SIGTERM');
       const ended = await closed;
@@ -77,6 +77,9 @@ describe('the webhook shutdown with a stuck insert', () => {
 function startListening(port: number) {
   const run = startFromSource('src/intake/webhook-main.ts', {
     cwd: SCRATCH,
+    // The case's own bound, so a child that never listens and never exits
+    // ends with the case rather than outliving it.
+    deadlineMs: 50_000,
     env: {
       ...process.env,
       DATABASE_URL: dbUrl(),
@@ -85,28 +88,23 @@ function startListening(port: number) {
     },
   });
   const listening = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      clearInterval(poll);
+      run.child.kill('SIGKILL');
+      reject(new Error(`no listening line within 20s: ${run.stderr()}`));
+    }, 20_000);
     const poll = setInterval(() => {
       if (!run.stdout().includes('"listening"')) return;
       clearInterval(poll);
+      clearTimeout(timer);
       resolve();
     }, 50);
     void run.closed.then(() => {
       clearInterval(poll);
+      clearTimeout(timer);
       reject(new Error(`the webhook exited before listening: ${run.stderr()}`));
     });
   });
   return { ...run, port, listening };
 }
 
-/** Resolves once a session on this file's database waits on a lock. */
-async function waitForALockWait(): Promise<void> {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
-    const waiting = await pool.query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE datname = current_database() AND wait_event_type = 'Lock'`,
-    );
-    if ((waiting.rows[0]?.n ?? 0) > 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error('the delivery never waited on the intake lock');
-}

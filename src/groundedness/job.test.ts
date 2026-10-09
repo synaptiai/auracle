@@ -238,8 +238,7 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
   }, 30_000);
 
   // The size rule applies to a synthetic half only, so on the real path
-  // this is the only check on a declared count. The calibration twin has a case; these two did not.
-  // A four-hour run over the committed fit half died on `fetch failed` after
+  // this is the only check on a declared count. A four-hour run over the committed fit half died on `fetch failed` after
   // roughly 3900 calls, and every scored draft went with it. The job holds no
   // checkpoint, so a connection that drops once costs the whole run.
   //

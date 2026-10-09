@@ -41,6 +41,7 @@ import type { FakeStep } from '../models/fake.js';
 import type { AdapterCapabilities } from '../policy/policy.js';
 import { indexDocument } from '../retriever/retriever.js';
 import { asIfRacing } from '../test-support/race-twin.js';
+import { lockWaitSeen } from '../test-support/lock-wait.js';
 import { truncateLedger } from '../test-support/schema.js';
 
 import { MAX_SEND_BACK_NOTE_CHARS, recordSendBackIn, sendBackRun } from './send-back.js';
@@ -962,14 +963,7 @@ describe('DEC-49: twin runs at one attempt', () => {
       const second = sendBackRun(pool, twinRunId, { note: 'Note B.', ledgerReply: true });
       // Wait until reviewer B's write is blocked on a lock, rather than for a
       // fixed time: it must have started before A commits.
-      for (let tries = 0; tries < 200; tries += 1) {
-        const waiting = await pool.query<{ n: string }>(
-          `SELECT count(*) AS n FROM pg_stat_activity
-            WHERE wait_event_type = 'Lock' AND datname = current_database()`,
-        );
-        if (Number(waiting.rows[0]!.n) > 0) break;
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      expect(await lockWaitSeen(pool), 'reviewer B waits on the turn lock').toBe(true);
       await holder.query(
         'UPDATE turn SET attempt = 2 WHERE conversation_id = $1 AND turn_number = $2',
         [first.conversationId, first.turnNumber],

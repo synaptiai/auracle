@@ -80,6 +80,25 @@ export function startFromSource(
   return { child, closed, stdout: () => out, stderr: () => err };
 }
 
+/**
+ * Starts a server process on a free loopback port, and tries a fresh port
+ * when another process took the first one before the child bound it. The
+ * child names that as `EADDRINUSE` on stderr. Any other outcome, a refusal
+ * included, goes to the caller, who reads it from `listening`.
+ */
+export async function startOnFreePort<T extends {
+  readonly listening: Promise<unknown>;
+  readonly closed: Promise<unknown>;
+  stderr(): string;
+}>(start: (port: number) => T): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    const run = start(await freePort());
+    const taken = await run.listening.then(() => false, () => run.stderr().includes('EADDRINUSE'));
+    if (!taken || attempt === 5) return run;
+    await run.closed;
+  }
+}
+
 /** A loopback port nothing listens on at the moment of the call. */
 export async function freePort(): Promise<number> {
   const probe = createServer();
