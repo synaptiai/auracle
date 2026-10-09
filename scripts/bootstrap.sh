@@ -71,37 +71,48 @@ if ! command -v node >/dev/null 2>&1; then
   step "node" "MISSING — install Node 22.22 or later, then run this again"
   exit 1
 fi
+# A version field is digits, and at most five of them. An empty field, a
+# missing one or a longer one is refused: `[` reads none of them as a number,
+# and inside an `if` its failure would read as a supported version.
+is_version_field() {
+  case "${1:-}" in
+    ""|*[!0-9]*|??????*) return 1 ;;
+  esac
+}
+
 # The version is read on its own line, as pnpm's is below: `set -e` would
-# end the script inside an assignment with nothing said. A version that is not
-# digits is refused, because `[` reads it as neither old nor new.
+# end the script inside an assignment with nothing said. What the tool prints
+# to stderr stays on the terminal, above this step, and names its reason.
 NODE_EXIT=0
-NODE_VERSION="$(node -v 2>/dev/null)" || NODE_EXIT=$?
+NODE_VERSION="$(node -v)" || NODE_EXIT=$?
 if [ "$NODE_EXIT" -ne 0 ]; then
   step "node" "present but fails: exit $NODE_EXIT"
   exit 1
 fi
-NODE_MAJOR="${NODE_VERSION#v}"
-NODE_MAJOR="${NODE_MAJOR%%.*}"
-NODE_MINOR="${NODE_VERSION#v*.}"
-NODE_MINOR="${NODE_MINOR%%.*}"
-case "$NODE_VERSION" in
-  v*.*) ;;
-  *) NODE_MAJOR=x ;;
+NODE_LINE="$(first_line "$NODE_VERSION")"
+NODE_MAJOR="" NODE_MINOR="" NODE_PATCH=""
+case "$NODE_LINE" in
+  v*) IFS=. read -r NODE_MAJOR NODE_MINOR NODE_PATCH NODE_REST <<EOF_NODE || true
+${NODE_LINE#v}
+EOF_NODE
+    ;;
 esac
-case "$NODE_MAJOR$NODE_MINOR" in
-  *[!0-9]*|"")
-    step "node" "$(first_line "$NODE_VERSION") — not a version this script can read; install Node 22.22 or later"
-    exit 1 ;;
-esac
+# A build suffix such as -nightly follows the patch number.
+NODE_PATCH="${NODE_PATCH%%[!0-9]*}"
+if ! is_version_field "$NODE_MAJOR" || ! is_version_field "$NODE_MINOR" || ! is_version_field "$NODE_PATCH"; then
+  step "node" "$NODE_LINE — not a version this script can read; install Node 22.22 or later"
+  exit 1
+fi
+NODE_SHOWN="v$NODE_MAJOR.$NODE_MINOR.$NODE_PATCH"
 if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 22 ]; }; then
-  step "node" "$NODE_VERSION — too old, this repository needs Node 22.22 or later"
+  step "node" "$NODE_SHOWN — too old, this repository needs Node 22.22 or later"
   exit 1
 fi
 if [ "$NODE_MAJOR" -eq 23 ] || [ "$NODE_MAJOR" -eq 25 ]; then
-  step "node" "$NODE_VERSION — not supported: use major version 22 (22.22 or later), 24, or 26 and later"
+  step "node" "$NODE_SHOWN — not supported: use major version 22 (22.22 or later), 24, or 26 and later"
   exit 1
 fi
-step "node" "$NODE_VERSION"
+step "node" "$NODE_SHOWN"
 
 # 2. Python. The documentation and guard checks use syntax Python 3.10 added.
 #    macOS ships 3.9 as python3, and there the first check stops on a
@@ -110,22 +121,23 @@ if ! command -v python3 >/dev/null 2>&1; then
   step "python3" "MISSING — install Python 3.10 or later, then run this again"
   exit 1
 fi
-# Python reports its version as numbers, so no warning it prints joins them.
-# The form runs on Python 2 as well, so an old one is named, not crashed on.
+# Python reports its version as numbers on stdout, so no warning it prints on
+# stderr joins them. The form runs on Python 2 as well, so an old one is
+# named, not crashed on.
 PY_EXIT=0
-PY_PARTS="$(python3 -c 'import sys; print("%d %d %d" % tuple(sys.version_info[:3]))' 2>/dev/null)" || PY_EXIT=$?
+PY_PARTS="$(python3 -c 'import sys; print("%d %d %d" % tuple(sys.version_info[:3]))')" || PY_EXIT=$?
 if [ "$PY_EXIT" -ne 0 ]; then
   step "python3" "present but fails: exit $PY_EXIT"
   exit 1
 fi
-read -r PY_MAJOR PY_MINOR PY_PATCH <<EOF_PY || true
-$PY_PARTS
+PY_MAJOR="" PY_MINOR="" PY_PATCH=""
+read -r PY_MAJOR PY_MINOR PY_PATCH PY_REST <<EOF_PY || true
+$(first_line "$PY_PARTS")
 EOF_PY
-case "${PY_MAJOR:-}${PY_MINOR:-}${PY_PATCH:-}" in
-  *[!0-9]*|"")
-    step "python3" "$(first_line "$PY_PARTS") — not a version this script can read; install Python 3.10 or later"
-    exit 1 ;;
-esac
+if ! is_version_field "$PY_MAJOR" || ! is_version_field "$PY_MINOR" || ! is_version_field "$PY_PATCH"; then
+  step "python3" "$(first_line "$PY_PARTS") — not a version this script can read; install Python 3.10 or later"
+  exit 1
+fi
 PY_VERSION="Python $PY_MAJOR.$PY_MINOR.$PY_PATCH"
 if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }; then
   step "python3" "$PY_VERSION — too old, the documentation and guard checks need Python 3.10 or later"
