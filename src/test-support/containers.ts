@@ -209,9 +209,8 @@ async function assertMailReachable(address: MailAddress): Promise<void> {
   try {
     // A generous budget even though CI gates on the port being open. The
     // gate proves a socket accepts, and this proves IMAP answers a login,
-    // which is later. An earlier version allowed twenty seconds on the
-    // assumption that the runner had already waited for readiness; CI
-    // disproved the assumption, so the budget does not rest on it.
+    // which is later. A twenty-second budget, which assumes the runner has
+    // waited for readiness, fails on CI, where the open port comes first.
     await awaitMailReady(address.host, address.imapPort, 120_000);
   } catch (error) {
     const reason = errorMessage(error);

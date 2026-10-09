@@ -163,8 +163,8 @@ export function pgArrivalSignal(connectionString: string): ArrivalSignal {
       //
       // Parsed against exactly what the emitter sends, `String(partition)`.
       // `Number` is wider than that: `Number('')` is 0, so an empty payload
-      // used to wake partition 0 specifically, and `'0x10'` and `'1e3'` were
-      // accepted too.
+      // would wake partition 0 specifically, and `Number` accepts `'0x10'`
+      // and `'1e3'` too.
       const payload = message.payload ?? '';
       if (!/^\d+$/.test(payload)) return;
       try {

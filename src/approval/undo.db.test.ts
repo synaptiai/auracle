@@ -24,6 +24,7 @@ import type { FakeStep } from '../models/fake.js';
 import type { AdapterCapabilities } from '../policy/policy.js';
 import { relayOne, relayPending } from '../relay/relay.js';
 import { indexDocument } from '../retriever/retriever.js';
+import { lockWaitSeen } from '../test-support/lock-wait.js';
 import { truncateLedger } from '../test-support/schema.js';
 
 import { approveRun } from './approve.js';
@@ -614,22 +615,37 @@ describe('DEC-51: the undo', () => {
     // yet written, and the run's row is locked for the whole of it.
     let release: () => void = () => undefined;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let reached: () => void = () => undefined;
+    const inFlight = new Promise<void>((resolve) => { reached = resolve; });
     const egress = new LedgerEgress();
     const original = egress.sendLedgerReply.bind(egress);
     egress.sendLedgerReply = async (reply: LedgerReply): Promise<{ readonly externalId: string }> => {
       const sent = await original(reply);
+      reached();
       await blocked;
       return sent;
     };
 
     const scanning = relayPending(pool, egress);
-    await new Promise((resolve) => setTimeout(resolve, 150));
-
-    // The undo begins while the send is in flight. It waits on the lock, and
-    // it refuses: by the time it reads the record, the send has landed.
-    const undone = undoApproval(pool, runId, { reviewer: 'synthetic-reviewer@example.test' });
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    release();
+    // The send is released whatever happens below, so a failed wait cannot
+    // leave the run row locked for every later case in the file.
+    let undone: ReturnType<typeof undoApproval> | undefined;
+    try {
+      // A scan that settles before it sends fails here, and names its result.
+      await Promise.race([
+        inFlight,
+        scanning.then((result) => {
+          throw new Error(`the relay settled before it sent: ${JSON.stringify(result)}`);
+        }),
+      ]);
+      // The undo begins while the send is in flight. It waits on the lock, and
+      // it refuses: by the time it reads the record, the send has landed.
+      undone = undoApproval(pool, runId, { reviewer: 'synthetic-reviewer@example.test' });
+      undone.catch(() => undefined);
+      expect(await lockWaitSeen(pool), 'the undo waits on a lock behind the send').toBe(true);
+    } finally {
+      release();
+    }
 
     expect((await scanning).map((result) => result.outcome)).toEqual(['sent']);
     expect(await undone).toEqual({ outcome: 'already_sent' });

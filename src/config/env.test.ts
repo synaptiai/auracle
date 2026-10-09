@@ -85,11 +85,10 @@ describe('positiveIntEnv', () => {
   });
 
   it('refuses hexadecimal', () => {
-    // `Number('0x10')` is 16 and passes `Number.isInteger`, so every one of
-    // the four parsers read PARTITION_COUNT=0x10 as sixteen partitions
-    // without a word. The same widening that
-    // `src/coordinator/arrival-signal.ts` had already found and fixed in its
-    // notification payload.
+    // `Number('0x10')` is 16 and passes `Number.isInteger`, so a parser that
+    // used `Number` alone would read PARTITION_COUNT=0x10 as sixteen
+    // partitions without a word. `src/coordinator/arrival-signal.ts` guards
+    // its notification payload against the same widening.
     process.env['AURACLE_TEST_INT'] = '0x10';
     expect(() => positiveIntEnv('AURACLE_TEST_INT', 8)).toThrow(/must be a positive integer/);
   });

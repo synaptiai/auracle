@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { REPO_ROOT, freePort, startFromSource } from '../test-support/source-process.js';
+import { REPO_ROOT, startFromSource, startOnFreePort } from '../test-support/source-process.js';
 
 // The child runs from an empty directory, so it reads no developer's `.env`.
 // The channel map it needs is the repository's own.
@@ -36,7 +36,10 @@ interface Webhook {
 
 /** Starts the webhook from source with WEBHOOK_HOST set as given. */
 async function startWebhook(host: string | undefined): Promise<Webhook> {
-  const port = await freePort();
+  return startOnFreePort((port) => startWebhookOn(host, port));
+}
+
+function startWebhookOn(host: string | undefined, port: number): Webhook {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     WEBHOOK_PORT: String(port),

@@ -608,8 +608,8 @@ describe('the reasons a turn shows no reply', () => {
     expect(thread?.turns[1]?.replyAbsence).toBe('approved_without_reply');
   });
 
-  // Six states are in flight, and every one of them used to report as a run
-  // that terminally sent nothing.
+  // Six states are in flight. None of them may report as a run that
+  // terminally sent nothing.
   it('says a run that has not finished has not finished', async () => {
     const states = ['received', 'classified', 'retrieved', 'composed', 'gated', 'executing'];
     for (const [index, state] of states.entries()) {

@@ -149,8 +149,8 @@ Open C:\\files, then \u202e.`);
   });
 
   // The way out is a step that exists. "Approve again" is the one step that
-  // cannot work — the draft this approval would read is what is missing — and
-  // the sentence used to name it.
+  // cannot work, because the draft this approval would read is what is
+  // missing. So the sentence must not name it.
   it('names the ways out of a missing draft', () => {
     const says = refusalSays({ outcome: 'draft_missing', draftExternalId: '9:12' }, 'run-1');
 

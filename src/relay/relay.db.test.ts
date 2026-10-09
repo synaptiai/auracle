@@ -3,6 +3,8 @@
 // (fencedInsert, section 4.2) so each test exercises insert -> pending ->
 // relay -> terminal status exactly as production would.
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { beforeConnect, failingConnects } from '../test-support/failing-pool.js';
 import { truncateLedger } from '../test-support/schema.js';
@@ -346,9 +348,9 @@ describe('section 4.4 outbox relay', () => {
     expect(adapter.sendCalls).toHaveLength(1);
     expect(await outboxStatus(idemKey)).toBe('delivery_unknown');
     expect(await runState(idemKey)).toBe('escalated');
-    // 'escalated' is terminal, so the service time must be measurable. The
-    // relay used to move the state without the stamp, which dropped every
-    // escalated run out of any latency measurement (db/005_run_timing.sql).
+    // 'escalated' is terminal, so the service time must be measurable. A
+    // state move without the stamp would drop every escalated run out of any
+    // latency measurement (db/005_run_timing.sql).
     expect(await runFinishedAt(idemKey)).toBeInstanceOf(Date);
 
     // A later scan finds nothing pending: escalation is terminal for the
@@ -1536,9 +1538,9 @@ describe('DEC-51: the relay and a send the ledger holds back', () => {
   // A connection that is not given back is a pool that empties. The
   // escalation path takes a client of its own, so a release missing from one
   // of its paths leaks one per escalation: the pool here holds ten, and this
-  // walks twelve records through it. Before the fix this case did not fail —
-  // it stopped, on the eleventh `connect()`, which is what the daemon would
-  // do in production.
+  // walks twelve records through it. A leak fails no assertion here: the case
+  // hangs on the eleventh `connect()` until it times out, as the daemon would
+  // hang in production.
   it('gives its connection back on every escalation, so the pool does not empty', async () => {
     const keys: string[] = [];
     for (let i = 0; i < 12; i += 1) {
@@ -1676,6 +1678,39 @@ describe('DEC-51: the relay and a send the ledger holds back', () => {
     // second time.
     expect(await outboxStatus(idemKey)).toBe('sent');
     expect(await runState(idemKey)).toBe('queued');
+  });
+});
+
+// The runbook takes a snapshot only once the relay has sent every action, so
+// a restore of it holds nothing the relay can send a second time. Its block
+// counts what is left to send. A send under its hold period is left to send,
+// though the relay's own scan skips it until the period ends, so a count that
+// read the scan would take the snapshot too early.
+describe('the runbook snapshot', () => {
+  it('counts every action left to send, a held one included', async () => {
+    await truncateLedger(pool);
+    const runbook = readFileSync(fileURLToPath(new URL('../../docs/operations.md', import.meta.url)), 'utf8');
+    const section = runbook.slice(runbook.indexOf('### Rollback story'));
+    // The snapshot block counts, and so does the restore block. Each copy is
+    // held to the same answers, so one cannot drift from the other.
+    const statements = [...section.matchAll(/"(SELECT count\(\*\) FROM outbox WHERE [^"]*)"/g)].map((match) => match[1]!);
+    expect(statements.length, 'the snapshot and restore blocks count the actions left to send').toBeGreaterThanOrEqual(2);
+    const left = async (): Promise<number[]> =>
+      Promise.all(statements.map(async (statement) => Number((await pool.query(statement)).rows[0]!.count)));
+
+    // Three actions on real runs: one due, one under its hold period, one sent.
+    const due = await seedPending(`T-${randomUUID().slice(0, 8)}`, 1n, 'at_most_once');
+    const held = await seedPending(`T-${randomUUID().slice(0, 8)}`, 1n, 'at_most_once');
+    const sent = await seedPending(`T-${randomUUID().slice(0, 8)}`, 1n, 'at_most_once');
+    await pool.query("UPDATE outbox SET not_before = now() + interval '10 minutes' WHERE idem_key = $1", [held]);
+    await pool.query("UPDATE outbox SET status = 'sent' WHERE idem_key = $1", [sent]);
+
+    // The relay's scan sees the due action alone. The held one waits outside it.
+    expect((await pendingRows(pool)).map((row) => row.idem_key)).toEqual([due]);
+    expect(await left()).toEqual(statements.map(() => 2));
+
+    await pool.query("UPDATE outbox SET status = 'sent' WHERE idem_key IN ($1, $2)", [due, held]);
+    expect(await left()).toEqual(statements.map(() => 0));
   });
 });
 

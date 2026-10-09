@@ -17,12 +17,10 @@
 //       one case, which must not read as a second case.
 //   F9  A registered value equals an unrelated value elsewhere, so both
 //       become one token. A fresh GreenMail gives the first draft UID "1",
-//       and the outbox epoch is "1" too. The first version of this module
-//       replaced both, and a run against a throwaway server differed from a
-//       run against a reused one.
+//       and the outbox epoch is "1" too. Replacing both makes a run against
+//       a throwaway server differ from a run against a reused one.
 //   F10 A mismatch rewrites the golden, so the next run passes with nothing
-//       reviewed. The first version of this module did that. Only an explicit
-//       accept may write a golden.
+//       reviewed. Only an explicit accept may write a golden.
 //   F11 A timestamp in Postgres text form ("2026-09-26 15:49:20.12+00")
 //       stays raw, so the artifact differs on every run.
 //   F12 A number that varies by design stays raw, so the artifact differs on

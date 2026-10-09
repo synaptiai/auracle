@@ -1,14 +1,11 @@
 // One reading of a fault, for every module that has to say what went wrong.
 //
-// This was a named local in four modules and an inline
-// `error instanceof Error ? error.message : String(error)` twenty-two times
-// more. Three of the four copies were the inline expression, and all three
-// are wrong about the one failure a daemon meets most: a refused TCP
-// connection arrives as an `AggregateError` whose own message is empty, so
-// they reported it as `''` or `AggregateError` and the operator never saw
-// `ECONNREFUSED`. `src/coordinator/arrival-signal.ts` had already worked that
-// out and fixed its own copy; this is that copy, moved to where the other
-// three can reach it.
+// The inline `error instanceof Error ? error.message : String(error)` is
+// wrong about the one failure a daemon meets most: a refused TCP connection
+// arrives as an `AggregateError` whose own message is empty. The inline form
+// reports it as `''` or `AggregateError`, and the operator never sees
+// `ECONNREFUSED`. This one reading names the cause. A module that reports a
+// fault uses it rather than the inline form.
 //
 // The module imports nothing. Every CLI tail and both daemons depend on it,
 // and a fault printer that can fail to load is one that reports nothing at

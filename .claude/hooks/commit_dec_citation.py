@@ -45,10 +45,8 @@ ROUTE = (
 
 
 def commit_msg_mode(msg_file):
-    staged = subprocess.run(
-        ["git", "diff", "--cached", "--name-only"],
-        capture_output=True, text=True,
-    ).stdout.split()
+    staged = read_git(["diff", "--cached", "--name-only"], "the staged files",
+                      sys.stderr).split()
     if ARCH_DOC not in staged:
         sys.exit(0)
     message = open(msg_file, errors="replace").read()
@@ -61,13 +59,25 @@ def commit_msg_mode(msg_file):
     sys.exit(0)
 
 
+def read_git(args, what, stream=None):
+    """The output of a git command, or a block when git cannot answer.
+
+    A commit the guard cannot read is a commit it has not checked, so an
+    error here blocks rather than reading as an empty answer. The hooks print
+    to stderr, and the range mode to stdout, as each already does.
+    """
+    done = subprocess.run(["git", *args], capture_output=True, text=True)
+    if done.returncode != 0:
+        print(f"BLOCKED: cannot read {what}: {done.stderr.strip()}",
+              file=stream or sys.stdout)
+        sys.exit(2)
+    return done.stdout
+
+
 def commit_message(sha):
     """Subject and body. The commit-msg hook reads the whole message, so this
     mode must too: a DEC cited in the body is the normal case."""
-    return subprocess.run(
-        ["git", "log", "-1", "--format=%s%n%b", sha],
-        capture_output=True, text=True,
-    ).stdout
+    return read_git(["log", "-1", "--format=%s%n%b", sha], f"the message of {sha[:10]}")
 
 
 def changed_files(sha):
@@ -84,17 +94,25 @@ def changed_files(sha):
     merge that edited the register on its own still lists it and is checked.
     An ordinary commit is unaffected.
     """
-    return subprocess.run(
-        ["git", "diff-tree", "-r", "--no-commit-id", "--name-only",
-         "--cc", sha],
-        capture_output=True, text=True,
-    ).stdout.split()
+    return read_git(
+        ["diff-tree", "-r", "--no-commit-id", "--name-only", "--cc", sha],
+        f"the files of {sha[:10]}",
+    ).split()
 
 
 def range_mode(rng):
-    shas = subprocess.run(
+    # A range the guard cannot read is a range it has not checked, so it
+    # blocks. An empty base is what a step that reads a pull request's base
+    # gets on a push, and an unknown base is a shallow checkout.
+    base = rng.split("..")[0]
+    listed = subprocess.run(
         ["git", "rev-list", rng], capture_output=True, text=True,
-    ).stdout.split()
+    )
+    if not base or listed.returncode != 0:
+        reason = "it names no base commit" if not base else listed.stderr.strip()
+        print(f"BLOCKED: cannot read the range '{rng}': {reason}.")
+        sys.exit(2)
+    shas = listed.stdout.split()
     bad = []
     for sha in shas:
         if ARCH_DOC in changed_files(sha) and not cites_a_real_dec(commit_message(sha)):
@@ -112,10 +130,8 @@ def hook_mode():
     cmd = json.load(sys.stdin).get("tool_input", {}).get("command", "")
     if not re.search(r"\bgit\b[^&|;]*\bcommit\b", cmd):
         sys.exit(0)
-    staged = subprocess.run(
-        ["git", "diff", "--cached", "--name-only"],
-        capture_output=True, text=True,
-    ).stdout.split()
+    staged = read_git(["diff", "--cached", "--name-only"], "the staged files",
+                      sys.stderr).split()
     if ARCH_DOC not in staged:
         sys.exit(0)
     if not cites_a_real_dec(cmd):

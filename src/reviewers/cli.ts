@@ -149,8 +149,8 @@ export function parseArgs(argv: readonly string[]): RosterArgs {
     return { error: `${flag} needs an identity` };
   }
   // A word that opens with `--` is a flag this command does not know, not an
-  // identity. Refusing it here keeps the guard the value-based lookup had:
-  // `--add --active` used to be refused as an unknown argument, and an
+  // identity. A positional lookup alone would take `--active` for one.
+  // Refusing it here keeps `--add --active` an unknown argument, and an
   // identity of that shape names no reviewer.
   if (words[identityAt]!.startsWith('--')) {
     return { error: `unknown argument '${words[identityAt]}'` };
@@ -192,9 +192,10 @@ function parseProductList(value: string): readonly string[] | string {
 /**
  * The refusal both commands print for a name the ledger would not record.
  *
- * One sentence, because the two commands answer the same input the same way:
- * `--deactivate` refused with a sentence of its own used to report that
- * nobody was deactivated, while the reviewer stayed active.
+ * One sentence, because the two commands answer the same input the same way.
+ * A `--deactivate` sentence of its own could report that nobody was
+ * deactivated. The operator would then miss that the reviewer they meant is
+ * still active.
  */
 function refusedName(identity: string): string {
   return `refused: '${showsEveryCharacter(identity)}' is not a name the ledger would record`

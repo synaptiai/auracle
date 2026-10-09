@@ -7,12 +7,11 @@
 // `pnpm run test:db` does not wait for it. A combined `pnpm test` still does:
 // vitest completes every project's setup before it runs any file.
 //
-// The two end-to-end mail suites used to start one server each, at module
-// scope, and guard themselves with `describe.skipIf(!greenmail)`. A
-// container that failed to start therefore produced a green run, the same
-// failure mode the database probe removes. It is one container per run now,
-// it must answer IMAP before any worker forks, and the suites no longer
-// guard themselves.
+// A suite that starts its own server at module scope and guards itself with
+// `describe.skipIf(!greenmail)` turns a container that fails to start into a
+// green run. That is the failure mode the database probe removes. So each
+// run starts one container, it must answer IMAP before any worker forks, and
+// the suites do not guard themselves.
 import type { TestProject } from 'vitest/node';
 
 import { ensureMail, ensurePostgres, stopContainers } from './containers.js';

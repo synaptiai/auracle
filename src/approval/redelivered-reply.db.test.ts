@@ -31,6 +31,7 @@ import type { AdapterCapabilities } from '../policy/policy.js';
 import { relayPending } from '../relay/relay.js';
 import { indexDocument } from '../retriever/retriever.js';
 import { asIfRacing } from '../test-support/race-twin.js';
+import { lockWaitSeen } from '../test-support/lock-wait.js';
 import { truncateLedger } from '../test-support/schema.js';
 
 import { snoozeRun } from '../outcomes/snooze.js';
@@ -147,22 +148,6 @@ async function sentReplies(ticketId: string): Promise<number> {
     [ticketId],
   );
   return rows[0]!.n;
-}
-
-/**
- * Resolves once some backend of this database waits on a lock, or when
- * `ms` passes. The caller then reads whether the work it started finished.
- */
-async function lockWaitSeen(ms: number): Promise<void> {
-  const until = Date.now() + ms;
-  while (Date.now() < until) {
-    const { rows } = await pool.query<{ waiting: number }>(
-      `SELECT count(*)::int AS waiting FROM pg_stat_activity
-        WHERE datname = current_database() AND wait_event_type = 'Lock'`,
-    );
-    if (rows[0]!.waiting > 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
 }
 
 /** The log lines that parse as objects, as the log reader reads them. */
@@ -548,10 +533,12 @@ describe('a message redelivered on a turn that is answered, or about to be', () 
         expect(await undo).toEqual({ outcome: 'busy' });
         // The undo waited its budget: about three seconds on the first lock,
         // then what was left on the next. Five seconds in all, not three and
-        // then five more, with room for a loaded host between the two.
+        // then five more. A budget restarted on the next lock takes at least
+        // eight, so the ceiling sits between the two with room for a loaded
+        // host.
         const took = Date.now() - started;
         expect(took).toBeGreaterThanOrEqual(4_500);
-        expect(took).toBeLessThan(7_000);
+        expect(took).toBeLessThan(7_500);
       } finally {
         await firstHolder.query('ROLLBACK').catch(() => undefined);
         await nextHolder.query('ROLLBACK');
@@ -588,6 +575,7 @@ describe('a message redelivered on a turn that is answered, or about to be', () 
 
     let undo: Promise<unknown> | null = null;
     let settledInScan: boolean | null = null;
+    let waitedInScan: boolean | null = null;
     let recordsInScan: number | null = null;
     const connect = pool.connect.bind(pool);
     const inScan = {
@@ -607,10 +595,10 @@ describe('a message redelivered on a turn that is answered, or about to be', () 
             let settled = false;
             undo = undoApproval(pool, newer!.runId, { reviewer: 'anna@example.test' })
               .finally(() => { settled = true; });
-            // Until the undo waits on a lock, or long enough for one that does
-            // not wait to commit. Postgres reports the wait, so a slow host
-            // moves the moment and not the result.
-            await lockWaitSeen(3_000);
+            // Until the undo waits on a lock. Postgres reports the wait, so a
+            // slow host moves the moment and not the result. An undo that
+            // takes no lock never waits, and commits instead.
+            waitedInScan = await lockWaitSeen(pool, { withinMs: 10_000 });
             settledInScan = settled;
             const record = await pool.query('SELECT 1 FROM outbox WHERE run_id = $1', [newer!.runId]);
             recordsInScan = record.rowCount;
@@ -620,8 +608,14 @@ describe('a message redelivered on a turn that is answered, or about to be', () 
         return client;
       },
     } as unknown as Pool;
-    await startSentBackAttempts({ ...d, pool: inScan }, OPTIONS);
+    try {
+      await startSentBackAttempts({ ...d, pool: inScan }, OPTIONS);
+    } finally {
+      // The undo settles before the case ends, whatever fails above.
+      await (undo as Promise<unknown> | null)?.catch(() => undefined);
+    }
     // While the scan held the turn, the undo waited and removed nothing.
+    expect(waitedInScan, 'the undo waits on the turn the scan holds').toBe(true);
     expect(settledInScan).toBe(false);
     expect(recordsInScan).toBe(1);
     expect(await supersedeRecord(older!.runId))

@@ -572,7 +572,7 @@ describe('runCalibrationJob (section 4.11, DEC-31)', () => {
     }
   });
 
-  // The bypass an adversarial review found: a file read by path that
+  // A bypass this case closes: a file read by path that
   // declares itself synthetic. loadGoldHalf(split, path) cross-checks
   // nothing, so the "committed corpus" justification for skipping the proof
   // does not hold here. The caller had already supplied the report half's

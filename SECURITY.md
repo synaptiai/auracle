@@ -65,7 +65,5 @@ decision from you before anything reaches a network.
   `.env`.** So the
   webhook holds `OPENROUTER_API_KEY` and the mailbox password, though it needs
   neither. Keep that file to the values the stack needs.
-- **The test mail server accepts any credentials.** It runs only under the
-  compose `test` profile, so a deploy without that profile leaves it out.
 - **The ledger stores customer message text.** The README section on the
   compliance position says where, and what you own as the data controller.

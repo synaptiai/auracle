@@ -1,4 +1,5 @@
-# A merge to main builds one image and pushes it to GHCR.
+# A merge to main builds one image and pushes it to GHCR, once Tests passes
+# on that commit.
 #
 # The image is tagged with the commit SHA, so every commit on main has a named
 # build and a rollback is a tag change. The tag reaches the registry only
@@ -6,38 +7,49 @@
 # pulls the image into their own stack (DEC-17, DEC-19).
 name: Release
 
+# After Tests completes on main, so a commit whose tests fail publishes no
+# image. The job below reads whether it passed. There is no dispatch, because a
+# build by hand would skip that gate. A re-run of a release reads the same
+# Tests result: after a red Tests run, re-run Tests, which starts a new release.
+# A commit whose tests failed gets no job here. Its red Tests run marks it.
 on:
-  push:
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
     branches: [main]
-  # Re-run the build for the tip of main by hand.
-  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
   IMAGE: ${{ github.repository }}
+  # The commit Tests ran on.
+  COMMIT: ${{ github.event.workflow_run.head_sha }}
 
 jobs:
   image:
-    # main alone: a dispatch from another branch would push that branch.
-    if: github.ref == 'refs/heads/main'
+    # A push to main whose tests passed. A pull request's Tests run never
+    # builds, a fork's branch named main included.
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # A group for each commit. GitHub keeps one waiting run per group and
     # cancels it when a newer one queues, so a group shared by the branch
     # would skip a commit. Each commit pushes its own tag, so two builds do
     # not collide.
     concurrency:
-      group: image-${{ github.sha }}
+      group: image-${{ github.event.workflow_run.head_sha }}
       cancel-in-progress: false
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - id: meta
         # The SHA, not `latest`. A tag that moves cannot be rolled back to,
         # and a host that pulls `latest` cannot say what it is running.
-        run: echo "tag=${REGISTRY}/${IMAGE}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        run: echo "tag=${REGISTRY}/${IMAGE}:${COMMIT}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -90,15 +102,3 @@ jobs:
 
       - name: Publish the image
         run: docker push "${{ steps.meta.outputs.tag }}"
-
-  # A dispatch from another branch runs no build. This job says so and fails,
-  # so the run does not read as a build that passed.
-  not-main:
-    if: github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions: {}
-    steps:
-      - name: Refuse a branch other than main
-        run: |
-          echo "The release workflow builds main alone. Dispatch it from main." >> "$GITHUB_STEP_SUMMARY"
-          exit 1

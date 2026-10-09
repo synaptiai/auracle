@@ -119,9 +119,9 @@ export async function runCalibrationJob(
 
   // Check the artifact directory before the sampling loop, not after it. The
   // loop makes CLASSIFIER_K model calls per fit-half ticket, and nextVersion
-  // reads the same listing either way; faulting afterwards threw away a run
-  // an operator had already paid for, over a directory state visible before
-  // the first call.
+  // reads the same listing either way. A fault after the loop would throw
+  // away a run the operator has already paid for, over a directory state
+  // visible before the first call.
   const dir = options.artifactDir ?? defaultCalibrationDir();
   await assertCalibrationDirUsable(dir);
 
@@ -265,10 +265,10 @@ function labellersOf(
  * Refuses a half whose labels cannot be scored, before the run spends
  * anything.
  *
- * `scoreLabeller` throws on a case that carries a labeller but no label, and
- * it used to run after the classification loop — so one such case discarded a
- * run of 36 900 model calls over a field readable before the first one. This
- * is the hazard `assertCalibrationDirUsable` was moved ahead of the loop for.
+ * `scoreLabeller` throws on a case that carries a labeller but no label.
+ * After the classification loop, one such case would discard a run of 36 900
+ * model calls. The field it needs is readable before the first call. So this
+ * check runs before the loop, as `assertCalibrationDirUsable` does.
  */
 function assertLabelsScoreable(tickets: readonly GoldTicket[]): void {
   for (const ticket of tickets) {

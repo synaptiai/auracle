@@ -143,9 +143,8 @@ describe('the turn joins the key (DEC-38)', () => {
     // The key is not an internal value. It is stored in outbox.idem_key and
     // handed to the target system, so it identifies a request beyond this
     // process. A change to how it is built silently gives every in-flight
-    // approval a new key, and c61b42a is the commit that proves that failure
-    // is real: the approval then derives a key its park never wrote, and the
-    // request is dropped as superseded.
+    // approval a new key. The approval then derives a key its park never
+    // wrote, and the request is dropped as superseded.
     //
     // Every other case here is relative, so all of them would still pass.
     // These three literals are what actually pins the construction.

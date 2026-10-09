@@ -13,8 +13,7 @@
 // of these names.
 //
 // It parses rather than greps. The first version matched
-// `export interface AdapterCapabilities`, and adversarial review defeated it
-// in one line: `export type AdapterCapabilities = { ... }` declares the same
+// `export interface AdapterCapabilities`, and one line defeats that: `export type AdapterCapabilities = { ... }` declares the same
 // contract, is structurally interchangeable with the interface, and matched
 // no pattern. A second declaration therefore sat in the tree with the guard
 // green — the exact split it exists to prevent. An interface, a type alias, a

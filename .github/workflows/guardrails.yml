@@ -2,11 +2,14 @@ name: Guardrails
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
-# A superseded push cancels the run it replaced.
+# A newer push to a pull request cancels the run it replaces. On main each
+# commit has a group of its own, as in tests.yml, so every merge has a result.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Every job only reads the repository.
 permissions:
@@ -24,23 +27,50 @@ jobs:
         with:
           python-version: "3.12"
 
-      # The two checks below are the only ones scoped to the pull request
-      # rather than to the tree, so they cannot be plain `pnpm run` targets:
-      # they need the base commit, which exists only here. Everything else
-      # this job runs is also in `pnpm run verify`, deliberately — this job
+      # The two range checks below are the only ones scoped to the commits a
+      # run adds rather than to the tree, so they cannot be plain `pnpm run`
+      # targets: they need a base commit, which only the event names. Everything
+      # else this job runs is also in `pnpm run verify`, deliberately: this job
       # answers in about fifteen seconds and that one takes minutes.
-      - name: Synthetic fixture rule (DEC-18)
+      #
+      # A pull request compares with its base. A push to main compares with the
+      # commit main held before it. Both checks refuse a range they cannot
+      # read, so a missing base fails the job rather than passing it unread.
+      - name: The commits this run adds
+        id: range
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
-          scripts/check-changed-pii.sh \
-            ${{ github.event.pull_request.base.sha }}...${{ github.sha }}
+          base="${PR_BASE:-$PUSH_BEFORE}"
+          case "$base" in
+            ""|0000000000000000000000000000000000000000)
+              echo "this event names no base commit to compare with" >&2
+              exit 1 ;;
+          esac
+          # A commit id is 40 hex characters. Anything else is not one, so it
+          # never reaches a command line below.
+          if ! [[ "$base" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "the base '$base' is not a commit id" >&2
+            exit 1
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      # `base...head` reads the files the run changes since the merge base.
+      - name: Synthetic fixture rule (DEC-18)
+        env:
+          BASE: ${{ steps.range.outputs.base }}
+        run: scripts/check-changed-pii.sh "$BASE...$GITHUB_SHA"
 
       - name: Synthetic-fixture guard cases (DEC-18)
         run: python3 .claude/hooks/test_fixtures_pii_guard.py
 
+      # `base..head` lists the commits the run adds, and no commit the base
+      # holds alone.
       - name: DEC citation on register changes (section 2)
-        run: |
-          python3 .claude/hooks/commit_dec_citation.py \
-            --range=${{ github.event.pull_request.base.sha }}...${{ github.sha }}
+        env:
+          BASE: ${{ steps.range.outputs.base }}
+        run: python3 .claude/hooks/commit_dec_citation.py "--range=$BASE..$GITHUB_SHA"
 
       - name: Live-database guard cases (DEC-17, DEC-19)
         run: python3 .claude/hooks/test_live_db_approval.py
@@ -60,8 +90,8 @@ jobs:
 
       # A document drifts quietly. These checks decide the claims a machine
       # can decide: every diagram box is declared and explained, the parked
-      # reply reaches a person through the adapter, every relative link
-      # resolves, section 7.1 accounts for every open item, and every design
+      # reply reaches a person through the adapter, every linked file
+      # exists, section 7.1 accounts for every open item, and every design
       # record declares a decision the register defines.
       - name: Documentation claims (diagrams, links, design index, design records)
         run: python3 scripts/check-docs.py
@@ -69,9 +99,8 @@ jobs:
       - name: Documentation checker cases
         run: python3 scripts/test_check_docs.py
 
-      # The live-database rule still blocks inside a session only. The step
-      # above tests its logic; it does not enforce the rule on a pull
-      # request. No hook enforces the test-edit rule any more: it blocked the
-      # regression test a bug fix exists to add, so REVIEW.md holds it now.
-      # The commit-msg hook covers the citation rule locally. See
-      # hooks/commit-msg for install instructions.
+      # The live-database rule blocks inside a session only. The step above
+      # tests its logic, and it does not enforce the rule on a pull request.
+      # REVIEW.md holds the test-edit rule, and no hook enforces it. The
+      # commit-msg hook covers the citation rule locally: hooks/commit-msg
+      # says how to install it.

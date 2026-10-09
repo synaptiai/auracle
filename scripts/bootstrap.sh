@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Brings a fresh clone to a state where `pnpm run verify` can run.
 #
-# Setup was a list in a document: enable corepack, install, copy the commit
-# hook, copy .env.example, start compose, migrate. Six manual steps, and the
-# commit hook is the one that fails silently — a contributor who skips it
-# edits the register with no DEC citation and learns of it from CI.
+# It enables corepack, installs the dependencies, installs the commit hook and
+# copies .env.example. Without the commit hook, a contributor can edit the
+# register with no DEC citation and learn of it only from CI.
 #
 # Idempotent. Every step checks before it acts, so running it a second time
 # changes nothing and says so.
@@ -65,21 +64,91 @@ else
   say "auracle bootstrap — $ROOT"
 fi
 
-# 1. Node. The engines field asks for 22.13 or later, and a lower one fails
-#    later and less clearly: vitest needs 22.12 and eslint needs 22.13.
+# 1. Node. vitest runs on major versions 22, 24, and 26 and later, and
+#    testcontainers needs 22.22. Any other version fails later and less
+#    clearly, so the engines field and this check name the same set.
 if ! command -v node >/dev/null 2>&1; then
-  step "node" "MISSING — install Node 22.13 or later, then run this again"
+  step "node" "MISSING — install Node 22.22 or later, then run this again"
   exit 1
 fi
-NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
-NODE_MINOR="$(node -p 'process.versions.node.split(".")[1]')"
-if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 13 ]; }; then
-  step "node" "$(node -v) — too old, this repository needs 22.13 or later"
-  exit 1
-fi
-step "node" "$(node -v)"
+# A version field is digits, and at most five of them. An empty field, a
+# missing one or a longer one is refused: `[` reads none of them as a number,
+# and inside an `if` its failure would read as a supported version.
+is_version_field() {
+  case "${1:-}" in
+    ""|*[!0-9]*|??????*) return 1 ;;
+  esac
+}
 
-# 2. pnpm, through corepack. `packageManager` in package.json pins the
+# The version is read on its own line, as pnpm's is below: `set -e` would
+# end the script inside an assignment with nothing said. What the tool prints
+# to stderr stays on the terminal, above this step, and names its reason.
+NODE_EXIT=0
+NODE_VERSION="$(node -v)" || NODE_EXIT=$?
+if [ "$NODE_EXIT" -ne 0 ]; then
+  NODE_REASON="$(first_line "$NODE_VERSION")"
+  step "node" "present but fails: ${NODE_REASON:-exit $NODE_EXIT}"
+  exit 1
+fi
+NODE_LINE="$(first_line "$NODE_VERSION")"
+NODE_MAJOR="" NODE_MINOR="" NODE_PATCH=""
+case "$NODE_LINE" in
+  v*) IFS=. read -r NODE_MAJOR NODE_MINOR NODE_PATCH NODE_REST <<EOF_NODE || true
+${NODE_LINE#v}
+EOF_NODE
+    ;;
+esac
+# A build suffix such as -nightly follows the patch number.
+NODE_PATCH="${NODE_PATCH%%[!0-9]*}"
+if ! is_version_field "$NODE_MAJOR" || ! is_version_field "$NODE_MINOR" || ! is_version_field "$NODE_PATCH"; then
+  step "node" "${NODE_LINE:-printed nothing} — not a version this script can read; install Node 22.22 or later"
+  exit 1
+fi
+NODE_SHOWN="v$NODE_MAJOR.$NODE_MINOR.$NODE_PATCH"
+if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 22 ]; }; then
+  step "node" "$NODE_SHOWN — too old, this repository needs Node 22.22 or later"
+  exit 1
+fi
+if [ "$NODE_MAJOR" -eq 23 ] || [ "$NODE_MAJOR" -eq 25 ]; then
+  step "node" "$NODE_SHOWN — not supported: use major version 22 (22.22 or later), 24, or 26 and later"
+  exit 1
+fi
+step "node" "$NODE_SHOWN"
+
+# 2. Python. The documentation and guard checks use syntax Python 3.10 added.
+#    macOS ships 3.9 as python3, and there the first check stops on a
+#    TypeError that names no version.
+if ! command -v python3 >/dev/null 2>&1; then
+  step "python3" "MISSING — install Python 3.10 or later, then run this again"
+  exit 1
+fi
+# Python reports its version as numbers on stdout, so no warning it prints on
+# stderr joins them. The form runs on Python 2 as well, so an old one is
+# named, not crashed on.
+PY_EXIT=0
+PY_PARTS="$(python3 -c 'import sys; print("%d %d %d" % tuple(sys.version_info[:3]))')" || PY_EXIT=$?
+if [ "$PY_EXIT" -ne 0 ]; then
+  PY_REASON="$(first_line "$PY_PARTS")"
+  step "python3" "present but fails: ${PY_REASON:-exit $PY_EXIT}"
+  exit 1
+fi
+PY_MAJOR="" PY_MINOR="" PY_PATCH=""
+read -r PY_MAJOR PY_MINOR PY_PATCH PY_REST <<EOF_PY || true
+$(first_line "$PY_PARTS")
+EOF_PY
+if ! is_version_field "$PY_MAJOR" || ! is_version_field "$PY_MINOR" || ! is_version_field "$PY_PATCH"; then
+  PY_LINE="$(first_line "$PY_PARTS")"
+  step "python3" "${PY_LINE:-printed nothing} — not a version this script can read; install Python 3.10 or later"
+  exit 1
+fi
+PY_VERSION="Python $PY_MAJOR.$PY_MINOR.$PY_PATCH"
+if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }; then
+  step "python3" "$PY_VERSION — too old, the documentation and guard checks need Python 3.10 or later"
+  exit 1
+fi
+step "python3" "$PY_VERSION"
+
+# 3. pnpm, through corepack. `packageManager` in package.json pins the
 #    version, and corepack is what honours it. An `npm install` here produces
 #    a tree no workflow validates.
 # `--check` changes nothing, so it enables nothing either. A failed enable
@@ -94,7 +163,7 @@ if [ "$CHECK_ONLY" -eq 0 ] && command -v corepack >/dev/null 2>&1; then
   fi
 fi
 if ! command -v pnpm >/dev/null 2>&1; then
-  # Node 25 and later ship no corepack, so the message names the route that
+  # Node 26 and later ship no corepack, so the message names the route that
   # works on every supported Node: the version `packageManager` pins.
   # The read never fails, and it takes a plain version or nothing. A missing,
   # malformed or unusual field names no version, so the message never prints
@@ -109,7 +178,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
   if [ "$COREPACK_RAN" -eq 1 ] || ! command -v corepack >/dev/null 2>&1; then
     step "pnpm" "MISSING — $INSTALL, then run this again"
   else
-    step "pnpm" "MISSING — run 'corepack enable' (Node 22 to 24), or $INSTALL, then run this again"
+    step "pnpm" "MISSING — run 'corepack enable' (Node 22 or 24), or $INSTALL, then run this again"
   fi
   exit 1
 fi
@@ -128,7 +197,7 @@ if [ "$PNPM_EXIT" -ne 0 ]; then
 fi
 step "pnpm" "$PNPM_VERSION"
 
-# 3. Dependencies, from the lockfile. Frozen, so a bootstrap never rewrites
+# 4. Dependencies, from the lockfile. Frozen, so a bootstrap never rewrites
 #    it: a lockfile change is a decision, not a side effect of setup.
 if [ -d node_modules ] && [ -f node_modules/.modules.yaml ]; then
   step "dependencies" "already installed"
@@ -142,7 +211,7 @@ else
   step "dependencies" "installed"
 fi
 
-# 4. The commit hook. It blocks an edit to docs/v1-architecture.md that cites
+# 5. The commit hook. It blocks an edit to docs/v1-architecture.md that cites
 #    no DEC. CI runs the same check, so skipping it costs a round trip.
 #
 #    Never overwritten. A contributor who wrote their own hook keeps it, and
@@ -172,7 +241,7 @@ else
   step "commit hook" "installed"
 fi
 
-# 5. `.env`. Copied from the example, which names every variable a process
+# 6. `.env`. Copied from the example, which names every variable a process
 #    reads and carries no value for any credential. Never overwritten: that
 #    file holds OPENROUTER_API_KEY once a person fills it in.
 ENV_MISSING_KEY=0
@@ -197,7 +266,7 @@ if [ -e .env ] && ! grep -qE '^\s*OPENROUTER_API_KEY=.+' .env; then
   ENV_MISSING_KEY=1
 fi
 
-# 6. Docker. Reported, never started.
+# 7. Docker. Reported, never started.
 DOCKER_READY=0
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   DOCKER_READY=1

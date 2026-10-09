@@ -246,8 +246,8 @@ describe('the reviewer roster command (DEC-45)', () => {
   });
 
   // A word past the identity is refused, as it is past `--list`. Dropping it
-  // runs a different command than the one typed: `--add anna --active` used
-  // to add her and say nothing about a flag nobody had written.
+  // runs a different command than the one typed: `--add anna --active` would
+  // add her and say nothing about a flag the command does not know.
   // A word that opens with `--` is a flag this command does not know. The
   // positional lookup alone would take one for an identity, and an identity
   // of that shape names no reviewer.

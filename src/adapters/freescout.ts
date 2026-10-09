@@ -241,9 +241,9 @@ const MAX_CONVERSATION_CHARS = 4_000_000;
  * Refuses a ticket id that cannot survive the round trip, or returns it.
  *
  * The park is checked before it happens, not when a later call fails to read
- * the id back. A colon-bearing ticket id used to park successfully and then
- * make every `readDraft` and `sendDraft` throw, which left a draft in front of
- * a person that nothing could send.
+ * the id back. Without this check, a colon-bearing ticket id parks
+ * successfully and then makes every `readDraft` and `sendDraft` throw. That
+ * leaves a draft in front of a person that nothing can send.
  */
 export function assertTicketIdIsAddressable(ticketExternalId: string): string {
   if (ticketExternalId.includes(DRAFT_ID_SEPARATOR)) {

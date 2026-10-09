@@ -255,15 +255,14 @@ export async function park(ctx: RunContext): Promise<StepResult> {
   // from this run. Two runs of the same park derive the same key, so the
   // adapter recognises the repeat and returns the first draft.
   //
-  // DEC-49 answered the caution this comment used to carry. Nothing in the
-  // key as it stood distinguished a retry from a fresh attempt after a
-  // person rejected the draft, so a reject path would have derived this same
-  // key and the adapter would have handed back the rejected draft. The
-  // attempt separates them, and it is action semantics: it says what a
-  // person asked for. A digest of the composed body fails — a crash retry
-  // retrieves again, and a document can pass its review date in between, so
-  // the retry would compose different text and park a second draft. The run
-  // id stays forbidden (DEC-24).
+  // DEC-49: without the attempt, nothing in the key distinguishes a retry
+  // from a fresh attempt after a person rejects the draft. A reject path
+  // would then derive this same key, and the adapter would hand back the
+  // rejected draft. The attempt separates them, and it is action semantics:
+  // it says what a person asked for. A digest of the composed body fails — a
+  // crash retry retrieves again, and a document can pass its review date in
+  // between, so the retry would compose different text and park a second
+  // draft. The run id stays forbidden (DEC-24).
   const parkKey = deriveIdemKey({
     actionClass: `${ctx.input.actionClass}:park`,
     ticketId: ctx.input.ticketId,

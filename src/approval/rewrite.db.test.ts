@@ -330,7 +330,7 @@ describe('DEC-48: a reply a person rewrote from scratch', () => {
 
   // A reply the model wrote is unaffected: the same path still carries its
   // own provenance, so this change narrows nothing for the automatic draft.
-  // The P1 the adversarial pass executed: a turn is served by every run that
+  // The failure this case pins: a turn is served by every run that
   // answers it, so the author has to travel with the text. Reading it from
   // the approving run's own journal made that run the author of a text its
   // sibling's reviewer wrote, and the customer received a person's words

@@ -1124,7 +1124,7 @@ describe('the approval-edit distance', () => {
 // sequence, so a draw inserted anywhere but the end moves every one of them —
 // silently, and for a change that was only supposed to add detail.
 //
-// The digest is of the planner at commit d7d860e, the parent of this change,
+// The digest is of the planner before `editDistance` changed scale. It was
 // taken by running that planner against these options rather than by copying
 // numbers out of a report. It covers, in order: run id, ticket id,
 // conversation id, partition, service time, enqueue stamp, pickup stamp,

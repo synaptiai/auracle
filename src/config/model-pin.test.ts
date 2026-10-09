@@ -63,12 +63,12 @@ function shipped(): string[] {
  * Every call to a model's `complete` in a module, read from the tree, with the
  * text of each whole call.
  *
- * The scan used to blank comments and strings with one pattern, and then walk
- * parentheses to find a call's end. A pattern has to guess where a string
- * ends: a `//` inside a URL once blanked the stated budget after it, and a
- * quote inside a regular expression would have shifted every string after
- * it. The compiler reads the call whole, so neither a string nor a comment
- * can hide one or pose as one, and a paren in a message is only text.
+ * The scan reads each call with the compiler, not with a pattern. A pattern
+ * that blanks comments and strings has to guess where a string ends. A `//`
+ * inside a URL makes it blank the stated budget after it. A quote inside a
+ * regular expression shifts every string after it. The compiler reads the
+ * call whole, so neither a string nor a comment can hide one or pose as one,
+ * and a paren in a message is only text.
  */
 function completeCalls(
   text: string,
@@ -419,8 +419,8 @@ describe('the escalation reasons the runbook explains', () => {
     // The table row, not the file. A mention anywhere satisfied the earlier
     // scan, so prose that named a reason made its own operator-facing row
     // deletable in silence — and the row is what carries "what you do about
-    // it". An adversarial pass deleted the `internal_fault` row with this suite
-    // green, because the paragraph beside the table held the token.
+    // it". A check of the whole text stays green when the `internal_fault` row
+    // is deleted, because the paragraph beside the table holds the token.
     const rows = new Set(
       [...runbook.matchAll(/^\|\s*`([a-z_]+)`\s*\|/gm)].map((m) => m[1] as string),
     );

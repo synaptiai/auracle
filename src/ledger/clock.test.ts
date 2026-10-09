@@ -88,9 +88,8 @@ describe('assertInsertClock', () => {
   });
 
   // The insert stores a finish only for a state that has finished. A finish
-  // supplied for any other state used to be accepted and then dropped, and
-  // the column stayed null, which the latency reader labels `unstamped`. The
-  // caller heard nothing.
+  // for any other state, accepted and then dropped, leaves the column null,
+  // which the latency reader labels `unstamped`. The caller hears nothing.
   it('refuses a finish supplied for a state that has not finished', () => {
     let caught: unknown;
     try {
@@ -136,9 +135,10 @@ describe('finishUnordered', () => {
 });
 
 // A Date that carries no time is still a Date, so the type system passes it
-// through. Every comparison against NaN is false, so it used to clear both
-// guards, open the transaction and then throw a bare RangeError out of
-// toISOString — untyped, and after the epoch upsert.
+// through. Every comparison against NaN is false, so a guard that only
+// compares lets it pass. The insert would then open the transaction and throw
+// a bare RangeError out of toISOString. That error is untyped, and it comes
+// after the epoch upsert.
 describe('a Date that carries no time', () => {
   const NOWHERE = new Date('nonsense');
 

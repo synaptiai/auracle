@@ -3,9 +3,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { dbUrl, probeLedger } from './config.js';
 
-// This suite used to call tryConnect and return early when it got null, so
-// an unreachable database made it pass having asserted nothing. The global
-// setup now guarantees a reachable one, so the connection is part of what
+// This suite does not return early when it cannot connect. A suite that did
+// would pass against an unreachable database having asserted nothing. The
+// global setup guarantees a reachable one, so the connection is part of what
 // this smoke test proves.
 const pool = new Pool({ connectionString: dbUrl(), max: 1 });
 

@@ -89,9 +89,9 @@ describe('probeLedger', () => {
   it('reaches ECONNREFUSED inside the AggregateError a refusal arrives as', async () => {
     // The case that justifies the sweep. This function exists to report an
     // unreachable ledger, and a refused TCP connection is the likeliest way
-    // for one to be unreachable — yet it arrived as an AggregateError whose
-    // own message is empty, so the inline reading it used to carry appended
-    // nothing at all. The operator was told the ledger was unreachable and
+    // for one to be unreachable — yet it arrives as an AggregateError whose
+    // own message is empty. A reading of that message alone appends nothing
+    // at all. The operator then learns that the ledger is unreachable, and
     // not one word about why.
     const refused = new AggregateError(
       [

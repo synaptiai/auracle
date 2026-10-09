@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
-import { declarationsOf, importedDeclarationsOf, literalText, parseSource, projectSource } from './source-reader.js';
+import { declarationsOf, importedDeclarationsOf, literalText, parseSource, projectSource, projectSources } from './source-reader.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 // The console has a walker of its own in `purity.test.ts`, which skips it.
@@ -88,17 +88,24 @@ function unwrapped(node: ts.Expression): ts.Expression {
   return at;
 }
 
-/** Each file read again inside the whole project, keyed by its name and its text. */
-const projects = new Map<string, ts.SourceFile>();
+/** Each file read again inside the whole project, with the text it was read from. */
+const projects = new Map<string, { text: string; project: ts.SourceFile }>();
+
+/**
+ * Test files read from the disk inside one program, by `scannedFiles`. A file
+ * whose text matches its entry reuses it, so the scan builds one program in
+ * all rather than one for each file.
+ */
+const fromDisk = new Map<string, ts.SourceFile>();
 
 /** A file read again inside the whole project, once, so an import resolves. */
 function projectOf(file: ts.SourceFile): ts.SourceFile {
-  const key = `${file.fileName}\0${file.text}`;
-  let project = projects.get(key);
-  if (project === undefined) {
-    project = projectSource(file.fileName, file.text);
-    projects.set(key, project);
-  }
+  const held = projects.get(file.fileName);
+  if (held !== undefined && held.text === file.text) return held.project;
+  const read = fromDisk.get(file.fileName);
+  if (read !== undefined && read.text === file.text) return read;
+  const project = projectSource(file.fileName, file.text);
+  projects.set(file.fileName, { text: file.text, project });
   return project;
 }
 
@@ -386,16 +393,18 @@ function testFiles(tree: string): string[] {
     .map((name) => join(REPO_ROOT, tree, name));
 }
 
-/** Every test file of both trees, checked against each tree's floor. */
-function scannedFiles(): string[] {
+/** Every test file of both trees with its titles, checked against each tree's floor. */
+function scannedFiles(): Array<{ path: string; found: Found[]; unread: Found[] }> {
   return TREES.flatMap(({ tree, files, titles, known }) => {
     const paths = testFiles(tree);
-    const read = paths.flatMap((path) => titlesOf(path, readFileSync(path, 'utf8')).found);
+    for (const [path, source] of projectSources(paths)) fromDisk.set(path, source);
+    const results = paths.map((path) => ({ path, ...titlesOf(path, readFileSync(path, 'utf8')) }));
+    const read = results.flatMap(({ found }) => found);
     // A scan that read nothing would pass. These floors fail it first.
     expect(paths.length, `the scan found too few test files under ${tree}`).toBeGreaterThan(files);
     expect(read.length, `the scan read too few titles under ${tree}`).toBeGreaterThan(titles);
     expect(paths.map((path) => relative(REPO_ROOT, path)), `the scan missed ${known}`).toContain(known);
-    return paths;
+    return results;
   });
 }
 
@@ -575,10 +584,26 @@ describe('test titles', () => {
     ]);
   });
 
+  // The scan reads each test file inside one program built from the disk.
+  // A text that differs from the disk must not reuse it: an import resolved
+  // at a position in the disk text names some other identifier, or none.
+  it('reads a changed text of a scanned file by its own text, not the disk', () => {
+    scannedFiles();
+    const path = join(REPO_ROOT, 'src/config/node-version.test.ts');
+    const changed = [
+      "import { OUTBOX_STATUSES } from '../ledger/insert.js';",
+      "it.each(OUTBOX_STATUSES)('reads %s', () => undefined);",
+      readFileSync(path, 'utf8'),
+    ].join('\n');
+    const { found, unread } = titlesOf(path, changed);
+    expect(unread).toEqual([]);
+    expect(found.map(({ title }) => title)).toEqual(expect.arrayContaining([
+      'reads pending', 'reads sent', 'reads fenced', 'reads delivery_unknown', 'reads malformed', 'reads not_sent',
+    ]));
+  });
+
   it('cites no issue number in any core or console test title, and reads every one', () => {
-    const scanned = scannedFiles().map((path) => ({
-      path: relative(REPO_ROOT, path), ...titlesOf(path, readFileSync(path, 'utf8')),
-    }));
+    const scanned = scannedFiles().map((result) => ({ ...result, path: relative(REPO_ROOT, result.path) }));
     const paths = scanned.map(({ path }) => path);
     for (const { known } of TREES) expect(paths).toContain(known);
     expect(paths.some((path) => path.startsWith('console/src/')), 'the console was scanned').toBe(true);

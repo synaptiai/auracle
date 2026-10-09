@@ -16,10 +16,8 @@ services:
       # needs the port off-box: a checkout reaches localhost and the stack's
       # own services reach `db` over the compose network on 5432.
       #
-      # The default is 5433, not 5432, because 5432 was occupied by another
-      # local stack on the machine this file was written on. That is one
-      # developer's fact, so it is a default and not a constant: set
-      # AURACLE_DB_PORT to move it.
+      # The default is 5433, so it does not collide with a local Postgres on
+      # 5432. Set AURACLE_DB_PORT to move it.
       - "127.0.0.1:${AURACLE_DB_PORT:-5433}:5432"
     volumes:
       - auracle-db-data:/var/lib/postgresql/data

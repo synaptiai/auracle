@@ -1,16 +1,13 @@
 // The tail every CLI and daemon ends with.
 //
-// Twenty entry points used to end with their own copy, and the copies had
-// drifted into four different answers to the same question. Fifteen printed
-// `err.message`. `bands/run.ts` and `latency/run.ts` printed the whole Error
-// when it carried a cause, because `src/artifacts/versioned.ts` attaches one
-// to every filesystem fault it wraps and the message alone drops the errno.
-// `console/src/main.ts` walked the chain into a string with a third
-// implementation. `groundedness/report.ts` printed the raw object. The fix
-// was made three times in three shapes and backported to none of the other
-// fifteen, so an artifact-write fault in fifteen tools still lost its errno.
+// Every entry point shares this one copy. Separate copies drift into
+// different answers to the same question. They print `err.message`, the
+// whole Error, a walked cause chain, or the raw object.
 //
-// One shape now, and it is the corrected one.
+// `src/artifacts/versioned.ts` attaches a cause to every filesystem fault it
+// wraps, and the message alone drops the errno that cause carries. So a tool
+// that prints only the message loses the errno of an artifact-write fault.
+// This file walks the cause chain, so every entry point prints the errno.
 import { errorMessage } from '../errors.js';
 import { terminalText } from './terminal-text.js';
 
@@ -26,9 +23,9 @@ const MAX_CAUSE_DEPTH = 16;
 /**
  * Everything a thrown value has to say, including its cause chain.
  *
- * Returns a string rather than printing the `Error` itself, which is what
- * `bands` and `latency` did. That is a deliberate trade: Node renders a
- * stack for a thrown object, and a string drops it. The errno survives —
+ * Returns a string rather than printing the `Error` itself. That is a
+ * deliberate trade: Node renders a stack for a thrown object, and a string
+ * drops it. The errno survives —
  * a filesystem cause carries it in its own message, as
  * `ENOENT: no such file or directory, open '...'` — and an operator reading
  * a refused configuration gets one sentence instead of six stack frames.
@@ -36,9 +33,9 @@ const MAX_CAUSE_DEPTH = 16;
  */
 export function describeFault(error: unknown): string {
   // The head is described unconditionally, and only then does the walk
-  // begin. Folding the two together made `undefined` — which `throw
-  // undefined` produces, and which is legal — print an empty line, because
-  // the test for "no further cause" and the head were the same test.
+  // begin. With the two folded together, `undefined` — which `throw
+  // undefined` produces, and which is legal — would print an empty line,
+  // because the test for "no further cause" and the head would be one test.
   const parts: string[] = [errorMessage(error)];
   // Identity, not equality: two distinct Errors may carry the same message,
   // and only a repeat of the same object is a cycle.
@@ -137,15 +134,14 @@ export async function runEntry(
     // lands here rather than escaping as a synchronous throw.
     await main();
   } catch (error) {
-    // The exit code first, before anything that could itself fail. Printing
-    // used to come first, and a failure to print took the whole catch block
-    // with it: the process exited 0 and `onFault` never ran, so the
-    // console's pool stayed open and a failure reported success.
+    // The exit code first, before anything that could itself fail. If
+    // printing came first, a failure to print would take the whole catch
+    // block with it. The process would exit 0 and `onFault` would never run.
+    // The console's pool would stay open, and a failure would report success.
     //
-    // `report` below is now unable to throw, which is what actually closes
-    // that hole — so no test can tell this ordering from its reverse. It
-    // stays as the second line of defence, and it is honest to say that
-    // only the first one is covered.
+    // `report` below cannot throw, and that is what closes this hole. So no
+    // test can tell this ordering from its reverse. The ordering is a second
+    // defence. Only the first, that `report` cannot throw, has a test.
     process.exitCode = 1;
     report(error);
     const { onFault } = options;

@@ -9,7 +9,7 @@
  * file crosses a TCP connection and every response is parsed from real HTTP,
  * so the client's own behavior is exercised. What it cannot prove is that
  * FreeScout answers this way; that pass is a person opening the instance
- * `docker compose` brings up, and the pull request records it separately.
+ * `docker compose` brings up, as the runbook describes.
  *
  * A wire server rather than an injected fetch, because the failure this
  * guards against is a request built wrong. A stub function that receives the

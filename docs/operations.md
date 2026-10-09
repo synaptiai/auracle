@@ -95,8 +95,10 @@ while `WEBHOOK_SECRET` is empty. The console serves only an active reviewer,
 and a trusted proxy authenticates that reviewer (DEC-45). So put an
 authenticating proxy in front of anything another machine reaches.
 
-A merge to `main` runs `.github/workflows/release.yml`. It builds the image,
-checks that the image names its processes, and only then pushes it to GHCR.
+A merge to `main` runs the tests, and `.github/workflows/release.yml` runs
+once they pass on that commit. It builds the image, checks that the image
+names its processes, and only then pushes it to GHCR. A commit whose tests
+fail publishes no image.
 The tag is the commit SHA and never `latest`. Nobody can roll back to a tag
 that moves.
 
@@ -218,20 +220,151 @@ already applied.
 ### Rollback story
 
 Migrations are forward-only by design. A failed migration rolls itself back.
-You only need a plan for a migration that succeeds and then proves wrong.
+A migration that succeeds and then proves wrong needs a plan. The plan depends
+on whether the ledger takes traffic after it.
 
-Take a snapshot before you run any migration.
+A snapshot returns the ledger to the moment before the migration, and it
+discards every write after that moment. So restore one only while nothing
+writes after it: right after the migration, before any daemon starts. Once
+traffic runs on the new schema, do not restore. Write a migration that
+corrects the faulty one, and apply it forward.
+
+The blocks below use `auracle`, the name the compose stack gives the ledger
+database. They need a superuser, as the compose user is: the snapshot
+creates the `vector` extension, and `db:migrate` restates a role.
+
+Run a migration in this order:
+
+1. Export `DATABASE_URL` without a password. Keep the password in
+   `~/.pgpass`, one line per server in the form `host:port:*:user:password`.
+   The `*` covers both `auracle` and `postgres`. Run `chmod 600 ~/.pgpass`. A
+   URL on the command line shows in the process list. A client ignores a
+   `~/.pgpass` that other users can read.
+2. Stop every writer except the relay. The daemons that write are the
+   webhook, the IMAP intake, the consumer and the console. The commands
+   `approve`, `reviewers`, `load-docs` and `seed-history` write too.
+3. Keep the relay running until it sends every pending action. A send in its
+   hold period waits for that period first. A send that keeps failing stays
+   pending: the relay logs `left_pending_retry` with its `sendError`. Fix the
+   cause and wait, or postpone the migration.
+4. Stop the relay, and run the snapshot block below. It refuses while another
+   client is connected to the ledger, or while an action is pending. It
+   checks both again after the dump, and it keeps the snapshot only when every
+   check passes. A writer that connects and leaves during the dump escapes
+   both checks, so stop every writer first.
+5. Run `pnpm run db:migrate`, and check the result before you start any
+   daemon. The migration's number is the newest row of `schema_version`.
+   `pnpm run escalations` and `pnpm run latency` only read, so each one runs
+   against the new schema without a write. If the check passes, start every
+   daemon. If it fails, restore the snapshot as below while every daemon is
+   still stopped.
+
+The snapshot holds customer text, so the block keeps it outside the checkout,
+readable by its owner alone. It writes a new file each time, and it removes a
+partial file, an interrupted one included. So a failed dump never replaces a
+good one.
 
 ```sh
-pg_dump "$DATABASE_URL" > pre-migrate.sql
+(
+  set -euo pipefail
+  : "${DATABASE_URL:?set and export DATABASE_URL}"
+  ask() { psql "$DATABASE_URL" -X -At -v ON_ERROR_STOP=1 -c "$1"; }
+  check() {
+    sessions=$(ask "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND backend_type = 'client backend' AND pid <> pg_backend_pid();") || exit
+    pending=$(ask "SELECT count(*) FROM outbox WHERE status = 'pending';") || exit
+    if [ "$sessions" != 0 ]; then
+      echo "$sessions other client(s) are connected to the ledger; stop every writer first" >&2
+      exit 1
+    fi
+    if [ "$pending" != 0 ]; then
+      echo "$pending action(s) are pending $1" >&2
+      exit 1
+    fi
+  }
+  check "now; let the relay send them, then stop it"
+  umask 077
+  mkdir -p "$HOME/auracle-backups"
+  chmod 700 "$HOME/auracle-backups"
+  snapshot="$HOME/auracle-backups/pre-migrate-$(date +%Y%m%dT%H%M%S)-$$.sql"
+  trap 'rm -f "$snapshot.part"' EXIT
+  trap 'exit 130' INT TERM HUP
+  pg_dump "$DATABASE_URL" > "$snapshot.part"
+  check "after the dump, so a writer still runs; stop it"
+  mv "$snapshot.part" "$snapshot"
+  echo "$snapshot"
+)
 ```
 
-If a migration succeeds and then causes a problem in production, restore that snapshot.
+To restore, put the snapshot into a new, empty database. A restore into the
+old database fails on the tables it already holds.
+
+1. Check that every daemon and every writer is still stopped. If any writer
+   ran after the snapshot, do not restore: write a corrective migration.
+2. Check out the commit that the ledger ran before this migration, run
+   `pnpm install --frozen-lockfile`, and run the block from that checkout.
+3. Set `ADMIN_URL` to the `postgres` database on the ledger's server. Give it
+   the user and the connection settings of `DATABASE_URL`, and no password.
+   Set `SNAPSHOT` to the file that the snapshot block prints.
+4. Run the block below. It refuses if an `auracle_faulty` from an earlier
+   rollback still exists. It renames the migrated ledger to `auracle_faulty`,
+   and restores the snapshot into a new `auracle`. If any later command fails,
+   it renames the new database to `auracle_partial` with a time. Then it
+   renames `auracle_faulty` back to `auracle`. It drops no database.
 
 ```sh
-psql "$DATABASE_URL" < pre-migrate.sql   # careful: replaces current data
-pnpm run db:migrate                       # re-applies up to the last good version
+(
+  set -euo pipefail
+  : "${ADMIN_URL:?set ADMIN_URL}" "${DATABASE_URL:?set DATABASE_URL}" "${SNAPSHOT:?set SNAPSHOT}"
+  export DATABASE_URL
+  test -r "$SNAPSHOT" || { echo "cannot read $SNAPSHOT" >&2; exit 1; }
+  admin() { psql "$ADMIN_URL" -X -At -v ON_ERROR_STOP=1 -c "$1"; }
+  earlier=$(admin "SELECT count(*) FROM pg_database WHERE datname = 'auracle_faulty';")
+  if [ "$earlier" != 0 ]; then
+    echo "auracle_faulty exists from an earlier rollback; drop or rename it first" >&2
+    exit 1
+  fi
+  admin 'ALTER DATABASE auracle RENAME TO auracle_faulty;'
+  restored=no
+  undo() {
+    [ "$restored" = yes ] && return
+    trap '' INT TERM HUP
+    set +e
+    partial="auracle_partial_$(date +%Y%m%d_%H%M%S)"
+    created=$(admin "SELECT count(*) FROM pg_database WHERE datname = 'auracle';")
+    if [ "$created" = 1 ] && ! admin "ALTER DATABASE auracle RENAME TO $partial;"; then
+      echo "the restore failed, and renaming the new auracle aside failed too; the migrated ledger is auracle_faulty" >&2
+      return
+    fi
+    if ! admin 'ALTER DATABASE auracle_faulty RENAME TO auracle;'; then
+      echo "the restore failed; the migrated ledger is auracle_faulty, so rename it to auracle" >&2
+      return
+    fi
+    if [ "$created" = 1 ]; then
+      echo "the restore failed; auracle is the migrated ledger again, and $partial holds the attempt" >&2
+    else
+      echo "the restore failed before it created a database; auracle is the migrated ledger again" >&2
+    fi
+  }
+  trap undo EXIT
+  trap 'exit 130' INT TERM HUP
+  admin 'CREATE DATABASE auracle;' || exit
+  psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 --single-transaction -q < "$SNAPSHOT"
+  pnpm run db:migrate   # brings the snapshot to this commit, and restates auracle_reader
+  pending=$(psql "$DATABASE_URL" -X -At -v ON_ERROR_STOP=1 \
+    -c "SELECT count(*) FROM outbox WHERE status = 'pending';")
+  if [ "$pending" != 0 ]; then
+    echo "the snapshot holds $pending pending action(s); the snapshot block did not take it" >&2
+    exit 1
+  fi
+  restored=yes
+)
 ```
+
+5. Start every daemon. Drop `auracle_faulty`, and any `auracle_partial`, once
+   you no longer need them.
+
+Do not run `db:migrate` from the commit that holds the faulty migration. It
+applies that migration again.
 
 Do not write reverse scripts per migration. A hand-written down-migration can
 diverge from what the forward step really did. A snapshot cannot diverge,
@@ -478,6 +611,11 @@ The consumer reads this configuration:
 
 | Variable | Meaning | Default |
 |----------|---------|---------|
+| `DATABASE_URL` | The ledger. Required. | none |
+| `OPENROUTER_API_KEY` | The model provider's key. Required. | none |
+| `OPENROUTER_BASE_URL` | The provider's endpoint. | `https://openrouter.ai/api/v1` |
+| `AURACLE_ZDR_ONLY` | `1` asks the provider for zero data retention on every call (DEC-17). Absence means off. | off |
+| `PRODUCTS_FILE` | The product catalog. A relative path reads from the working directory. | `products.json` |
 | `CONSUMER_PARTITIONS` | Comma-separated partitions this process owns. Required. | none |
 | `CONSUMER_INTERVAL_MS` | Ceiling on the wait between scans, in milliseconds. Intake signals an arrival and the consumer wakes on it, so this bounds the wait when a signal is lost. | 5000 |
 | `TICKET_DEADLINE_MS` | Per-ticket clock budget (DEC-25). | 60000 |
@@ -628,10 +766,13 @@ the customer. An automatic write that resolves the case ends it as well.
 
 A person may save or rewrite a reply on the turn after the publish. The re-run
 then ends too, so a new attempt never throws their work away (DEC-46). A
-failed embedding never starts the attempt. A re-run on a run the system still
-walks waits for a person. After `RERUN_STALE_HOURS` in the system's hands,
-three hours, the scan takes the run as dead and ends the re-run. The case page draws the same
-answer, from the same rule, before the scan records it.
+failed embedding never starts the attempt.
+
+A re-run on a run the system still walks waits for a person.
+`RERUN_STALE_HOURS` in `src/knowledge/rerun.ts` sets a limit of three hours.
+After three hours in the system's hands, the scan takes the run as dead and
+ends the re-run. The case page draws the same answer, from the same rule,
+before the scan records it.
 
 The same post from the case then asks for that re-run again. The new request
 keeps the time and the replies of the first one. So a reply that a person
@@ -1380,7 +1521,9 @@ There a tag would be text, and it would be saved with the reply.
 ### Which gate numbers a process runs on
 
 Every process that evaluates policy resolves its gate numbers once at startup.
-It reads the highest artifact under `calibration/` and logs what it adopted.
+It reads the highest artifact under `calibration/` for the agreement threshold,
+and the highest under `groundedness/` for the coverage pair. It logs what it
+adopted.
 Read that line before you trust a gate number.
 
 ```
@@ -1415,8 +1558,9 @@ reads `synthetic` for the shipped corpus and `real` for a half of your own
 history. The `model_ver` and `prompt_ver` fields name the pins the fit ran
 under.
 
-Read those two. The consumer checks the model behind a fitted coverage pair.
-It refuses to start when that model is not the one `MODEL_VER` names.
+Read those two. The consumer checks the model behind each fitted gate: the
+coverage pair and the agreement threshold. It refuses to start when the
+artifact of either names a model other than the one `MODEL_VER` names.
 
 A threshold is one model's judgment of what coverage means. A model that
 reads claims more generously reaches the same number on weaker evidence.
@@ -1506,7 +1650,7 @@ The report states a band, or it states why it has none. It never states both.
 | `steady at 0 over 30 days` | The metric held one value all window, and today matches it. | Nothing. This is the healthy reading for the delivery count. |
 | `no spread over 30 days, and today moved to 3` | The metric held one value all window, and today left it. | Look now. There is no sigma to measure the step against. |
 | `the day measured a value that is not a number` | The ledger holds a value no arithmetic can use. | Read the ledger for that day. This needs a person. |
-| `the window spans more than one provider: stub and model` | The compared days span more than one model provider. | Wait out the window, or read the days on each side of the change separately. |
+| `the window spans more than one provider: model and stub` | The compared days span more than one model provider. | Wait out the window, or read the days on each side of the change separately. |
 
 Each line has a code in the artifact, in `shortfall_code`. Read that rather
 than the sentence if a tool consumes the file.
@@ -1562,7 +1706,7 @@ still acquire a value later.
 
 ### What happened on this run
 
-Two ledger tables answer this question. The `step_journal` table holds one row
+Three ledger tables answer this question. The `step_journal` table holds one row
 per step of a run. Each row has the status, the result JSON and the prompt and
 model versions (DEC-26). The pinned versions let you reproduce later exactly
 which prompt and model produced each step:
@@ -1621,7 +1765,7 @@ coordinator can record appears below. A queued message that failed
 | `classifier_unreadable` | Every classifier sample came back unreadable, so agreement measured nothing. | An answer budget too small for the model. Check `MODEL_VER` and the budget it needs. |
 | `classifier_no_label` | Samples were readable and named no intent this taxonomy holds. | A taxonomy or prompt fault, not a budget one. Compare the answers against `fixtures/taxonomy.json`. |
 | `retriever_unreadable` | The embedder answered with something the retriever could not read, or with no cost and no `EMBEDDINGS_USD_PER_MTOK` to price it. | Check the embedding model pin, the provider response and the price. |
-| `composer_unreadable` | The composer answered nothing at all. | The same cause, on the compose step. |
+| `composer_unreadable` | The composer answered with neither a draft nor an abstain. | The same cause, on the compose step. |
 | `gate_unreadable` | The coverage judge answered with no verdict. | The same cause, on the gate step. |
 | `internal_fault` | An invariant inside the coordinator did not hold. | A defect in this system. Read `fault` on the escalate row, then file an issue with that message. |
 
@@ -1783,7 +1927,7 @@ a partition. Drop the window when you hunt a stalled one.
 
 #### The counts beside the figures
 
-The job reports six counts rather than folding them into the figures. Each
+The job reports seven counts rather than folding them into the figures. Each
 names one cause, because each sends you somewhere different.
 
 | Count | What it means | What you do |
@@ -1794,6 +1938,7 @@ names one cause, because each sends you somewhere different.
 | `unstamped` | The run carries no finish time. | Nothing, unless it grows. |
 | `never_ran` | The run reaches a terminal state without executing, such as an intake abandonment. | Read `pnpm run escalations`. This count rises when a partition is failing. |
 | `snoozed` | A reviewer puts the case aside (DEC-48). Its duration is the wait, not work. | Nothing. It is the wait the distribution leaves out, and it falls as reviewers answer those cases. |
+| `rejected` | A reviewer sends the case back for a new attempt (DEC-49). Its duration is a person's reading time, not work. | Nothing. A rise says reviewers disagree with more drafts, so read those cases. |
 
 A run the job cannot measure never enters a figure as a zero. A zero would
 flatter exactly the runs the ledger understands least.
@@ -1811,16 +1956,16 @@ package, so nothing it needs reaches the daemons.
 
 ```sh
 pnpm install
-pnpm run build
 DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle \
 READER_DATABASE_URL=postgres://auracle_reader:auracle_reader@localhost:5433/auracle \
 CONSOLE_IDENTITY_HEADER=<header-your-proxy-sets> \
-  pnpm --filter @auracle/console start
+  pnpm run console
 ```
 
-`pnpm run build` compiles the core and the console together, because the
-solution references both. Without an identity source, the console refuses
-every request. The README's Quickstart uses `CONSOLE_DEV_REVIEWER` from source
+`pnpm run console` builds the core and the console together, because the
+solution references both. It runs from the repository root, where the console
+finds `products.json`. Without an identity source, the console refuses every
+request. The README's Quickstart uses `CONSOLE_DEV_REVIEWER` from source
 instead, for a checkout.
 
 It listens on 127.0.0.1:8787. Set `CONSOLE_PORT` and `CONSOLE_HOST` to change
@@ -1846,7 +1991,7 @@ front, and the browser sends the proxy's name instead. Name it in
 
 ```sh
 CONSOLE_ALLOWED_HOSTS=console.internal.example,console.internal.example:8443 \
-  pnpm --filter @auracle/console start
+  pnpm run console
 ```
 
 Each entry is a host and a port, exactly as the browser sends it. Omit the
@@ -2111,7 +2256,7 @@ client writes it.
 
 It also refuses a header that carries a credential, such as `authorization`.
 The ledger records the name the console resolves, and a credential is not a
-name. `hosts.ts` holds both lists.
+name. `console/src/hosts.ts` holds both lists.
 
 Each list holds the common names, not every possible name. So have the proxy
 name the reviewer in a header of its own: `X-Auth-Request-Email`, for
@@ -2236,12 +2381,14 @@ the queue does not list it. A line under the header links to the escalated
 runs on the runs list, which shows the newest 200. `pnpm run escalations`
 lists every one.
 
-The queue draws three groups, in the order a reviewer works them. The first
+The queue draws four groups, in the order a reviewer works them. The first
 holds a case that the rule `irreversible` or `high_risk` stopped. It also holds
 a case whose gate row records a high-tier intent, and a parked compensation.
 The second, Both gates clean, holds a case whose agreement and coverage each
-cleared their own line. The third holds every other waiting case. The oldest
-case comes first in each group.
+cleared their own line. The third holds every other waiting case. The fourth
+holds the cases another reviewer has taken (DEC-46).
+
+In each group the reader's own products come first, then the oldest case.
 
 Clean compares each gate with its own line and never combines the two
 (DEC-05). A gate the ledger did not measure clears nothing, so its case is not
@@ -2354,8 +2501,9 @@ judges that class irreversible. It sends at most once, so an unconfirmed send
 escalates (DEC-30).
 
 The warning reads the action, not the rule that stopped the run. The engine
-tests five rules in order and reports the first that fired. So a compensation
-can stop on a rule that says nothing about permanence.
+tests five rules in order before it reads either gate, and it reports the
+first that fires. So a compensation can stop on a rule that says nothing
+about permanence.
 
 A case reads one journal, for its own run. The queue reads none. Reading one
 for every waiting run would be a statement for each row of an uncapped list.
@@ -3097,11 +3245,12 @@ helpdesk. The console offers no editor there. A member of staff who typed there 
 text that never sends. Nobody can recall a sent reply (DEC-12).
 
 The console reads the draft back when `APPROVE_ADAPTER` names `imap-smtp` or
-`freescout`. That is the path `pnpm run approve --read-back` takes. The approval
-reads the draft the helpdesk holds and records the approval-edit distance
-against it. Export the adapter's own variables too, because the console reads no
-`.env`. Name the adapter the consumer parks through. The console cannot read a
-draft id another adapter minted, so every approval would refuse.
+`freescout`. That is the path `pnpm run approve -- --run <run-id> --read-back`
+takes. The approval reads the draft the helpdesk holds and records the
+approval-edit distance against it. Export the adapter's own variables too,
+because the console reads no `.env`. Name the adapter the consumer parks
+through. The console cannot read a draft id another adapter minted, so every
+approval would refuse.
 
 An unset `APPROVE_ADAPTER` reads nothing back, and so does the reference
 adapter `helpdesk`. That adapter keeps its drafts in the memory of the process
@@ -3274,7 +3423,7 @@ not the explanation.
 | `pnpm run check:guards` | The session hooks and the structural eval layer. |
 | `pnpm run check:fixtures` | Regenerates the corpus and refuses any difference. |
 
-**The pipeline daemons.** "Running the processes" explains each one. The
+**The daemons.** "Running the processes" explains the first four, and the
 console has its own section.
 
 | Command | What it does |
@@ -3283,6 +3432,7 @@ console has its own section.
 | `pnpm run imap` | Takes messages in over IMAP. |
 | `pnpm run consumer` | Walks the state machine for its partitions, and returns the cases whose snooze is due (DEC-48). |
 | `pnpm run relay` | Drains the outbox to the adapters. |
+| `pnpm run console` | Serves the operator console. Its own section explains it. |
 
 Each daemon also starts from source with no build step, for a local session:
 `pnpm run dev:webhook`, `pnpm run dev:imap`, `pnpm run dev:consumer`,
@@ -3295,7 +3445,7 @@ explains why Node's own type stripping cannot run this tree.
 |---|---|
 | `pnpm run db:migrate` | Applies the SQL files under `db/` in order, and restates the readers' role. |
 | `pnpm run escalations` | Lists what needs a person, and why. |
-| `pnpm run approve` | Approves or rejects one parked reply. |
+| `pnpm run approve` | Approves one parked run. |
 | `pnpm run reviewers` | Adds, deactivates and lists the reviewers who may use the console. |
 | `pnpm run latency` | Reports queue wait and service time per partition. |
 | `pnpm run bands` | Reports the `bands.yaml` metrics for one day. |

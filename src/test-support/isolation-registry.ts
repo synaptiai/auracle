@@ -3,9 +3,9 @@
 // Isolation is the property this run depends on, and it is the one a green
 // run cannot demonstrate: thirty files sharing one database pass most of the
 // time, and the day they do not, the failure reads as a flake in whatever
-// suite happened to lose. Adversarial review made that concrete — it pointed
-// every file at a single clone, and the per-file guard stayed green while a
-// DEC-28 fencing-epoch case broke in the suite next door.
+// suite happened to lose. Pointing every file at a single clone shows it: the
+// per-file guard stays green while a DEC-28 fencing-epoch case breaks in the
+// suite next door.
 //
 // So each file appends the database it received, and the run's teardown
 // asserts the set. That is a claim no single file can make about itself.

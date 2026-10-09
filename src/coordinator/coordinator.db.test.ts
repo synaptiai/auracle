@@ -738,16 +738,15 @@ describe('section 4.3 run coordinator', () => {
   it('escalates a run whose coverage judge answered with no verdict (DEC-30)', async () => {
     const ticketId = 'T-' + randomUUID().slice(0, 8);
     // Nine agreeing samples, a document, a cited draft, then a judge answer
-    // that carries no verdict. That answer used to score as unsupported, so
-    // coverage read 0.0 and the run reported a confident block. It is a fault,
-    // not a measurement.
+    // that carries no verdict. That answer is a fault, not a measurement.
+    // Scored as unsupported, it would give a coverage of 0.0 and a confident
+    // block.
     const script: FakeStep[] = [
       ...Array.from({ length: 9 }, () => ({ text: 'password_reset' })),
       { vectors: [VEC] },
       { text: '[doc:d1] Open the account settings page and choose reset password.' },
-      // A real truncation, not an empty string. The fake used to model no stop
-      // reason at all, so every consumer test drove this guard with a shape
-      // the provider never produces.
+      // A real truncation, not an empty string. A fake with no stop reason
+      // would drive this guard with a shape the provider never produces.
       { finishReason: 'length' },
     ];
     const deps = makeDeps(script);

@@ -126,11 +126,10 @@ describe('the agreement gate with a per-intent threshold', () => {
 // The wiring, which is what the cases above could not see.
 //
 // Every case above constructs `thresholds.perIntent` and `input.intent` by
-// hand, so all seven passed while no caller supplied either. The feature was
-// a consumer with no producer: the calibration job never wrote the map, the
-// resolver never read it, and all three policy call sites omitted the intent.
-// Reverting that wiring was a no-op on the suite, because it had never been
-// written.
+// hand, so all seven pass whether or not any caller supplies either. Without
+// the wiring, the feature is a consumer with no producer: the calibration job
+// writes no map, the resolver reads none, and the policy call sites omit the
+// intent.
 //
 // These cases walk the path instead of assuming it.
 describe('the per-intent threshold as it actually reaches the gate', () => {
@@ -141,9 +140,9 @@ describe('the per-intent threshold as it actually reaches the gate', () => {
       groundednessReview: 0.8,
       perIntent: { 'refund-request': 0.7 },
     });
-    // The first version of this change spread the map in at the call site and
-    // it was dropped here in silence, leaving a wired feature that could
-    // never fire.
+    // `makeThresholds` rebuilds the record field by field. If it did not copy
+    // `perIntent`, a map spread in at the call site would be dropped here in
+    // silence, and the feature could never fire.
     expect(built.perIntent).toEqual({ 'refund-request': 0.7 });
     expect(
       evaluatePolicyDetailed(input({ intent: 'refund-request', thresholds: built })).reason,

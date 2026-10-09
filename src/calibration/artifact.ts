@@ -348,9 +348,9 @@ export async function loadCalibrationArtifact(
   dir: URL = defaultCalibrationDir(),
 ): Promise<CalibrationArtifact | null> {
   const base = withTrailingSlash(dir);
-  // One scan for both paths. An earlier pass pre-filtered the listing on the
-  // explicit branch, which hid every fault belonging to another version and
-  // left a second, lenient posture behind a docstring claiming one.
+  // One scan for both paths. A listing pre-filtered on the explicit branch
+  // would hide every fault belonging to another version, and leave a second,
+  // lenient posture behind a docstring that claims one.
   const all = await listArtifacts(base, LABEL);
   let found: ArtifactFile | null;
   if (version === undefined) {
@@ -387,9 +387,9 @@ export async function assertCalibrationDirUsable(dir: URL): Promise<void> {
 /**
  * Mint the next version number by scanning existing artifacts under dir.
  *
- * Strict, like the loader. An earlier pass made this lenient on the argument
- * that `pnpm run calibrate` is the way out of a directory the loader refused.
- * It is not: the job writes a new version and the loader refuses the same
+ * Strict, like the loader. A lenient scan would rest on the argument that
+ * `pnpm run calibrate` is the way out of a directory the loader refuses. It
+ * is not: the job writes a new version, and the loader refuses the same
  * stray file as before. The job checks the directory before it spends
  * anything, so a fault costs no model call.
  */

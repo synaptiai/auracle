@@ -3,13 +3,13 @@
 // The property is "every test file got a database of its own", and no single
 // file can check it about itself. The run's teardown reads the record back.
 //
-// The record used to hold the database alone, one line per evaluation of
-// `db-url.setup.ts`. That caught two files that each recorded the same
-// database. It could not catch a setup that stopped running per file: fewer
-// lines and no duplicate reads exactly like a smaller run, and a targeted run
-// of one file is ordinary, so there is no floor to compare against.
+// A record of the database alone holds one line per evaluation of
+// `db-url.setup.ts`. It catches two files that each record the same database.
+// It cannot catch a setup that stops running per file. Fewer lines and no
+// duplicate read exactly like a smaller run. A targeted run of one file is
+// ordinary, so there is no floor to compare against.
 //
-// It holds the file's path now, recorded from a hook where
+// So each line also holds the file's path, recorded from a hook where
 // `expect.getState().testPath` is populated. Two files on one database are
 // two lines naming it however the module registry behaved.
 import { afterEach, describe, expect, it } from 'vitest';

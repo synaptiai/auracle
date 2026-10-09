@@ -100,9 +100,9 @@ describe('toIntakeTicket', () => {
     const derived = toIntakeTicket(withoutId, CATALOGUE).messageId;
 
     expect(derived).toMatch(/^no-id-[0-9a-f]{32}$/);
-    // Never the delivery id. That used to stand in, and DEC-38 made it
-    // unsafe: a redelivery under a new UID would take a fresh turn, derive a
-    // different key, and the action would run a second time.
+    // Never the delivery id, which is unsafe under DEC-38. A redelivery under
+    // a new UID would take a fresh turn and derive a different key. The action
+    // would then run a second time.
     expect(derived).not.toBe('src-1');
   });
 

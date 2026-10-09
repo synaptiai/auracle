@@ -31,9 +31,11 @@ interface Job {
   steps?: Step[];
 }
 
-const workflow = parse(readFileSync(WORKFLOW, 'utf8')) as { on: unknown; jobs: Record<string, Job> };
+const workflow = parse(readFileSync(WORKFLOW, 'utf8')) as { on: unknown; env: Record<string, string>; jobs: Record<string, Job> };
+
+/** The commit a run builds: the one Tests ran on. */
+const COMMIT = '${{ github.event.workflow_run.head_sha }}';
 const image = workflow.jobs.image!;
-const refusal = workflow.jobs['not-main']!;
 const steps = image.steps ?? [];
 
 /** What a step is: its name, or the action it uses without the pin, or its id. */
@@ -50,20 +52,26 @@ function stringsOf(value: unknown): string[] {
 }
 
 describe('the release workflow', () => {
-  it('runs on a push to main and on a dispatch, and nothing else', () => {
-    expect(workflow.on).toEqual({ push: { branches: ['main'] }, workflow_dispatch: null });
+  // An image of a commit whose tests failed never reaches the registry: the
+  // build starts only after Tests passes on that commit.
+  // No dispatch: a build by hand would skip the gate. A re-run of a release
+  // reads the same Tests result, so a red Tests run is retried by re-running
+  // Tests, which starts a new release.
+  it('runs after Tests completes on main, and nothing else', () => {
+    expect(workflow.on).toEqual({
+      workflow_run: { workflows: ['Tests'], types: ['completed'], branches: ['main'] },
+    });
   });
 
-  it('runs the image job on main, and refuses a dispatch from any other branch', () => {
-    expect(Object.keys(workflow.jobs).sort()).toEqual(['image', 'not-main']);
-    expect(image.if).toBe("github.ref == 'refs/heads/main'");
+  // A commit whose tests did not pass gets no job at all. Its own red Tests
+  // run marks it: a job here would attach its check to the newest commit on
+  // main, which a workflow_run event names, and not to the commit tested.
+  it('builds only a commit pushed to main whose tests passed', () => {
+    expect(Object.keys(workflow.jobs)).toEqual(['image']);
+    expect(image.if).toBe(
+      "github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'",
+    );
     expect(image.permissions).toEqual({ contents: 'read', packages: 'write' });
-    expect(refusal.if).toBe("github.ref != 'refs/heads/main'");
-    expect(refusal.permissions).toEqual({});
-    expect(refusal.steps).toHaveLength(1);
-    const run = refusal.steps![0]!.run ?? '';
-    expect(run).toMatch(/exit 1\s*$/);
-    expect(run.match(/\bexit\b/g)).toHaveLength(1);
   });
 
   it('builds the image without publishing it, checks it, and publishes it last', () => {
@@ -86,8 +94,8 @@ describe('the release workflow', () => {
 
   it('stops the push when the check fails', () => {
     // No condition and no `continue-on-error` lets a step past a failure.
-    for (const job of [image, refusal]) expect(job['continue-on-error']).toBeUndefined();
-    const lenient = [...steps, ...(refusal.steps ?? [])]
+    expect(image['continue-on-error']).toBeUndefined();
+    const lenient = steps
       .filter((step) => step.if !== undefined || step['continue-on-error'] !== undefined)
       .map(identity);
     expect(lenient).toEqual([]);
@@ -105,14 +113,16 @@ describe('the release workflow', () => {
     expect(run.match(/exit 1/g)?.length).toBeGreaterThanOrEqual(4);
   });
 
-  it('tags the image with the commit SHA alone', () => {
-    expect(steps[1]!.run).toBe('echo "tag=${REGISTRY}/${IMAGE}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"');
+  it('builds and tags the commit the tests ran on, by its SHA alone', () => {
+    expect(workflow.env.COMMIT).toBe(COMMIT);
+    expect(steps[0]!.with?.ref).toBe(COMMIT);
+    expect(steps[1]!.run).toBe('echo "tag=${REGISTRY}/${IMAGE}:${COMMIT}" >> "$GITHUB_OUTPUT"');
     // `ubuntu-latest` names a runner, not a tag.
     expect(stringsOf(workflow).filter((text) => /(?<!ubuntu-)\blatest\b/.test(text))).toEqual([]);
   });
 
   it('builds every commit on main in a group of its own, so a newer one cancels none', () => {
-    expect(image.concurrency).toEqual({ group: 'image-${{ github.sha }}', 'cancel-in-progress': false });
+    expect(image.concurrency).toEqual({ group: `image-${COMMIT}`, 'cancel-in-progress': false });
   });
 
   it('names no host, remote shell or deploy', () => {

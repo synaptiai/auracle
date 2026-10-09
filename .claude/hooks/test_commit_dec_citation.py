@@ -6,6 +6,7 @@ The guard requires a commit that changes the design register to name a DEC
 the register defines. The commit-msg hook and the pull-request range mode
 must agree on where a citation may appear and on what counts as one.
 """
+import json
 import os
 import subprocess
 import sys
@@ -165,6 +166,85 @@ for name, expected, kwargs in RANGE_CASES:
     else:
         print(f"FAIL range: {name}: want {expected} got {got}")
         failures += 1
+
+# A range the guard cannot read is a range it has not checked. An empty base
+# is what a push event gives a step that reads the pull request's base, and an
+# unknown one is a shallow checkout. Both must fail, never pass unread.
+#
+# The fixture cites its change, so a guard that read the history anyway would
+# pass it: only a refusal of the range itself blocks here.
+def run_unreadable_range(make_range):
+    with tempfile.TemporaryDirectory() as repo:
+        rng = build_repo(repo, feature_edits_register=True, citation=True, evil_merge=False)
+        head = rng.split("...")[1]
+        done = subprocess.run(
+            [sys.executable, HOOK, f"--range={make_range(head)}"],
+            capture_output=True, text=True, cwd=repo,
+        )
+        return done.returncode if "cannot read the range" in done.stdout else f"{done.returncode}, unnamed"
+
+
+# A commit in a readable range whose files git cannot list has not been read
+# either. Removing the tree object of the feature commit leaves the range
+# listable and the commit's files unreadable.
+def run_unreadable_commit():
+    with tempfile.TemporaryDirectory() as repo:
+        rng = build_repo(repo, feature_edits_register=False, citation=True, evil_merge=False)
+        tree = git(repo, "rev-parse", "feature^{tree}").stdout.strip()
+        os.remove(os.path.join(repo, ".git", "objects", tree[:2], tree[2:]))
+        done = subprocess.run(
+            [sys.executable, HOOK, f"--range={rng}"],
+            capture_output=True, text=True, cwd=repo,
+        )
+        return done.returncode if "cannot read" in done.stdout else f"{done.returncode}, unnamed"
+
+
+UNREADABLE_CASES = [
+    ("a range with an empty base", lambda head: f"...{head}"),
+    ("a range whose base is not a commit", lambda head: "0" * 40 + "..." + head),
+]
+
+for name, make_range in UNREADABLE_CASES:
+    got = run_unreadable_range(make_range)
+    if got == BLOCK:
+        print(f"pass range: {name}")
+    else:
+        print(f"FAIL range: {name}: want {BLOCK} got {got}")
+        failures += 1
+
+# The commit-msg hook and the session hook read the staged files too. When git
+# cannot answer, nothing reads as staged, and the commit would pass unread.
+def run_without_git(args, stdin=""):
+    env = dict(os.environ, GIT_DIR=os.path.join(tempfile.gettempdir(), "no-such-git-dir"))
+    done = subprocess.run([sys.executable, HOOK, *args], input=stdin,
+                          capture_output=True, text=True, cwd=ROOT, env=env)
+    said = done.stdout + done.stderr
+    return done.returncode if "cannot read" in said else f"{done.returncode}, unnamed"
+
+
+with tempfile.NamedTemporaryFile("w", suffix=".msg", delete=False) as handle:
+    handle.write("docs: a change\n")
+    message_path = handle.name
+try:
+    for name, args, stdin in [
+        ("the commit-msg hook when git cannot list the staged files", ["--commit-msg", message_path], ""),
+        ("the session hook when git cannot list the staged files", [], json.dumps({"tool_input": {"command": "git commit -m x"}})),
+    ]:
+        got = run_without_git(args, stdin)
+        if got == BLOCK:
+            print(f"pass: {name}")
+        else:
+            print(f"FAIL: {name}: want {BLOCK} got {got}")
+            failures += 1
+finally:
+    os.unlink(message_path)
+
+got = run_unreadable_commit()
+if got == BLOCK:
+    print("pass range: a commit whose files git cannot list")
+else:
+    print(f"FAIL range: a commit whose files git cannot list: want {BLOCK} got {got}")
+    failures += 1
 
 print()
 if failures:

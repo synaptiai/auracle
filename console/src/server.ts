@@ -655,10 +655,10 @@ function backToQueue(url: URL): { readonly href: string; readonly text: string }
 /**
  * A form larger than the bound.
  *
- * Its own type, because the route answers it and the catch-all does not. It
- * used to be a plain error, so an oversized body reached the 500 page: the
- * request was refused rather than failed, and the two say different things
- * to whoever sent it.
+ * Its own type, because the route answers it and the catch-all does not. As
+ * a plain error, an oversized body would reach the 500 page. The request is
+ * refused rather than failed, and the two say different things to whoever
+ * sent it.
  */
 /**
  * The form on a write route, or the refusal that route answers with.

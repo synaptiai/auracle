@@ -1,4 +1,4 @@
-# AGENTS.md — Agentic Support System
+# AGENTS.md — Auracle
 
 This file holds the rules an agent needs to work in this tree. A person reads
 `CONTRIBUTING.md` for the same workflow. Where a topic has a home in another
@@ -59,9 +59,9 @@ date. It skips a source file older than its build output. A check that
 reads that stale output passes on broken code. An archive extraction or a
 `cp -p` restore is enough to produce it.
 
-Only `check` and `dev:console` read the core's source. The console's build,
-its tests, `start` and the image read `dist/`. `dev:console` reads the source
-through `console/tsconfig.dev.json`.
+Only `check` and `dev:console` read the core's source. The console's build, its
+tests, `pnpm run console` and the image read `dist/`. `dev:console` reads the
+source through `console/tsconfig.dev.json`.
 
 Five processes start from source with no build step:
 
@@ -112,8 +112,9 @@ that mentions the environment, and fails on a name `.env.example` lacks.
 
 `.claude/` holds files for Claude Code. It is not optional for anyone else.
 `pnpm run verify` runs the self-tests of its guards through `check:guards`.
-The commit hook runs `.claude/hooks/commit_dec_citation.py` on every commit,
-and CI runs the guards on every pull request. `CONTRIBUTING.md` section 6
+The commit hook runs `.claude/hooks/commit_dec_citation.py` on every commit.
+CI runs the PII guard and the citation guard on every pull request, and
+the self-tests of all three guards. `CONTRIBUTING.md` section 6
 describes each part and the session hooks.
 
 ## How to test a change
@@ -260,7 +261,7 @@ result. So a step runs in a unit suite with no database behind it.
 ```
 received -> classified -> retrieved -> composed -> gated
   -> executing          (automatic path, reversible internal writes)
-  -> awaiting_approval  (customer replies, DEC-12)
+  -> awaiting_approval  (every parked action, DEC-06, DEC-07, DEC-12, DEC-13, DEC-34)
   -> resolved | escalated | superseded | abandoned | closed
   -> snoozed           (waiting for a period or the customer, DEC-48)
 ```
@@ -285,7 +286,7 @@ These processes run without stopping:
 - `pnpm run webhook` and `pnpm run imap` take messages in.
 - `pnpm run consumer` walks the state machine for its partitions.
 - `pnpm run relay` drains the outbox to the adapters.
-- `pnpm --filter @auracle/console start` serves the operator console.
+- `pnpm run console` serves the operator console.
 
 Offline jobs never touch live traffic. `pnpm run calibrate`,
 `pnpm run gold-report`, `pnpm run triage` and `pnpm run export-corpus` write
@@ -303,10 +304,10 @@ state. Adapters declare their capabilities, and autonomy adapts to those
 declarations (DEC-06).
 
 `docs/operations.md` is the runbook. `README.md` states the published numbers
-and the compliance position. `docs/v2-roadmap.md` states what is left in V2
-and what blocks each item. `python3 scripts/check-docs.py` proves the diagram
-structure, the links and the design index. It does not decide whether a
-diagram is true.
+and the compliance position. `docs/v2-roadmap.md` states what is left in V2 and
+what blocks each item. `python3 scripts/check-docs.py` proves the diagram
+structure, that each linked file exists, and the design index. It does not
+decide whether a diagram is true.
 
 ## Conventions
 
@@ -358,10 +359,11 @@ corpus, and committed fixtures match its output byte for byte.
 - Blending agreement and coverage into one confidence score. The gates are
   independent (DEC-05, section 3.2).
 - Reading `gate_pass_rate` from the gate verdict alone. `evaluatePolicy`
-  returns `gated` for four reasons before it compares agreement. They are a
-  customer reply, a high-tier intent, an irreversible write, and a missing
-  idempotency or read-back capability. The journaled `reason` says which rule decided.
-  `reachedAgreementGate` says whether the comparison happened.
+  returns `gated` for five reasons before it compares agreement. They are a
+  customer reply, a high-tier intent, an irreversible write, a missing
+  idempotency capability and a missing read-back capability. The journaled
+  `reason` says which rule decided. `reachedAgreementGate` says whether the
+  comparison happened.
 - Setting the classifier temperature to zero. At zero, agreement is always 1.0
   and the gate passes every ticket (section 4.5).
 - Deriving the idempotency key from `run_id` or a timestamp. Two runs of the

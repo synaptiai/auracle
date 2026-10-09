@@ -1,10 +1,9 @@
 // A step runs, and answers, without a database.
 //
-// The objective this suite exists for. `coordinateTicket` used to be one
-// function, so reaching the gate branch needed a pool, a provider and an
-// egress adapter — and `coordinator.db.test.ts` grew to 1,075 lines because
-// there was no smaller thing to call. Every case here drives a real step
-// module with a recording stub for the ledger.
+// The objective this suite exists for. `coordinateTicket` only sequences
+// step modules, so a case reaches the gate branch without a pool, a provider
+// or an egress adapter. Every case here drives a real step module with a
+// recording stub for the ledger.
 //
 // The stub answers statements; it does not implement the ledger. A case
 // that would need the ledger to behave belongs in a `.db.test.ts` file, and
@@ -447,8 +446,8 @@ describe('a fault inside the walk', () => {
   // back where it was before this guard, with every suite green.
   //
   // The first version asked for a `throw` of a `new Identifier(...)`, which is
-  // a regex with a parser behind it. An adversarial pass walked four ordinary
-  // spellings straight through it — `throw held`, `throw make(msg)`,
+  // a regex with a parser behind it. Four ordinary spellings walk straight
+  // through it — `throw held`, `throw make(msg)`,
   // `throw new globalThis.Error(msg)` and `Promise.reject(new Error(msg))` —
   // with the suite green on each. The repository's rule is to parse source
   // rather than pattern-match it, and parsing the wrong shape is still

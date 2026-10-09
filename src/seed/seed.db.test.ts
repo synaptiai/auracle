@@ -192,8 +192,8 @@ describe('the seeded history', () => {
   });
 
   // And two windows that share a seed do not collide, because each day mixes
-  // the day string into its own stream. Seeding one extra day after a long
-  // history used to regenerate the first day's ids.
+  // the day string into its own stream. Without that, seeding one extra day
+  // after a long history regenerates the first day's ids.
   it('writes a neighbouring day without colliding on the same seed', async () => {
     await writeHistory(pool, planHistory(OPTIONS));
     const before = await pool.query('SELECT count(*)::int AS n FROM run');
@@ -844,14 +844,13 @@ describe('the journal a seeded run leaves', () => {
   });
 
   // DEC-34, DEC-37. `approveRun` writes the reply text only for a park that
-  // carries a helpdesk draft, because a ledger-only park sends no reply. The
-  // seeder wrote one anyway, so the ledger asserted a customer reply for a
-  // run that routed a ticket and sent nothing — and `consumer.ts` feeds that
-  // column to the composer as the agent's half of the conversation.
+  // carries a helpdesk draft, because a ledger-only park sends no reply. A
+  // seeder that wrote one anyway would make the ledger assert a customer
+  // reply for a run that routed a ticket and sent nothing, and `consumer.ts`
+  // feeds that column to the composer as the agent's half of the conversation.
   it('records no reply text for a run whose approval sends no reply', async () => {
-    // Every approved ledger-only park. The planner now leaves the distance
-    // null on these, so they are found by the park shape rather than by the
-    // distance that used to mark them.
+    // Every approved ledger-only park. The planner leaves the distance null
+    // on these, so they are found by the park shape, not by the distance.
     const ledgerOnly = plan.filter(
       (run) => run.state === 'awaiting_approval' && run.park !== null
         && run.park.draftExternalId === undefined,

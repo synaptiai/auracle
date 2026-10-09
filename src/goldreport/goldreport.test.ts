@@ -1033,9 +1033,9 @@ describe('a seeded provenance must carry the seed value (DEC-31)', () => {
     ['groundednessBlock', 0.5],
     ['groundednessReview', 0.9],
   ])('refuses a moved %s on a CALIBRATED run too', async (field, value) => {
-    // The guard used to sit inside the seed branch, so naming a run
-    // 'calibration' let any coverage pair through — and the artifact records
-    // no coverage value at all, so nothing disclosed it.
+    // The guard applies outside the seed branch too. Inside it alone, naming
+    // a run 'calibration' would let any coverage pair through. The artifact
+    // records no coverage value, so nothing would disclose it.
     await expect(
       runWithThresholds(
         { [field]: value },

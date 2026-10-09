@@ -398,10 +398,10 @@ function dispatchFor(row: PendingOutboxRow, ledgerHoldsReply: boolean): Dispatch
  * record, and `fence` is null with it. Nothing in `db/` declares a foreign
  * key from `outbox.run_id`, so the ledger would accept such a row — but the
  * scan's own query inner-joins `run` (`pendingRows`), so the relay never
- * reads one. A hand-built row is sent, exactly as before this change:
- * `fence === null` refuses nothing. The empty state still reads as in flight
- * for every row the scan does return, which is the fail-closed reading where
- * a state this code does not know is governed rather than licensed.
+ * reads one. A hand-built row is sent: `fence === null` refuses nothing. The
+ * empty state still reads as in flight for every row the scan does return,
+ * which is the fail-closed reading where a state this code does not know is
+ * governed rather than licensed.
  */
 interface FenceReading {
   readonly fence: bigint | null;
@@ -652,10 +652,10 @@ export async function relayOne(
     // letting the error turn a failed send into a blind retry.
     //
     // Both causes are recorded. The relay is the component whose failures
-    // decide DEC-30, and it used to discard them: rotated SMTP credentials
-    // produced an endless stream of left_pending_retry with no line anywhere
-    // naming the authentication failure, and a readBack that throws on every
-    // call manufactures delivery_unknown escalations that look exactly like
+    // decide DEC-30. Without the causes, rotated SMTP credentials produce an
+    // endless stream of left_pending_retry with no line anywhere naming the
+    // authentication failure. A readBack that throws on every call
+    // manufactures delivery_unknown escalations that look exactly like
     // genuine ones.
     sendFailure = errorText(sendError);
     // The adapter proved this attempt sent nothing, so DEC-30's matrix is not

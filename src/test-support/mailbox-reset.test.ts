@@ -1,8 +1,8 @@
 // Which hosts a test run will empty mailboxes on.
 //
-// `MAIL_HOST` used to mean "read mail here". It now also means "delete every
-// message in the mailboxes these suites own here", and the reachability probe
-// checks a TCP port rather than who owns the server.
+// `MAIL_HOST` means "read mail here", and also "delete every message in the
+// mailboxes these suites own here". The reachability probe checks a TCP port
+// rather than who owns the server.
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ALLOW_REMOTE_MAIL, assertLocalMailHost } from './mailbox-reset.js';

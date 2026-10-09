@@ -18,7 +18,8 @@ Postgres, with no orchestration framework.
 **What it is not.** It is not a hosted product, and nothing publishes it to
 npm. It is a working system to study, run on your own infrastructure and adapt.
 
-**Status.** Version 0.1.0, the first public version, which is not yet released.
+**Status.** Version 0.1.0 is the first public release. Read its
+[release notes](https://github.com/synaptiai/auracle/releases/tag/v0.1.0).
 [CHANGELOG.md](CHANGELOG.md) records each release. Every number
 this repository publishes comes from a synthetic corpus. So the numbers test the
 pipeline, not the quality of the answers.
@@ -102,8 +103,9 @@ One turn moves through these steps. The
    the gates. It escalates below the agreement threshold or the block
    threshold. It parks below the review threshold. At or above all three, it
    takes the automatic path, through the outbox.
-8. **Approval.** A person approves or rejects each parked action, in the
-   helpdesk or in the operator console (DEC-11, DEC-40, DEC-44).
+8. **Approval.** A person approves each parked action, or sends back or closes
+   its case. They do it in the helpdesk or in the operator console (DEC-11,
+   DEC-40, DEC-44).
 
 The two gates stay separate (DEC-05). Each one catches a failure the other
 cannot see, and one blended score can pass while either gate fails.
@@ -119,8 +121,9 @@ next section, [Run the live pipeline](#run-the-live-pipeline), adds the key.
 
 ### Prerequisites
 
-- **Node 22.13 or later.** `.nvmrc` names the major version.
-- **pnpm 11.20.0.** On Node 22 to 24, run `corepack enable`. Node 25 and
+- **Node 22.22 or later, on major version 22, 24, or 26 and later.** vitest
+  does not run on Node 23 or 25. `.nvmrc` names the major version CI uses.
+- **pnpm 11.20.0.** On Node 22 or 24, run `corepack enable`. Node 26 and
   later ship no corepack, so run `npm install -g pnpm@11.20.0` there.
 - **Docker** with Compose, for Postgres and a test mail server.
 - **Python 3.10 or later**, for the documentation and guard checks.
@@ -141,8 +144,8 @@ pnpm run verify:fast
 ```
 
 - `./scripts/bootstrap.sh` installs the dependencies from the lockfile,
-  installs the commit hook and copies `.env.example` to `.env`. It changes
-  nothing that already exists.
+  installs the commit hook and copies `.env.example` to `.env`. It also runs
+  `corepack enable`. It overwrites no file that already exists.
 - The compose stack starts Postgres with pgvector, its vector-search
   extension, on port 5433. It also starts GreenMail, a test mail server, on
   ports 3025 and 3143. Every port binds `127.0.0.1`. `--wait` returns once
@@ -225,7 +228,7 @@ container image.
 | [The V2 roadmap](docs/v2-roadmap.md) | What is left, and what blocks each item |
 | [The contributing guide](CONTRIBUTING.md) | From a clean checkout to a merged change |
 | [The review guide](REVIEW.md) | The three passes every change makes |
-| [The playbook](docs/background/agentic-support-playbook.html) | The workshop pack that precedes the design. The register supersedes it |
+| [The playbook](docs/background/agentic-support-playbook.html) | The workshop pack that precedes the design. The register supersedes it. It is an HTML file, so open it in a browser |
 
 ## Compliance position
 
@@ -301,9 +304,9 @@ Article 50(2) applies from 2 December 2026, after a grace period of four
 months. That grace period covers only systems on the market before 2 August
 2026. This system is not one of them.
 
-So on the register's reading, Article 50(2) applies to this system from 2
-August 2026. Confirm the date that applies to your deployment with legal
-advice.
+So on the register's reading, Article 50(2) already applies to this system,
+from 2 August 2026. Confirm the date that applies to your deployment with
+legal advice.
 
 The system adds provenance metadata to each generated text (DEC-33). The
 metadata is structured, so a machine can read it after export. A line of
@@ -431,5 +434,6 @@ queue only. On the synthetic gold set this job is a demonstration.
 - [SECURITY.md](SECURITY.md) says how to report a vulnerability privately,
   and what the default setup does not protect.
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) applies to everyone who takes part.
-- Open an [issue](https://github.com/synaptiai/auracle/issues) for a bug or a
-  question.
+- Open an [issue](https://github.com/synaptiai/auracle/issues) for a bug.
+  Ask a question in
+  [Discussions](https://github.com/synaptiai/auracle/discussions).

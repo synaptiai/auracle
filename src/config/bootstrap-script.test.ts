@@ -38,11 +38,23 @@ let caseCount = 0;
 function bootstrap(options: {
   readonly args?: readonly string[];
   readonly packageManager?: string | null;
-  /** A stand-in, or null for no corepack at all, as Node 25 and later ship. */
+  /** A stand-in, or null for no corepack at all, as Node 26 and later ship. */
   readonly corepack?: Tool | null;
   readonly pnpm?: Tool;
   /** The locale the script runs under, as a developer's shell sets it. */
   readonly locale?: string;
+  /**
+   * What `node -v` does: a version as `v22.22.0`, or a tool that fails.
+   * Unset, the real node.
+   */
+  readonly node?: string | Tool;
+  /**
+   * The python3 stand-in. It answers the version query with `version`, as
+   * `3.12.4`, printed the way the script asks for it. Unset, a supported
+   * version: the host's own python3 never runs, because macOS ships one that
+   * is too old.
+   */
+  readonly python?: { readonly version?: string; readonly stderr?: string; readonly exit?: number };
 }): { status: number | null; stdout: string; stderr: string; ran: string } {
   caseCount += 1;
   const root = path.join(SCRATCH, `case-${caseCount}`);
@@ -52,21 +64,46 @@ function bootstrap(options: {
   copyFileSync(`${REPO_ROOT}scripts/bootstrap.sh`, path.join(root, 'tree', 'scripts', 'bootstrap.sh'));
   const manifest = options.packageManager === null ? {} : { packageManager: options.packageManager ?? 'pnpm@11.20.0' };
   writeFileSync(path.join(root, 'tree', 'package.json'), JSON.stringify(manifest));
-  symlinkSync(process.execPath, path.join(bin, 'node'));
+  if (options.node === undefined) {
+    symlinkSync(process.execPath, path.join(bin, 'node'));
+  } else {
+    // A stand-in for `node -v` that runs every other call on the real node,
+    // so the script's own reads still work.
+    const answer: Tool = typeof options.node === 'string' ? { stdout: options.node, exit: 0 } : options.node;
+    const node = path.join(bin, 'node');
+    writeFileSync(node, [
+      '#!/bin/sh',
+      'if [ "$1" = "-v" ]; then',
+      answer.stderr === undefined ? '' : `  printf '%s\\n' '${answer.stderr}' >&2`,
+      answer.stdout === undefined ? '' : `  printf '%s\\n' '${answer.stdout}'`,
+      `  exit ${answer.exit}`,
+      'fi',
+      `exec '${process.execPath}' "$@"`,
+    ].join('\n'));
+    chmodSync(node, 0o755);
+  }
   const log = path.join(root, 'ran.log');
   const tools: ReadonlyArray<readonly [string, Tool | undefined]> = [
     ['corepack', options.corepack === null ? undefined : (options.corepack ?? { exit: 1 })],
     ['pnpm', options.pnpm],
     ['docker', { exit: 1 }],
+    ['python3', {
+      stdout: (options.python?.version ?? '3.12.4').replaceAll('.', ' '),
+      ...(options.python?.stderr === undefined ? {} : { stderr: options.python.stderr }),
+      exit: options.python?.exit ?? 0,
+    }],
   ];
+  // The log records the tools a case asserts on. A version read is not one.
+  const unlogged = new Set(['python3']);
   for (const [name, tool] of tools) {
     if (tool === undefined) continue;
     const script = path.join(bin, name);
     writeFileSync(script, [
       '#!/bin/sh',
-      `echo "${name} $*" >> '${log}'`,
-      tool.stdout === undefined ? '' : `printf '%s\\n' '${tool.stdout}'`,
+      unlogged.has(name) ? '' : `echo "${name} $*" >> '${log}'`,
+      // stderr first: a warning a tool prints comes before its answer.
       tool.stderr === undefined ? '' : `printf '%s\\n' '${tool.stderr}' >&2`,
+      tool.stdout === undefined ? '' : `printf '%s\\n' '${tool.stdout}'`,
       tool.stderrFormat === undefined ? '' : `printf '${tool.stderrFormat}' >&2`,
       `exit ${tool.exit}`,
     ].join('\n'));
@@ -92,10 +129,102 @@ function bootstrap(options: {
 }
 
 describe('the bootstrap script', () => {
+  // vitest runs on Node 22, 24, and 26 and later, and testcontainers needs
+  // 22.22. A version outside that set fails later and less clearly.
+  it.each(['v22.21.1', 'v20.19.0'])('refuses Node %s, and names the floor', (version) => {
+    const run = bootstrap({ node: version });
+    expect(run.stdout).toContain(`${version} — too old, this repository needs Node 22.22 or later`);
+    expect(run.status).toBe(1);
+  });
+
+  it.each(['v23.11.0', 'v25.2.1'])('refuses Node %s, a major version vitest does not support', (version) => {
+    const run = bootstrap({ node: version });
+    expect(run.stdout).toContain(`${version} — not supported: use major version 22 (22.22 or later), 24, or 26 and later`);
+    expect(run.status).toBe(1);
+  });
+
+  // The documentation and guard checks use syntax Python 3.10 added. macOS
+  // ships 3.9 as python3, and there the check fails with a TypeError.
+  it.each(['3.9.6', '2.7.18'])('refuses Python %s, and names the floor', (version) => {
+    const run = bootstrap({ python: { version } });
+    expect(run.stdout).toContain(`Python ${version} — too old, the documentation and guard checks need Python 3.10 or later`);
+    expect(run.status).toBe(1);
+  });
+
+  it.each(['3.10.0', '3.14.2'])('accepts Python %s', (version) => {
+    const run = bootstrap({ python: { version } });
+    expect(run.stdout).toMatch(new RegExp(`python3\\s+Python ${version.replaceAll('.', '\\.')}\\n`));
+  });
+
+  // A warning a Python prints on stderr, before its answer, is not its version.
+  it('accepts a supported Python that warns on stderr', () => {
+    const run = bootstrap({ python: { version: '3.12.1', stderr: 'Could not find platform independent libraries <prefix>' } });
+    expect(run.stdout).toMatch(/python3\s+Python 3\.12\.1\n/);
+    expect(run.stdout).not.toContain('too old');
+  });
+
+  // Each field is read on its own, so an empty field, a missing one or one too
+  // long to compare is refused rather than read as a supported version.
+  it.each(['3', '3.x.1', '3.99999999.0'])('refuses a Python version it cannot read: %s', (version) => {
+    const run = bootstrap({ python: { version } });
+    expect(run.stdout).toContain('not a version this script can read; install Python 3.10 or later');
+    expect(run.status).toBe(1);
+  });
+
+  // The macOS stub without the developer tools, or a pyenv shim for a version
+  // that is not installed. The bootstrap still says what failed.
+  it('names a python3 that cannot report its version, and keeps its reason on the terminal', () => {
+    const run = bootstrap({ python: { version: '', stderr: 'xcrun: error: invalid active developer path', exit: 1 } });
+    expect(run.stdout).toMatch(/python3\s+present but fails: exit 1\n/);
+    expect(run.stderr).toContain('xcrun: error: invalid active developer path');
+    expect(run.status).toBe(1);
+  });
+
+  // An answer with no text is named as such, and a failure's own reason on
+  // stdout is shown, as the pnpm step shows one.
+  it('names a node that prints nothing, and one that fails with a reason', () => {
+    const silent = bootstrap({ node: { stdout: '', exit: 0 } });
+    expect(silent.stdout).toContain('printed nothing — not a version this script can read');
+    const failing = bootstrap({ node: { stdout: 'nodenv: version 22 is not installed', exit: 1 } });
+    expect(failing.stdout).toMatch(/node\s+present but fails: nodenv: version 22 is not installed\n/);
+  });
+
+  it('names a python3 that prints nothing, and one that fails with a reason', () => {
+    const silent = bootstrap({ python: { version: '' } });
+    expect(silent.stdout).toContain('printed nothing — not a version this script can read');
+    const failing = bootstrap({ python: { version: 'pyenv: python3: command not found', exit: 127 } });
+    expect(failing.stdout).toMatch(/python3\s+present but fails: pyenv: python3: command not found\n/);
+  });
+
+  it('names a node that cannot report its version', () => {
+    const run = bootstrap({ node: { stderr: 'No version is set for command node', exit: 126 } });
+    expect(run.stdout).toMatch(/node\s+present but fails: exit 126\n/);
+    expect(run.status).toBe(1);
+  });
+
+  it.each(['v22', 'v.22.0', 'v22..0', 'v9999999.0.0', '22.22.0'])('refuses a node version it cannot read: %s', (version) => {
+    const run = bootstrap({ node: version });
+    expect(run.stdout).toContain(`${version} — not a version this script can read; install Node 22.22 or later`);
+    expect(run.status).toBe(1);
+  });
+
+  // A prerelease suffix on the patch is the build, not a version to refuse.
+  it('accepts a Node build with a suffix, and names the version it read', () => {
+    const run = bootstrap({ node: 'v22.22.0-nightly20261001' });
+    expect(run.stdout).toMatch(/node\s+v22\.22\.0\n/);
+  });
+
+  it.each(['v22.22.0', 'v24.0.0', 'v26.0.0', 'v27.1.0'])('accepts Node %s', (version) => {
+    const run = bootstrap({ node: version });
+    expect(run.stdout).toMatch(new RegExp(`node\\s+${version.replaceAll('.', '\\.')}\\n`));
+    expect(run.stdout).not.toContain('too old');
+    expect(run.stdout).not.toContain('not supported');
+  });
+
   it('enables nothing in check mode', () => {
     const run = bootstrap({ args: ['--check'], corepack: { exit: 0 } });
     expect(run.ran).not.toContain('corepack');
-    expect(run.stdout).toContain("run 'corepack enable' (Node 22 to 24), or run 'npm install -g pnpm@11.20.0'");
+    expect(run.stdout).toContain("run 'corepack enable' (Node 22 or 24), or run 'npm install -g pnpm@11.20.0'");
     expect(run.status).toBe(1);
   });
 

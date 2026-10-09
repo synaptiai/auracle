@@ -68,7 +68,7 @@ flowchart TB
     FS["FreeScout adapter<br/>posts to a FreeScout instance"]
   end
 
-  PERSON(["A person<br/>reads the parked draft,<br/>then approves or rejects it"])
+  PERSON(["A person<br/>reads the parked draft,<br/>then approves it"])
   APPR["approve<br/>the approval command"]
 
   subgraph RELAYD["relay: one daemon sends"]
@@ -218,7 +218,7 @@ flowchart LR
 | IMAPPOLL | Accepts messages from a mailbox. |
 | CONSUMERD | Walks each run through the steps. |
 | RELAYD2 | Sends the actions the outbox holds. |
-| CONSOLED | Serves the operator console, where a reviewer approves or rejects a parked action. It approves through the same path as the approve command. |
+| CONSOLED | Serves the operator console, where a reviewer approves a parked action, or closes, sends back or snoozes its case. It approves through the same path as the approve command. |
 | RUNTIME | The components that handle one ticket. The consumer calls all but the first. |
 | ENQ2 | Turns one arriving message into one queue row, and routes it to its conversation. |
 | CLASSIFY | Picks the intent. It samples nine times, so disagreement is visible. |
@@ -327,6 +327,9 @@ erDiagram
   CONVERSATION ||..o{ TURN : "holds"
   CONVERSATION ||..o{ INTAKE : "queues"
   CONVERSATION ||..o{ RUN : "owns"
+  TURN ||..o{ INTAKE : "arrives as"
+  TURN ||..o{ RUN : "is answered by"
+  TURN ||..o{ DOCUMENT_RERUN : "is asked again by"
   RUN ||..o{ STEP_JOURNAL : "journals"
   RUN ||..o{ OUTBOX : "queues"
   TICKET_EPOCH ||..o{ RUN : "fences"
@@ -351,7 +354,7 @@ erDiagram
 | SCHEMA_VERSION | Each migration the runner applies. `src/ledger/migrate.ts` creates this one. |
 | REVIEWER | The roster of people the console serves. |
 | CASE_HOLD | The reviewer who holds the reservation of a parked run now, and when the reservation lapses. |
-| CASE_HOLD_EVENT | Each take, handover, release, send and lapse of a reservation. |
+| CASE_HOLD_EVENT | Each take, handover, release, send, close, send-back and lapse of a reservation. |
 | DOCUMENT_RERUN | A document a reviewer writes from a case, and the new attempt it asks for. |
 | GATE_LATEST | The most recent gate reading for each product and intent. |
 

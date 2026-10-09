@@ -112,9 +112,9 @@ describe('fencedInsert with an explicit clock', () => {
   });
 
   // A run inserted already terminal never transitions, so the insert is the
-  // only chance to stamp its finish. The clock's finish used to be dropped
-  // here in silence, and the latency reader then labelled the row
-  // `unstamped` and left it out of the service distribution.
+  // only chance to stamp its finish. If the insert drops the clock's finish
+  // in silence, the latency reader labels the row `unstamped` and leaves it
+  // out of the service distribution.
   it('stamps the finish on a run inserted already terminal', async () => {
     const run = makeRun({ state: 'resolved', enqueuedAt: ARRIVED });
     expect(
@@ -145,8 +145,8 @@ describe('fencedInsert with an explicit clock', () => {
     expect(await runCount()).toBe(0);
   });
 
-  // A Date that carries no time used to clear the guards, open the
-  // transaction, upsert the epoch and then throw a bare RangeError.
+  // The guards must refuse a Date that carries no time. Past them, it would
+  // open the transaction, upsert the epoch and then throw a bare RangeError.
   it('refuses a Date that carries no time and stores nothing', async () => {
     const run = makeRun();
     await expect(
@@ -309,9 +309,9 @@ describe('fencedTransition with an explicit clock', () => {
   });
 
   // A transition that asks for a non-terminal state and carries no outbox
-  // record can never stamp a finish, so a clock there is a caller bug. It
-  // used to be order-checked and then discarded in silence, while the insert
-  // side refused the matching case. The two sides read as one decision now.
+  // record can never stamp a finish, so a clock there is a caller bug. The
+  // insert side refuses the matching case, and the two sides read as one
+  // decision. A clock order-checked and then discarded would hide the bug.
   it('refuses a clock on a non-terminal transition that carries no outbox', async () => {
     const run = await seeded();
     let caught: unknown;
@@ -542,12 +542,12 @@ describe('fencedTransition with an explicit clock', () => {
     );
   });
 
-  // The clock is now checked before wrong_state and before stale_epoch, and
-  // that ordering is the contract. It changed with the liveness fix: a
-  // caller's bad clock used to be reported only on the paths that reached
-  // the terminal branch, so a seeder loop hitting wrong_state never learned
-  // its clock was garbage, and the same garbage threw on the next run that
-  // did reach it. A refusal now happens on every path, before any write.
+  // The clock is checked before wrong_state and before stale_epoch, and that
+  // ordering is the contract. A check only on the paths that reach the
+  // terminal branch hides a caller's bad clock. A seeder loop hitting
+  // wrong_state never learns its clock is garbage, and the same garbage
+  // throws on the next run that does reach it. So a refusal happens on every
+  // path, before any write.
   it('refuses a bad clock even when the state is wrong', async () => {
     const run = await seeded();
     await expect(

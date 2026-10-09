@@ -81,10 +81,10 @@ describe('renderHistory (DEC-37)', () => {
   });
 
   it('bounds that one turn too, so the ceiling is a ceiling', () => {
-    // The newest turn used to be emitted whole whatever its size, so a single
-    // pasted log entered every later prompt of the conversation. No ingress
-    // caps one message: the webhook bounds the whole body and the mail path
-    // bounds nothing (DEC-25).
+    // A newest turn emitted whole, whatever its size, lets a single pasted
+    // log enter every later prompt of the conversation. No ingress caps one
+    // message: the webhook bounds the whole body and the mail path bounds
+    // nothing (DEC-25).
     const huge = turn(9, 'y'.repeat(HISTORY_MAX_CHARS * 4));
 
     const rendered = renderHistory([huge]);

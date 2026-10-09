@@ -4,8 +4,8 @@
 // class it raises. That is half the claim. The other half is what the walk
 // does with one, and only a case that calls `coordinateTicket` can say: the
 // catch is in the sequencer, and so is the `return await` the catch depends
-// on. A review pass replaced both `return await` with `return` and left every
-// suite green, because nothing here went through the sequencer at all.
+// on. Replacing both `return await` with `return` left every other suite
+// green, because nothing else goes through the sequencer at all.
 //
 // Pure, against a ledger stub that answers rather than refuses. The stub is
 // not the ledger and makes no claim to be one — `coordinator.db.test.ts` owns

@@ -279,9 +279,9 @@ describe('the latency report (V2 open item 7)', () => {
     const p = report.partitions[0]!;
     expect(p.wait.unordered).toBe(1);
     expect(p.wait.unmeasured).toBe(0);
-    // The two good runs still produce a report. One bad row used to abort it
-    // for every partition, so an operator investigating a busy queue got
-    // nothing at all.
+    // The two good runs still produce a report. One bad row must not abort it
+    // for every partition. An operator investigating a busy queue would then
+    // get nothing at all.
     expect(p.wait.count).toBe(2);
     expect(p.wait.p50Ms).toBe(2 * MINUTE);
     expect(p.wait.maxMs).toBe(4 * MINUTE);

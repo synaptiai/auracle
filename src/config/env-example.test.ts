@@ -6,11 +6,10 @@
 // forgets it. Nothing would fail: the process would read `undefined` and
 // take a default nobody chose.
 //
-// The source is parsed, not matched, because this repository has been caught
-// by pattern-matched guards before. But parsing precisely is not enough
-// either. The first version of this file resolved `process.env.NAME`,
-// `process.env['NAME']` and the two shared helpers, and it passed against an
-// example missing twelve variables:
+// The source is parsed, not matched, because a pattern can misread a string
+// or a comment and miss a read. But parsing precisely is not enough either.
+// A scan that resolves only `process.env.NAME`, `process.env['NAME']` and the
+// two shared helpers passes against an example that lacks twelve variables:
 //
 //   - `src/config/action-profile.ts` reads `env['ACTION_CLASS']` through a
 //     parameter, not `process.env` directly.
@@ -61,10 +60,12 @@ const NOT_A_VARIABLE = new Set([
 /**
  * Variables no process reads, which the example still has to carry.
  *
- * The compose files interpolate the first five: compose is a shell, not a
- * program. `AURACLE_IMAGE` selects the tag the dev stack runs,
- * `COMPOSE_PROFILES` selects its optional services, and the two passwords
- * are the ledger's and the readers' role's logins in the stack.
+ * The compose files interpolate the first nine: compose is a shell, not a
+ * program. The three ports are where the test stack publishes its servers.
+ * `AURACLE_IMAGE` selects the tag the dev stack runs, `COMPOSE_PROFILES`
+ * selects its optional services, and the two passwords are the ledger's and
+ * the readers' role's logins in the stack. The FreeScout stack creates its
+ * administrator from the two `FREESCOUT_ADMIN_` names.
  * The rest are read by `src/test-support/`, which the scan skips because a
  * harness is not something an adopter configures — but an adopter running
  * the suite still needs to know they exist.
@@ -75,6 +76,10 @@ const NOT_READ_BY_A_PROCESS = new Set([
   'COMPOSE_PROFILES',
   'AURACLE_READER_PASSWORD',
   'AURACLE_DB_PASSWORD',
+  'AURACLE_SMTP_PORT',
+  'AURACLE_IMAP_PORT',
+  'FREESCOUT_ADMIN_EMAIL',
+  'FREESCOUT_ADMIN_PASSWORD',
   'AURACLE_TEST_DB_REUSE',
   'AURACLE_TEST_MAIL_REUSE',
   'AURACLE_TEST_ALLOW_REMOTE_DB',
@@ -287,9 +292,9 @@ describe('.env.example', () => {
   });
 
   it('reaches the reads no simple rule finds', () => {
-    // The three shapes that defeated the first version of this guard. Each
-    // is asserted by name, so narrowing the scan later fails here rather
-    // than quietly reducing what it covers.
+    // The shapes that a scan of direct reads alone misses. Each is asserted
+    // by name, so narrowing the scan later fails here rather than quietly
+    // reducing what it covers.
     expect([...PRECISE.keys()]).toContain('AURACLE_ALLOW_COMPOSE_DEFAULT'); // a constant
     expect([...PRECISE.keys()]).toContain('ACTION_CLASS'); // an `env` parameter
     expect([...PRECISE.keys()]).toContain('SMTP_PORT'); // a helper calling a helper
@@ -334,6 +339,7 @@ describe('.env.example', () => {
     const reachable = [
       readFileSync(join(REPO_ROOT, 'docker-compose.yml'), 'utf8'),
       readFileSync(join(REPO_ROOT, 'docker-compose.dev.yml'), 'utf8'),
+      readFileSync(join(REPO_ROOT, 'docker-compose.freescout.yml'), 'utf8'),
       ...sourceFiles(join(REPO_ROOT, 'src', 'test-support'))
         .map((file) => readFileSync(join(REPO_ROOT, file), 'utf8')),
     ].join('\n');
@@ -341,7 +347,7 @@ describe('.env.example', () => {
       expect(known, `${name} is hatched but not documented`).toContain(name);
       expect(reachable, `${name} is hatched and nothing reads it any more`).toContain(name);
     }
-    expect(NOT_READ_BY_A_PROCESS.size).toBeLessThan(13);
+    expect(NOT_READ_BY_A_PROCESS.size).toBeLessThan(17);
   });
 
   it('holds no name that is obviously not a variable', () => {

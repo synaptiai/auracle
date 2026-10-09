@@ -73,11 +73,10 @@ def covered(path):
 def file_mode(paths):
     """Blocks inside the corpus, warns outside it.
 
-    The guard used to fail a pull request for any hit in any changed text
-    file. A document or a test that mentioned a plausible identifier failed
-    the whole run, so the rule fired where it was not the rule. Outside the
-    corpus a hit is still printed -- a reader should see it -- but it does
-    not gate the change.
+    The rule covers the corpus only. A document or a test outside it can
+    mention a plausible identifier. A block there fails the whole run where
+    the rule does not apply. Outside the corpus a hit is printed, so a reader
+    sees it, but it does not gate the change.
     """
     failed = False
     warned = False

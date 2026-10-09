@@ -57,19 +57,18 @@ export function toIntakeTicket(
     // DEC-47: the product of the channel this message arrived on, resolved
     // here so the queue row carries it and the run that answers inherits it.
     // The channel is the source's own queue field, which the helpdesk
-    // reported and this seam used to drop. Null when it names none, or names
-    // one the catalogue does not serve.
+    // reports and this seam must carry. Null when it names none, or names one
+    // the catalogue does not serve.
     product: productForChannel(catalogue, event.ticket.queue),
     // The source's own message identity, so a repeat deduplicates and a new
     // message enqueues (DEC-24).
     //
-    // The fallback used to be the adapter's delivery id, which for mail is
-    // the IMAP UID. That was argued safe on the grounds that the idempotency
-    // key stops a duplicate effect anyway. DEC-38 ended that: the key now
-    // folds in the turn, a re-enqueued message takes a fresh turn number, and
-    // a different key means the outbox insert succeeds instead of landing
-    // superseded — so the action runs twice. A UIDVALIDITY change or a
-    // mailbox move is enough to fire it.
+    // A fallback to the adapter's delivery id, which for mail is the IMAP
+    // UID, runs the action twice. The idempotency key does not stop that.
+    // Under DEC-38 the key folds in the turn, and a re-enqueued message takes
+    // a fresh turn number. A different key means the outbox insert succeeds
+    // instead of landing superseded. A UIDVALIDITY change or a mailbox move
+    // is enough to fire it.
     //
     // So the fallback is derived from the message itself, which survives a
     // redelivery under a new delivery id.

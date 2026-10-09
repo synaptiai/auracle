@@ -7,21 +7,21 @@
 // this is an arity property of each call site, which a reader can check.
 //
 // The rule is stated over every shipped module and not only over the four
-// entry points. A guard that walked out from the daemons alone missed
+// entry points. A guard that walked out from the daemons alone would miss
 // src/approval/approve.ts, which is the second of the two non-test callers
 // of the fenced path and reaches a terminal state: no daemon imports it, so
-// no daemon closure contains it, and a clock added there would have passed.
-// A new entry point would have been missed the same way.
+// no daemon closure contains it, and a clock added there would pass. A new
+// entry point would be missed the same way.
 //
-// The daemon closure is still asserted, because the acceptance criterion
-// names those four processes. It is now the narrower of two statements
-// rather than the only one.
+// The daemon closure is asserted too, because those four processes write
+// production rows. It is the narrower of the two statements.
 //
-// The guard reads each module with the TypeScript compiler. It used to strip
-// strings and comments with patterns, and a double-quoted string holding an
-// apostrophe paired with the next single quote on its line, which blanked a
-// call between them. A parsed tree has no such pairing to get wrong: a string
-// is a node and a comment is trivia, and neither is a call.
+// The guard reads each module with the TypeScript compiler, not with
+// patterns. A pattern that strips strings and comments can pair two quotes
+// wrongly: the apostrophe in a double-quoted string, and the next single
+// quote on its line. That blanks any call between them. A parsed tree has no
+// such pairing to get wrong: a string is a node and a comment is trivia, and
+// neither is a call.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
@@ -86,9 +86,9 @@ function specifierText(node: ts.Node | undefined): string | undefined {
  * commented-out import is not an import, and it is not followed.
  *
  * A specifier built at runtime, `import(path)` or `` import(`./${name}.js`) ``,
- * names no module the source states. It used to be dropped, and the module it
- * reached left the closure with nothing to say so. It is unreadable now, and
- * the cases below refuse it.
+ * names no module the source states. A walker that drops it lets the module
+ * it reaches leave the closure with nothing to say so. So it is unreadable,
+ * and the cases below refuse it.
  */
 function relativeSpecifiers(source: ts.SourceFile): { relative: string[]; unreadable: string[] } {
   const found: string[] = [];
@@ -129,10 +129,10 @@ const COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
  * The relative imports of a module, resolved as the compiler resolves them,
  * and each one that resolves to no source file.
  *
- * The walker used to swap `.js` for `.ts` and keep the result if a file was
- * there. A `.tsx` source, a directory or a mistyped path each dropped out of
- * the closure and took every module behind it along. The compiler's own
- * resolution answers instead, and an import it cannot resolve is refused.
+ * The walker uses the compiler's own resolution, and refuses an import it
+ * cannot resolve. A walker that swaps `.js` for `.ts` keeps the result only
+ * when a file is there. It drops a `.tsx` source, a directory or a mistyped
+ * path from the closure, with every module behind it.
  */
 function importsOf(file: string): { resolved: string[]; unresolved: string[] } {
   const { relative: specifiers, unreadable } = relativeSpecifiers(parseSource(file));
@@ -180,9 +180,9 @@ function shippedModules(dir: string, acc: string[] = []): string[] {
 /**
  * Every local name bound to `name` in `source`, including an alias.
  *
- * `import { fencedInsert as fi }` used to defeat the scan completely: the
- * arity search built its pattern from the literal name, so a call written
- * `fi(pool, run, null, clock)` was invisible and the guard reported no
+ * An arity search built from the literal name misses
+ * `import { fencedInsert as fi }` completely. A call written
+ * `fi(pool, run, null, clock)` is invisible to it, and the guard reports no
  * offender. An alias is a rename, not an escape. So is a destructure of a
  * dynamic import, `const { fencedInsert: fi } = await import(…)`.
  */

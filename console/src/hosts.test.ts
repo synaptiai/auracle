@@ -33,12 +33,12 @@ describe('allowedHosts', () => {
     expect(allowedHosts('127.0.0.1', 443)).toContain('localhost');
   });
 
-  // The finding this file exists for. `CONSOLE_ALLOWED_HOSTS` used to add to
-  // the derived names, so an operator who put an authenticating proxy in
-  // front and bound the console off loopback still answered a request that
-  // reached the port directly and sent `Host: localhost:8787`. Naming a proxy
-  // has to mean the console answers that proxy and nobody else, or the
-  // variable cannot do the job the runbook gives it.
+  // The case this file exists for. `CONSOLE_ALLOWED_HOSTS` replaces the
+  // derived names. If it added to them, a direct request could still send
+  // `Host: localhost:8787`. A console behind an authenticating proxy, bound
+  // off loopback, would answer it. Naming a proxy has to mean the console
+  // answers that proxy and nobody else, or the variable cannot do the job the
+  // runbook gives it.
   it('answers only the named hosts once the operator names any', () => {
     process.env[VAR] = 'console.internal.example';
     const names = allowedHosts('0.0.0.0', 8787);
@@ -122,14 +122,13 @@ describe('the header a trusted proxy names the approver in (DEC-42)', () => {
     delete process.env[HEADER];
   });
 
-  // It used to be gated on `CONSOLE_ALLOWED_HOSTS`, on the reasoning that
-  // naming a host says a proxy is in front. It does not: the derived-name
-  // comment above lists two reasons an operator names hosts with no proxy
-  // anywhere. An operator who named hosts for one of those and also named a
-  // header got a console where anyone reaching the port named themselves.
+  // Naming a host in `CONSOLE_ALLOWED_HOSTS` does not say a proxy is in
+  // front. The comment on `allowedHosts` in hosts.ts lists three gaps that
+  // make an operator name hosts with no proxy anywhere. A header gated on the
+  // hosts would then let anyone who reaches the port name themselves.
   //
   // So the variable is not a proxy detector, and this holds that the two are
-  // now independent — the trust is stated rather than inferred.
+  // independent — the trust is stated rather than inferred.
   it('does not depend on the hosts, which do not imply a proxy', () => {
     process.env[HEADER] = 'X-Forwarded-User';
     process.env[VAR] = 'localhost:8787,[::1]:8787';

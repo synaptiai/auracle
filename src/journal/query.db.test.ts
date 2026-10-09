@@ -267,9 +267,9 @@ describe('the compose step', () => {
   });
 
   // The field's own contract says null, never the empty list, because an
-  // empty list is a clean bill of health. A member that is not a string used
-  // to be filtered out, so a list of one bad member answered the same as a
-  // run whose every cited document was inside its review window.
+  // empty list is a clean bill of health. A member that is not a string makes
+  // the whole list null rather than being filtered out. Filtered, a list of
+  // one bad member would read as a run with no stale cited document.
   it('reads a stale list holding a non-string as unrecorded, not as empty', async () => {
     const runId = await journal([
       {
@@ -283,9 +283,9 @@ describe('the compose step', () => {
 });
 
 describe('a retrieval the reader cannot take at its word', () => {
-  // Three states, and the reader used to hold two. A completed retrieve row
-  // whose `docIds` is unreadable is neither a run that never retrieved (null)
-  // nor a retrieval that found nothing (the empty list).
+  // Three states, and the reader keeps all three apart. A completed retrieve
+  // row whose `docIds` is unreadable is neither a run that never retrieved
+  // (null) nor a retrieval that found nothing (the empty list).
   it('reports an unreadable id list under its own name, not as no retrieval', async () => {
     const runId = await journal([
       { stepId: 'retrieve', status: 'done', result: { docIds: 'SYN-1', embed_model_ver: 'e1' } },
@@ -329,7 +329,8 @@ describe('a retrieval the reader cannot take at its word', () => {
 
 describe('what the reader now returns about a draft and its claims', () => {
   // DEC-40: a console may approve a parked draft, and an approver who cannot
-  // read the reply cannot approve it. This used to be a boolean.
+  // read the reply cannot approve it. So the reader returns the draft itself,
+  // not only whether one exists.
   it('returns the parked draft, and says when there is none', async () => {
     const withDraft = await journal([
       {

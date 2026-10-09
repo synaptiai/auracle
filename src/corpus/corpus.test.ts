@@ -356,10 +356,9 @@ describe('buildCorpusTickets turn structure', () => {
     expect(stats.droppedOrphanAgentMessages).toBe(0);
   });
 
-  // M5: the previous fixture put the only agent message between turns 1 and
-  // 2, where "the last emitted turn" and "the first emitted turn" are the
-  // same record. Attaching to emitted[0] passed every case. Three turns
-  // separate the two.
+  // With the only agent message between turns 1 and 2, "the last emitted
+  // turn" and "the first emitted turn" are the same record, and a join that
+  // attached to emitted[0] would pass. Three turns separate the two.
   it('attaches a reply to the turn it answered, not to the first turn', async () => {
     const third = LATE_FOLLOWUP_EMAIL
       .replace('Date: Tue, 7 Jan 2025 10:00:00 +0000', 'Date: Tue, 7 Jan 2025 12:00:00 +0000')
@@ -382,7 +381,7 @@ describe('buildCorpusTickets turn structure', () => {
     expect(byTurn.get(3)?.agent_reply).toBeUndefined();
   });
 
-  // M7: no case used two agent messages, so removing the join was invisible.
+  // Two agent messages, so a case fails when the join is removed.
   it('joins two replies that both precede the next customer turn', async () => {
     const second = AGENT_REPLY_EMAIL
       .replace('Date: Tue, 7 Jan 2025 09:00:00 +0000', 'Date: Tue, 7 Jan 2025 09:30:00 +0000')
@@ -400,8 +399,8 @@ describe('buildCorpusTickets turn structure', () => {
     expect(reply.indexOf('replacement')).toBeLessThan(reply.indexOf('Thursday'));
   });
 
-  // M1: droppedEmptyMessages was never observed non-zero, so a hardcoded 0
-  // satisfied every assertion about it.
+  // droppedEmptyMessages is non-zero here, so a hardcoded 0 cannot satisfy
+  // the assertion about it.
   it('drops a message with no body text and counts it', async () => {
     const empty = LATE_FOLLOWUP_EMAIL.replace('Still nothing. Can you check again?', '   ');
     const { events } = await collectEvents([
@@ -413,7 +412,7 @@ describe('buildCorpusTickets turn structure', () => {
     expect(tickets.map((t) => t.turn_number)).toEqual([1]);
   });
 
-  // M2: mail ingress hardcodes author 'customer', so a system message is
+  // Mail ingress hardcodes author 'customer', so a system message is
   // unreachable through the poller. The port allows one, so the event is
   // built directly against the port's own shape.
   it('drops a message from neither party and counts it', async () => {
@@ -578,10 +577,10 @@ describe('buildCorpusTickets turn structure', () => {
     expect(tickets).toHaveLength(1);
   });
 
-  // A message first seen under a thread that is then discarded used to claim
-  // its id for good, so the surviving copy in a real thread was dropped as a
-  // duplicate. A customer turn vanished, and the record showed only a
-  // duplicate count.
+  // A message first seen under a thread that is then discarded must not claim
+  // its id for good. If it did, the surviving copy in a real thread would be
+  // dropped as a duplicate. A customer turn would vanish, and the record would
+  // show only a duplicate count.
   it('does not let a discarded thread claim a message id', async () => {
     const { events } = await collectEvents([{ sourceId: '1', rfc5322Text: SIMPLE_TEXT_EMAIL }]);
     const seed = events[0]!;
@@ -633,8 +632,8 @@ describe('buildCorpusTickets turn structure', () => {
   // to zero on any ')' leaves ' GMT' behind, so a date that states no zone at
   // all is accepted and parsed against the exporter host's clock. Nesting the
   // comment at the end of the header does not discriminate: both versions
-  // then produce identical output, which is how the first version of this
-  // case passed against the bug it was written for.
+  // then produce identical output, so a case built that way passes against
+  // the bug it is written for.
   it('does not let a nested comment leave a zone name behind', async () => {
     const nested = LATE_FOLLOWUP_EMAIL.replace(
       'Date: Tue, 7 Jan 2025 10:00:00 +0000',
@@ -659,9 +658,9 @@ describe('buildCorpusTickets turn structure', () => {
     expect(buildCorpusTickets(events).stats.orderFallbackThreads).toBe(0);
   });
 
-  // A message this thread itself discarded used to claim its id, so the same
-  // message positioned as a genuine reply elsewhere was dropped and that turn
-  // lost its agent half (DEC-37).
+  // A message this thread itself discarded must not claim its id. If it did,
+  // the same message positioned as a genuine reply elsewhere would be
+  // dropped. That turn would lose its agent half (DEC-37).
   it('does not let a message its own thread discarded claim an id', async () => {
     const { events } = await collectEvents([
       { sourceId: '1', rfc5322Text: SIMPLE_TEXT_EMAIL },
@@ -671,8 +670,8 @@ describe('buildCorpusTickets turn structure', () => {
     // Thread A opens with the agent message, which no turn can carry, and
     // then holds a customer turn — so the thread SURVIVES while that one
     // message is discarded. A thread that produced nothing exits before the
-    // line under test, which is why the first version of this case passed
-    // against the bug it was written for.
+    // line under test, so a case built on one passes against the bug it is
+    // written for.
     const root = 'orphan-root@example.test';
     const orphanAgent: NormalizedEvent = {
       ...agent, sourceId: 'orphan-agent',

@@ -151,13 +151,35 @@ export function projectSource(file: string, text?: string): ts.SourceFile {
     rootNames: [file], options: projectOptions, host, ...(lastProject === undefined ? {} : { oldProgram: lastProject }),
   });
   lastProject = program;
+  return checkedSource(program, file, program.getTypeChecker());
+}
+
+/**
+ * Many modules, each as `projectSource` reads it from the disk, inside one
+ * program of the whole project with one checker. A scan of every test file
+ * builds one program instead of one for each file.
+ */
+export function projectSources(files: readonly string[]): Map<string, ts.SourceFile> {
+  projectOptions ??= {
+    ...ts.parseJsonConfigFileContent(
+      ts.readConfigFile(join(REPO_ROOT, 'tsconfig.json'), ts.sys.readFile).config, ts.sys, REPO_ROOT,
+    ).options,
+    noEmit: true,
+  };
+  const program = ts.createProgram({ rootNames: [...files], options: projectOptions });
+  const checker = program.getTypeChecker();
+  return new Map(files.map((file) => [file, checkedSource(program, file, checker)]));
+}
+
+/** The program's source for `file`, refused when it does not parse. */
+function checkedSource(program: ts.Program, file: string, checker: ts.TypeChecker): ts.SourceFile {
   const source = program.getSourceFile(file);
   if (source === undefined) throw new Error(`${file} is not part of the program`);
   const errors = program.getSyntacticDiagnostics(source);
   if (errors.length > 0) {
     throw new Error(`${file} does not parse: ${ts.flattenDiagnosticMessageText(errors[0]!.messageText, ' ')}`);
   }
-  projectCheckers.set(source, program.getTypeChecker());
+  projectCheckers.set(source, checker);
   return source;
 }
 

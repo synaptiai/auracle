@@ -7,7 +7,7 @@
 import type { AddressInfo } from 'node:net';
 import { connect } from 'node:net';
 import type { Server } from 'node:http';
-import { request } from 'node:http';
+import { createServer, request } from 'node:http';
 import { createHash } from 'node:crypto';
 
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
@@ -434,13 +434,38 @@ async function startGuarded(
   readBack?: string,
   ledgerReply = false,
 ): Promise<string> {
-  const probe = createConsole(d, '.root{}', {
-    allowedHosts: [], readBack: null, states: [...STATES], ledger: LEDGER, ledgerReply,
-    sendHoldMs: SEND_HOLD_MS,
+  // The allowed hosts name the port, so a probe finds a free one first. It is
+  // closed before the console binds it, and another process can take the
+  // port in between. A bind that fails then tries a fresh port, rather than
+  // leaving the case to time out.
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await bindGuarded(d, await freeLoopbackPort(), namedProxy, readBack, ledgerReply);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE' || attempt === 5) throw error;
+    }
+  }
+}
+
+/** A loopback port that was free a moment ago, once its probe has closed. */
+async function freeLoopbackPort(): Promise<number> {
+  const probe = createServer();
+  await new Promise<void>((resolve, reject) => {
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', resolve);
   });
-  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
   const { port } = probe.address() as AddressInfo;
-  probe.close();
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  return port;
+}
+
+async function bindGuarded(
+  d: ConsoleDeps,
+  port: number,
+  namedProxy: string | undefined,
+  readBack: string | undefined,
+  ledgerReply: boolean,
+): Promise<string> {
   const server = createConsole(d, '.root{}', {
     // Derived through `allowedHosts` when a proxy is named, so this harness
     // builds the same set `main.ts` would rather than restating it.
@@ -456,8 +481,14 @@ async function startGuarded(
     ledgerReply,
     sendHoldMs: SEND_HOLD_MS,
   });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
   opened.push(server);
-  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
   allowedPort = port;
   return `http://127.0.0.1:${port}`;
 }
@@ -614,9 +645,9 @@ describe('the console routes', () => {
 });
 
 
-// The two attacks a review reproduced against the first version of this
-// server. Both returned success then: a cross-site POST was approved, and a
-// request carrying an attacker's Host was answered.
+// Two attacks a server without these checks answers with success: a
+// cross-site POST that approves a reply, and a request that carries an
+// attacker's Host.
 //
 // Neither is stopped by binding to loopback, which is what the runbook
 // claimed. The approval sends a customer reply and a sent reply cannot be
@@ -833,10 +864,10 @@ describe('the console against a page it did not serve', () => {
   });
 
   // A console behind an authenticating proxy answers the proxy and nobody
-  // else. The allowlist used to add the proxy's name to the derived loopback
-  // names rather than replacing them, so a request that reached the port
-  // directly passed by claiming to be loopback — and the approval behind it
-  // sends a customer reply that cannot be recalled (DEC-12, DEC-14).
+  // else. The proxy's name replaces the derived loopback names. If it joined
+  // them, a request that reaches the port directly would pass by claiming to
+  // be loopback. The approval behind it sends a customer reply that cannot be
+  // recalled (DEC-12, DEC-14).
   it('refuses a direct approval once the operator names a proxy', async () => {
     const approved: string[] = [];
     await startGuarded(
@@ -943,9 +974,9 @@ describe('what a fault and a refusal tell the operator', () => {
     }
   });
 
-  // Refused, not failed. It used to reach the catch-all and answer 500 with
-  // the bound's own sentence, which reports the console as broken by a
-  // request it correctly declined.
+  // Refused, not failed. A 500 from the catch-all would carry the bound's own
+  // sentence. It would report the console as broken by a request it
+  // correctly declined.
   it('answers an oversized approval form with a refusal', async () => {
     const approved: string[] = [];
     const base = await startGuarded(deps({
@@ -1203,8 +1234,8 @@ describe('what a fault and a refusal tell the operator', () => {
   // An approval that answered anything else wrote no approver to the ledger,
   // and the log must not read as though one were written.
   //
-  // A claim and a record cannot differ here, which is what used to need its
-  // own case: the gate refuses a value DEC-42 would reduce to
+  // A claim and a record cannot differ here, so this file needs no case for
+  // a difference. The gate refuses a value DEC-42 would reduce to
   // `unattributed`, so the reviewer reaching this route is always a name the
   // ledger keeps. `reviewer.test.ts` holds that refusal.
   it('names no recorded approver when the approval did not happen', async () => {
@@ -1699,8 +1730,8 @@ describe('the evidence states that are not a list of claims', () => {
     expect(html).toContain('could not be read');
   });
 
-  // Two different facts, and the more alarming one used to render as the
-  // other: a reply citing a document the retriever never returned.
+  // Two different facts. The more alarming one, a reply citing a document
+  // the retriever never returned, must not render as the other.
   it('separates a document that left the index from one never retrieved', async () => {
     const html = await caseWith({
       draftBody: 'a reply', parkedAction: false, documentsMalformed: false,
@@ -6539,8 +6570,8 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
     expect(draftPath).toContain('Approving sends the helpdesk draft to the customer.');
   });
 
-  // A read that failed is not a write that may have committed. The 500 used
-  // to say the save might have landed about a fault that never reached one.
+  // A read that failed is not a write that may have committed. The 500 must
+  // not say the save might have landed about a fault that never reached one.
   it('says nothing was saved when the failure was a read', async () => {
     const base = await capable({
       readRun: async () => { throw new Error('the ledger did not answer'); },
@@ -10018,9 +10049,9 @@ describe('the way back from a conversation', () => {
   });
 });
 
-// The branches a review named as untested. Each case fails if its branch is
-// removed or turned the wrong way.
-describe('the branches a review named as untested', () => {
+// Branches no other case reaches. Each case fails if its branch is removed or
+// turned the wrong way.
+describe('the branches no other case reaches', () => {
   const hold = (reviewer: string) => ({
     reviewer, takenAt: new Date(Date.now() - 60_000), lapsesAt: new Date(Date.now() + 600_000),
   });
