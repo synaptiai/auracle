@@ -1,8 +1,8 @@
 // The stylesheet against the reviewer design's tokens (issue #100).
 //
-// The handoff fixes these values as final. A pure read of the stylesheet
-// string, so a drift in a token or a lost accessibility rule fails here
-// rather than in a screenshot nobody compares.
+// The reviewer design fixes these values as final. A pure read of the
+// stylesheet string, so a drift in a token or a lost accessibility rule fails
+// here rather than in a screenshot nobody compares.
 import { describe, expect, it } from 'vitest';
 
 import { CONSOLE_CSS } from './css.js';
@@ -161,7 +161,7 @@ function rule(selector: string, at: string | null = null): ReadonlyMap<string, s
   return found[0]!.declarations;
 }
 
-/** The handoff's token table, verbatim. */
+/** The reviewer design's token table, verbatim. */
 const THEME_FREE = {
   '--s1': '4px', '--s2': '8px', '--s3': '12px', '--s4': '16px',
   '--s5': '24px', '--s6': '32px', '--s7': '48px',
@@ -207,8 +207,8 @@ describe('the design tokens', () => {
     }
   });
 
-  // The handoff keeps the light palette as it stands. Its depth tokens are
-  // white hairlines, which vanish on a white panel, so the light theme
+  // The reviewer design keeps the light palette as it stands. Its depth tokens
+  // are white hairlines, which vanish on a white panel, so the light theme
   // redefines every depth token rather than inheriting an invisible one.
   it('overrides the palette and every depth token in the light theme', () => {
     const light = rule('.root[data-theme="light"]');
@@ -485,9 +485,9 @@ describe('the type', () => {
   });
 });
 
-// Issue #154. Each value below is the handoff's: its type table, and the
-// computed style of its own controls on the case screen.
-describe('the handoff, where the console had drifted from it', () => {
+// Issue #154. Each value below is the reviewer design's: its type table, and
+// the computed style of its own controls on the case screen.
+describe('the reviewer design, where the console had drifted from it', () => {
   it('sets the page title at 21px, 600 and -.015em', () => {
     const title = rule('.hdt');
     expect(title.get('font-size')).toBe('21px');
@@ -511,7 +511,7 @@ describe('the handoff, where the console had drifted from it', () => {
     expect(value.get('letter-spacing')).toBe('normal');
   });
 
-  it('draws a secondary button as the handoff does: a ring, muted text, no fill', () => {
+  it('draws a secondary button as the reviewer design does: a ring, muted text, no fill', () => {
     const button = rule('.btn');
     expect(button.get('background')).toBe('transparent');
     expect(button.get('color')).toBe('var(--mut)');

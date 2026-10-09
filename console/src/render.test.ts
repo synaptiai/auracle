@@ -255,9 +255,9 @@ describe('an escalation reason on an operator surface', () => {
 // surrogate pair.
 describe('initialsOf', () => {
   it('takes the first character of each of the first two words, upper-cased', () => {
-    expect(initialsOf('Ida Lindqvist')).toBe('IL');
-    expect(initialsOf('ida lindqvist')).toBe('IL');
-    expect(initialsOf('Åsa Berg Nyström')).toBe('ÅB');
+    expect(initialsOf('Ida Synthetic')).toBe('IS');
+    expect(initialsOf('ida synthetic')).toBe('IS');
+    expect(initialsOf('Åsa Board Member')).toBe('ÅB');
   });
 
   // Some letters upper-case to two. The avatar holds one per word.
@@ -269,8 +269,8 @@ describe('initialsOf', () => {
   // avatar shows the letter a reader sees, and a word that opens with a mark
   // alone gives no initial.
   it('takes the first visible character of each word', () => {
-    const decomposed = 'A\u030asa Nystro\u0308m';
-    expect(initialsOf(decomposed)).toBe('\u00c5N');
+    const decomposed = 'A\u030asa Synthe\u0301tic';
+    expect(initialsOf(decomposed)).toBe('\u00c5S');
     expect(initialsOf('ops \u0301')).toBe('O');
     expect(initialsOf('\u0301')).toBe('');
   });
@@ -280,12 +280,12 @@ describe('initialsOf', () => {
   });
 
   it('counts a character outside the basic plane as one', () => {
-    const name = '\u{1D4D0}da Lind';
+    const name = '\u{1D4D0}da Synthetic';
     const initials = initialsOf(name);
-    expect(Array.from(initials)).toEqual(['\u{1D4D0}', 'L']);
+    expect(Array.from(initials)).toEqual(['\u{1D4D0}', 'S']);
   });
 
   it('ignores the whitespace around and between words', () => {
-    expect(initialsOf('  Ida   Lindqvist  ')).toBe('IL');
+    expect(initialsOf('  Ida   Synthetic  ')).toBe('IS');
   });
 });

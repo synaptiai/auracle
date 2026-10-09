@@ -2487,8 +2487,8 @@ describe('the design notes', () => {
     ]);
   });
 
-  // The second decision: a card states what the console does, and names no
-  // code it replaced. The handoff's source lines named files and functions.
+  // The second decision: a card states what the console does, and names no code
+  // it replaced. The reviewer design's source lines named files and functions.
   it('names no replaced code on any card', async () => {
     const base = await startGuarded(deps());
     const html = await (await fetch(base + '/notes')).text();
@@ -2832,9 +2832,9 @@ describe('the knowledge screen (DEC-50)', () => {
     expect(html).toContain('2026-09-06 to 2026-09-20 UTC');
   });
 
-  // Issue #154: the handoff colours each figure by the verdict its label
-  // names: a gap and a waiting count warn, a lapsed review is hot, and what
-  // the team wrote and what it now answers is a good outcome.
+  // Issue #154: the reviewer design colours each figure by the verdict its
+  // label names: a gap and a waiting count warn, a lapsed review is hot, and
+  // what the team wrote and what it now answers is a good outcome.
   it('colours each figure by the verdict its card names', async () => {
     const html = await knowledgePage({ readKnowledge: async () => REPORT });
     const colours = [...html.matchAll(/<span class="metric" style="color:var\(--([a-z]+)\)">/g)].map((m) => m[1]);
@@ -4213,7 +4213,7 @@ describe('what a refused request is told', () => {
   });
 });
 
-describe('the queue a reviewer lands on (issue #101)', () => {
+describe('the queue a reviewer lands on', () => {
   const waitingRun = (runId: string, ticketId: string, over: Record<string, unknown>) => ({
     runId, ticketId, state: 'awaiting_approval', promptVer: 'p1', ...ROW,
     riskTier: 'medium',
@@ -4246,8 +4246,8 @@ describe('the queue a reviewer lands on (issue #101)', () => {
     expect(html).toMatch(/<a class="item" href="\/case\//);
   });
 
-  // Issue #154: the risk group's rows carry the risk colour down their edge,
-  // as the handoff draws them, and every row's wait reads in the waiting
+  // Issue #154: the risk group's rows carry the risk colour down their edge, as
+  // the reviewer design draws them, and every row's wait reads in the waiting
   // colour. A row in another group carries no risk edge.
   it('marks a risk row, and only a risk row, and puts every wait in the waiting colour', async () => {
     const base = await startGuarded(deps({ listApprovals: async () => queue() }));
@@ -5279,7 +5279,7 @@ describe('what the gate panel says when a threshold decided nothing', () => {
 // The case a reviewer decides on (issue #102). One page per run, holding the
 // customer's words, the reply and its documents, why it reached a person, the
 // two gates, the steps and the approval.
-describe('the case a reviewer decides on (issue #102)', () => {
+describe('the case a reviewer decides on', () => {
   /** The markup of the card whose label is `label`, up to the next card. */
   function cardOf(html: string, label: string): string {
     const start = html.indexOf(label);
@@ -5930,9 +5930,9 @@ describe('the rail', () => {
     }
 
     it('names the reviewer this request resolved to, with their initials', async () => {
-      const foot = await footFor('Ida Lindqvist');
-      expect(foot).toContain('>Ida Lindqvist<');
-      expect(foot).toContain('>IL<');
+      const foot = await footFor('Ida Synthetic');
+      expect(foot).toContain('>Ida Synthetic<');
+      expect(foot).toContain('>IS<');
     });
 
     // The name is rendered, so it is escaped like every other value a surface
@@ -5978,7 +5978,7 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
     const base = await capable();
     const html = await (await fetch(base + CASE)).text();
 
-    // The card, titled as the design handoff titles it, holding the reply
+    // The card, titled as the reviewer design titles it, holding the reply
     // the ledger would send.
     expect(html).toContain('Your reply · editable here, sent from here');
     expect(html).toContain('the ledger holds this reply');
@@ -6932,8 +6932,8 @@ describe('DEC-51: the batch confirm and its undo', () => {
     const html = await res.text();
     expect(approve).toHaveBeenCalledWith(CLEAN_A, REVIEWER, digestOf(FIRST_REPLY));
     expect(approve).toHaveBeenCalledWith(CLEAN_B, REVIEWER, digestOf(SECOND_REPLY));
-    // The handoff's own words, where they are true: the ledger holds the two
-    // records pending, so nothing has been sent, and the panel says so.
+    // The reviewer design's own words, where they are true: the ledger holds
+    // the two records pending, so nothing has been sent, and the panel says so.
     expect(html).toContain('2 replies approved.');
     expect(html).toContain('The relay has sent none of them yet');
     expect(html).toContain('Nothing clean is waiting.');
@@ -6991,9 +6991,9 @@ describe('DEC-51: the batch confirm and its undo', () => {
     expect(html).toContain('The reply changed since this page was drawn');
   });
 
-  // Criterion 1's last clause, and the handoff's own words: a primary control
-  // acting on zero objects is a defect. The button is drawn only where the
-  // clean group has rows, so a queue whose clean cases are gone draws none.
+  // Criterion 1's last clause, and the reviewer design's own words: a primary
+  // control acting on zero objects is a defect. The button is drawn only where
+  // the clean group has rows, so a queue whose clean cases are gone draws none.
   // SEC-8: a single approval holds its send too, and the case it approved is
   // where a reviewer looks for the way back. Before this bar, that page said
   // "Approved. The relay performs it next." while the relay was waiting.
@@ -7238,8 +7238,8 @@ describe('DEC-51: the batch confirm and its undo', () => {
     expect(html).toContain('The relay has sent none of them yet');
   });
 
-  // The handoff's own words, and only where the ledger backs them: a batch
-  // whose records the ledger reports sent draws them.
+  // The reviewer design's own words, and only where the ledger backs them: a
+  // batch whose records the ledger reports sent draws them.
   it('calls the replies sent only where the ledger says they were', async () => {
     const approve = vi.fn().mockResolvedValue('approved');
     const base = await startGuarded(
@@ -7481,7 +7481,7 @@ describe('DEC-48: the console closes a case with no reply', () => {
     const html = await (await fetch(base + CASE + '?close=1')).text();
 
     expect(buttonInForm(html, '/close')).toBe(true);
-    // The button the handoff names, and the field the record needs.
+    // The button the reviewer design names, and the field the record needs.
     expect(html).toContain('Close, no reply');
     expect(html).toMatch(/<input[^>]*name="reason"/);
     // DEC-46: the digest of the reply this page drew, so a close from a page
@@ -9108,7 +9108,7 @@ describe('DEC-50: a reviewer writes the missing document from the case', () => {
   });
 });
 
-describe('the team screen (issue #112)', () => {
+describe('the team screen', () => {
   const HOLDER_RUN = '00000000-0000-4000-8000-0000000000c1';
   const TEAM: TeamReport = {
     today: {
@@ -9137,9 +9137,9 @@ describe('the team screen (issue #112)', () => {
     [...html.matchAll(/<span class="lbl">([^<]*)<\/span><\/header><div class="body"><span class="(metric|nofig)"(?: style="[^"]*")?>([^<]*)<\/span>/g)]
       .map((m) => [m[1]!, m[2]!, m[3]!]);
 
-  // Issue #154: the handoff's colours. How few cases reached a person and how
-  // short a case ran are good outcomes, the team's time is the accent, and
-  // the oldest wait warns.
+  // Issue #154: the reviewer design's colours. How few cases reached a person
+  // and how short a case ran are good outcomes, the team's time is the accent,
+  // and the oldest wait warns.
   it('colours each figure by the verdict its card names', async () => {
     const html = await teamPage({ readTeam: async () => TEAM });
     const colours = [...html.matchAll(/<span class="metric" style="color:var\(--([a-z]+)\)">/g)].map((m) => m[1]);
@@ -9257,7 +9257,7 @@ describe('the team screen (issue #112)', () => {
   });
 });
 
-describe('the routing screen (issue #112)', () => {
+describe('the routing screen', () => {
   const REPORT: RoutingReport = {
     products: [
       {
@@ -9389,7 +9389,7 @@ describe('the routing screen (issue #112)', () => {
 // Issue #154: the queue's sort, a reviewer preference kept as the theme is,
 // in a cookie a GET sets on its way back. So a take, a filter change and the
 // theme toggle keep it without every link carrying it.
-describe('the sort a reviewer picks (issue #154)', () => {
+describe('the sort a reviewer picks', () => {
   const waiting = (runId: string, ticketId: string, over: Record<string, unknown>) => ({
     runId, ticketId, state: 'awaiting_approval', promptVer: 'p1', ...ROW,
     riskTier: 'medium', reason: null, stepsUsed: 4, draftExternalId: 'D-1', coverage: null,
@@ -9503,7 +9503,7 @@ describe('the sort a reviewer picks (issue #154)', () => {
 //   - it re-takes a case the reviewer already holds instead of a new one;
 //   - with nothing free it claims a take;
 //   - a row's Take sits inside the batch form, so it posts the batch.
-describe('taking the next case, and a row\'s Take (issue #154)', () => {
+describe('taking the next case, and a row\'s Take', () => {
   const hold = (reviewer: string) => ({
     reviewer, takenAt: new Date(Date.now() - 60_000), lapsesAt: new Date(Date.now() + 600_000),
   });
@@ -9770,7 +9770,7 @@ describe('taking the next case, and a row\'s Take (issue #154)', () => {
   });
 });
 
-// Issue #154: the case reads as the handoff draws it. The hold and the
+// Issue #154: the case reads as the reviewer design draws it. The hold and the
 // case's place in the queue sit in the header, the bar at the foot is one row
 // of controls with the send warning under it, and each outcome that needs a
 // field opens it in the case rather than in the bar. Their failures, written
@@ -9780,7 +9780,7 @@ describe('taking the next case, and a row\'s Take (issue #154)', () => {
 //   - the position counts the whole queue rather than the filtered one, or
 //     counts a case somebody else holds;
 //   - the hold leaves the header, or the release and the takeover go with it.
-describe('the case as the handoff lays it out (issue #154)', () => {
+describe('the case as the reviewer design lays it out', () => {
   const hold = (reviewer: string) => ({
     reviewer, takenAt: new Date(Date.now() - 60_000), lapsesAt: new Date(Date.now() + 20 * 60_000),
   });
@@ -9922,10 +9922,10 @@ describe('the case as the handoff lays it out (issue #154)', () => {
   });
 });
 
-// Issue #154: the rail's knowledge badge, as the handoff draws it: the number
-// of gaps, in plain dim mono. On the pages that counted it, the queue and the
-// knowledge screen, and nowhere a count was not read.
-describe('the knowledge badge in the rail (issue #154)', () => {
+// Issue #154: the rail's knowledge badge, as the reviewer design draws it: the
+// number of gaps, in plain dim mono. On the pages that counted it, the queue
+// and the knowledge screen, and nowhere a count was not read.
+describe('the knowledge badge in the rail', () => {
   const report = (gaps: number): KnowledgeReport => ({
     from: '2026-09-06T12:00:00.000Z', to: '2026-09-20T12:00:00.000Z',
     blockedCases: 5, unreadCases: 0, pastReview: 0, teamDocuments: 0, answeredByTeam: 0,
@@ -9978,13 +9978,13 @@ describe('the knowledge badge in the rail (issue #154)', () => {
 });
 
 // Issue #154: the conversation links back to the case it was opened from, as
-// the handoff's "← case" does, and keeps that case's queue filters. Its
+// the reviewer design's "← case" does, and keeps that case's queue filters. Its
 // failures, written first:
 //   - the back link appears with no case named, or for a run that answered
 //     no turn of this conversation;
 //   - the filters fall off on the way back;
 //   - the case's links to the thread carry nothing to come back to.
-describe('the way back from a conversation (issue #154)', () => {
+describe('the way back from a conversation', () => {
   const OTHER = '99999999-9999-4999-8999-999999999999';
 
   it('links each way into the thread with the case to come back to', async () => {
@@ -10022,7 +10022,7 @@ describe('the way back from a conversation (issue #154)', () => {
 
 // Issue #154: the branches a review named as untested. Each case fails if
 // its branch is removed or turned the wrong way.
-describe('the branches a review named as untested (issue #154)', () => {
+describe('the branches a review named as untested', () => {
   const hold = (reviewer: string) => ({
     reviewer, takenAt: new Date(Date.now() - 60_000), lapsesAt: new Date(Date.now() + 600_000),
   });
@@ -10176,7 +10176,7 @@ describe('the branches a review named as untested (issue #154)', () => {
 //   - an approval carrying changed text sends the saved reply anyway;
 //   - a reply nobody touched is refused because the browser sent CRLF;
 //   - an approval with no editor on its page is refused.
-describe('an approval that would drop the editor\'s unsaved text (issue #154)', () => {
+describe('an approval that would drop the editor\'s unsaved text', () => {
   const SAVED = 'Thanks for writing in.\nWe refunded the duplicate charge.';
   const run = { ...WAITING, request: { ...REQUEST, savedReplyText: SAVED } };
   const digest = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');

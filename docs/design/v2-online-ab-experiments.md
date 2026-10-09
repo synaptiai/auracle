@@ -74,7 +74,7 @@ arm = uint64_be(SHA-256(experiment_salt + ':' + partition_key)[0..8]) mod k
 
 - The `partition_key` is the DEC-27 key. Today it is `ticket_id`
   (`partitionOf` in `src/coordinator/coordinator.ts`). If the multi-turn
-  proposal (design doc 8bd63fe0, draft DEC-35) is ratified, the key becomes
+  proposal (design doc `v2-multi-turn-conversation-state.md`, draft DEC-35) is ratified, the key becomes
   `conversation_id ?? ticket_id`. Assignment follows the same expression.
   Every turn of one conversation then sits in one arm.
 - The `experiment_salt` is a random value fixed when the person creates the
@@ -116,7 +116,7 @@ of gates. The axis under test is the only difference.
 
 ## 4. Viability gate
 
-Activation criteria, in the style of design doc 899a1565. A person sets the
+Activation criteria, in the style of design doc `v2-automatic-customer-replies.md`. A person sets the
 final numbers. The seed values follow the sensitivity math in section 4.10. No
 experiment starts until every criterion holds.
 
@@ -185,7 +185,7 @@ and the pinned versions (DEC-26) supply attribution after the readout.
 ## 7. Draft decisions for the register
 
 Numbering assumes the multi-turn drafts (DEC-34 to DEC-38, design doc
-8bd63fe0) are ratified first. The person assigns the final numbers.
+`v2-multi-turn-conversation-state.md`) are ratified first. The person assigns the final numbers.
 
 | ID | Decision | Rejected alternatives |
 |----|----------|----------------------|

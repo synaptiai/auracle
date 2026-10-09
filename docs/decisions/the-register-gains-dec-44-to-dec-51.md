@@ -18,7 +18,7 @@ enters the table in section 2.
 ## Proposed outcome
 
 Section 2 carries DEC-44 to DEC-51. The maintainer ratified the wording in
-`../design/c8b2e42f-b76d-43ef-8010-f7e8932bde48.md` on 2026-09-14.
+`../design/amendment-a-reviewer-console-four-people-work-from.md` on 2026-09-14.
 
 No row rewrites a row it supersedes. DEC-11, DEC-38, DEC-40 and DEC-42 keep
 their text, as DEC-27 kept its text when DEC-36 replaced the partition key.

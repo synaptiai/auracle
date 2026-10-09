@@ -658,7 +658,7 @@ describe('approval completion path (DEC-12 end to end)', () => {
   // parked for a person is not in flight in any consumer — so the claim must
   // leave it approvable. The count the claim returns is asserted in
   // consumer.db.test.ts, beside the tickets it does and does not move.
-  it('approves a reply parked before a consumer start (issue #113)', async () => {
+  it('approves a reply parked before a consumer start', async () => {
     const ticketId = 'T-' + randomUUID().slice(0, 8);
     const { runId, draftExternalId } = await parkReply(ticketId);
     const { rows } = await pool.query('SELECT partition FROM run WHERE run_id = $1', [runId]);

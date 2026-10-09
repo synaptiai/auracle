@@ -10,7 +10,7 @@ updated_at: 2026-09-04T00:00:00Z
 
 Status: a trace, not a proposal. It answers one question the item 7 design
 document left open. That document is
-`99dc14d7-da9d-4a92-a9dc-d7c0685c6992.md`.
+`v2-head-of-line-delay-correction.md`.
 
 The maintainer confirmed the trace on 2026-09-04. No row enters section 2, and
 section 7.1 records the same conclusion.

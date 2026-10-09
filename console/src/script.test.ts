@@ -226,7 +226,7 @@ function casePage(typedElsewhere = false, chord = true) {
   return { page, send, save, sendForm, editor, reply, reason, unsavedNote, typedNote, link, kbd };
 }
 
-describe('the send chord on a case (issue #154)', () => {
+describe('the send chord on a case', () => {
   it('presses the send once from the page, and never a second time', () => {
     const c = casePage();
     const page = run(c.page);
@@ -322,7 +322,7 @@ describe('the send chord on a case (issue #154)', () => {
   });
 });
 
-describe('a send pressed by hand (issue #154)', () => {
+describe('a send pressed by hand', () => {
   it('stops a send that would drop the editor\'s unsaved changes, and says why', () => {
     const c = casePage();
     c.reply.value = 'Thanks for writing in. We refunded it.';
@@ -401,7 +401,7 @@ describe('a send pressed by hand (issue #154)', () => {
   });
 });
 
-describe('taking a case by key or by button (issue #154)', () => {
+describe('taking a case by key or by button', () => {
   function queuePage() {
     const takeNext = new Element('form', { action: '/take', class: 'takenext' });
     const rowTake = new Element('form', { action: '/take' });

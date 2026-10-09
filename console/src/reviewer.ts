@@ -156,7 +156,7 @@ export function claimedIdentity(
   }
   // `said` is the text the console judged, not the bytes Node read: a name a
   // proxy sent as UTF-8 that the rules then refuse would otherwise reach the
-  // log as `NystrÃ¶m`, and the fix for that refusal is to check what the
+  // log as `SynthÃ¶tic`, and the fix for that refusal is to check what the
   // proxy sends.
   const said = headerText(first);
   return { claim: said, detail: 'no_value', said, lines: 1 };
@@ -166,7 +166,7 @@ export function claimedIdentity(
  * A header value as the text its sender meant.
  *
  * Node reads header bytes as Latin-1, one character per byte. A proxy that
- * sends a name as UTF-8 then arrives as `NystrÃ¶m`, and that is what the
+ * sends a name as UTF-8 then arrives as `SynthÃ¶tic`, and that is what the
  * ledger would record. So bytes that decode as UTF-8 are read as UTF-8.
  *
  * Bytes that do not decode stay as Node read them, because they are Latin-1

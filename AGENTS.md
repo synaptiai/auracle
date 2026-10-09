@@ -146,6 +146,9 @@ A bug fix follows rule 4. Its regression test fails before the fix, as
 `REVIEW.md` requires. Do not add a unit test that an end-to-end test already
 covers. Do not add a test that asserts a mock, a constant or a type.
 
+A test title says what the case proves, in plain words. It cites no issue
+number. `src/test-support/test-titles.test.ts` fails a title that does.
+
 ## Running one test
 
 The runner is Vitest. Run one file or one case:

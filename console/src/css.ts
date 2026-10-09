@@ -11,11 +11,14 @@
 // fallback. It also has to work on a host with no egress.
 //
 // The tokens, the rail, the motion and the focus ring follow the reviewer
-// design handoff (issue #100), whose values are final. The rest comes from the
-// earlier canvas under `docs/design/console-canvas/`.
-// The canvas holds five artboards and each carries its own `<style>` block, so
-// joining them into one stylesheet meant resolving four collisions. A
-// concatenation would have let the last artboard read win, silently:
+// design, whose values are final. That design is the console's visual source,
+// and it does not ship with this repository. The decision records call it the
+// design handoff. The comments below name it where a value comes from it. The
+// rest comes from the earlier canvas under `docs/design/console-canvas/`.
+// The canvas holds seven artboards, and each carries its own `<style>` block.
+// Joining them into one stylesheet means resolving the class names they share
+// with different meanings. A concatenation would let the last artboard read
+// win, silently:
 //
 //   - `.shell` is a 188px rail beside the main column on Main. On Approvals
 //     the canvas drew a queue beside a detail pane. The rail is the shell every
@@ -40,21 +43,23 @@ body { margin: 0; }
   --dim:#5b626a; --rule:#25292e; --rule2:#31363c;
   --accent:oklch(0.66 0.11 255); --warn:oklch(0.72 0.11 78); --hot:oklch(0.66 0.13 42);
   --crit:oklch(0.62 0.15 22); --ok:oklch(0.68 0.09 155);
-  /* The handoff's faces, then what each platform installs. The console fetches
-   * no font, and Chromium ignores ui-monospace, so a stack that fell straight
-   * to the generic monospace drew Courier. */
+  /* The reviewer design's faces, then what each platform installs. The
+   * console fetches no font, and Chromium ignores ui-monospace, so a stack that
+   * fell straight to the generic monospace drew Courier. */
   --sans:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
   --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;
-  /* The handoff's scale: space on a 4 and 8 grid, three radii, three durations.
-   * The rail and the motion use it. The canvas rules below still carry literal
-   * sizes, and each screen adopts the scale as it moves to the handoff design. */
+  /* The reviewer design's scale: space on a 4 and 8 grid, three radii, three
+   * durations. The rail and the motion use it. The canvas rules below still
+   * carry literal sizes, and each screen adopts the scale as it moves to the
+   * reviewer design. */
   --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
   --r-sm:4px; --r-md:8px; --r-lg:12px;
   --dur-fast:150ms; --dur-normal:200ms; --dur-slow:300ms;
   --ease-smooth:cubic-bezier(0.22, 1, 0.36, 1);
   --ease-spring:cubic-bezier(0.35, 1.55, 0.65, 1);
-  /* The handoff's depth: a hairline ring and a layered shadow. The canvas cards
-   * below still draw a 1px border until their screen moves to this design. */
+  /* The reviewer design's depth: a hairline ring and a layered shadow. The
+   * canvas cards below still draw a 1px border until their screen moves to this
+   * design. */
   --ring:inset 0 0 0 1px rgba(255,255,255,.055);
   --ring-strong:inset 0 0 0 1px rgba(255,255,255,.10);
   --shadow-1:0 1px 1px rgba(0,0,0,.30), 0 2px 6px rgba(0,0,0,.22);
@@ -169,7 +174,7 @@ a:hover { color:var(--ink); text-decoration:underline; }
   letter-spacing:-.02em; font-variant-numeric:tabular-nums; line-height:1; }
 /* A gate value is a reading beside its track, not a headline (issue #154). */
 .gate .big { font-size:19px; font-weight:400; letter-spacing:normal; }
-/* A stat card's figure, at the handoff's metric size. Its colour is the
+/* A stat card's figure, at the reviewer design's metric size. Its colour is the
  * verdict the card's label names, so the colour never stands alone. */
 .metric { font-family:var(--mono); font-size:34px; font-weight:500;
   letter-spacing:-.03em; font-variant-numeric:tabular-nums; line-height:1; }
@@ -219,9 +224,9 @@ tbody tr:hover { background:var(--panel); }
 .lhd { padding:14px 16px; border-bottom:1px solid var(--rule); }
 .item { display:block; padding:12px 16px; border-bottom:1px solid var(--rule); color:inherit; }
 .item:hover { background:var(--panel2); text-decoration:none; color:inherit; }
-/* The handoff's buttons: a secondary one is a ring and muted text with no
- * fill, and the primary one is the only filled control on a page. Left to the
- * browser, a secondary button drew grey on both themes. */
+/* The reviewer design's buttons: a secondary one is a ring and muted text with
+ * no fill, and the primary one is the only filled control on a page. Left to
+ * the browser, a secondary button drew grey on both themes. */
 .btn { padding:9px 14px; border-radius:var(--r-md); font-size:12.5px; font-weight:400;
   background:transparent; color:var(--mut); border:1px solid var(--rule2);
   font-family:var(--sans); cursor:pointer; }
@@ -329,7 +334,7 @@ tr.fixed td { background:var(--panel2); }
 }
 .preview { flex:1 1 300px; max-width:420px; display:flex; flex-direction:column; gap:8px; }
 /* The callout names the defect and offers the ways out of it. Ringed the way
- * the design handoff rings it: this is the one thing on the page that blocks
+ * the reviewer design rings it: this is the one thing on the page that blocks
  * a send, and it must not read as one more paragraph. */
 .callout { border:1px solid var(--rule2); border-left:2px solid var(--hot);
   border-radius:4px; padding:11px 13px; background:var(--panel); }
@@ -391,7 +396,8 @@ tr.fixed td { background:var(--panel2); }
 .qrow > .item { flex:1 1 auto; min-width:0; }
 .qrow > input[type=checkbox] { margin:17px 0 0 14px; accent-color:var(--ok); }
 /* Issue #154: a risk row carries the risk colour down its edge, as the
- * handoff's risk group does, and the wait reads in the waiting colour. */
+ * reviewer design's risk group does, and the wait reads in the waiting
+ * colour. */
 .qrow.risk { box-shadow:inset 3px 0 0 var(--hot); }
 /* The row's own take sits beside its link, and never squeezes the text. */
 .qrow > .take { flex:none; align-self:center; margin-right:16px; padding:5px 11px; font-size:11.5px; }
@@ -455,8 +461,8 @@ td a, dd a { display: inline-block; }
  * A turn's number, time and outcome sit beside what was said while there is
  * room, and on a line above it when there is not. Flex bases rather than a
  * grid track, for the reason the case gives: a fixed track cannot give way. */
-/* The handoff's thread width. A turn's rule across a wide page detaches the
- * chip from the text it describes. */
+/* The reviewer design's thread width. A turn's rule across a wide page
+ * detaches the chip from the text it describes. */
 .turns { container-type:inline-size; max-width:1100px; }
 .turn {
   display: flex;
@@ -509,9 +515,9 @@ td a, dd a { display: inline-block; }
 
 /* --- the design notes ----------------------------------------------------
  *
- * One column of cards, each with a rule on its left in the colour of what it
- * is about. The column stops at the handoff's 1000px, so a card's prose keeps
- * a readable measure on a wide page. */
+ * One column of cards, each with a rule on its left in the colour of what it is
+ * about. The column stops at the reviewer design's 1000px, so a card's prose
+ * keeps a readable measure on a wide page. */
 .designnotes { max-width:1000px; gap:12px; }
 .designnote { background:var(--panel); border:1px solid var(--rule); border-left-width:2px;
   border-radius:var(--r-lg); padding:15px 17px; }
@@ -549,9 +555,9 @@ td a, dd a { display: inline-block; }
 .why p { margin:0 0 8px; font-size:12.5px; }
 .why p:last-child { margin-bottom:0; }
 /* The approval stays in reach at the foot of the window, however long the
- * reply is. Issue #154: one row of controls, as the handoff draws it, and the
- * send warning under them. An outcome that needs a field opens it in the
- * case, so no field makes the bar taller than a short window. */
+ * reply is. Issue #154: one row of controls, as the reviewer design draws it,
+ * and the send warning under them. An outcome that needs a field opens it in
+ * the case, so no field makes the bar taller than a short window. */
 .actionbar { position:sticky; bottom:0; z-index:1; background:var(--panel);
   border-top:1px solid var(--rule2); padding:10px 24px; display:flex; flex-wrap:wrap;
   align-items:center; gap:6px 16px; }

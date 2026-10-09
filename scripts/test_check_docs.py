@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import unicodedata
 
 CHECKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "check-docs.py")
 PASS, FAIL = 0, 1
@@ -100,11 +101,24 @@ class Hung:
     stderr = "the checker did not return within 60 seconds"
 
 
+def git_env(root: str) -> dict[str, str]:
+    """The environment a case runs git in, about its own root alone.
+
+    A git hook exports where its repository is. This drops those names, and
+    stops git's search for a repository at the root's parent.
+    """
+    env = {name: value for name, value in os.environ.items()
+           if name not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+    env["GIT_CEILING_DIRECTORIES"] = os.path.dirname(os.path.abspath(root))
+    return env
+
+
 def run(root: str, check: str):
+    env = git_env(root)
     try:
         return subprocess.run(
             [sys.executable, CHECKER, "--root", root, "--only", check],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, text=True, timeout=60, env=env)
     except subprocess.TimeoutExpired:
         return Hung()
 
@@ -349,7 +363,7 @@ def case_no_diagram_to_judge(root):
 def case_register_grows_an_open_item(root):
     # The item count is read from section 7, not assumed. An eighth item with
     # no row must report.
-    write(root, "docs/design/aaa.md", "x\n")
+    write(root, "docs/design/a-record.md", "x\n")
     grown = REGISTER_OK.replace("7. Seven.\n", "7. Seven.\n8. Eight.\n")
     write(root, "docs/v1-architecture.md", grown)
     return "design-index", FAIL, "no row for open item 8"
@@ -357,7 +371,7 @@ def case_register_grows_an_open_item(root):
 
 def case_section_71_inside_a_fence(root):
     # Splitting on the first occurrence anywhere read a fence as the table.
-    write(root, "docs/design/aaa.md", "x\n")
+    write(root, "docs/design/a-record.md", "x\n")
     write(root, "docs/v1-architecture.md",
           "```\n### 7.1 an example, not the table\n```\n\n" + REGISTER_OK)
     return "design-index", PASS, None
@@ -612,21 +626,321 @@ def case_no_flow_diagram(root):
 
 
 def case_design_index_pass(root):
-    write(root, "docs/design/aaa.md", "x\n")
+    write(root, "docs/design/a-record.md", "x\n")
     write(root, "docs/v1-architecture.md", REGISTER_OK)
     return "design-index", PASS, None
 
 
 def case_design_index_missing_item(root):
-    write(root, "docs/design/aaa.md", "x\n")
+    write(root, "docs/design/a-record.md", "x\n")
     write(root, "docs/v1-architecture.md", REGISTER_OK.replace(
-        "| 4. Clusters | `aaa.md` | blocked |\n", ""))
+        "| 4. Clusters | `a-record.md` | blocked |\n", ""))
     return "design-index", FAIL, "no row for open item 4"
+
+
+def case_design_index_record_unnamed(root):
+    # The reverse direction: a record the register never names is a record
+    # nobody can find from the decision it serves.
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/b-record.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", FAIL, "docs/design/b-record.md is a design document section 7.1 does not name"
+
+
+def case_design_index_record_generated_name(root):
+    # A generated identifier tells a reader nothing about the record.
+    name = "0123abcd-4567-89ab-cdef-0123456789ab.md"
+    write(root, f"docs/design/{name}", "x\n")
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK.replace(
+        "| 4. Clusters | `a-record.md` | blocked |\n",
+        f"| 4. Clusters | `a-record.md` | blocked |\n| (none) | `{name}` | ratified |\n"))
+    return "design-index", FAIL, f"docs/design/{name} has a name that says nothing"
+
+
+def case_design_index_ignores_subdirectory(root):
+    # A canvas or other folder under docs/design/ is no record.
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/console-canvas/README.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", PASS, None
+
+
+def case_design_index_dir_unreadable(root):
+    # docs/design is a file here, so it cannot be listed. The finding names
+    # that, not a missing record for each row.
+    write(root, "docs/design", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", FAIL, "docs/design/: cannot read", "does not exist under"
+
+
+def case_design_index_dir_missing(root):
+    # No docs/design at all is one finding, not one for each row.
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", FAIL, "docs/design/: does not exist", "names 'a-record.md'"
+
+
+def case_design_index_names_record_in_folder(root):
+    # A row may name a file inside a folder under docs/design.
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/console-canvas/README.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK.replace(
+        "| 4. Clusters | `a-record.md` | blocked |\n",
+        "| 4. Clusters | `a-record.md` | blocked |\n| (none) | `console-canvas/README.md` | ratified |\n"))
+    return "design-index", PASS, None
+
+
+def case_design_index_names_a_folder(root):
+    # A row that names a folder names no record.
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/notes.md/inner.txt", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK.replace(
+        "| 4. Clusters | `a-record.md` | blocked |\n",
+        "| 4. Clusters | `a-record.md` | blocked |\n| (none) | `notes.md` | ratified |\n"))
+    return "design-index", FAIL, "names 'notes.md', which does not exist"
+
+
+def case_design_index_names_wrong_case(root):
+    # A disk that ignores case finds `A-Record.md` for `a-record.md`. A checkout on a
+    # disk that does not would not, so the name must match as written.
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK.replace("`a-record.md`", "`A-Record.md`"))
+    return "design-index", FAIL, "names 'A-Record.md', which does not exist"
+
+
+def case_design_index_named_uppercase_extension(root):
+    # A row may name a record whose extension is upper case.
+    write(root, "docs/design/a-record.MD", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK.replace("`a-record.md`", "`a-record.MD`"))
+    return "design-index", FAIL, "docs/design/a-record.MD has a name that says nothing", "does not name"
+
+
+def case_design_index_ulid_name(root):
+    name = "01ARZ3NDEKTSV4RRFFQ69G5FAV.md"
+    write(root, f"docs/design/{name}", "x\n")
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK.replace(
+        "| 4. Clusters | `a-record.md` | blocked |\n",
+        f"| 4. Clusters | `a-record.md` | blocked |\n| (none) | `{name}` | ratified |\n"))
+    return "design-index", FAIL, f"docs/design/{name} has a name that says nothing"
+
+
+def case_design_index_date_name(root):
+    # A name of digits and dashes says when, not what.
+    name = "2026-10-08-1530.md"
+    write(root, f"docs/design/{name}", "x\n")
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK.replace(
+        "| 4. Clusters | `a-record.md` | blocked |\n",
+        f"| 4. Clusters | `a-record.md` | blocked |\n| (none) | `{name}` | ratified |\n"))
+    return "design-index", FAIL, f"docs/design/{name} has a name that says nothing"
+
+
+def case_design_index_folder_named_md(root):
+    # A folder whose name ends in .md is no document, and no folder the check
+    # knows.
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/notes.md/inner.txt", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", FAIL, "docs/design/notes.md/ is a folder this check does not know"
+
+
+def case_design_index_uppercase_generated(root):
+    name = "0123ABCD-4567-89AB-CDEF-0123456789AB.md"
+    write(root, f"docs/design/{name}", "x\n")
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK.replace(
+        "| 4. Clusters | `a-record.md` | blocked |\n",
+        f"| 4. Clusters | `a-record.md` | blocked |\n| (none) | `{name}` | ratified |\n"))
+    return "design-index", FAIL, f"docs/design/{name} has a name that says nothing"
+
+
+def case_design_index_short_hex_name(root):
+    # The short id form the records once used is no name either.
+    name = "0a1b2c3d.md"
+    write(root, f"docs/design/{name}", "x\n")
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK.replace(
+        "| 4. Clusters | `a-record.md` | blocked |\n",
+        f"| 4. Clusters | `a-record.md` | blocked |\n| (none) | `{name}` | ratified |\n"))
+    return "design-index", FAIL, f"docs/design/{name} has a name that says nothing"
+
+
+def case_design_index_uppercase_extension(root):
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/b-record.MD", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", FAIL, "docs/design/b-record.MD is a design document section 7.1 does not name"
 
 
 def case_design_index_names_absent_file(root):
     write(root, "docs/v1-architecture.md", REGISTER_OK)
     return "design-index", FAIL, "does not exist"
+
+
+def named_extra(root, name):
+    """A register whose table names one more document, and that document."""
+    write(root, f"docs/design/{name}", "x\n")
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK.replace(
+        "| 4. Clusters | `a-record.md` | blocked |\n",
+        f"| 4. Clusters | `a-record.md` | blocked |\n| (none) | `{name}` | ratified |\n"))
+
+
+def case_design_index_row_through_a_file(root):
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK.replace(
+        "| 4. Clusters | `a-record.md` | blocked |\n",
+        "| 4. Clusters | `a-record.md` | blocked |\n| (none) | `a-record.md/inner.md` | ratified |\n"))
+    return "design-index", FAIL, "names 'a-record.md/inner.md', which does not exist"
+
+
+def case_design_index_row_with_dot_slash(root):
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK.replace("`a-record.md`", "`./a-record.md`"))
+    return "design-index", PASS, None
+
+
+def case_design_index_row_through_unreadable_folder(root):
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/console-canvas/README.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK.replace(
+        "| 4. Clusters | `a-record.md` | blocked |\n",
+        "| 4. Clusters | `a-record.md` | blocked |\n| (none) | `console-canvas/README.md` | ratified |\n"))
+    os.chmod(os.path.join(root, "docs/design/console-canvas"), 0o000)
+    return ("design-index", FAIL, "names 'console-canvas/README.md', which cannot be read",
+            "which does not exist")
+
+
+def case_design_index_unnamed_other_extension(root):
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/b-record.markdown", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", FAIL, "docs/design/b-record.markdown is a design document section 7.1 does not name"
+
+
+def case_design_index_one_letter_word(root):
+    named_extra(root, "z-2026.md")
+    return "design-index", FAIL, "docs/design/z-2026.md has a name that says nothing"
+
+
+def git_work_tree(root, ignore):
+    """Make `root` a git work tree whose `.gitignore` holds `ignore`."""
+    subprocess.run(["git", "init", "-q", root], check=True, env=git_env(root))
+    write(root, ".gitignore", ignore)
+
+
+def case_design_index_skips_dot_files(root):
+    # A file browser writes .DS_Store into any folder it opens, and git
+    # ignores it.
+    git_work_tree(root, ".DS_Store\n")
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/.DS_Store", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", PASS, None
+
+
+def case_design_index_skips_ignored_swap_file(root):
+    # An editor's swap file sits beside the document it edits.
+    git_work_tree(root, ".*.sw?\n")
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/.a-record.md.swp", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", PASS, None
+
+
+def case_design_index_skips_a_decomposed_ignored_name(root):
+    # macOS can list a name decomposed, while .gitignore holds it composed,
+    # and git there ignores the file. Elsewhere a name is its bytes, and git
+    # does not.
+    git_work_tree(root, "caf\u00e9.swp\n")
+    write(root, "docs/design/a-record.md", "x\n")
+    decomposed = unicodedata.normalize("NFD", "caf\u00e9.swp")
+    write(root, "docs/design/" + decomposed, "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    if sys.platform == "darwin":
+        return "design-index", PASS, None
+    return "design-index", FAIL, f"docs/design/{decomposed} has a name that says nothing"
+
+
+def case_design_index_follows_git_on_decomposed_names(root):
+    # With core.precomposeunicode off, git does not compose a name, so a
+    # decomposed file is not the composed one .gitignore names, on any disk.
+    git_work_tree(root, "caf\u00e9.swp\n")
+    subprocess.run(["git", "-C", root, "config", "core.precomposeunicode", "false"],
+                   check=True, env=git_env(root))
+    write(root, "docs/design/a-record.md", "x\n")
+    decomposed = unicodedata.normalize("NFD", "caf\u00e9.swp")
+    write(root, "docs/design/" + decomposed, "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", FAIL, f"docs/design/{decomposed} has a name that says nothing"
+
+
+def case_design_index_unset_setting_composes_nothing(root):
+    # With the setting unset, git composes nothing, on macOS too.
+    git_work_tree(root, "caf\u00e9.swp\n")
+    subprocess.run(["git", "-C", root, "config", "--unset", "core.precomposeunicode"],
+                   env=git_env(root))
+    write(root, "docs/design/a-record.md", "x\n")
+    decomposed = unicodedata.normalize("NFD", "caf\u00e9.swp")
+    write(root, "docs/design/" + decomposed, "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", FAIL, f"docs/design/{decomposed} has a name that says nothing"
+
+
+def case_design_index_reads_an_unignored_dot_file(root):
+    # Git ignores only what it is told to. Outside a work tree, nothing is.
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/.DS_Store", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", FAIL, "docs/design/.DS_Store is a design document section 7.1 does not name"
+
+
+def case_design_index_dot_named_document(root):
+    # A dot-named document is still a document, and git commits it.
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/.hidden-notes.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", FAIL, "docs/design/.hidden-notes.md is a design document section 7.1 does not name"
+
+
+def case_design_index_dot_named_other_file(root):
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/.notes.txt", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", FAIL, "docs/design/.notes.txt is a design document section 7.1 does not name"
+
+
+def case_design_index_dot_folder(root):
+    write(root, "docs/design/a-record.md", "x\n")
+    write(root, "docs/design/.drafts/notes.md", "x\n")
+    write(root, "docs/v1-architecture.md", REGISTER_OK)
+    return "design-index", FAIL, "docs/design/.drafts/ is a folder this check does not know"
+
+
+def case_design_index_single_word_name(root):
+    named_extra(root, "ledger.md")
+    return "design-index", FAIL, "docs/design/ledger.md has a name that says nothing"
+
+
+def case_design_index_cuid_name(root):
+    named_extra(root, "cjld2cjxh0000qzrmn831i7rn.md")
+    return "design-index", FAIL, "docs/design/cjld2cjxh0000qzrmn831i7rn.md has a name that says nothing"
+
+
+def case_design_index_nanoid_name(root):
+    named_extra(root, "V1StGXR8_Z5jdHi6B-myT.md")
+    return "design-index", FAIL, "docs/design/V1StGXR8_Z5jdHi6B-myT.md has a name that says nothing"
+
+
+def case_design_index_short_sha_name(root):
+    named_extra(root, "0a1b2c3.md")
+    return "design-index", FAIL, "docs/design/0a1b2c3.md has a name that says nothing"
+
+
+def case_design_index_timestamp_name(root):
+    named_extra(root, "20261008t153000z-2026-10-08.md")
+    return "design-index", FAIL, "docs/design/20261008t153000z-2026-10-08.md has a name that says nothing"
 
 
 # Section 2 defines the decisions, and section 7 lists the open items. One
@@ -653,13 +967,13 @@ REGISTER_OK = """## 2. Decision register
 
 | Item | Document | Status |
 |---|---|---|
-| 1. One | `aaa.md` | proposed |
-| 2. Two | `aaa.md` | ratified |
-| 3. Three | `aaa.md` | ratified |
-| 4. Clusters | `aaa.md` | blocked |
-| 5. Five | `aaa.md` | blocked |
+| 1. One | `a-record.md` | proposed |
+| 2. Two | `a-record.md` | ratified |
+| 3. Three | `a-record.md` | ratified |
+| 4. Clusters | `a-record.md` | blocked |
+| 5. Five | `a-record.md` | blocked |
 | 6. Six | none | closed without one |
-| 7. Seven | `aaa.md` | proposed |
+| 7. Seven | `a-record.md` | proposed |
 """
 
 
@@ -1841,6 +2155,40 @@ CASES = [
     ("a table accounting for every item passes", case_design_index_pass),
     ("an item missing from the table fails", case_design_index_missing_item),
     ("a table naming an absent file fails", case_design_index_names_absent_file),
+    ("a record the table does not name fails", case_design_index_record_unnamed),
+    ("a record with a generated name fails", case_design_index_record_generated_name),
+    ("a folder under docs/design is no record", case_design_index_ignores_subdirectory),
+    ("an unreadable design directory is named, once", case_design_index_dir_unreadable),
+    ("a folder named like a record is a folder the check must know", case_design_index_folder_named_md),
+    ("an upper-case generated name fails", case_design_index_uppercase_generated),
+    ("a short hex name fails", case_design_index_short_hex_name),
+    ("a document with an upper-case extension is read, and refused", case_design_index_uppercase_extension),
+    ("a missing design directory is named, once", case_design_index_dir_missing),
+    ("a row may name a record inside a folder", case_design_index_names_record_in_folder),
+    ("a row that names a folder fails", case_design_index_names_a_folder),
+    ("a row must name a record in its own case", case_design_index_names_wrong_case),
+    ("a named upper-case extension still fails the name rule", case_design_index_named_uppercase_extension),
+    ("a row through a file fails", case_design_index_row_through_a_file),
+    ("a row written with ./ names the same document", case_design_index_row_with_dot_slash),
+    ("an unreadable folder a row names through is named", case_design_index_row_through_unreadable_folder, NEEDS_DENIAL),
+    ("a document the table does not name fails, whatever its extension", case_design_index_unnamed_other_extension),
+    ("a single-word name fails", case_design_index_single_word_name),
+    ("a dot-file a tool writes is no document", case_design_index_skips_dot_files),
+    ("a swap file git ignores is no document", case_design_index_skips_ignored_swap_file),
+    ("a dot-file git does not ignore is read", case_design_index_reads_an_unignored_dot_file),
+    ("an ignored name the disk lists decomposed is no document", case_design_index_skips_a_decomposed_ignored_name),
+    ("the lookup follows git's own setting for decomposed names", case_design_index_follows_git_on_decomposed_names),
+    ("an unset setting composes no name", case_design_index_unset_setting_composes_nothing),
+    ("a dot-named document still needs a row", case_design_index_dot_named_document),
+    ("a dot-named file of another extension still needs a row", case_design_index_dot_named_other_file),
+    ("a dot-named folder is still a folder the check must know", case_design_index_dot_folder),
+    ("a name whose one word is a letter fails", case_design_index_one_letter_word),
+    ("a cuid name fails", case_design_index_cuid_name),
+    ("a nanoid name fails", case_design_index_nanoid_name),
+    ("a short commit hash name fails", case_design_index_short_sha_name),
+    ("a timestamp name fails", case_design_index_timestamp_name),
+    ("a ULID name fails", case_design_index_ulid_name),
+    ("a name of digits and dashes fails", case_design_index_date_name),
 ]
 
 
@@ -1880,8 +2228,9 @@ def check_crash_guard():
 
 def check_cli(name, args, want, wanted_text):
     """One case that exercises the command line rather than a document."""
+    root = args[args.index("--root") + 1] if "--root" in args else os.getcwd()
     got = subprocess.run([sys.executable, CHECKER, *args],
-                         capture_output=True, text=True, timeout=60)
+                         capture_output=True, text=True, timeout=60, env=git_env(root))
     output = (got.stdout + got.stderr).strip()
     if got.returncode != want:
         print(f"FAIL {name}: want exit {want}, got {got.returncode}")
@@ -1929,7 +2278,7 @@ def main() -> int:
     # not a finding, and a blank or repeated `--only` must not change what runs.
     with tempfile.TemporaryDirectory() as root:
         write(root, "docs/architecture-map.md", GOOD_FLOW + SMALL + ER)
-        write(root, "docs/design/aaa.md", "x\n")
+        write(root, "docs/design/a-record.md", "x\n")
         write_decisions(root)
         # `dec-range` and `script-index` read four more files, and a root that
         # holds none of them reports rather than passing in silence. The

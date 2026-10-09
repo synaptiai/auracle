@@ -19,7 +19,7 @@ function partitionSection(): string {
   return text.slice(start, end === -1 ? undefined : end).replace(/\s+/g, ' ');
 }
 
-describe('the runbook on a consumer restart (issue #113)', () => {
+describe('the runbook on a consumer restart', () => {
   it('says the claim raises the fence only while a run is in flight', () => {
     expect(partitionSection()).toContain(
       'The claim raises the fence of a ticket only while a run of that ticket is in flight.',

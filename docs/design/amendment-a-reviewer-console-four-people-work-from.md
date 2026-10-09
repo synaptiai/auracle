@@ -479,8 +479,8 @@ one.
 | `../quick-map.md` | the stated range, and the list of decisions no row names | The decisions the register holds, and those no directory implements |
 | `../v2-roadmap.md` | the section on this proposal | This document reads ratified |
 
-The historical handoff under `../internal/` restates DEC-11 as it stood for
-epic 21. It records that epic, so it stays as written.
+An earlier session note, which this tree does not hold, restates DEC-11 as it
+stood for epic 21. It records that epic, so it stays as written.
 
 ### When the change that alters the behaviour ships
 

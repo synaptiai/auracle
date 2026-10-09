@@ -102,6 +102,9 @@ motivates each attack.
 | Live database approval | live-db validator hook | no | yes |
 | Simplified Technical English | none | rules 1 and 2 | yes |
 | A design record cites a defined DEC | none | yes | yes |
+| Section 7.1 names every design document, by a name that says what it is | none | yes | yes |
+| No test title cites an issue number | none | yes | yes |
+| The release workflow checks the image before it publishes it | none | yes | n/a |
 | Fixtures match the generator | none | yes | n/a |
 
 The last two columns differ on purpose. A job that runs a guard's own tests

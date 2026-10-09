@@ -95,40 +95,90 @@ while `WEBHOOK_SECRET` is empty. The console serves only an active reviewer,
 and a trusted proxy authenticates that reviewer (DEC-45). So put an
 authenticating proxy in front of anything another machine reaches.
 
-A merge to `main` runs `.github/workflows/release.yml`. It builds the image
-and pushes it to GHCR, tagged with the commit SHA and never `latest`. Nobody
-can roll back to a tag that moves.
+A merge to `main` runs `.github/workflows/release.yml`. It builds the image,
+checks that the image names its processes, and only then pushes it to GHCR.
+The tag is the commit SHA and never `latest`. Nobody can roll back to a tag
+that moves.
 
-### The dev host
+### Running the image on a host
 
-The `dev` GitHub environment names a host, and
-`.github/workflows/release.yml` deploys the image to it on a merge to
-`main`. Nothing provisions that host. Prepare it once:
+This repository deploys nowhere. The release workflow pushes an image tagged
+with the commit SHA, and you run that image on your own host. Prepare the host
+once:
 
-1. Create the directory the deploy writes to. The default is `/srv/auracle`;
-   set the `DEV_APP_DIR` repository variable to change it.
-2. Put a filled `.env` in that directory. Start from `.env.example`. The
-   deploy overwrites both compose files on every run, so `.env` is the only
-   durable place for host configuration.
-   Set `AURACLE_DB_PASSWORD` and `AURACLE_READER_PASSWORD` in it before the
-   first deploy. `openssl rand -hex 24` makes each one. Postgres reads the
-   ledger's password only when it creates its data volume.
-3. Give the deploy user membership of the `docker` group.
-4. Set the `dev` environment's deployment branch policy to `main` only.
+1. Create a directory for the stack, such as `/srv/auracle`. Copy
+   `docker-compose.yml`, `docker-compose.dev.yml` and `.env.example` into it.
+2. Put a filled `.env` in that directory, and make it readable by its owner
+   alone with `chmod 600 .env`. Start from `.env.example`. Set
+   `AURACLE_DB_PASSWORD`, `AURACLE_READER_PASSWORD` and `WEBHOOK_SECRET` in it
+   before the first start. `openssl rand -hex 24` makes each one. Postgres
+   reads the ledger's password only when it creates its data volume.
+3. Check the three values compose will use. An empty value, such as `""`,
+   counts as unset, and so does a value of spaces alone. A key that appears
+   twice takes its last value. Without a value the stack starts on the public
+   default passwords, and the webhook checks no signature. Nothing else warns
+   you. Compose takes each password from the shell before `.env`, so run the
+   check in the shell that runs `up`. The webhook reads its secret from `.env`
+   alone, so the check clears that one name from the shell first. It prints a
+   line for each problem, and nothing when all three are set. A value of
+   non-ASCII characters alone can read as unset, so make each one with
+   `openssl`:
 
-Five secrets on the `dev` environment, and the deploy reports which are
-missing rather than failing:
+```sh
+if env=$(env -u WEBHOOK_SECRET \
+  docker compose -f docker-compose.yml -f docker-compose.dev.yml config --environment); then
+  for name in AURACLE_DB_PASSWORD AURACLE_READER_PASSWORD WEBHOOK_SECRET; do
+    value=$(printf '%s\n' "$env" | sed -n "s/^$name=//p" | tail -1)
+    case "$value" in
+      auracle | auracle_reader) echo "$name is the public default" ;;
+      *[[:graph:]]*) ;;
+      *) echo "$name is not set" ;;
+    esac
+  done
+else
+  echo "compose cannot read the configuration"
+fi
+```
 
-| Secret | What it is |
-|---|---|
-| `DEV_SSH_HOST` | the host the deploy reaches |
-| `DEV_SSH_USER` | the account it connects as |
-| `DEV_SSH_KEY` | that account's private key |
-| `DEV_SSH_KNOWN_HOSTS` | the host's public key, pinned |
-| `GHCR_READ_TOKEN` | a `read:packages` token, because the package is private |
+4. Set `AURACLE_IMAGE` in `.env` to the image you run, such as
+   `ghcr.io/<owner>/<repo>:<commit-sha>`. A rollback is a change of that tag.
+   Each image that the release workflow pushes passes its check first. An
+   image older than that check carries no such proof.
+5. If the package is private, log in with a token that can only read
+   packages. Keep the token in a file that only you can read, with
+   `chmod 600`. Pass it on standard input, so it stays out of shell history,
+   and delete the file after the login. `docker login` keeps the credential in
+   `~/.docker/config.json` until you run `docker logout ghcr.io`:
 
-Two optional repository variables: `DEV_APP_DIR` and
-`DEV_COMPOSE_PROFILES`. Set the second to `mail` to run the IMAP intake.
+```sh
+docker login ghcr.io -u <user> --password-stdin < token-file
+rm token-file
+```
+
+6. Pull the image, then start the stack from that directory. The `&&` stops
+   the start when the pull fails. `--no-build` makes a missing image fail with
+   its own name, and not with a missing Dockerfile:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.dev.yml pull \
+  && docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --no-build --remove-orphans
+```
+
+7. Wait about 30 seconds, then check the processes. `up -d` returns before
+   each daemon starts. A daemon that refuses its configuration restarts
+   without end, and it reads as up for its first few seconds. Each service
+   must show the state `running`, except `migrate`, which shows `exited` with
+   code 0. Each restart count must be 0. Read the log of any other service:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.dev.yml ps --all --format '{{.Service}} {{.State}} {{.Status}}'
+docker compose -f docker-compose.yml -f docker-compose.dev.yml ps --all -q | xargs docker inspect -f '{{.Name}} {{.RestartCount}}'
+docker compose -f docker-compose.yml -f docker-compose.dev.yml logs --tail=50 <service>
+```
+
+Set `COMPOSE_PROFILES=mail` in `.env` to run the IMAP intake as well. If you
+take `mail` out again, stop the `imap` container by hand. `--remove-orphans`
+does not stop a service whose profile is off.
 
 The ports bind as "Running the image" describes. So put a proxy that
 authenticates in front of the console and the webhook before another machine
@@ -137,10 +187,21 @@ and strips any copy a client sent (DEC-42). `CONSOLE_ALLOWED_HOSTS` must then
 name the host. Without it the console refuses the `Host` the browser sends.
 
 Add each reviewer the proxy names to the roster before the console serves
-them:
+them. The image runs no roster command. So run it from a checkout on that
+host, at the commit the image tag names.
+
+The command reads the checkout's `.env`, not the stack's. A value set on the
+command line wins over that file. So give it `DATABASE_URL` for the ledger on
+its loopback port. That port is 5433, unless `AURACLE_DB_PORT` in the stack's
+`.env` sets another. `read -rs` takes the ledger's password without an echo,
+so it stays out of shell history. `unset` then removes it from the shell:
 
 ```sh
-pnpm run reviewers -- --add reviewer@example.com
+git checkout <commit-sha>
+pnpm install --frozen-lockfile
+read -rs PW
+DATABASE_URL="postgres://auracle:$PW@127.0.0.1:5433/auracle" pnpm run reviewers -- --add reviewer@example.com
+unset PW
 ```
 
 ## 2. Schema migrations
@@ -359,7 +420,8 @@ Start each process in its own terminal.
 
 Bring a stack up from a checkout in this order. Each step needs the one
 before it. For local development, follow the README's Quickstart instead. A
-deployed stack runs the image, as "The dev host" in section 1 describes.
+deployed stack runs the image, as "Running the image on a host" in section 1
+describes.
 
 ```sh
 docker compose up -d --wait             # 1. Postgres with pgvector

@@ -1589,7 +1589,7 @@ describe('section 4.3 partition consumer', () => {
     }
   });
 
-  it('leaves a parked ticket fence alone, so the person can still approve (issue #113)', async () => {
+  it('leaves a parked ticket fence alone, so the person can still approve', async () => {
     // A reply waiting for a person is in no consumer's hands. Raising its
     // fence at a deployment would refuse the approval, which is the only
     // thing left to do with that run.
@@ -1623,7 +1623,7 @@ describe('section 4.3 partition consumer', () => {
     expect(moved).toEqual({ outcome: 'accepted' });
   });
 
-  it('leaves a finished ticket fence alone too, so its record still sends (issue #113)', async () => {
+  it('leaves a finished ticket fence alone too, so its record still sends', async () => {
     // The other half of the narrowing, and the one the relay depends on: a
     // ticket whose only run has finished is not in flight, so a claim must
     // not touch it. Bumping it would leave the record below the fence, and
@@ -1655,7 +1655,7 @@ describe('section 4.3 partition consumer', () => {
     expect(fence.rows[0]?.epoch).toBe('1');
   });
 
-  it('plans no epoch outside the insert, so the pre-bump window is closed (issue #113)', async () => {
+  it('plans no epoch outside the insert, so the pre-bump window is closed', async () => {
     // What this test used to pin: the old owner read the fence, planned an
     // epoch, and a rebalance landed between that read and its insert — after
     // which the insert could pass at an epoch equal to the bumped fence. The

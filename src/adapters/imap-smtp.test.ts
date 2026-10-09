@@ -277,7 +277,7 @@ function egressOn(port: number, timeoutMs?: number, smtpPort = 1): SmtpEgressAda
   });
 }
 
-describe('the IMAP connection a draft read opens (issue #102)', () => {
+describe('the IMAP connection a draft read opens', () => {
   // ImapFlow reports a dropped connection as an 'error' event. With no
   // listener Node rethrows it outside every promise, and the long-running
   // console that reads drafts back died with it.

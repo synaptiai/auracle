@@ -85,6 +85,20 @@ export function declarationsOf(name: ts.Identifier): readonly ts.Declaration[] {
   return checkerOf(name.getSourceFile()).getSymbolAtLocation(name)?.declarations ?? [];
 }
 
+/**
+ * The declarations a name refers to, with an import followed to what it
+ * imports. Only a module `projectSource` read can follow one, because only
+ * the whole project holds the other module; elsewhere an import stays an
+ * import.
+ */
+export function importedDeclarationsOf(name: ts.Identifier): readonly ts.Declaration[] {
+  const checker = checkerOf(name.getSourceFile());
+  const symbol = checker.getSymbolAtLocation(name);
+  if (symbol === undefined) return [];
+  const target = (symbol.flags & ts.SymbolFlags.Alias) === 0 ? symbol : checker.getAliasedSymbol(symbol);
+  return target.declarations ?? [];
+}
+
 /** The repository's root, where its tsconfig sits. */
 const REPO_ROOT = new URL('../../', import.meta.url).pathname;
 

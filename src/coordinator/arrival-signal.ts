@@ -5,9 +5,9 @@
 // reported a mean queue wait of 2.78 s against a poll floor of 2.50 s, at
 // 1.37 % utilisation. Ninety percent of the wait was the loop's own sleep,
 // and one run in a hundred waited longer than one poll period. The V2 design
-// document (99dc14d7) names three sources of delay and maps corrections for
-// two of them; the sleep is the third, and it is the one the measurement
-// indicts.
+// document (`v2-head-of-line-delay-correction.md`) names three sources of
+// delay and maps corrections for two of them; the sleep is the third, and it
+// is the one the measurement indicts.
 //
 // What this is not. It is not a lease and not a lock service, both of which
 // DEC-27 rejects. A notification grants no exclusivity and no mutual

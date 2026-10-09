@@ -95,10 +95,9 @@ import sys
 MAX_WORDS = 20
 MAX_SENTENCES = 6
 
-# The markdown this repository ships to a reader. Internal notes under
-# docs/internal/ are deliberately absent: a working document should not gate
-# a pull request. CODE_OF_CONDUCT.md is absent too. It is the Contributor
-# Covenant text unchanged, and a rewrite would make it another document.
+# The markdown this repository ships to a reader. CODE_OF_CONDUCT.md is
+# absent. It is the Contributor Covenant text unchanged, and a rewrite would
+# make it another document.
 SHIPPED_GLOBS = (
     "README.md",
     "AGENTS.md",

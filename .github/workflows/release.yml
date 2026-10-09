@@ -1,28 +1,16 @@
-# A merge to main builds one image and offers it to the dev host.
+# A merge to main builds one image and pushes it to GHCR.
 #
-# Before this, both workflows ran on `pull_request` only, so a merge produced
-# no artifact and "ship to dev" was a manual act nobody had written down.
-#
-# Two jobs. `image` always runs and pushes to GHCR tagged with the commit SHA,
-# so every commit on main has a named build and a rollback is a tag change.
-# `deploy-dev` is gated by a GitHub environment named `dev`, which is where
-# the host and its credentials live. DEC-17 and DEC-19 make the adopter the
-# data controller, so the environment is the boundary: this workflow never
-# names a host, and the migration step can only reach the ledger that
-# environment points at.
+# The image is tagged with the commit SHA, so every commit on main has a named
+# build and a rollback is a tag change. The tag reaches the registry only
+# after the image passes its check. This workflow deploys nowhere: an adopter
+# pulls the image into their own stack (DEC-17, DEC-19).
 name: Release
 
 on:
   push:
     branches: [main]
-  # Re-run the build and deploy for the tip of main by hand. The job below
-  # refuses any other branch, so this is a re-run and not a way to ship one.
+  # Re-run the build for the tip of main by hand.
   workflow_dispatch:
-
-# No workflow-level concurrency. A superseded push should cancel a build, and
-# `cancel-in-progress` at this level cancels the whole run — `deploy-dev`
-# included, mid-`up`, which is the state the deploy job's own group exists to
-# prevent. The two jobs declare their own groups instead.
 
 env:
   REGISTRY: ghcr.io
@@ -30,17 +18,19 @@ env:
 
 jobs:
   image:
+    # main alone: a dispatch from another branch would push that branch.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # A superseded push cancels the build it replaced. Safe here and only
-    # here: a cancelled build leaves nothing behind.
+    # A group for each commit. GitHub keeps one waiting run per group and
+    # cancels it when a newer one queues, so a group shared by the branch
+    # would skip a commit. Each commit pushes its own tag, so two builds do
+    # not collide.
     concurrency:
-      group: image-${{ github.ref }}
-      cancel-in-progress: true
+      group: image-${{ github.sha }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
-    outputs:
-      tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -57,19 +47,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The build loads the image into the runner's Docker, not the
+      # registry. The last step pushes the tag, after the check passes.
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          push: true
+          push: false
+          load: true
           tags: ${{ steps.meta.outputs.tag }}
           # The runner's cache, so a second build reuses the install layer.
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # The build proves the image compiles. It does not prove a process
-      # starts, and the first version of this image built cleanly and then
-      # failed at runtime on a file it had not copied. So the image answers
-      # for itself before anything is deployed from it.
+      # The build proves the image compiles, not that a process starts. A
+      # missing file fails at runtime. So before the workflow publishes the
+      # image, the image names its processes. It also holds the module each
+      # one runs, the migrations, the intent taxonomy and the product list.
+      # The modules come from the entrypoint itself, so that list cannot
+      # drift from what the image runs.
       - name: The image names its processes
         run: |
           set -eu
@@ -82,189 +77,28 @@ jobs:
             }
           done
           echo "$out"
+          docker run --rm --entrypoint sh "${{ steps.meta.outputs.tag }}" -c '
+            set -eu
+            modules=$(grep -o "/app/[^ ]*\.js" /usr/local/bin/entrypoint.sh)
+            [ -n "$modules" ] || { echo "the entrypoint names no module" >&2; exit 1; }
+            for file in $modules /app/fixtures/taxonomy.json /app/products.json; do
+              [ -f "$file" ] || { echo "the image lacks $file" >&2; exit 1; }
+            done
+            ls /app/db/*.sql >/dev/null 2>&1 || { echo "the image lacks the migrations in /app/db" >&2; exit 1; }
+            echo "the image holds each module, the migrations, the taxonomy and the product list"
+          '
 
-  deploy-dev:
-    needs: image
+      - name: Publish the image
+        run: docker push "${{ steps.meta.outputs.tag }}"
+
+  # A dispatch from another branch runs no build. This job says so and fails,
+  # so the run does not read as a build that passed.
+  not-main:
+    if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
-    # main alone. `workflow_dispatch` runs on whatever branch it is
-    # dispatched from, and this job holds the dev host's SSH key, copies
-    # *the dispatched branch's* compose files to the host and runs them
-    # against its Docker socket. Without this line any branch — no push
-    # access to main required — reaches both the key and root on the host,
-    # by adding a bind mount to a compose file nobody reviewed. The
-    # environment's own branch policy is the second lock; this is the first,
-    # and it lives in a file that is reviewed.
-    if: github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-    # The environment holds the host and its key, and it is what makes the
-    # migration step reachable only for the dev ledger. An approval rule on
-    # the environment gates this job without changing this file.
-    environment:
-      name: dev
-      url: ${{ vars.DEV_CONSOLE_URL }}
-    # Never two deploys to one host at once, and never cancel one halfway:
-    # a cancelled deploy leaves the host between two images.
-    concurrency:
-      group: deploy-dev
-      cancel-in-progress: false
+    permissions: {}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      # The environment may not be provisioned yet. A job that fails on a
-      # missing secret would make every merge to main red for a reason that
-      # is not a defect in the merge, so it says what is missing and stops.
-      - id: gate
-        name: The dev environment names a host
-        # Through `env:`, never interpolated into the script. A secret
-        # substituted into a `run:` body becomes shell source before the
-        # shell reads it, so a host value holding a quote is a syntax error
-        # and one holding `"; cmd; :"` executes on the runner that is about
-        # to load the deploy key. Actions masks a secret in the log; it does
-        # not stop it being parsed.
-        env:
-          DEV_SSH_HOST: ${{ secrets.DEV_SSH_HOST }}
-          DEV_SSH_USER: ${{ secrets.DEV_SSH_USER }}
-          DEV_SSH_KEY: ${{ secrets.DEV_SSH_KEY }}
-          DEV_SSH_KNOWN_HOSTS: ${{ secrets.DEV_SSH_KNOWN_HOSTS }}
-          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      - name: Refuse a branch other than main
         run: |
-          set -eu
-          missing=""
-          [ -n "${DEV_SSH_HOST:-}" ] || missing="$missing DEV_SSH_HOST"
-          [ -n "${DEV_SSH_USER:-}" ] || missing="$missing DEV_SSH_USER"
-          [ -n "${DEV_SSH_KEY:-}" ]  || missing="$missing DEV_SSH_KEY"
-          # F8: the step below writes this into known_hosts, and three of
-          # four secrets used to produce an empty file and a red merge with
-          # no report — the opposite of what this gate exists for.
-          [ -n "${DEV_SSH_KNOWN_HOSTS:-}" ] || missing="$missing DEV_SSH_KNOWN_HOSTS"
-          # The package is private, so the host cannot pull without one.
-          [ -n "${GHCR_READ_TOKEN:-}" ] || missing="$missing GHCR_READ_TOKEN"
-          if [ -n "$missing" ]; then
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            {
-              echo "### No dev host is configured"
-              echo
-              echo "The \`dev\` environment is missing:$missing"
-              echo
-              echo "The image is built and pushed as \`${{ needs.image.outputs.tag }}\`."
-              echo "Set those secrets on the \`dev\` environment to deploy it."
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Authorise to the dev host
-        if: steps.gate.outputs.ready == 'true'
-        env:
-          DEV_SSH_KEY: ${{ secrets.DEV_SSH_KEY }}
-          DEV_SSH_KNOWN_HOSTS: ${{ secrets.DEV_SSH_KNOWN_HOSTS }}
-        run: |
-          set -eu
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$DEV_SSH_KEY" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          # The host key is pinned, and the gate above refuses to deploy
-          # without it. Unpinned, the first connection accepts whatever
-          # answers, which is the whole of the protection this transport
-          # offers — and the key it would hand over is the one written above.
-          printf '%s\n' "$DEV_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-
-      - name: Migrate the ledger, then restart the processes
-        if: steps.gate.outputs.ready == 'true'
-        env:
-          TAG: ${{ needs.image.outputs.tag }}
-          DIR: ${{ vars.DEV_APP_DIR || '/srv/auracle' }}
-          DEV_SSH_USER: ${{ secrets.DEV_SSH_USER }}
-          DEV_SSH_HOST: ${{ secrets.DEV_SSH_HOST }}
-          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-          COMPOSE_PROFILES: ${{ vars.DEV_COMPOSE_PROFILES }}
-        run: |
-          set -eu
-          # An Actions *variable* is not masked and is not held to a secret's
-          # handling, and this one used to be interpolated into a remote
-          # command string: a value of `/srv/a'; curl … | sh; x='` ran as the
-          # deploy user, who is in the `docker` group. Checked here, and
-          # passed as an argument below rather than spliced into a string.
-          case "$DIR" in
-            /*) ;;
-            *) echo "DEV_APP_DIR must be an absolute path" >&2; exit 1 ;;
-          esac
-          case "$DIR" in
-            *[!A-Za-z0-9_/.-]*) echo "DEV_APP_DIR holds a character this deploy refuses" >&2; exit 1 ;;
-          esac
-
-          ssh_opts="-i $HOME/.ssh/id_deploy -o StrictHostKeyChecking=yes"
-          ssh_opts="$ssh_opts -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
-          target="$DEV_SSH_USER@$DEV_SSH_HOST"
-
-          # The compose files travel with the deploy, so the host runs the
-          # stack this commit describes rather than whatever it last received.
-          # A host edit to either file is overwritten every run; `.env` is
-          # the durable place for host configuration.
-          # shellcheck disable=SC2086
-          scp $ssh_opts docker-compose.yml docker-compose.dev.yml "$target:$DIR/"
-
-          # The values reach the remote shell as positional arguments, not as
-          # text inside the command string.
-          # shellcheck disable=SC2086
-          ssh $ssh_opts "$target" 'bash -s' -- "$TAG" "$DIR" "$GHCR_READ_TOKEN" \
-            "${{ github.actor }}" "${COMPOSE_PROFILES:-}" <<'REMOTE'
-          set -euo pipefail
-          AURACLE_IMAGE="$1"
-          DIR="$2"
-          GHCR_TOKEN="$3"
-          GHCR_USER="$4"
-          COMPOSE_PROFILES="$5"
-          export AURACLE_IMAGE COMPOSE_PROFILES
-          cd "$DIR"
-          compose="docker compose -f docker-compose.yml -f docker-compose.dev.yml"
-          # The compose files fall back to public passwords. A host `.env` that
-          # sets neither keeps them, so the run says so where a reader sees it.
-          for name in AURACLE_DB_PASSWORD AURACLE_READER_PASSWORD; do
-            # A value of `""` or `''` is empty too, and compose falls back for it.
-            if ! grep -Eq "^${name}=[\"']?[^\"'[:space:]]" .env 2>/dev/null; then
-              echo "::warning title=Public password::${name} is not set in the host .env, so the stack uses its public default. See SECURITY.md."
-            fi
-          done
-          # Loud. The package is private, so a failed login surfaces three
-          # lines later as an unexplained pull failure; `|| true` used to
-          # hide it, and the token it needed was never passed at all.
-          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-          docker pull "$AURACLE_IMAGE"
-          # The migration is a service with `restart: no`, and the daemons
-          # depend on it completing successfully. So `up -d` runs it first and
-          # refuses to start them if it fails, which is the ordering the
-          # ledger needs and not a step this script has to sequence itself.
-          #
-          # COMPOSE_PROFILES selects the optional services. The mail path is
-          # `mail`; leaving it unset starts the four daemons that need no
-          # mailbox. A profile-disabled container already running is left
-          # alone by --remove-orphans and never recreated, so enabling the
-          # profile later needs one `up` with it set.
-          $compose up -d --remove-orphans
-          $compose ps
-          docker image prune -f
-          REMOTE
-
-      - name: Forget the deploy key
-        # Runs whatever happened above. The runner is ephemeral, so this is
-        # about the steps that follow in this job rather than the VM.
-        if: always()
-        run: shred -u ~/.ssh/id_deploy 2>/dev/null || rm -f ~/.ssh/id_deploy
-
-      - name: What was deployed
-        if: always()
-        run: |
-          {
-            echo "### Image"
-            echo
-            echo '`${{ needs.image.outputs.tag }}`'
-            echo
-            if [ "${{ steps.gate.outputs.ready }}" = "true" ]; then
-              echo "Deployed to the \`dev\` environment."
-            else
-              echo "Not deployed: the \`dev\` environment names no host."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "The release workflow builds main alone. Dispatch it from main." >> "$GITHUB_STEP_SUMMARY"
+          exit 1

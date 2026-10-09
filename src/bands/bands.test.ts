@@ -239,7 +239,7 @@ describe('the definitions the report is pinned to', () => {
 // wording: a whitelist holds against spellings nobody has enumerated.
 describe('the documents that cite bands.yaml', () => {
   // Discovered, not listed. A hardcoded pair could never catch a third
-  // document carrying the same claim, and one did: the epic handoff.
+  // document carrying the same claim.
   //
   // The root documents are in scope too. `README.md` states the published
   // numbers and `AGENTS.md` names the command, and a false claim in either
@@ -270,12 +270,9 @@ describe('the documents that cite bands.yaml', () => {
     .sort();
 
   it('finds the documents that carry the claim', () => {
-    // Named, not counted. A count of five was reached by two scaffold prompts
-    // that make no baseline claim, so it stayed green while both documents
-    // this case exists to cover fell out of the glob.
-    for (const path of ['docs/operations.md', 'docs/internal/epic-v2-handoff.md']) {
-      expect(cites, `${path} no longer reaches this case`).toContain(path);
-    }
+    // Named, not counted. A count stays green while the document this case
+    // exists to cover falls out of the glob.
+    expect(cites, 'docs/operations.md no longer reaches this case').toContain('docs/operations.md');
   });
 
   it.each(cites)('%s never says the file holds a baseline', (path) => {

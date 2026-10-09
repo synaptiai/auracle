@@ -437,7 +437,7 @@ describe('the gold-half validator rejects a broken corpus', () => {
       // than its digest, would show them here.
       writeFileSync(fitPath, JSON.stringify(realHalf([realTurn({
         claims: [{
-          text: 'Ada Lovelace asked us to close account 44812.',
+          text: 'Ada Synthetic asked us to close account 44812.',
           doc_id: 'DOC-SYN-001', supported: true, grade: null,
         }],
       })])));
@@ -465,7 +465,7 @@ describe('the gold-half validator rejects a broken corpus', () => {
       expect(fitIdentity.claimDigests.size).toBe(1);
       for (const digest of fitIdentity.claimDigests) expect(digest).toMatch(/^[0-9a-f]{12}$/);
       const asText = JSON.stringify([...fitIdentity.claimDigests]);
-      expect(asText).not.toContain('Ada Lovelace');
+      expect(asText).not.toContain('Ada Synthetic');
       expect(asText).not.toContain('44812');
       expect(() => assertHalvesDisjoint(fitIdentity, reportIdentity)).not.toThrow();
 
@@ -548,7 +548,7 @@ describe('the gold-half validator rejects a broken corpus', () => {
   // exactly where DEC-18 says such a value may not go. So the sentence is
   // named by digest, like every other case value, and never printed.
   it('names a shared claim sentence by digest, never in full', () => {
-    const secret = { text: 'Ada Lovelace at ada@customer-domain.example asked to close account 44812.', doc_id: 'DOC-SYN-001', supported: true, grade: null };
+    const secret = { text: 'Ada Synthetic at ada@customer-domain.example asked to close account 44812.', doc_id: 'DOC-SYN-001', supported: true, grade: null };
     const fit = identityOf({
       split: 'fit', source: 'real', count: 1,
       tickets: [realTurn({ claims: [secret] })],
@@ -559,7 +559,7 @@ describe('the gold-half validator rejects a broken corpus', () => {
     });
     const call = () => assertHalvesDisjoint(fit, report);
     expect(call).toThrow(/claim sentence digest [0-9a-f]{12}/);
-    expect(call).not.toThrow(/Ada Lovelace/);
+    expect(call).not.toThrow(/Ada Synthetic/);
     expect(call).not.toThrow(/customer-domain/);
     expect(call).not.toThrow(/44812/);
   });

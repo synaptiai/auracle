@@ -10,7 +10,7 @@ import { FROZEN_RECORD_DIRS, isFrozenRecord } from './frozen-records.js';
 
 describe('a frozen record', () => {
   it('is a record under one of the named directories', () => {
-    expect(isFrozenRecord('docs/design/649c439e-afec-4bba-90d7-c14f78fd372d.md')).toBe(true);
+    expect(isFrozenRecord('docs/design/v2-compensation.md')).toBe(true);
     expect(isFrozenRecord('docs/decisions/park-key-stops-a-duplicate-draft.md')).toBe(true);
     expect(isFrozenRecord('intent/archive/anything.md')).toBe(true);
   });

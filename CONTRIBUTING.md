@@ -293,9 +293,10 @@ python3 scripts/check-docs.py
 
 It proves that each diagram declares and explains every box it draws an edge
 to. It proves that every relative link resolves. It proves that the register's
-design table accounts for every open item. It proves that each design record
-cites a decision the register defines, and that each archived record cites
-none.
+design table accounts for every open item, and names every design document
+under `docs/design/`. It refuses a document whose file name says nothing, such
+as a UUID. It proves that each design record cites a decision the register
+defines, and that each archived record cites none.
 
 CI runs it and its cases on every pull request. It decides structure and
 reference. It does not decide whether a document is true.

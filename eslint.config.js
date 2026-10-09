@@ -6,12 +6,9 @@ export default tseslint.config(
   // in parallel. It holds a second checkout with its own dist/, and the bare
   // 'dist/' pattern above is anchored at the repository root, so eslint walked
   // into it and reported that checkout's build output as findings in this one.
-  // docs/internal/ holds working documents and design handoffs, including
-  // vendored JavaScript nobody here wrote. `pnpm run verify` is now the whole
-  // contract (issue #71), so anything eslint reads can fail a pull request —
-  // and a design artifact dropped in the tree would. The style checker already
-  // draws this line: guardrails.yml notes that a document under docs/internal/
-  // never gates a pull request. This makes the lint agree with it.
+  // docs/internal/ is a local directory for working notes that git ignores.
+  // Anything eslint reads can fail `pnpm run verify`, and a file dropped there
+  // is no part of the tree.
   // A bare pattern matches at the root only, so 'dist/' left console/dist/ in
   // the lint: 46 compiled files. '.decisions/' holds the decision journal and
   // its scratch scripts, which git ignores as well.

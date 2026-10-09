@@ -1204,20 +1204,20 @@ decision only when a row enters the table in section 2.
 
 | Item | Document | Status |
 |---|---|---|
-| 1. Phase 2 exit criteria | `899a1565-de05-44ce-8693-ed6dd4cb97e3.md` | proposed, blocked |
-| 2. Compensation | `649c439e-afec-4bba-90d7-c14f78fd372d.md` | accepted, ratified as DEC-34 |
-| 3. Conversation state | `8bd63fe0-8567-44f9-b6cf-ae3d83918381.md` | ratified as DEC-35 to DEC-39 |
-| 4. Automatic feedback clusters | `f4c1a90e-7d3b-4c2a-9e15-3b8d6f0a5c47.md` | blocked on volume |
-| 5. A threshold for each intent | `434db94d-bbba-4977-805a-e9d83cb0b6c5.md` | open. The mechanism ships, and the item waits on an adopter's labeled history |
+| 1. Phase 2 exit criteria | `v2-automatic-customer-replies.md` | proposed, blocked |
+| 2. Compensation | `v2-compensation.md` | accepted, ratified as DEC-34 |
+| 3. Conversation state | `v2-multi-turn-conversation-state.md` | ratified as DEC-35 to DEC-39 |
+| 4. Automatic feedback clusters | `v2-automatic-feedback-clusters.md` | blocked on volume |
+| 5. A threshold for each intent | `v2-per-intent-agreement-thresholds.md` | open. The mechanism ships, and the item waits on an adopter's labeled history |
 | 6. Schema migration procedure | none needed | closed by `src/ledger/migrate.ts` |
-| 7. Head-of-line delay | `99dc14d7-da9d-4a92-a9dc-d7c0685c6992.md` | proposed. The measurement ships, and the correction is unchosen |
-| (none) | `8dcb8fcb-39dc-4911-a695-2282b6081f07.md` operator console | ratified as DEC-40 |
-| (none) | `38f6dcea-8473-4cf4-9aef-c13936a0442f.md` a threshold for each intent | ratified as DEC-41 |
+| 7. Head-of-line delay | `v2-head-of-line-delay-correction.md` | proposed. The measurement ships, and the correction is unchosen |
+| (none) | `amendment-an-operator-console-beside-the-helpdesk-draft.md` operator console | ratified as DEC-40 |
+| (none) | `amendment-a-threshold-for-each-intent.md` a threshold for each intent | ratified as DEC-41 |
 | (none) | no document: the approver a reply carries | ratified as DEC-42 |
-| (none) | `ab98fd60-4327-4891-bb4e-00e51e66bdbd.md` partition concurrency | a trace. No row needed |
-| (none) | `bbc657f2-8083-47be-84e9-672825e2158d.md` online A/B tests | proposed, blocked |
-| (none) | `af2c0364-dc11-4547-a0b0-90f51592ae2b.md` ledger implementation | V1 background |
-| (none) | `c8b2e42f-b76d-43ef-8010-f7e8932bde48.md` a reviewer console four people work from | ratified as DEC-44 to DEC-51 |
+| (none) | `trace-bounded-intra-partition-concurrency.md` partition concurrency | a trace. No row needed |
+| (none) | `v2-online-ab-experiments.md` online A/B tests | proposed, blocked |
+| (none) | `ledger-implementation.md` ledger implementation | V1 background |
+| (none) | `amendment-a-reviewer-console-four-people-work-from.md` a reviewer console four people work from | ratified as DEC-44 to DEC-51 |
 
 A DEC number inside one of those documents is provisional. The register
 assigns the real number at ratification. So two documents may propose the

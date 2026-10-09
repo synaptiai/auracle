@@ -1157,7 +1157,7 @@ describe('the close a person made (DEC-48)', () => {
 // #122: why a run stopped superseded. The row is written by the park step
 // and by the consumer's scan, outside the walk's own step list, and the run
 // page reads it through here.
-describe('the reason a run was superseded (#122)', () => {
+describe('the reason a run was superseded', () => {
   it('returns the reason and the run it names, outside the walk', async () => {
     const runId = await journal([
       {

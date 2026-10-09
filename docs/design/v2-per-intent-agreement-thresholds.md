@@ -272,4 +272,4 @@ trigger against another that fires on synthetic data. No such job was ever
 written, so the comparison rests on nothing.
 
 Open item 4 now has a design document of its own:
-`f4c1a90e-7d3b-4c2a-9e15-3b8d6f0a5c47.md`.
+`v2-automatic-feedback-clusters.md`.

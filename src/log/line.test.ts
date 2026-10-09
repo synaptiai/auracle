@@ -7,7 +7,7 @@ const char = (code: number): string => String.fromCharCode(code);
 
 describe('a structured log line', () => {
   it('is the JSON of the entry when every string is plain', () => {
-    const entry = { event: 'console_approved', runId: 'r-1', approvedBy: 'Åsa Nyström', n: 3 };
+    const entry = { event: 'console_approved', runId: 'r-1', approvedBy: 'Åsa Synthetic', n: 3 };
     expect(logLine(entry)).toBe(JSON.stringify(entry));
   });
 

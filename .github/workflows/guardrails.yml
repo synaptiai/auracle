@@ -51,8 +51,7 @@ jobs:
       # Rules 1 and 2 of the style convention only. Rules 3 to 5 need a
       # reader, and no checker claims them. The file list lives in
       # SHIPPED_GLOBS inside the checker and nowhere else, so this step names
-      # no files: a document under docs/internal/ never gates a pull request,
-      # and the list cannot drift away from `pnpm run check:ste`.
+      # no files, and the list cannot drift away from `pnpm run check:ste`.
       - name: Simplified Technical English (rules 1 and 2)
         run: python3 scripts/ste-check.py
 

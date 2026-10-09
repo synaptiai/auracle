@@ -2,7 +2,7 @@
 #
 # `docker-compose.yml` runs the ledger alone, for a checkout that builds from
 # source. This file runs the five processes as well, from one image tagged
-# with a commit. It is what the dev host runs, and running it locally starts
+# with a commit. It is what a host runs, and running it locally starts
 # the same artifact rather than a similar one.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
@@ -12,13 +12,15 @@
 # the ledger, so each crash-loops on its startup probe until Postgres is
 # ready. That is self-healing and it is not the guarantee `up` gives.
 #
-# AURACLE_IMAGE selects the tag. The deploy job sets it to the commit SHA, so
-# the host runs a named build and a rollback is a tag change. The default
-# builds from this checkout, which is what you want locally.
+# AURACLE_IMAGE selects the image. Set it to the one the release workflow
+# pushed, `ghcr.io/<owner>/<repo>:<commit-sha>`, so the host runs a named build
+# and a rollback is a tag change. The default builds from this checkout, which
+# is what you want locally.
 #
 # Every process reads its configuration from `.env`, which is never committed.
-# Copy `.env.example` and fill it in. `env_file` loads it into each container;
-# a variable already in the shell wins, as it does for a checkout.
+# Copy `.env.example` and fill it in. `env_file` loads it into each container,
+# and a value in the host's shell does not override it. A `${...}` in this
+# file is the other way round: compose takes it from the shell before `.env`.
 #
 # DATABASE_URL is the exception, and it is set here rather than read. The
 # documented start writes `DATABASE_URL=...@localhost:5433/...` into `.env`,
@@ -110,8 +112,8 @@ services:
     # Set COMPOSE_PROFILES=mail to include it. A container already running
     # under a profile that is then disabled is left alone by
     # `--remove-orphans` and never recreated, so it would keep serving the
-    # previous image after every deploy: stop it by hand if you turn the
-    # profile off.
+    # previous image after each `up`: stop it by hand if you turn the profile
+    # off.
     profiles: [mail]
     restart: unless-stopped
 
@@ -168,7 +170,7 @@ services:
       # behind it, and a trusted proxy authenticates that reviewer (DEC-45).
       # It lists every gated run with its draft text and releases customer
       # replies (DEC-12), so nothing but a proxy belongs in front of it.
-      # Setting this to the dev host's name is what a proxy in front needs;
+      # Setting this to the host's name is what a proxy in front needs;
       # without it the console derives loopback names only and refuses that
       # Host. A console in this stack runs from the image. So it takes no
       # development reviewer, and refuses CONSOLE_DEV_REVIEWER.

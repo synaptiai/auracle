@@ -79,7 +79,7 @@ async function backfilled(
 
 const at = (minute: number): Date => new Date(Date.UTC(2026, 8, 14, 12, minute));
 
-describe('the routing screen (issue #112)', () => {
+describe('the routing screen', () => {
   beforeEach(async () => {
     await truncateLedger(pool);
   });

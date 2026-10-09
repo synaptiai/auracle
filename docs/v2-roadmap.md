@@ -40,7 +40,7 @@ it. No code change moves this. Only a person amends the register.
 
 **B2. No exit decision exists.** Section 5 states that the criteria to leave
 Phase 2 need a decision the register does not make. The design document
-`899a1565-de05-44ce-8693-ed6dd4cb97e3.md` proposes eight criteria, C1 to C8.
+`v2-automatic-customer-replies.md` proposes eight criteria, C1 to C8.
 
 They cover volume, edit distance, a human audit of unchanged sends and a
 groundedness floor. They also cover person-set eligibility, disclosure, an
@@ -148,7 +148,7 @@ The adopter. Volume arrives with their own traffic and with nothing else.
 
 ### What has shipped toward it
 
-No code. The design document `f4c1a90e-7d3b-4c2a-9e15-3b8d6f0a5c47.md`
+No code. The design document `v2-automatic-feedback-clusters.md`
 records the mechanism, the trigger and the reason V1 answers this manually.
 
 The taxonomy induction job already embeds records, groups them, and folds
@@ -193,7 +193,7 @@ The adopter, who labels their own history or writes a model labeler for it.
 
 ### What has shipped toward it
 
-The mechanism ships. `434db94d-bbba-4977-805a-e9d83cb0b6c5.md` specifies it.
+The mechanism ships. `v2-per-intent-agreement-thresholds.md` specifies it.
 DEC-13 names the trigger as its own bound, and DEC-41 governs above it.
 
 Below the trigger the calibration job fits the global threshold and records an
@@ -286,8 +286,8 @@ The item is open. The measurement exists, and the correction does not.
 DEC-44 to DEC-51 govern the review tool. They cover an authenticated reviewer,
 a reservation, a product and the ways a case ends. They also cover a new
 attempt, knowledge written from a case and a hold period before a send.
-`c8b2e42f-b76d-43ef-8010-f7e8932bde48.md` under `docs/design/` records the
-reasoning.
+`amendment-a-reviewer-console-four-people-work-from.md` under `docs/design/`
+records the reasoning.
 
 The console ships each of them. A roster of reviewers decides who may use the
 console. The console refuses a request with no active roster identity. The

@@ -649,7 +649,7 @@ describe('section 4.3 run coordinator', () => {
   // End to end, against the real ledger, because the claim is about the row
   // an operator reads and the state the run stops in. A stub can assert the
   // statements; only the ledger can answer `pnpm run escalations`.
-  it('escalates a coordinator fault to a row the escalations view names (#94)', async () => {
+  it('escalates a coordinator fault to a row the escalations view names', async () => {
     const ticketId = 'T-' + randomUUID().slice(0, 8);
     const base = makeDeps(happyScript());
     const intents = [...base.taxonomy.intents];

@@ -92,7 +92,7 @@ async function read(now = NOW) {
   return readTeam(readers, { now, lapseMs: LAPSE });
 }
 
-describe('the team screen (issue #112)', () => {
+describe('the team screen', () => {
   beforeEach(async () => {
     await truncateLedger(pool);
   });

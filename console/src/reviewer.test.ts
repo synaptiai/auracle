@@ -81,24 +81,24 @@ describe('the reviewer behind a request (DEC-45)', () => {
   });
 
   // Node reads header bytes as Latin-1. A proxy that sends UTF-8 bytes would
-  // otherwise put a name like `NystrÃ¶m` in the audit column, and the roster
+  // otherwise put a name like `SynthÃ¶tic` in the audit column, and the roster
   // would be asked about that name instead of the person's.
   it('reads a name a proxy sent as UTF-8 bytes as the name it sent', async () => {
-    const req = await requestWith([HEADER, Buffer.from('Åsa Nyström', 'utf8').toString('latin1')]);
+    const req = await requestWith([HEADER, Buffer.from('Åsa Synthetic', 'utf8').toString('latin1')]);
     const asked: string[] = [];
     const reviewer = await headerResolver(async (identity) => {
       asked.push(identity);
       return true;
     })(req);
-    expect(reviewer).toEqual({ reviewer: 'Åsa Nyström' });
+    expect(reviewer).toEqual({ reviewer: 'Åsa Synthetic' });
     // The roster sees the name, not the bytes Node read them as.
-    expect(asked).toEqual(['Åsa Nyström']);
+    expect(asked).toEqual(['Åsa Synthetic']);
   });
 
   // A byte that is not UTF-8 is Latin-1 text, and it stays as Node read it.
   it('reads a Latin-1 name unchanged', async () => {
-    const req = await requestWith([HEADER, 'Åsa Nyström']);
-    expect(await headerResolver()(req)).toEqual({ reviewer: 'Åsa Nyström' });
+    const req = await requestWith([HEADER, 'Åsa Synthetic']);
+    expect(await headerResolver()(req)).toEqual({ reviewer: 'Åsa Synthetic' });
   });
 
   // The header is read only when the operator named it. A console cannot

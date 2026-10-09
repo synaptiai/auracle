@@ -241,7 +241,7 @@ describe('the queue in groups', () => {
   //   - oldest or my products lists a case somebody else holds as work;
   //   - my products drops age inside each half;
   //   - the work order takes a held case, or loses the order the page drew.
-  describe('the sort a reviewer picks (issue #154)', () => {
+  describe('the sort a reviewer picks', () => {
     const queue = [
       run('rest-old', { gateCoverage: 0.5, product: 'ledger', createdAt: at('2026-09-14T06:00:00Z') }),
       run('risk-new', { gateReason: 'irreversible', product: 'aurora', createdAt: at('2026-09-14T11:00:00Z') }),

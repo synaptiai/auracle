@@ -40,7 +40,7 @@ async function rows() {
   }>('SELECT product, intent_id, run_id, gate_at, reason, unreadable FROM gate_latest ORDER BY product NULLS LAST, intent_id')).rows;
 }
 
-describe('the gate\'s latest record (issue #112)', () => {
+describe('the gate\'s latest record', () => {
   beforeEach(async () => {
     await truncateLedger(pool);
   });

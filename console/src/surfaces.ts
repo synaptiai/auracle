@@ -1,13 +1,13 @@
-// The five surfaces (issue #27).
+// The console's surfaces.
 //
 // Each takes data the query modules produced and returns HTML. None of them
 // reads the ledger: the server does that through `bands`, `latency` and the
 // runs module, so a metric has one definition and the console cannot drift
 // from the job that publishes it.
 //
-// The design canvas at `.creatumo/design/console-canvas/` settles the
-// contents. Its brief states the rule these surfaces are held to: no screen
-// anywhere combines agreement and coverage into one score.
+// The design canvas at `docs/design/console-canvas/` settles the first
+// surfaces' contents. Its brief states the rule these surfaces are held to:
+// no screen anywhere combines agreement and coverage into one score.
 //
 // Where the canvas draws a value this console cannot read, the block is left
 // out rather than drawn empty. An artboard is a proposal about what an
@@ -265,7 +265,8 @@ function rail(shell: Shell): string {
       const badge = surface.href === '/' && shell.approvals !== null
         ? `<span class="badge">${escapeHtml(String(shell.approvals))}</span>`
         : surface.href === '/knowledge' && shell.gaps !== undefined && shell.gaps !== null
-          // The handoff's plain badge: a count to read, not a call to act.
+          // The reviewer design's plain badge: a count to read, not a
+          // call to act.
           ? `<span class="badge plain">${escapeHtml(String(shell.gaps))}</span>`
           : '';
       // The label and the badge are siblings. The label may shrink and
@@ -1110,7 +1111,7 @@ interface ReplyEdit {
 /**
  * The query a link into a conversation carries from a case (issue #154): the
  * case, and the queue filters it was opened under, so the thread can link
- * back to it as the handoff's "← case" does.
+ * back to it as the reviewer design's "← case" does.
  */
 function fromCase(runId: string, rule: string | null, product: string | null): string {
   return `?from=${encodeURIComponent(runId)}${filtersQuery(rule, product).replace(/^\?/, '&')}`;
@@ -2101,10 +2102,10 @@ function holdSeconds(holdMs: number): number {
 /**
  * The screen a reviewer reads before a batch sends (DEC-51).
  *
- * The handoff's own words: the group's button says "read each first", and
- * this is where that reading happens. Every reply is drawn in full, and the
- * confirm button carries each case's digest, so a case whose reply moved
- * since this page was drawn refuses rather than sending text nobody read.
+ * The reviewer design's own words: the group's button says "read each first",
+ * and this is where that reading happens. Every reply is drawn in full, and the
+ * confirm button carries each case's digest, so a case whose reply moved since
+ * this page was drawn refuses rather than sending text nobody read.
  */
 export function renderConfirm(
   cases: readonly ConfirmCase[],
@@ -2166,10 +2167,10 @@ export function renderConfirm(
 /**
  * What a batch did, in the group's own words (DEC-51).
  *
- * The handoff's success state: a sentence naming what was sent, what remains,
- * and an undo while the hold stands. A case that refused is drawn with its
- * own sentence from the approval's vocabulary, because a batch that reported
- * "six sent" while one refused would be a lie about a customer reply.
+ * The reviewer design's success state: a sentence naming what was sent, what
+ * remains, and an undo while the hold stands. A case that refused is drawn with
+ * its own sentence from the approval's vocabulary, because a batch that
+ * reported "six sent" while one refused would be a lie about a customer reply.
  */
 export function renderConfirmResult(
   outcomes: readonly BatchOutcome<ConsoleApproveOutcome['outcome']>[],
@@ -2227,8 +2228,8 @@ export function renderConfirmResult(
     ? undefined
     : new Set([...options.unread].filter((runId) => !refusedBeforeApproval.has(runId)));
   const count = sent.length;
-  // The handoff's own words, and only where they are true: with a hold, the
-  // records are pending for the length of the window.
+  // The reviewer design's own words, and only where they are true: with a hold,
+  // the records are pending for the length of the window.
   const headline = options.delivered === count && count > 0
     ? `${count} ${count === 1 ? 'reply sent.' : 'replies sent.'}`
     : `${count} ${count === 1 ? 'reply approved.' : 'replies approved.'}`;
@@ -3546,8 +3547,8 @@ function holdLine(view: CaseView, options: CaseOptions): string {
   // was reading. They travel on the action's query string, as the approval's
   // do, and never as a field.
   const filters = escapeHtml(filtersQuery(options.rule, options.product));
-  // Issue #154: the case's place among those its queue offers, beside the
-  // hold, as the handoff draws it. Not drawn for a case the queue would not
+  // Issue #154: the case's place among those its queue offers, beside the hold,
+  // as the reviewer design draws it. Not drawn for a case the queue would not
   // offer, because a position in a list it is not on is no position.
   const position = options.position === undefined || options.position === null
     ? ''
@@ -4270,8 +4271,8 @@ function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
       drawsEditor(view, options),
     )
     : '';
-  // Issue #154: the other outcomes are links that open their form in the
-  // case, in the handoff's order. A field in the bar for each of them made
+  // Issue #154: the other outcomes are links that open their form in the case,
+  // in the reviewer design's order. A field in the bar for each of them made
   // the bar taller than a 540px window.
   const open = openStep(view, options);
   const steps = offeredSteps(view, options).map(({ step, label }) => {
@@ -4302,7 +4303,8 @@ function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
 type OpenStep = CaseStep | 'rewrite' | 'sendback';
 
 /**
- * The outcomes this case offers beyond the approval, in the handoff's order.
+ * The outcomes this case offers beyond the approval, in the order the
+ * reviewer design gives them.
  *
  * DEC-48: the close and the snooze on every waiting case. That includes a run
  * whose park holds nothing to approve: a case nobody can approve is exactly
@@ -4955,7 +4957,7 @@ function casesSays(n: number): string {
 /**
  * One stat card: a label, the ledger's figure, and what it counts.
  *
- * The figure is coloured by the verdict the label names, as the handoff
+ * The figure is coloured by the verdict the label names, as the reviewer design
  * colours it (issue #154). The label says it in words, so the colour is never
  * the only carrier.
  */

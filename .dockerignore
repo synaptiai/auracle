@@ -1,31 +1,23 @@
-# The build stage copies what it needs by name. This list covers the paths a
-# COPY could still reach, and the two that would break the image if it did:
-# a host node_modules holds darwin binaries, and a host dist/ is whatever was
-# last built locally, which `tsc -b` would then trust by timestamp.
+# Paths a COPY could still reach. The build copies what it needs by name.
+
+# Host packages and build output: darwin binaries and a stale build.
 node_modules
 **/node_modules
 dist
 **/dist
+# Git history and pnpm's package store.
 .git
 .pnpm-store
 
-# Secrets. The image reads its configuration from the environment.
-#
-# Every directory, not the root alone. A path here is matched against the
-# whole context path, so a bare `.env` left `console/.env` and `src/.env` in
-# the context — and `cache-to: type=gha,mode=max` exports every intermediate
-# layer to the Actions cache. CI cannot hit it (a fresh checkout has no
-# untracked `.env`); a local `docker build` can.
-**/.env
-.env.*
-!.env.example
+# Secrets, in every directory. The image reads its configuration at runtime.
+**/.env*
+!**/.env.example
+**/*.env
 
-# The gold corpus, 10MB. The consumer reads fixtures/taxonomy.json and nothing
-# else under fixtures/ reaches a process this image starts; the halves are for
-# the offline jobs, which run from a checkout.
+# The gold corpus. No process in the image reads it.
 fixtures/gold
 
-# Run artifacts: the adopter's own traffic (DEC-17, DEC-19).
+# Run output: the adopter's own traffic (DEC-17, DEC-19).
 corpus/
 triage/
 latency/
@@ -33,13 +25,12 @@ bands/
 calibration/
 groundedness/
 
-# Session and tool state.
+# Local state of agent tools.
 .claude/
 .decisions/
 .trail/
-.gstack/
-.creatumo/
 .flow/
+# Python caches and macOS folder metadata.
 __pycache__/
 **/__pycache__/
 .pytest_cache/

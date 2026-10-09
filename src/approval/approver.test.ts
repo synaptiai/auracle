@@ -49,9 +49,9 @@ describe('the approver a reply records', () => {
   // selector draw nothing in most places, so neither is part of a name.
   it('keeps a name written outside ASCII', () => {
     const names = [
-      '\u00c5sa Nystr\u00f6m',
-      '\u0141ucja Wr\u00f3bel',
-      '\u0645\u0647\u0631\u062f\u0627\u062f \u0646\u06cc\u06a9', // Persian, two words
+      '\u00c5sa Synth\u00f6tic',
+      '\u0141ucja Synth\u00f3tic',
+      '\u06a9\u0627\u0631\u0628\u0631 \u0622\u0632\u0645\u0627\u06cc\u0634\u06cc', // Persian, two words: a test user
       '\u0915\u094d\u0937', // Devanagari, a conjunct written with a virama alone
       '\u0418\u0432\u0430\u043d', // Cyrillic
       'ops \u{1F600}', // an emoji that draws as one
@@ -84,7 +84,7 @@ describe('the approver a reply records', () => {
     const claimed = [
       'al\u200dice',
       '\u0418\u0432\u200d\u0430\u043d', // between Cyrillic letters, where it draws nothing
-      '\u0645\u0647\u0631\u062f\u0627\u062f\u200c\u0646\u06cc\u06a9', // Persian, a non-joiner
+      '\u06a9\u0627\u0631\u0628\u0631\u200c\u0622\u0632\u0645\u0627\u06cc\u0634\u06cc', // Persian, a non-joiner
       '\u0915\u094d\u200d\u0937', // Devanagari, a joiner inside a conjunct
       'ops \u{1F468}\u200d\u{1F4BB}', // an emoji sequence
       'ops \u2764\ufe0f', // an emoji with its presentation selector

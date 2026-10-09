@@ -225,7 +225,7 @@ container image.
 | [The V2 roadmap](docs/v2-roadmap.md) | What is left, and what blocks each item |
 | [The contributing guide](CONTRIBUTING.md) | From a clean checkout to a merged change |
 | [The review guide](REVIEW.md) | The three passes every change makes |
-| [The playbook](docs/agentic-support-playbook.html) | The narrative argument for this design ([PDF](docs/agentic-support-playbook.pdf)) |
+| [The playbook](docs/background/agentic-support-playbook.html) | The workshop pack that precedes the design. The register supersedes it |
 
 ## Compliance position
 

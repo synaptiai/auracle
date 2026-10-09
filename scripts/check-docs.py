@@ -17,7 +17,8 @@ into commands.
                 foreign key. A database test checks the drawing itself.
   links         Every relative link in a shipped document resolves.
   design-index  The register's design table accounts for every open item it
-                lists, and every file it names exists.
+                lists, and every file it names exists. It names every entry
+                under docs/design/, and each name says what the document is.
   decisions     Every design record cites a decision the register defines, and
                 every archived record cites none.
   dec-range     Every document that states the register's range states the
@@ -59,13 +60,33 @@ import glob
 import hashlib
 import json
 import os
+import posixpath
 import re
 import stat
+import subprocess
 import sys
+import unicodedata
 
 MAP = "docs/architecture-map.md"
 REGISTER = "docs/v1-architecture.md"
 DESIGN_DIR = "docs/design"
+# A design document's name: two or more lowercase parts joined by hyphens,
+# one of them a word, all letters, with a letter past `f`. An allow rule,
+# because a list of the names a tool generates never ends: a UUID, a hash, a
+# ULID, a cuid, a timestamp. Each lacks the hyphens or the word.
+DOCUMENT_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)+\.md$")
+WORD = re.compile(r"^[a-z]*[g-z][a-z]*$")
+
+
+def says_what_it_is(entry: str) -> bool:
+    """Whether a file name passes the rule `DOCUMENT_NAME` and `WORD` state."""
+    if not DOCUMENT_NAME.match(entry):
+        return False
+    return any(len(part) > 1 and WORD.match(part) for part in entry[: -len(".md")].split("-"))
+# The folders under docs/design, each with what it holds.
+DESIGN_FOLDERS = {
+    "console-canvas": "the console's artboards, which its README describes",
+}
 DECISIONS_DIR = "docs/decisions"
 ARCHIVE_DIR = "intent/archive"
 MANIFEST = "package.json"
@@ -636,8 +657,84 @@ def design_table(register: str) -> str | None:
         if line.lstrip().startswith("|"))
 
 
+def ignored_by_git(root: str, paths: list[str]) -> set[str]:
+    """The paths, relative to `root`, that git ignores there.
+
+    Git reads `.gitignore`, `.git/info/exclude` and the user's own excludes
+    file, so an editor's swap file or a file browser's metadata counts as
+    ignored wherever the contributor told git to ignore it. A root that is no
+    git work tree ignores nothing, and git's absence is the same.
+    """
+    if not paths:
+        return set()
+    # With core.precomposeunicode, which macOS git writes on, git composes the
+    # names it reads from the disk, but not those it reads on stdin, and the
+    # disk can list a name decomposed. So then each path goes to git
+    # composed, and each answer maps back to every name listed that way.
+    # Otherwise a name is its bytes.
+    compose = precomposes(root)
+    asked: dict[str, list[str]] = {}
+    for path in paths:
+        asked.setdefault(unicodedata.normalize("NFC", path) if compose else path, []).append(path)
+    # Bytes, not text: a file name need not be valid UTF-8.
+    try:
+        done = subprocess.run(
+            ["git", "-C", root, "check-ignore", "--stdin", "-z"],
+            input=b"\0".join(os.fsencode(path) for path in asked) + b"\0",
+            capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    # 0: some path is ignored; 1: none is; anything else: no work tree here.
+    if done.returncode not in (0, 1):
+        return set()
+    answers = (os.fsdecode(path) for path in done.stdout.split(b"\0") if path)
+    return {listed for answer in answers for listed in asked.get(answer, [answer])}
+
+
+def precomposes(root: str) -> bool:
+    """Whether git composes the names it reads from the disk under `root`.
+
+    Only git on macOS reads the setting, and only a value of true composes.
+    `git init` and `git clone` there write it true. Unset or unreadable, git
+    composes nothing.
+    """
+    if sys.platform != "darwin":
+        return False
+    try:
+        done = subprocess.run(
+            ["git", "-C", root, "config", "--type=bool", "core.precomposeunicode"],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return done.returncode == 0 and done.stdout.strip() == "true"
+
+
+def record_problem(design: str, record: str) -> str | None:
+    """Why `record` names no file under `design`, or None when it names one.
+
+    A disk that ignores case opens `AAA.md` for `aaa.md`, and a checkout on a
+    disk that does not then breaks the link. So each part of the name must
+    match an entry as it is listed. A folder that cannot be listed is a
+    folder that cannot be read, not a file that does not exist.
+    """
+    at = design
+    for part in posixpath.normpath(record).split("/"):
+        try:
+            if part not in os.listdir(at):
+                return "does not exist"
+        except NotADirectoryError:
+            return "does not exist"
+        except FileNotFoundError:
+            return "does not exist"
+        except OSError as error:
+            return f"cannot be read ({error.strerror or error})"
+        at = os.path.join(at, part)
+    return None if os.path.isfile(at) else "does not exist"
+
+
 def check_design_index(root: str, findings: list[str]) -> None:
-    """Every open item has a row, and every file a row names exists."""
+    """Every open item has a row, every file a row names exists, and the table
+    names every entry under docs/design, each by a name that says what it is."""
     register = read_repo_file(root, REGISTER, findings)
     if register is None:
         return
@@ -663,11 +760,48 @@ def check_design_index(root: str, findings: list[str]) -> None:
         if not re.search(rf"^\s*\|\s*{item}\.\s", table, re.M):
             findings.append(
                 f"{REGISTER}: section 7.1 has no row for open item {item}")
-    for named in re.findall(r"`([^`]+\.md)`", table):
-        if not os.path.exists(os.path.join(root, DESIGN_DIR, named)):
+    # Read the directory once, first. A missing or unreadable one is one
+    # finding, not a "does not exist" for every row the table names.
+    design = os.path.join(root, DESIGN_DIR)
+    try:
+        entries = sorted(os.listdir(design))
+    except FileNotFoundError:
+        findings.append(f"{DESIGN_DIR}/: does not exist")
+        return
+    except OSError as error:
+        findings.append(f"{DESIGN_DIR}/: cannot read ({error.strerror or error})")
+        return
+    named = {posixpath.normpath(record) for record in re.findall(r"`([^`]+\.md)`", table, re.I)}
+    for record in sorted(named):
+        problem = record_problem(design, record)
+        if problem is not None:
             findings.append(
-                f"{REGISTER}: section 7.1 names '{named}', which does not exist "
+                f"{REGISTER}: section 7.1 names '{record}', which {problem} "
                 f"under {DESIGN_DIR}/")
+    # The reverse direction. A document the register never names is one
+    # nobody finds from the decision it serves, and a name a tool generated
+    # tells a reader nothing about it. So every entry at the top of the
+    # directory is a design document the table names, or a folder this check
+    # knows. A link to nothing is a document that does not exist.
+    # A file git ignores, such as an editor's swap file, never ships, and it
+    # is no document. Every other entry answers to the rules below.
+    ignored = ignored_by_git(root, [posixpath.join(DESIGN_DIR, entry) for entry in entries])
+    for entry in entries:
+        if posixpath.join(DESIGN_DIR, entry) in ignored:
+            continue
+        if os.path.isdir(os.path.join(design, entry)):
+            if entry not in DESIGN_FOLDERS:
+                findings.append(
+                    f"{DESIGN_DIR}/{entry}/ is a folder this check does not know. "
+                    f"Name it in DESIGN_FOLDERS with what it holds")
+            continue
+        if not says_what_it_is(entry):
+            findings.append(
+                f"{DESIGN_DIR}/{entry} has a name that says nothing. Use lowercase "
+                f"words joined by hyphens, ending in .md")
+        if entry not in named:
+            findings.append(
+                f"{DESIGN_DIR}/{entry} is a design document section 7.1 does not name")
 
 
 DECISIONS_SECTION = re.compile(

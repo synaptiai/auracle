@@ -89,7 +89,7 @@ Published numbers move. The change set states which ones moved and why.
 It gains a per-intent lookup with the global value as its fallback.
 
 The calibration job already knows the shape. The design document
-`434db94d-bbba-4977-805a-e9d83cb0b6c5.md` specifies it: below the trigger the
+`v2-per-intent-agreement-thresholds.md` specifies it: below the trigger the
 job fits the global threshold and records an empty per-intent map, and at or
 above it the job fits a threshold for each intent above the data floor. The
 artifact records `trigger_min_labelled` and `labelled_cases` either way.

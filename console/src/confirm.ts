@@ -50,9 +50,10 @@ export interface BatchDeps<TOutcome> {
 /**
  * How many cases one batch may carry.
  *
- * The handoff's own list is six, and a reviewer confirms what they have read.
- * The bound exists because a form field is a place any text can be put, and a
- * batch of ten thousand would hold a connection and a transaction for each.
+ * The reviewer design's own list is six, and a reviewer confirms what they
+ * have read. The bound exists because a form field is a place any text can be
+ * put, and a batch of ten thousand would hold a connection and a transaction
+ * for each case.
  */
 export const MAX_BATCH = 50;
 

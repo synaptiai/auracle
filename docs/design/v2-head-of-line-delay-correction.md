@@ -79,7 +79,7 @@ walk keeps its own try block. The concurrency bound K needs a limit pinned
 like any other (DEC-25 spirit: a bound makes damage visible).
 
 One V2 interaction needs care. The multi-turn proposal (DEC-35, design id
-8bd63fe0) changes the intake key to `(ticket_id, message_id)`. A poll can
+`v2-multi-turn-conversation-state.md`) changes the intake key to `(ticket_id, message_id)`. A poll can
 then return two rows of one ticket. The scheduler must serialize rows of one
 ticket inside the scan. Grouping the poll by ticket is enough.
 

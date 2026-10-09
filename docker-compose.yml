@@ -59,10 +59,10 @@ services:
   mail:
     # Behind a profile, so it starts for a test run and for nothing else.
     #
-    # `.github/workflows/release.yml` deploys with
+    # A host runs the stack with
     # `-f docker-compose.yml -f docker-compose.dev.yml up -d`, which starts
-    # every service the merged file declares. Without this the dev host ran a
-    # mail server that accepts any credentials for any account, reachable by
+    # every service the merged file declares. Without this the host would run
+    # a mail server that accepts any credentials for any account, reachable by
     # every local process and every container on the compose network. The
     # `imap` service in the dev overlay is gated the same way and for a
     # related reason.

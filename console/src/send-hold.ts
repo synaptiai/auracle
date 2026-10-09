@@ -2,18 +2,17 @@
  * How long a console send waits before the relay may post it (DEC-51).
  *
  * Its own module for the reason `hold-lapse.ts` is: `main.ts` runs `main()`
- * when it is imported, so nothing there can be reached from a test. The
- * default is the period the handoff's own copy shows — "Undo · 12s" — and
- * two shipped documents state it: the runbook and `.env.example`. A page
- * promising a window the console does not use would be a sentence about
- * another console, so the default is here, where a test holds it to the words
- * the pages use.
+ * when it is imported, so nothing there can be reached from a test. The default
+ * is the period the reviewer design's own copy shows — "Undo · 12s" — and two
+ * shipped documents state it: the runbook and `.env.example`. A page promising
+ * a window the console does not use would be a sentence about another console,
+ * so the default is here, where a test holds it to the words the pages use.
  *
  * The period is a *server* hold, never a delay in the browser: a closed tab
  * must not drop a send the page reported as done.
  */
 
-/** Twelve seconds: the window the handoff's undo button counts down. */
+/** Twelve seconds: the window the reviewer design's undo button counts down. */
 export const SEND_HOLD_MS = 12_000;
 
 /**
