@@ -1,4 +1,4 @@
-// What a long-running process needs to report a fault and exit (issue #72).
+// What a long-running process needs to report a fault and exit.
 //
 // The console is a separate package with its own entry point, so it needs the
 // same tail every daemon uses. This is the only part of the core that a

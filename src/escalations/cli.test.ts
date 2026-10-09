@@ -52,10 +52,10 @@ function item(over: Partial<EscalationItem> = {}): EscalationItem {
 }
 
 describe('the escalations table', () => {
-  // Issue #94: `internal_fault` names a defect inside the coordinator and not
-  // a step, so the invariant message is the whole of what an operator has to
-  // go on. The runbook tells them to quote it into an issue, and it reached
-  // the ledger and no reader at all.
+  // `internal_fault` names a defect inside the coordinator and not a step, so
+  // the invariant message is the whole of what an operator has to go on. The
+  // runbook tells them to quote it into an issue, and it reached the ledger and
+  // no reader at all.
   it('prints the fault message of a run that met a defect', () => {
     const table = renderTable([
       item({
@@ -122,9 +122,9 @@ describe('the escalations table', () => {
     }
   });
 
-  // Issue #114. A ticket id arrives from a webhook or a Message-ID with no
-  // character check, and a reason or a fault quotes an adapter. This table is
-  // printed for a person, so a raw control there moves the cursor or
+  // A ticket id arrives from a webhook or a Message-ID with no character check,
+  // and a reason or a fault quotes an adapter. This table is printed for a
+  // person, so a raw control there moves the cursor or
   // reorders the row they read.
   it('writes every character a terminal would act on as an escape', () => {
     const esc = String.fromCharCode(0x1b);

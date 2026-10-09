@@ -1,4 +1,4 @@
-// What reached a person today, against what arrived (issue #101).
+// What reached a person today, against what arrived.
 //
 // Arrivals are inbound messages, one turn each. What reached the queue is the
 // part of those arrivals whose run parked for a person, counted once per
@@ -16,7 +16,7 @@ import { truncateLedger } from '../test-support/schema.js';
 import { readQueueToday } from './today.js';
 
 const pool = new Pool({ connectionString: dbUrl() });
-// The readers connect as the role that cannot act beyond a read (issue #153).
+// The readers connect as the role that cannot act beyond a read.
 const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 await pool.query('SELECT 1');
 

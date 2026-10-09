@@ -155,10 +155,10 @@ describe('webhook → intake path', () => {
     const url = await start();
     // Remove the table so enqueueTicket's INSERT fails outright, then put it
     // back. A `beforeEach` used to re-apply the whole schema, so the drop
-    // repaired itself and nobody had to think about it; issue #68 replaced
-    // that hook with a truncate, because each file now receives an already
-    // migrated database. This case is the one place that changes the schema
-    // rather than the rows, so it is the one place that must restore it.
+    // repaired itself and nobody had to think about it; per-file databases
+    // replaced that hook with a truncate, because each file now receives an
+    // already migrated database. This case is the one place that changes the
+    // schema rather than the rows, so it is the one place that must restore it.
     //
     // Leaving it dropped is invisible in the default order, where this case
     // runs last. Under `--sequence.shuffle` it broke two later cases, and

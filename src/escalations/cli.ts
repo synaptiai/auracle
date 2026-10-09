@@ -88,10 +88,10 @@ export function renderTable(items: readonly EscalationItem[]): string {
   // The fault messages, under the table rather than in it.
   //
   // `internal_fault` names a defect inside the coordinator and not a step, so
-  // this message is the whole of what an operator has to go on (issue #94).
-  // It is a sentence, so a column for it would set every other column's width
-  // from the longest one. The runbook tells a person to quote it into an
-  // issue, and before this the field reached the ledger and no reader.
+  // this message is the whole of what an operator has to go on. It is a
+  // sentence, so a column for it would set every other column's width from the
+  // longest one. The runbook tells a person to quote it into an issue, and
+  // before this the field reached the ledger and no reader.
   //
   // The JSON output carries it on every item, so a script needs no parsing of
   // this block.

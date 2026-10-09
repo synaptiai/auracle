@@ -23,10 +23,10 @@ services:
       - "127.0.0.1:${AURACLE_DB_PORT:-5433}:5432"
     volumes:
       - auracle-db-data:/var/lib/postgresql/data
-    # The readers' role logs in to the ledger and to no other database
-    # (issue #153). Its rights are taken in the ledger's database only, and
-    # a login to `postgres` would get PUBLIC's there. The file lives outside
-    # the data directory, so an existing volume takes it at its next start.
+    # The readers' role logs in to the ledger and to no other database. Its
+    # rights are taken in the ledger's database only, and a login to `postgres`
+    # would get PUBLIC's there. The file lives outside the data directory, so an
+    # existing volume takes it at its next start.
     command: ["postgres", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
     configs:
       - source: pg_hba
@@ -40,8 +40,7 @@ services:
       timeout: 3s
       retries: 10
 
-  # The mail server the mail suites drive (issue #80). Test-only: see the
-  # profile below.
+  # The mail server the mail suites drive. Test-only: see the profile below.
   #
   # `src/test-support/containers.ts` already honours MAIL_HOST the way it
   # honours DATABASE_URL: set it, and the setup probes that server instead of

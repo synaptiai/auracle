@@ -1,5 +1,5 @@
-// A statement read as Postgres reads it, for the guards that check the SQL
-// a reader sends (issue #146).
+// A statement read as Postgres reads it, for the guards that check the SQL a
+// reader sends.
 //
 // The guards removed SQL comments with patterns before they looked for a
 // second statement or a function. A pattern does not know where a string

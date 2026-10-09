@@ -373,9 +373,9 @@ describe('ImapMailboxFetcher', () => {
     expect(server.clients).toHaveLength(1);
   });
 
-  // Issue #114. The client's error text is the server's or the network's, and
-  // the fetcher's own default sink writes it. It was a prose line with the
-  // text pasted in, so nothing escaped it.
+  // The client's error text is the server's or the network's, and the fetcher's
+  // own default sink writes it. It was a prose line with the text pasted in, so
+  // nothing escaped it.
   it('writes the client error as an escaped JSON line on its default sink', async () => {
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {

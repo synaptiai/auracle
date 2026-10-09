@@ -77,7 +77,7 @@ export interface BandsArtifact {
   /** Runs the day held. Every metric's counts partition this number. */
   runs: number;
   /**
-   * What answered the model calls behind this day, or null (issue #23).
+   * What answered the model calls behind this day, or null.
    *
    * Null means the day recorded no provider, or recorded more than one. The
    * name only: the literal 'stub' or 'model', never a prompt, a completion or

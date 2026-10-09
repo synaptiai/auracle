@@ -31,13 +31,13 @@ export async function gate(ctx: RunContext): Promise<StepResult> {
   if (gateLimit !== null) return { kind: 'escalate', reason: gateLimit };
 
   // Before the journal row and before the judge call, because this refuses
-  // rather than acts. `classify` refuses a label the taxonomy does not hold,
-  // so reaching here means the taxonomy this run gated against is not the one
-  // it classified against. A defect, not a model answer: it escalates as
-  // `internal_fault` rather than escaping the walk (issue #94).
+  // rather than acts. `classify` refuses a label the taxonomy does not hold, so
+  // reaching here means the taxonomy this run gated against is not the one it
+  // classified against. A defect, not a model answer: it escalates as
+  // `internal_fault` rather than escaping the walk.
   //
   // Below `journalStart` it left a 'gate' row at status 'started' with a null
-  // result forever — the shape this issue removes from `park` — and paid for a
+  // result forever — the shape `park` no longer leaves — and paid for a
   // coverage judge on a run certain to fault.
   const intent = ctx.deps.taxonomy.intents.find((i) => i.id === classification.intentId);
   if (intent === undefined) {
@@ -151,10 +151,10 @@ export async function gate(ctx: RunContext): Promise<StepResult> {
     thresholds: gateThresholds,
   });
   ctx.state.decision = decision;
-  // Issue #112: the latest gate of this product and intent, for the routing
-  // screen. In the transition's own commit, so a consumer the fence refused
-  // records nothing (DEC-28). A write that cannot finish is skipped and
-  // logged, and never stops the run.
+  // The latest gate of this product and intent, for the routing screen. In the
+  // transition's own commit, so a consumer the fence refused records nothing
+  // (DEC-28). A write that cannot finish is skipped and logged, and never stops
+  // the run.
   const gated = await transitionOrStop(ctx, 'gated', undefined, (client) => recordGateLatestOrSkip(client, {
     runId: ctx.runId,
     intentId: classification.intentId,

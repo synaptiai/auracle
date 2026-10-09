@@ -1,4 +1,4 @@
--- The role the console's readers and the latency report connect as (issue #153, DEC-04).
+-- The role the console's readers and the latency report connect as (DEC-04).
 --
 -- Each reader runs in one READ ONLY transaction, and READ ONLY refuses a write
 -- to a table and nothing else. Under a superuser a read can still end another

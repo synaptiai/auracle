@@ -1,5 +1,5 @@
 // Whether the console reads a draft back before it approves, and how long it
-// waits (issue #102, section 4.10).
+// waits (section 4.10).
 //
 // Pure cases. The adapter choice is injected, so nothing here builds a real
 // adapter or reaches a helpdesk.

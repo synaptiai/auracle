@@ -1,4 +1,4 @@
-// The console's approval write (issue #27, DEC-11, DEC-40).
+// The console's approval write (DEC-11, DEC-40).
 //
 // DEC-11 rejected "a Slack queue; a new web queue" by name, and section 4.2
 // says adopters do not install a new interface to receive a draft. DEC-40
@@ -105,9 +105,9 @@ export type ConsoleApproveOutcome =
    */
   | { readonly outcome: 'read_back_not_a_note'; readonly fault: string }
   /**
-   * #123: the batch's own check, before its approval: a batch confirms
-   * drafted replies alone (DEC-51). Nothing was approved, which the batch
-   * knows, so this is an answer and not a fault.
+   * The batch's own check, before its approval: a batch confirms drafted
+   * replies alone (DEC-51). Nothing was approved, which the batch knows, so
+   * this is an answer and not a fault.
    */
   | { readonly outcome: 'batch_no_draft' }
   /** The same check could not read the case, so the batch approved nothing. */

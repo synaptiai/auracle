@@ -249,15 +249,15 @@ describe('the documents that cite bands.yaml', () => {
   // that motivated a change, so a sentence there describing the file as it
   // stood before that change is the record and not a defect.
   //
-  // `docs/decisions/` is the same kind of thing and lives under `docs/`, so
-  // the recursive walk below reaches it. The exemption follows the records:
+  // `docs/decisions/` is the same kind of thing and lives under `docs/`, so the
+  // recursive walk below reaches it. The exemption follows the records:
   // they moved out of `intent/` when a design record stopped being an intent
   // file, and a record that describes a superseded state is still a record.
-  // Named once in `src/test-support/frozen-records.ts`, because issue #79
-  // moved eleven design records into `docs/design/` and three more guards
-  // met the same question on the same day. Two of those records do claim
-  // `bands.yaml` holds a baseline; both were written before the file did
-  // not, which is history rather than a document to correct.
+  // Named once in `src/test-support/frozen-records.ts`, because a cleanup moved
+  // eleven design records into `docs/design/` and three more guards met the
+  // same question on the same day. Two of those records do claim `bands.yaml`
+  // holds a baseline; both were written before the file did not, which is
+  // history rather than a document to correct.
   const SHIPPED = ['README.md', 'AGENTS.md', 'CONTRIBUTING.md'];
   const cites = [
     ...readdirSync(join(REPO_ROOT, 'docs'), { recursive: true, encoding: 'utf8' })
@@ -695,9 +695,9 @@ const READ_ONLY_MODULES = readdirSync(join(REPO_ROOT, 'src/bands'))
 /**
  * Source with comments removed, so prose about writing never trips the scan.
  *
- * The compiler finds the JavaScript comments. A pattern that cut at every
- * `//` erased the rest of a line holding a URL, and a statement written there
- * went unread (issue #146).
+ * The compiler finds the JavaScript comments. A pattern that cut at every `//`
+ * erased the rest of a line holding a URL, and a statement written there went
+ * unread.
  *
  * SQL comments are stripped too, because a column name survives inside one and
  * an earlier guard of this shape passed its own mutation twice. Only a line
@@ -739,7 +739,7 @@ describe('the bands command never writes', () => {
     }
   });
 
-  // The shapes that blinded the pattern this reader replaced (issue #146).
+  // The shapes that blinded the pattern this reader replaced.
   it('reads a statement written after a URL, and none in a comment', () => {
     expect(codeOfText(`const u = 'http://x'; const w = 'DELETE FROM run';`, 'm.ts')).toContain('DELETE FROM run');
     expect(codeOfText(`const r = /"/; const u = "http://x"; const w = 'DELETE FROM run';`, 'm.ts'))
@@ -771,11 +771,11 @@ describe('the bands command never writes', () => {
   // The blocklist is over column names, so it is blind to the one payload the
   // query does read. Only these keys may be extracted from it.
   //
-  // Three now, not two. Issue #23 added `provider`, which holds the answerer's
-  // kind — the literal string 'stub' or 'model' — and never a payload, a
-  // prompt or a completion. A fourth key is a widening of what this report can
-  // carry out of the journal, so it belongs here with its reason, and DEC-18
-  // decides whether it may be added at all.
+  // Three now, not two. The traffic simulator added `provider`, which holds the
+  // answerer's kind — the literal string 'stub' or 'model' — and never a
+  // payload, a prompt or a completion. A fourth key is a widening of what this
+  // report can carry out of the journal, so it belongs here with its reason,
+  // and DEC-18 decides whether it may be added at all.
   it('extracts no jsonb key from the journal beyond the three it needs', () => {
     const code = codeOf('src/bands/query.ts');
     // Every quoted literal near the payload, not only the arrow syntaxes. A

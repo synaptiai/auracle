@@ -71,8 +71,8 @@ function assertLocalDbHost(url: string): void {
 }
 
 /**
- * The same database as `url`, as the readers' role connects to it (issue #153).
- * Every reader runs through `boundedRead`, which refuses the writer's session.
+ * The same database as `url`, as the readers' role connects to it. Every reader
+ * runs through `boundedRead`, which refuses the writer's session.
  */
 export function asReader(url: string): string {
   const parsed = new URL(url);
@@ -201,8 +201,8 @@ export async function cloneTemplate(
       try {
         await admin.query(`CREATE DATABASE "${name}" TEMPLATE "${templateName(runId)}"`);
         // A clone copies the template's tables and functions, and not the
-        // database's own rights: PUBLIC gets TEMP back, which the readers'
-        // role must not hold (issue #153).
+        // database's own rights: PUBLIC gets TEMP back, which the readers' role
+        // must not hold.
         await revokeTempFromPublic(admin, name);
         return withDatabase(adminUrl, name);
       } catch (error) {

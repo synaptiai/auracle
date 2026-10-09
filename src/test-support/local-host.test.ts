@@ -1,4 +1,4 @@
-// Which server a test run will change (issues #80 and #153).
+// Which server a test run will change.
 //
 // A test run creates the readers' role, sets its password and its connection
 // limit, and empties mailboxes. Each change belongs to the whole server. The

@@ -1,4 +1,4 @@
-// Which group a waiting case belongs to, and in what order (issue #101).
+// Which group a waiting case belongs to, and in what order.
 //
 // Its own module, so the rule a reviewer works by is stated once and tested
 // without a page. It reads values the ledger already recorded and decides no
@@ -15,17 +15,17 @@ import { isReadableTime } from './render.js';
  * the intent's risk tier as high, or the run parked a compensation, an action
  * nobody can take back. `clean`: agreement cleared its own line and coverage
  * cleared the review line, each on its own. `rest`: everything else waiting.
- * `held` (DEC-46): somebody else took the case, so it is not work to start —
- * it waits last, and returns to its own group when the hold ends.
- * `waiting` (issue #154): every case nobody else holds, in one list, under a
- * sort other than risk first.
+ * `held` (DEC-46): somebody else took the case, so it is not work to start — it
+ * waits last, and returns to its own group when the hold ends.
+ * `waiting`: every case nobody else holds, in one list, under a sort other than
+ * risk first.
  */
 export type QueueGroup = 'first' | 'clean' | 'rest' | 'held' | 'waiting';
 
 export const QUEUE_GROUPS: readonly QueueGroup[] = ['first', 'clean', 'rest', 'held'];
 
 /**
- * The order a reviewer asked for (issue #154).
+ * The order a reviewer asked for.
  *
  * `risk` is the queue's own order: the groups above, the reader's products
  * first inside each, then the longest wait. `oldest` and `mine` set the
@@ -48,8 +48,8 @@ export interface Groupable {
   readonly gateCoverage: number | null;
   readonly coverageReviewThreshold: number | null;
   /**
-   * #123: the park's helpdesk draft, or null. Only a reply the batch holds for
-   * an undo can be confirmed with one press (DEC-51).
+   * The park's helpdesk draft, or null. Only a reply the batch holds for an
+   * undo can be confirmed with one press (DEC-51).
    */
   readonly draftExternalId: string | null;
 }
@@ -87,10 +87,10 @@ export function queueGroupOf(run: Groupable): QueueGroup {
   if (run.gateReason === null || !(POLICY_REASONS as readonly string[]).includes(run.gateReason)) {
     return 'rest';
   }
-  // #123: the clean group is the one a single press confirms, and that batch
-  // holds each reply so a mistake can be undone (DEC-51). An internal write
-  // parks no reply and takes no hold (DEC-34), so it waits here and is
-  // approved on its own case page, where the page names the action.
+  // The clean group is the one a single press confirms, and that batch holds
+  // each reply so a mistake can be undone (DEC-51). An internal write parks no
+  // reply and takes no hold (DEC-34), so it waits here and is approved on its
+  // own case page, where the page names the action.
   if (run.draftExternalId === null) return 'rest';
   const agreementClears = isFraction(run.agreement) && run.agreementThreshold !== null
     && run.agreement >= run.agreementThreshold;
@@ -179,9 +179,8 @@ export function groupQueue<T extends Groupable & { readonly createdAt: Date | nu
 /**
  * The cases a reviewer could start, in the order the page draws them.
  *
- * Every group but the held one, first to last (issue #154). "Take next case"
- * starts from the head of this list, and a case's position on its own page is
- * its place in it.
+ * Every group but the held one, first to last. "Take next case" starts from the
+ * head of this list, and a case's position on its own page is its place in it.
  */
 export function workOrder<T>(sections: readonly QueueSection<T>[]): T[] {
   return sections.filter((section) => section.group !== 'held').flatMap((section) => section.runs);

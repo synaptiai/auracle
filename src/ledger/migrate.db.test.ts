@@ -529,8 +529,8 @@ describe('migrate', () => {
     expect(comment.rows[0]?.description).toContain('DEC-50');
   });
 
-  // Issue #112: the screens read the hold history by run and by time, and
-  // each product's newest arrival, through indexes rather than full scans.
+  // The screens read the hold history by run and by time, and each product's
+  // newest arrival, through indexes rather than full scans.
   it('indexes what the team and routing screens read (db/036, db/038)', async () => {
     await migrate(client);
     const indexes = await client.query<{ indexname: string; indexdef: string }>(
@@ -548,11 +548,11 @@ describe('migrate', () => {
     expect(indexes.rows[3]!.indexdef).toContain('(product, COALESCE(enqueued_at, created_at))');
   });
 
-  // Issue #112, DEC-41, DEC-47: the gate's latest record for each product and
-  // intent. The backfill reads the journal once and keeps, for each pair, the
-  // newest gate row the gate's own shape describes, counting the newer ones it
-  // could not read. It keys an intent as the classifier wrote it, which is the
-  // key the gate writes, and reads only runs whose move to gated committed.
+  // DEC-41, DEC-47: the gate's latest record for each product and intent. The
+  // backfill reads the journal once and keeps, for each pair, the newest gate
+  // row the gate's own shape describes, counting the newer ones it could not
+  // read. It keys an intent as the classifier wrote it, which is the key the
+  // gate writes, and reads only runs whose move to gated committed.
   it('fills the latest gate of each product and intent from the journal (db/037)', async () => {
     await migrate(client);
     await client.query('DROP TABLE gate_latest');

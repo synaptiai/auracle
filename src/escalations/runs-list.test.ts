@@ -1,4 +1,4 @@
-// The runs list the console reads (issue #27).
+// The runs list the console reads.
 //
 // The console writes no SQL. It reads through the modules the jobs already
 // use, so a metric or a state filter has exactly one definition and the two

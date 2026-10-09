@@ -1,5 +1,5 @@
 // What the routing screen shows: what each product may do without a person,
-// read from what the running system recorded (issue #112).
+// read from what the running system recorded.
 //
 // The console holds neither the calibration artifact nor a consumer's action
 // profile. Every gate records the threshold in force for its run and the rule

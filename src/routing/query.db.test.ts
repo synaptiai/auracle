@@ -1,4 +1,4 @@
-// The routing screen's figures (issue #112).
+// The routing screen's figures.
 //
 // For each product and intent, the gate step keeps its latest record: the
 // threshold in force for that run, whether it was fitted, and the rule that
@@ -20,7 +20,7 @@ import { recordGateLatest } from './latest.js';
 import { ROUTING_TIMEOUT_MS, readRouting } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl() });
-// The readers connect as the role that cannot act beyond a read (issue #153).
+// The readers connect as the role that cannot act beyond a read.
 const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 await pool.query('SELECT 1');
 

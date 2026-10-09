@@ -172,7 +172,7 @@ export async function turnIsClosed(
 }
 
 /**
- * The run whose customer reply closes the turn, or null when none does (#122).
+ * The run whose customer reply closes the turn, or null when none does.
  *
  * The same record `turnIsClosed` reads with `replies`: a reply that reached
  * the customer, may have, or will. It names the run, so a run that stops
@@ -201,7 +201,7 @@ export async function turnReplyRun(
 }
 
 /**
- * What already holds the turn's reply, for a reply park about to park (#122).
+ * What already holds the turn's reply, for a reply park about to park.
  *
  * Two answers stop the park. `turn_answered`: the turn holds a reply record
  * that reached the customer, may have, or will, read as `turnReplyRun` reads
@@ -265,7 +265,7 @@ export async function turnReplyHolder(
 
 /**
  * A run of this ticket's turn and attempt that parked a reply draft and was
- * stopped before it could wait (#122).
+ * stopped before it could wait.
  *
  * Two walks of one message on one ticket can overlap. A rebalance hands the
  * partition to a new owner mid-walk, or a retry follows a crash between the

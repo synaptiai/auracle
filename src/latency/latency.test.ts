@@ -174,7 +174,7 @@ const READ_ONLY_MODULES = ['src/latency/query.ts', 'src/latency/run.ts'];
  * Source with its comments removed, so prose about writing never trips the
  * scan. The compiler finds the comments: a pattern that cut at every `//`
  * erased the rest of a line holding a URL, and a statement written there went
- * unread (issue #146).
+ * unread.
  */
 function codeOf(relative: string): string {
   return withoutComments(readFileSync(join(REPO_ROOT, relative), 'utf8'), relative);

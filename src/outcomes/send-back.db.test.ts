@@ -590,8 +590,8 @@ describe('DEC-49: the next attempt', () => {
       [first.conversationId, first.turnNumber],
     ).then((result) => result.rows);
     // The retry is the same request as the re-attempt, which waits with its
-    // reply, so it parks nothing and names the run that owns it (#122). Read
-    // at attempt 1, it would have found no reply waiting and parked again.
+    // reply, so it parks nothing and names the run that owns it. Read at
+    // attempt 1, it would have found no reply waiting and parked again.
     expect(reattempt!.state).toBe('awaiting_approval');
     expect(retry!.state).toBe('superseded');
     expect(await journalRow(retry!.run_id, 'park')).toBeUndefined();
@@ -876,7 +876,7 @@ describe('DEC-49: twin runs at one attempt', () => {
       PARTITIONS,
     );
     // A twin as a race leaves it: the park refuses a redelivered reply on a
-    // turn whose reply already waits (#122).
+    // turn whose reply already waits.
     await asIfRacing(pool, first.runId, () => processQueuedTickets(
       { ...makeDeps(egress, { ledgerReply: true }), provider: new FakeProvider(happyScript()) },
       optionsFor(),
@@ -893,8 +893,8 @@ describe('DEC-49: twin runs at one attempt', () => {
     return { first, twinRunId: twin.rows[0]!.run_id, egress };
   }
 
-  // #122: a reply park refuses a twin, but only one of its own attempt. Between
-  // a send-back and the scan that ends the rejected attempt's sibling, that
+  // A reply park refuses a twin, but only one of its own attempt. Between a
+  // send-back and the scan that ends the rejected attempt's sibling, that
   // sibling still waits, and the new attempt's walk must park regardless.
   it('parks the new attempt while a sibling of the rejected one still waits', async () => {
     const ticketId = `T-${randomUUID().slice(0, 8)}`;
@@ -1012,7 +1012,7 @@ describe('DEC-49: twin runs at one attempt', () => {
     );
     expect(Number(outbox.rows[0]!.n)).toBe(0);
 
-    // The consumer's scan takes it out of the queue, and records why (#122).
+    // The consumer's scan takes it out of the queue, and records why.
     await startSentBackAttempts(makeDeps(helpdeskWith(ticketId), { ledgerReply: true }), optionsFor());
     expect((await runRow(twinRunId)).state).toBe('superseded');
     expect(await journalRow(twinRunId, 'supersede')).toMatchObject({
@@ -1279,8 +1279,8 @@ describe('DEC-49: twin runs at one attempt', () => {
     );
     await processQueuedTickets(deps, optionsFor());
     // The redelivery walked at the raised attempt and parked nothing: the turn
-    // already holds a reply, so the park stops it superseded (#122). A reply
-    // on that turn could never be approved anyway.
+    // already holds a reply, so the park stops it superseded. A reply on that
+    // turn could never be approved anyway.
     const walked = await pool.query<{ run_id: string; state: string }>(
       `SELECT run_id, state FROM run
         WHERE conversation_id = $1 AND turn_number = $2 AND attempt = 2
@@ -1317,7 +1317,7 @@ describe('DEC-49: twin runs at one attempt', () => {
 
     await startSentBackAttempts(makeDeps(helpdeskWith(ticketId), { ledgerReply: true }), optionsFor());
     expect((await runRow(twinRunId)).state).toBe('superseded');
-    // And the record names the run whose reply answered the turn (#122).
+    // And the record names the run whose reply answered the turn.
     expect(await journalRow(twinRunId, 'supersede')).toMatchObject({
       status: 'done', result: { reason: 'turn_answered', answeredBy: first.runId },
     });

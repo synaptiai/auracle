@@ -1,4 +1,4 @@
-// The console's stylesheet, as a module (issue #27).
+// The console's stylesheet, as a module.
 //
 // A `.css` file beside the source does not survive the build: `tsc` emits
 // JavaScript and nothing else, and there is no copy step — so the console
@@ -114,7 +114,7 @@ a:hover { color:var(--ink); text-decoration:underline; }
    title wraps to two lines inside 194px and breaks the rail's rhythm. */
 .navlabel { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .nav .badge { flex:none; white-space:nowrap; }
-/* The knowledge badge is a count to read, not a call to act (issue #154). */
+/* The knowledge badge is a count to read, not a call to act. */
 .badge.plain { background:transparent; color:var(--dim); font-weight:400; }
 .nav a:hover { background:var(--panel2); color:var(--ink); text-decoration:none; }
 .nav a.on { background:var(--panel2); color:var(--ink); box-shadow:inset 2px 0 0 var(--accent); }
@@ -172,7 +172,7 @@ a:hover { color:var(--ink); text-decoration:underline; }
 .kv dd { margin:0; font-family:var(--mono); color:var(--mut); }
 .big { font-family:var(--mono); font-size:27px; font-weight:500;
   letter-spacing:-.02em; font-variant-numeric:tabular-nums; line-height:1; }
-/* A gate value is a reading beside its track, not a headline (issue #154). */
+/* A gate value is a reading beside its track, not a headline. */
 .gate .big { font-size:19px; font-weight:400; letter-spacing:normal; }
 /* A stat card's figure, at the reviewer design's metric size. Its colour is the
  * verdict the card's label names, so the colour never stands alone. */
@@ -271,7 +271,7 @@ tbody tr:hover { background:var(--panel); }
 .pv { font-family:var(--mono); font-size:11px; text-align:right; }
 .hol { display:flex; align-items:center; gap:7px; justify-content:flex-end; flex-wrap:wrap; }
 
-/* The team screen (issue #112): four narrow cards, a row for each person, and
+/* The team screen: four narrow cards, a row for each person, and
  * a three-part bar for each product. An absence sits where the figure goes. */
 /* 148px, so the four sit in one row at 907px wide, beside the rail. */
 .grid.team { grid-template-columns:repeat(auto-fit, minmax(148px, 1fr)); }
@@ -285,7 +285,7 @@ tbody tr:hover { background:var(--panel); }
 .stack3 i { display:block; height:100%; }
 .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-top:2px; flex:none; }
 
-/* The routing screen (issue #112): product tabs, then each intent's rules. */
+/* The routing screen: product tabs, then each intent's rules. */
 .tabs { display:flex; flex-wrap:wrap; gap:6px; }
 .tab { padding:6px 12px; border:1px solid var(--rule2); border-radius:4px; font-size:12px; color:var(--mut); }
 .tab.on { background:var(--accent); color:#0d0e10; border-color:var(--accent); }
@@ -395,7 +395,7 @@ tr.fixed td { background:var(--panel2); }
 .qrow { display:flex; align-items:flex-start; gap:9px; }
 .qrow > .item { flex:1 1 auto; min-width:0; }
 .qrow > input[type=checkbox] { margin:17px 0 0 14px; accent-color:var(--ok); }
-/* Issue #154: a risk row carries the risk colour down its edge, as the
+/* A risk row carries the risk colour down its edge, as the
  * reviewer design's risk group does, and the wait reads in the waiting
  * colour. */
 .qrow.risk { box-shadow:inset 3px 0 0 var(--hot); }
@@ -555,9 +555,9 @@ td a, dd a { display: inline-block; }
 .why p { margin:0 0 8px; font-size:12.5px; }
 .why p:last-child { margin-bottom:0; }
 /* The approval stays in reach at the foot of the window, however long the
- * reply is. Issue #154: one row of controls, as the reviewer design draws it,
- * and the send warning under them. An outcome that needs a field opens it in
- * the case, so no field makes the bar taller than a short window. */
+ * reply is. One row of controls, as the reviewer design draws it, and the send
+ * warning under them. An outcome that needs a field opens it in the case, so no
+ * field makes the bar taller than a short window. */
 .actionbar { position:sticky; bottom:0; z-index:1; background:var(--panel);
   border-top:1px solid var(--rule2); padding:10px 24px; display:flex; flex-wrap:wrap;
   align-items:center; gap:6px 16px; }

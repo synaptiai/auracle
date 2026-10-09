@@ -31,10 +31,10 @@
  *
  * One transaction does all of:
  *   1. refuse the move unless the run sits in `awaiting_approval` (DEC-12)
- *   2. read the fencing epoch against ticket_epoch (DEC-28), under the same
- *      row lock. A parked run passes it whatever the fence says (issue #113):
- *      a person's write is not an old owner's write, and a deploy that raised
- *      the fence was refusing the approval the reply needed
+ *   2. read the fencing epoch against ticket_epoch (DEC-28), under the same row
+ *      lock. A parked run passes it whatever the fence says: a person's write
+ *      is not an old owner's write, and a deploy that raised the fence was
+ *      refusing the approval the reply needed
  *   3. commit the run's next state
  *   4. insert the relayable outbox record
  *   5. when a final body was captured or read back, record the
@@ -84,12 +84,13 @@ export type ApproveOutcome =
   /** Section 4.2 rule 2: another semantic action already holds the key. */
   | { readonly outcome: 'superseded' }
   /**
-   * The fence refused the write. Since issue #113 no caller reaches this arm
-   * from here: a run parked in `awaiting_approval` is outside the fence's
-   * reach (src/ledger/insert.ts), so a person's approval commits whatever
-   * the ticket's fence says. It stays in the union because the console maps
-   * every outcome by name, and removing it would leave that mapping to fail
-   * on a value it could still be handed by a later parked state.
+   * The fence refused the write. Since the fix for stranded approvals, no
+   * caller reaches this arm from here: a run parked in `awaiting_approval` is
+   * outside the fence's reach (src/ledger/insert.ts), so a person's approval
+   * commits whatever the ticket's fence says. It stays in the union because the
+   * console maps every outcome by name, and removing it would leave that
+   * mapping to fail on a value it could still be handed by a later parked
+   * state.
    */
   | { readonly outcome: 'stale_epoch'; readonly highestAcceptedEpoch: bigint }
   /**
@@ -728,10 +729,10 @@ export async function approveRun(
         }
         // DEC-49: and a reply on a turn that already holds a reply that went
         // out, may have, or will. Read under the same lock, so a second
-        // approval on the turn cannot add its record between this read and
-        // that one's. A reply is a park that names a draft, or the reply's
-        // action class parked in the ledger alone (#122); a compensation is
-        // not one (DEC-34), so it is not asked.
+        // approval on the turn cannot add its record between this read and that
+        // one's. A reply is a park that names a draft, or the reply's action
+        // class parked in the ledger alone; a compensation is not one (DEC-34),
+        // so it is not asked.
         if ((park.draftExternalId !== undefined || park.actionClass === CUSTOMER_REPLY_ACTION_CLASS)
           && await turnIsClosed(
             client, { conversationId, turnNumber: park.turnNumber }, { replies: true },

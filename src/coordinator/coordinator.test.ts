@@ -1,4 +1,4 @@
-// The sequencer's fault exit, driven through `coordinateTicket` (issue #94).
+// The sequencer's fault exit, driven through `coordinateTicket`.
 //
 // `steps.test.ts` drives each of the four invariant checks and asserts the
 // class it raises. That is half the claim. The other half is what the walk

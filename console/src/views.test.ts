@@ -1,4 +1,4 @@
-// What a journal step says on the run detail page (issue #27).
+// What a journal step says on the run detail page.
 //
 // These ran through `main.ts` until now, which runs `main()` on import, so
 // nothing asserted them. The park branch is why that mattered.
@@ -125,8 +125,8 @@ describe('what a park step says', () => {
     expect(said).not.toContain('action payload recorded');
   });
 
-  // #123: a handle names a draft only as a non-empty string on a park that
-  // finished, as the reader and the queue read it.
+  // A handle names a draft only as a non-empty string on a park that finished,
+  // as the reader and the queue read it.
   it('names no draft for an empty handle, or one on a park that did not finish', () => {
     const empty = park({ draftExternalId: '', draftRecorded: true, payloadRecorded: true, payload: { queue: 'billing' }, actionClass: 'compensate' });
     expect(stepSays(empty.step, empty.journal)).toContain('action payload recorded');
@@ -182,9 +182,9 @@ describe('what a park step says', () => {
   });
 });
 
-// #122: why a run stopped with nothing sent. A redelivered message on a turn
-// that already holds a reply ends superseded, and the run page is where a
-// reviewer who opens it reads which run answered the turn.
+// Why a run stopped with nothing sent. A redelivered message on a turn that
+// already holds a reply ends superseded, and the run page is where a reviewer
+// who opens it reads which run answered the turn.
 describe('what a supersede step says', () => {
   function superseded(fields: Record<string, unknown>): { step: JournalStep; journal: RunJournal } {
     return journal({
@@ -332,14 +332,14 @@ describe('what a run row carries onto a page', () => {
     expect(trimmed.reason).not.toContain('ada@x.example');
   });
 
-  // Issue #94: the escalations module gained a `fault` field, whole and
-  // untrimmed, because `pnpm run escalations` is a command and this page is
-  // not. A row carries the fields this function names and no others, so a
-  // field added to the reader cannot reach a surface by accident — which is
-  // the property the trim above depends on.
+  // The escalations module gained a `fault` field, whole and untrimmed, because
+  // `pnpm run escalations` is a command and this page is not. A row carries the
+  // fields this function names and no others, so a field added to the reader
+  // cannot reach a surface by accident — which is the property the trim above
+  // depends on.
   // DEC-47: the product is carried through whole. It is a value from the
-  // catalogue rather than free text, so it is not trimmed like a reason, and
-  // a run with none carries that null rather than a blank.
+  // catalogue rather than free text, so it is not trimmed like a reason, and a
+  // run with none carries that null rather than a blank.
   it('carries the product, and a null when the channel mapped to none', () => {
     expect(toRow(item).product).toBe('aurora');
     expect(toRow({ ...item, product: null }).product).toBeNull();
@@ -390,8 +390,8 @@ describe('what a run row carries onto a page', () => {
     expect(toRow({ ...item, coverage: null }).gateCoverage).toBeNull();
   });
 
-  // Issue #101. The queue groups on each gate against its own line, so the
-  // detail carries all four values the reader returned, and null as null.
+  // The queue groups on each gate against its own line, so the detail carries
+  // all four values the reader returned, and null as null.
   it('carries each gate value and its own line onto a detail', () => {
     const base = {
       ...item, draftExternalId: null, payloadRecorded: false, actionClass: 'customer_reply',
@@ -539,9 +539,9 @@ describe('numbering the claims of a reply that opens with a courtesy sentence', 
     } as unknown as RunJournal;
   }
 
-  // #123: an internal write parks in the ledger alone with its payload
-  // (DEC-34), and journals its rationale as a body too. The payload says
-  // which, and a handle alone says a customer reply.
+  // An internal write parks in the ledger alone with its payload (DEC-34), and
+  // journals its rationale as a body too. The payload says which, and a handle
+  // alone says a customer reply.
   it('reads an internal write from its payload, and a reply from its handle', () => {
     const withPark = (park: Record<string, unknown>): RunJournal => {
       const journal = composed();

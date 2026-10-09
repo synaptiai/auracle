@@ -1,4 +1,4 @@
-// The stylesheet against the reviewer design's tokens (issue #100).
+// The stylesheet against the reviewer design's tokens.
 //
 // The reviewer design fixes these values as final. A pure read of the
 // stylesheet string, so a drift in a token or a lost accessibility rule fails
@@ -362,10 +362,10 @@ describe('what reads at every width', () => {
   // clips its children hid four of them, and a mouse could reach none of the
   // last three. The segments wrap, and each one grows to fill its row.
   //
-  // Issue #154: a segment that grew to fill its row stretched the last option
-  // of a wrapped control across the whole width. Each segment keeps its own
-  // width, and draws its own divider, so a short last row leaves no bare
-  // strip of divider colour either.
+  // A segment that grew to fill its row stretched the last option of a wrapped
+  // control across the whole width. Each segment keeps its own width, and draws
+  // its own divider, so a short last row leaves no bare strip of divider colour
+  // either.
   it('wraps a segmented control rather than clipping its options', () => {
     const seg = rule('.seg');
     expect(seg.get('flex-wrap')).toBe('wrap');
@@ -383,8 +383,8 @@ describe('what reads at every width', () => {
     expect(rule('.railfoot .chip').get('white-space')).toBe('normal');
   });
 
-  // Issue #101. A queue row's ticket keeps room of its own, and the age
-  // beside it drops to the next line rather than squeezing it.
+  // A queue row's ticket keeps room of its own, and the age beside it drops to
+  // the next line rather than squeezing it.
   it('wraps a queue row without starving its subject', () => {
     const top = rule('.itop');
     expect(top.get('display')).toBe('flex');
@@ -397,8 +397,8 @@ describe('what reads at every width', () => {
     expect(rule('.imeta').get('overflow-wrap')).toBe('anywhere');
   });
 
-  // Issue #102. The case's two columns are flex bases that wrap, never fixed
-  // tracks. Side by side they need 460px, 300px and the 24px gap between.
+  // The case's two columns are flex bases that wrap, never fixed tracks. Side
+  // by side they need 460px, 300px and the 24px gap between.
   it('wraps the case columns below about 800px of case width', () => {
     const body = rule('.case');
     expect(body.get('display')).toBe('flex');
@@ -421,8 +421,8 @@ describe('what reads at every width', () => {
     expect(bar.get('position')).toBe('sticky');
     expect(bar.get('bottom')).toBe('0');
     expect(bar.get('background')).toBe('var(--panel)');
-    // Issue #154: one row of controls that wraps when it must, and the send
-    // warning on a line of its own under them.
+    // One row of controls that wraps when it must, and the send warning on a
+    // line of its own under them.
     expect(bar.get('flex-wrap')).toBe('wrap');
     const acts = rule('.actionbar .acts');
     expect(acts.get('display')).toBe('flex');
@@ -431,9 +431,9 @@ describe('what reads at every width', () => {
     expect(rule('.actionbar form').get('flex')).toBe('none');
   });
 
-  // Issue #103. A turn's time and chip sit beside what was said while there
-  // is room, and above it when there is not. Flex bases, because a fixed
-  // column track beside the rail leaves the prose too little at a narrow page.
+  // A turn's time and chip sit beside what was said while there
+  // is room, and above it when there is not. Flex bases, because a fixed column
+  // track beside the rail leaves the prose too little at a narrow page.
   it('wraps a conversation turn rather than fixing a column track', () => {
     const turn = rule('.turn');
     expect(turn.get('display')).toBe('flex');
@@ -485,8 +485,8 @@ describe('the type', () => {
   });
 });
 
-// Issue #154. Each value below is the reviewer design's: its type table, and
-// the computed style of its own controls on the case screen.
+// Each value below is the reviewer design's: its type table, and the computed
+// style of its own controls on the case screen.
 describe('the reviewer design, where the console had drifted from it', () => {
   it('sets the page title at 21px, 600 and -.015em', () => {
     const title = rule('.hdt');

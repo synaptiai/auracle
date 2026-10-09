@@ -1,4 +1,4 @@
-// The console's HTTP layer (issue #27).
+// The console's HTTP layer.
 //
 // `node:http` and nothing else, following `src/ingress/webhook-server.ts`,
 // which carries the same note: stdlib only, no framework. The console adds no
@@ -106,8 +106,8 @@ export interface ConsoleDeps {
   /**
    * Today's arrivals and how many reached the queue, for the UTC day.
    *
-   * Two counts from the ledger, stated in the queue header. The console
-   * derives no share from them (issue #101).
+   * Two counts from the ledger, stated in the queue header. The console derives
+   * no share from them.
    */
   readonly readQueueToday: () => Promise<QueueTodayView>;
   readonly readBands: () => Promise<BandRow[]>;
@@ -127,14 +127,13 @@ export interface ConsoleDeps {
    */
   readonly readCaseGap: (runId: string) => Promise<CaseGap | null>;
   /**
-   * Issue #112: the team screen's figures, from one snapshot of the ledger.
-   * Time on support is the hold history DEC-46 records.
+   * The team screen's figures, from one snapshot of the ledger. Time on support
+   * is the hold history DEC-46 records.
    */
   readonly readTeam: () => Promise<TeamReport>;
   /**
-   * Issue #112: what each product may do without a person, from the gate
-   * record the gate step keeps for each product and intent, for the
-   * taxonomy's intents.
+   * What each product may do without a person, from the gate record the gate
+   * step keeps for each product and intent, for the taxonomy's intents.
    */
   readonly readRouting: () => Promise<RoutingReport>;
   /** DEC-46: how long a take holds a case, so the routing screen can say it. */
@@ -370,8 +369,7 @@ function queueBack(
 }
 
 /**
- * The cases a reviewer could start, in the order their queue draws them
- * (issue #154).
+ * The cases a reviewer could start, in the order their queue draws them.
  *
  * The queue page's own reads, narrowed by the same filters and ordered by the
  * same sort, so "Take next case" and a case's position agree with the list
@@ -444,7 +442,7 @@ async function readWorkOrder(
 const TAKE_NEXT_TRIES = 10;
 
 /**
- * How long the queue waits for the knowledge badge (issue #154).
+ * How long the queue waits for the knowledge badge.
  *
  * The badge is a count beside the work, and the queue is the work. So the
  * count is read alongside the queue's own reads, and a count that has not
@@ -777,8 +775,8 @@ async function confirmCases(
         dropped.push({ runId, says: 'the ledger does not hold this case, so it is not in the batch.' });
         continue;
       }
-      // #123: the batch holds each reply so a mistake can be undone (DEC-51).
-      // An internal write parks no reply and takes no hold (DEC-34), so it is
+      // The batch holds each reply so a mistake can be undone (DEC-51). An
+      // internal write parks no reply and takes no hold (DEC-34), so it is
       // approved on its own case page, where the page names the action.
       if (run.draftExternalId === null) {
         dropped.push({
@@ -934,10 +932,10 @@ class OversizedForm extends Error {
 const FORM_LIMIT = 64 * 1024;
 
 /**
- * The approval's bound (issue #154). Where the editor is drawn, the send posts
- * the editor's text, and an untouched parked draft may be longer than a save
- * allows: non-ASCII text grows about nine times when a form encodes it. Still
- * a bound, for the reason `readForm` gives.
+ * The approval's bound. Where the editor is drawn, the send posts the editor's
+ * text, and an untouched parked draft may be longer than a save allows:
+ * non-ASCII text grows about nine times when a form encodes it. Still a bound,
+ * for the reason `readForm` gives.
  */
 const APPROVE_FORM_LIMIT = 1024 * 1024;
 
@@ -993,7 +991,7 @@ function cookieOf<T extends string>(
 const SORT_COOKIE = 'sort';
 
 /**
- * The queue order the reviewer chose (issue #154), or the queue's own.
+ * The queue order the reviewer chose, or the queue's own.
  *
  * A preference, kept as the theme is: a cookie a GET sets on its way back. So
  * a take, a filter and the theme toggle keep it, and no link has to carry it.
@@ -1249,9 +1247,9 @@ async function route(
     return;
   }
 
-  // Issue #154: the queue's sort, set the way the theme is. GET alone, because
-  // it writes a cookie, and the return is the queue it came from, rebuilt by
-  // the theme's own allowlist.
+  // The queue's sort, set the way the theme is. GET alone, because it writes a
+  // cookie, and the return is the queue it came from, rebuilt by the theme's
+  // own allowlist.
   if (req.method === 'GET' && path === '/sort') {
     const to = url.searchParams.get('to');
     if (to === null || !(QUEUE_SORTS as readonly string[]).includes(to)) {
@@ -1357,8 +1355,8 @@ async function route(
       return;
     }
     const waiting = await deps.listApprovals();
-    // Issue #154: started once the queue is read, so a page that failed starts
-    // no count, and it runs alongside the queue's other reads. The read is
+    // Started once the queue is read, so a page that failed starts no count,
+    // and it runs alongside the queue's other reads. The read is
     // the knowledge screen's, which pages share while it runs.
     const gapsRead = gapCountWithin(deps, BADGE_WAIT_MS);
     // DEC-46: who holds what, for the whole page in one read. A fault does
@@ -1406,8 +1404,8 @@ async function route(
       console.error(logLine({ event: 'console_counts_unread', tag, error: describeFault(error) }));
       today = { unreadTag: tag };
     }
-    // Issue #154: the rail's knowledge badge. A fault or a slow read draws
-    // the rail without it, because the queue is the work and a count is not.
+    // The rail's knowledge badge. A fault or a slow read draws the rail without
+    // it, because the queue is the work and a count is not.
     const gaps = await gapsRead;
     send(res, 200, page(
       'Needs a person',
@@ -1595,9 +1593,9 @@ async function route(
       console.error(logLine({ event: 'console_reruns_unread', tag, runId, error: describeFault(error) }));
       reruns = { unreadTag: tag };
     }
-    // Issue #154: where this case sits in the queue it was opened from, with
-    // that queue's filters and the reviewer's sort. A fault does not take the
-    // case away: the page draws without a position.
+    // Where this case sits in the queue it was opened from, with that queue's
+    // filters and the reviewer's sort. A fault does not take the case away: the
+    // page draws without a position.
     const caseSort = readSort(req.headers.cookie);
     let position: { at: number; of: number } | null = null;
     let productsUnreadHere = false;
@@ -1617,7 +1615,7 @@ async function route(
         console.error(logLine({ event: 'console_position_unread', tag, runId, error: describeFault(error) }));
       }
     }
-    // Issue #154: the outcome whose form is open in the case, if one is asked.
+    // The outcome whose form is open in the case, if one is asked.
     const step = (['close', 'snooze', 'handover'] as const)
       .find((name) => url.searchParams.get(name) === '1') ?? null;
     send(res, 200, page(
@@ -1657,9 +1655,9 @@ async function route(
       send(res, 404, page('Conversation', nothingFound(), shell(path)));
       return;
     }
-    // Issue #154: the case this thread was opened from, when it is a run that
-    // answered a turn of it. Any other value names no case to go back to, and
-    // is never written back out.
+    // The case this thread was opened from, when it is a run that answered a
+    // turn of it. Any other value names no case to go back to, and is never
+    // written back out.
     const from = url.searchParams.get('from');
     const { rule, product } = queueFilters(url);
     // Read from the run itself: a turn names only its newest run, and an
@@ -1803,10 +1801,10 @@ async function route(
       ));
       return;
     }
-    // Issue #154: take next. The server picks the case, from the queue the
-    // reviewer was reading, so the page never decides for a moment it no
-    // longer describes. A form that names a case as well asks for two things,
-    // and is refused rather than read as either.
+    // Take next. The server picks the case, from the queue the reviewer was
+    // reading, so the page never decides for a moment it no longer describes. A
+    // form that names a case as well asks for two things, and is refused rather
+    // than read as either.
     if (form.has('next')) {
       if (form.has('runId')) {
         send(res, 400, bare('Refused', 'A take names one case or asks for the next one, not both. Nothing was taken.', theme));
@@ -2141,8 +2139,8 @@ async function route(
     // DEC-45: who approved, as the identity the gate resolved. It is on the
     // roster and active, or this request never reached the route.
     //
-    // #123: a reply parked in the ledger alone has no helpdesk draft, and the
-    // relay refuses a reply record with none (DEC-44). The case page offers no
+    // A reply parked in the ledger alone has no helpdesk draft, and the relay
+    // refuses a reply record with none (DEC-44). The case page offers no
     // approval for it, and a request built by hand gets none either. A read
     // that fails here refuses nothing: the approval reads the run itself.
     let ledgerOnlyReply = false;
@@ -2173,14 +2171,14 @@ async function route(
       ));
       return;
     }
-    // Issue #154: the send posts the editor's form where the page drew one, so
-    // (checked once the run is read: a case that left the queue gets the
-    // approval's own answer, not advice to save)
-    // the editor's text arrives with it. Text that differs from what the
-    // editor drew is a change nobody saved, and an approval would send the
-    // saved reply and drop it. Refused here, so no page whose script did not
-    // run can drop it either. Compared as typed text, because a browser posts
-    // a textarea's line breaks as CRLF.
+    // The send posts the editor's form where the page drew one, so (checked
+    // once the run is read: a case that left the queue gets the approval's own
+    // answer, not advice to save)
+    // the editor's text arrives with it. Text that differs from what the editor
+    // drew is a change nobody saved, and an approval would send the saved reply
+    // and drop it. Refused here, so no page whose script did not run can drop
+    // it either. Compared as typed text, because a browser posts a textarea's
+    // line breaks as CRLF.
     if (form.has('text') && waitingRun) {
       const drawn = (form.get('drawn') ?? '').trim();
       if (!SHOWN_DIGEST.test(drawn)) {
@@ -2352,8 +2350,8 @@ async function route(
       ));
       return;
     }
-    // #123: one answer per case. A run named twice would be checked and
-    // approved twice, and the page could not say which answer was its own.
+    // One answer per case. A run named twice would be checked and approved
+    // twice, and the page could not say which answer was its own.
     if (new Set(runIds).size !== runIds.length) {
       console.error(logLine({
         event: 'console_refused', reason: 'batch_repeats_a_case', runId: null,
@@ -2378,9 +2376,9 @@ async function route(
       ));
       return;
     }
-    // #123: a batch confirms replies alone (DEC-51). The page drops an
-    // internal write, and a post that names one anyway is refused whole,
-    // before anything is approved.
+    // A batch confirms replies alone (DEC-51). The page drops an internal
+    // write, and a post that names one anyway is refused whole, before anything
+    // is approved.
     //
     // A case this read cannot reach is not refused here: a fault says nothing
     // about which kind it parked. The batch's own approval checks the kind
@@ -2422,9 +2420,9 @@ async function route(
     try {
       outcomes = await confirmBatch(
         {
-          // #123: the kind is read as each case is approved, so a case the
-          // check above could not read is never approved unchecked. A park
-          // row never changes kind, so nothing can move it after this read.
+          // The kind is read as each case is approved, so a case the check
+          // above could not read is never approved unchecked. A park row never
+          // changes kind, so nothing can move it after this read.
           //
           // Both refusals are answers, not faults: the batch knows nothing
           // was approved, and the page says so.

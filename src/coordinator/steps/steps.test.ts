@@ -1,4 +1,4 @@
-// A step runs, and answers, without a database (issue #75).
+// A step runs, and answers, without a database.
 //
 // The objective this suite exists for. `coordinateTicket` used to be one
 // function, so reaching the gate branch needed a pool, a provider and an
@@ -229,8 +229,8 @@ describe('a step answers without a ledger behind it', () => {
   // events, not on either one alone.
   it('records the parking marker before it reaches the customer (DEC-11)', async () => {
     const entries: Entry[] = [];
-    // The marker is a fenced write (#122), so the run row and the fence it
-    // reads are answered as a current lease.
+    // The marker is a fenced write, so the run row and the fence it reads are
+    // answered as a current lease.
     const recorder = recordingPool(entries, (statement) =>
       statement.startsWith('SELECT ticket_id, epoch, state')
         ? [{ ticket_id: 'T-1', epoch: '1', state: 'gated', created_at: new Date(), finish_unordered: false }]
@@ -311,14 +311,14 @@ describe('a step answers without a ledger behind it', () => {
   });
 
   // The refusal comes before the journal row, because it refuses rather than
-  // acts (issue #94). Journalling first left a 'park' row at status 'started'
-  // with a null result forever on every refusal.
+  // acts. Journalling first left a 'park' row at status 'started' with a null
+  // result forever on every refusal.
   //
   // The pool answers the SELECT this check reads. A stub that answers nothing
-  // never reaches the branch at all, which is why nothing drove it before.
-  // #122: the hand-back names a run the ledger then does not hold. That is a
-  // fault in the ledger, not a refusal to word, so the walk throws it, and no
-  // draft is asked for.
+  // never reaches the branch at all, which is why nothing drove it before. The
+  // hand-back names a run the ledger then does not hold. That is a fault in the
+  // ledger, not a refusal to word, so the walk throws it, and no draft is asked
+  // for.
   it('throws a fault when the run it hands the turn back to is gone', async () => {
     const entries: Entry[] = [];
     const recorder = recordingPool(entries, (statement) =>
@@ -355,7 +355,7 @@ describe('a step answers without a ledger behind it', () => {
 });
 
 /**
- * A defect inside the walk ends the run where an operator reads it (#94).
+ * A defect inside the walk ends the run where an operator reads it.
  *
  * Four checks assert an invariant this system owns. Each threw a plain
  * `Error` and escaped `coordinateTicket`, so the run kept whatever state it
@@ -404,8 +404,8 @@ describe('a fault inside the walk', () => {
 
     // And it refuses before it journals, like `park` does. Below the
     // write-before-act row this left a 'gate' row at status 'started' with a
-    // null result forever — the shape this issue removes — and paid for a
-    // coverage judge on a run certain to fault (issue #94).
+    // null result forever — the shape this test forbids — and paid for a
+    // coverage judge on a run certain to fault.
     expect(recorder.statements().filter((line) => /step_journal/.test(line))).toEqual([]);
     expect(entries.some((entry) => entry.kind === 'egress')).toBe(false);
     expect(ctx.progress.stepsUsed).toBe(0);
@@ -444,7 +444,7 @@ describe('a fault inside the walk', () => {
 
   // Structural, because the hazard is a check added later. A fifth invariant
   // written as a bare `Error` escapes the sequencer's catch and puts the run
-  // back where this issue found it, with every suite green.
+  // back where it was before this guard, with every suite green.
   //
   // The first version asked for a `throw` of a `new Identifier(...)`, which is
   // a regex with a parser behind it. An adversarial pass walked four ordinary

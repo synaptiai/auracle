@@ -1,4 +1,4 @@
-// The migrator's check of READER_DATABASE_URL before the restate (issue #153).
+// The migrator's check of READER_DATABASE_URL before the restate.
 //
 // The ways the check can fail:
 //

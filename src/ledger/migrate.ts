@@ -318,9 +318,9 @@ function tlsProtection(ssl: DriverParameters['ssl']): { level: 0 | 1 | 2 | 3; ca
 }
 
 /**
- * After the migrations (issue #153): restates the readers' role, gives it its
- * login when a credential is given, then logs in as it to see which ledger and
- * which other databases it reaches. Every message names the state it leaves.
+ * After the migrations: restates the readers' role, gives it its login when a
+ * credential is given, then logs in as it to see which ledger and which other
+ * databases it reaches. Every message names the state it leaves.
  */
 export async function restateReaders(client: PoolClient, options: RestateReadersOptions = {}): Promise<void> {
   const role = options.role ?? READER_ROLE;
@@ -433,8 +433,8 @@ async function main(): Promise<void> {
     throw new Error(`DATABASE_URL could not be read: ${errorMessage(error)}, so nothing was migrated.`);
   }
 
-  // Issue #153: the readers' URL is checked before any file applies, so a bad
-  // one fails the run before it migrates anything.
+  // The readers' URL is checked before any file applies, so a bad one fails the
+  // run before it migrates anything.
   const readerUrl = process.env['READER_DATABASE_URL'];
   let credential: string | undefined;
   try {

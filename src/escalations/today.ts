@@ -1,4 +1,4 @@
-// What reached a person today, against what arrived (issue #101).
+// What reached a person today, against what arrived.
 //
 // The queue header states both counts. Two counts and no ratio: the published
 // containment figure comes from the gold report, and a live share beside it

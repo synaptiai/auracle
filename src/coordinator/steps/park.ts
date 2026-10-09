@@ -155,12 +155,12 @@ async function resumeStranded(ctx: RunContext): Promise<StepResult | null> {
 export async function park(ctx: RunContext): Promise<StepResult> {
   const draft = stateAfter(ctx.state, 'draft', 'park', 'compose');
 
-  // Before the journal row, because this refuses rather than acts. The check
-  // is one SELECT and changes nothing, so DEC-04 still holds: the row below is
+  // Before the journal row, because this refuses rather than acts. The check is
+  // one SELECT and changes nothing, so DEC-04 still holds: the row below is
   // written before the first thing this step does to the world, and a read is
   // not one of those things. Journalling first left
   // a 'park' row at status 'started' with a null result forever on every
-  // refusal — a step the ledger says began and nothing says ended (issue #94).
+  // refusal — a step the ledger says began and nothing says ended.
   //
   // Guarded on the customer branch, which is the only one that parks in the
   // target system and so the only one a half-finished prior park can concern.
@@ -169,13 +169,13 @@ export async function park(ctx: RunContext): Promise<StepResult> {
     return { kind: 'escalate', reason: 'park_unresolved' };
   }
 
-  // Issue #122: a reply on a turn whose reply is answered or already waits.
-  // A message source delivers at least once, so a message can arrive again,
-  // and intake files it on the same turn (DEC-38). On a helpdesk that takes
-  // no idempotency key, parking again makes a second draft with a handle of
-  // its own. The approval refuses a second reply (DEC-49), but a helpdesk
-  // agent could still send that draft by hand. So the run parks nothing,
-  // stops superseded, and records the run that holds the turn's reply.
+  // A reply on a turn whose reply is answered or already waits. A message
+  // source delivers at least once, so a message can arrive again, and intake
+  // files it on the same turn (DEC-38). On a helpdesk that takes no idempotency
+  // key, parking again makes a second draft with a handle of its own. The
+  // approval refuses a second reply (DEC-49), but a helpdesk agent could still
+  // send that draft by hand. So the run parks nothing, stops superseded, and
+  // records the run that holds the turn's reply.
   //
   // One read, so one snapshot answers both questions: an approval that
   // commits during it is seen either as a waiting run or as its record. No
@@ -197,12 +197,11 @@ export async function park(ctx: RunContext): Promise<StepResult> {
     }
   }
 
-  // Issue #122: an older walk of this ticket's turn and attempt parked a
-  // draft, and the fence stopped it before it could wait. The draft is
-  // already in the helpdesk, and this walk is the same request (DEC-24), so
-  // the turn goes back to the run that parked it, and this run stops. A read
-  // first, like the check above, so a walk with nothing to hand back writes
-  // no row for it.
+  // An older walk of this ticket's turn and attempt parked a draft, and the
+  // fence stopped it before it could wait. The draft is already in the
+  // helpdesk, and this walk is the same request (DEC-24), so the turn goes back
+  // to the run that parked it, and this run stops. A read first, like the check
+  // above, so a walk with nothing to hand back writes no row for it.
   if (ctx.input.isCustomerVisible) {
     const resumed = await resumeStranded(ctx);
     if (resumed !== null) return resumed;
@@ -289,8 +288,8 @@ export async function park(ctx: RunContext): Promise<StepResult> {
     }));
   if (marked !== null) {
     // The step ends here, and its row says so, as the execute step's does:
-    // a row left at 'started' says the step began and nothing ended it
-    // (issue #94). No park key: no draft was asked for.
+    // a row left at 'started' says the step began and nothing ended it. No park
+    // key: no draft was asked for.
     await journalFinish(ctx, 'park', 'superseded', {
       actionClass: ctx.input.actionClass,
       delivery: ctx.input.delivery,

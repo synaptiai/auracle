@@ -1,4 +1,4 @@
-// Cases blocked by a gap, and the knowledge screen's figures (issue #111).
+// Cases blocked by a gap, and the knowledge screen's figures.
 //
 // DEC-50, as the ratified proposal words it: the case page and the
 // knowledge screen count the cases a gap blocked the same way.

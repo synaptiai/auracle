@@ -1,5 +1,4 @@
-// The intent labeller, and the score that makes its labels readable
-// (issue #26, DEC-41).
+// The intent labeller, and the score that makes its labels readable (DEC-41).
 //
 // DEC-41 fits a threshold for each intent above the labelled-case trigger,
 // and it requires two things of every such threshold: each case says what

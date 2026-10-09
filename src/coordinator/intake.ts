@@ -340,9 +340,9 @@ export async function enqueueTicket(
         await endSnoozedIn(client, conversationId);
       }
 
-      // Issue #25: tell the consumer that owns this partition, so it stops
-      // sleeping through the arrival. Emitted on the transaction's client, so
-      // the notification commits with the row and rolls back with it — the
+      // Tell the consumer that owns this partition, so it stops sleeping
+      // through the arrival. Emitted on the transaction's client, so the
+      // notification commits with the row and rolls back with it — the
       // redelivery path above rolls back, and must wake nobody. The signal is
       // an optimisation, never an authority: CONSUMER_INTERVAL_MS still bounds
       // the wait when it is lost.

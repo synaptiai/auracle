@@ -1,10 +1,10 @@
 // What a step is handed, and what it may answer (section 4.3).
 //
-// `coordinateTicket` was one 592-line function holding seven closures and
-// six open-coded step blocks. Testing the gate branch needed a pool, a
-// provider and an egress adapter, because there was no smaller thing to
-// call. The steps are modules now, each `(ctx: RunContext) => StepResult`,
-// and this file is the seam between them and the sequencer (issue #75).
+// `coordinateTicket` was one 592-line function holding seven closures and six
+// open-coded step blocks. Testing the gate branch needed a pool, a provider and
+// an egress adapter, because there was no smaller thing to call. The steps are
+// modules now, each `(ctx: RunContext) => StepResult`, and this file is the
+// seam between them and the sequencer.
 //
 // The context is deliberately mutable in two places and nowhere else: the
 // step counter and the accumulated results. A step reads what the earlier
@@ -292,10 +292,10 @@ export async function stopEscalated(
   ctx: RunContext,
   reason: EscalationReason,
   /**
-   * What the reason does not say, journalled beside it. `internal_fault`
-   * names a defect and not a step, so the fault message is the whole of what
-   * an operator has to go on (issue #94). `reason` is written last, so a
-   * detail key of that name cannot displace the value the queue reads.
+   * What the reason does not say, journalled beside it. `internal_fault` names
+   * a defect and not a step, so the fault message is the whole of what an
+   * operator has to go on. `reason` is written last, so a detail key of that
+   * name cannot displace the value the queue reads.
    */
   detail: Record<string, unknown> = {},
 ): Promise<CoordinateOutcome> {
@@ -316,7 +316,7 @@ export async function stopEscalated(
  * A step that answers 'continue' where the run has to end is a defect in the
  * walk: park and execute both end it, so 'continue' from either means the
  * sequencer lost track of its own order. It raises a fault rather than
- * returning, and the sequencer's catch ends the run at 'escalated' (#94).
+ * returning, and the sequencer's catch ends the run at 'escalated'.
  *
  * A function rather than a closure inside `coordinateTicket`, so the fault is
  * reachable from a test. It was unreachable from outside the module before,

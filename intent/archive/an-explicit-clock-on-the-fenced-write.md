@@ -148,5 +148,5 @@ timestamp comes from. DEC-25 limits a run's clock time, and that limit reads
 ## Open questions
 
 Whether a seeded row should declare itself, as a gold half does. That needs a
-column, so it needs a decision and a migration. The seeder in issue #23 is the
+column, so it needs a decision and a migration. The seeder in issue 23 is the
 first caller that makes the question concrete.

@@ -13,7 +13,7 @@ This repository has no traffic, and by DEC-18 it may never have real traffic.
 
 A seeder writes 45 backdated UTC days through the real ledger path, so both
 readers answer for the first time. The bands report emits verdicts, and the
-latency report shows a distribution that issue #25 can read.
+latency report shows a distribution that issue 25 can read.
 
 The history is reproducible from its seed. A baseline built from a history
 nobody can rebuild is a number nobody can check.
@@ -35,7 +35,7 @@ all. So a daemon that ever imported the seeder still fails the guard.
 ## Constraints
 
 Every parameter of the model comes from the system's shape, never from a
-wanted verdict. Issue #25's evidence gate reads this history and decides
+wanted verdict. Issue 25's evidence gate reads this history and decides
 which correction head-of-line delay needs. So a history built to make one
 rule fire would seed the check with the material meant to verify it.
 
@@ -211,7 +211,7 @@ resolves the same run row, so a real ledger measures it the same way.
 
 A reader computing utilisation from that column reads three quarters of an
 hour. The consumer was busy for fourteen seconds. Those are different
-quantities and they differ by two orders of magnitude. Issue #25 reads this
+quantities and they differ by two orders of magnitude. Issue 25 reads this
 report. So the distinction is stated here rather than left to be inferred.
 Consumer occupancy is the work, and the service percentile is the run.
 

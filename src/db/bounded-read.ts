@@ -23,8 +23,8 @@ const READ_STATEMENT = /^\s*(?:\(|(?:select|with|values|table)\b)/i;
 const CLIENT_TIMEOUT = 'Query read timeout';
 
 /**
- * Who the session is, and whether it is the role named by $1 and nothing
- * more (issue #153). `who` is the user the connection logged in as.
+ * Who the session is, and whether it is the role named by $1 and nothing more.
+ * `who` is the user the connection logged in as.
  *
  * It names the role rather than testing for rights, because a role with
  * none of the superuser's rights can still own the tables. It reads the
@@ -197,12 +197,12 @@ export async function boundedRead<T>(
     // The idle bound covers the time `read` spends between statements, which
     // no statement timeout does. Both are local to this transaction.
     //
-    // The same statement asks who the session is (issue #153). READ ONLY
-    // refuses a write to a table and nothing else: a superuser's read can
-    // still end another session, write to the catalog or create a replication
-    // slot. The readers connect as auracle_reader, a role with none of those
-    // rights, and any other session is refused before the read runs. The
-    // rules are SESSION_CHECK's.
+    // The same statement asks who the session is. READ ONLY refuses a write to
+    // a table and nothing else: a superuser's read can still end another
+    // session, write to the catalog or create a replication slot. The readers
+    // connect as auracle_reader, a role with none of those rights, and any
+    // other session is refused before the read runs. The rules are
+    // SESSION_CHECK's.
     //
     // The search path names pg_temp last, so no temporary object a session
     // left behind stands in front of a table a reader names.

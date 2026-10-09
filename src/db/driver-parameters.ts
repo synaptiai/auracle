@@ -1,4 +1,4 @@
-// What the Postgres driver makes of a connection URI (issue #153).
+// What the Postgres driver makes of a connection URI.
 import pg from 'pg';
 
 /** The fields the driver parsed from a URI, as it will use them. */

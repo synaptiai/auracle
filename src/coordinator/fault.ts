@@ -6,12 +6,12 @@
 // does not define, and a final step answered 'continue'. None of them is an
 // environment fault, and none of them clears on a retry.
 //
-// Before this they were plain `Error`s. They escaped `coordinateTicket`, so
-// the run kept whatever state it last reached and journalled nothing;
+// Before this they were plain `Error`s. They escaped `coordinateTicket`, so the
+// run kept whatever state it last reached and journalled nothing;
 // `src/escalations/query.ts` reads its reason from an `escalate` step, and
 // these runs wrote none. The consumer logged `{ outcome: 'error' }` and left
 // the message queued against MAX_INTAKE_ATTEMPTS, which spent a classifier
-// budget and filed an orphan run on every one of the 50 attempts (issue #94).
+// budget and filed an orphan run on every one of the 50 attempts.
 //
 // A distinct class, and not a catch of every error, because the two cases
 // want opposite handling. A defect is deterministic: retrying it is certain
@@ -46,9 +46,9 @@ export class CoordinatorFaultError extends Error {
    *
    * The sequencer's recovery writes to the ledger, and that write can fail —
    * most sharply for the fault that says the run row is gone, because the
-   * recovery's own transition addresses that same missing row. Without a
-   * cause the ledger's complaint replaced the invariant message, which is the
-   * whole of what `internal_fault` gives an operator (issue #94).
+   * recovery's own transition addresses that same missing row. Without a cause
+   * the ledger's complaint replaced the invariant message, which is the whole
+   * of what `internal_fault` gives an operator.
    */
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);

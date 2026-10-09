@@ -120,9 +120,10 @@ describe('the tracked reference fit', () => {
   });
 
 
-  // The register and the README quote this pair in prose. #40 reshaped the
-  // corpus underneath it, and a document that kept the old pair would describe
-  // a fit that no longer exists. So every quotation site is pinned.
+  // The register and the README quote this pair in prose. The move to a Zipf
+  // corpus reshaped the corpus underneath it, and a document that kept the old
+  // pair would describe a fit that no longer exists. So every quotation site is
+  // pinned.
   //
   // Three earlier versions were too weak, and all three are recorded because
   // the defect keeps taking the same shape. A `toContain` over the whole file

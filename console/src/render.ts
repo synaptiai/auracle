@@ -1,4 +1,4 @@
-// Rendering rules the console cannot break (issue #27, DEC-05).
+// Rendering rules the console cannot break (DEC-05).
 //
 // Two of them come from the design brief and one from the bands job.
 //
@@ -299,11 +299,11 @@ export function renderMetricValue(metric: MetricValue): string {
 export { escalationHead } from 'auracle/domain';
 
 /**
- * Whether a park is an internal write (#123, DEC-34): it names no draft, it
- * recorded an object payload, and its action is not the customer reply's. A
- * reply parked in the ledger alone records a payload too, under a profile
- * that shows no customer, and it is still a reply. The conversation reader's
- * SQL applies the same test, so every surface names the same kind.
+ * Whether a park is an internal write (DEC-34): it names no draft, it recorded
+ * an object payload, and its action is not the customer reply's. A reply parked
+ * in the ledger alone records a payload too, under a profile that shows no
+ * customer, and it is still a reply. The conversation reader's SQL applies the
+ * same test, so every surface names the same kind.
  */
 export function parksAnAction(
   payloadRecorded: boolean,

@@ -1,5 +1,5 @@
 // The console is a fifth long-running process, and it is held to the four
-// obligations the other four already meet (issue #27).
+// obligations the other four already meet.
 //
 // This guard exists because a mutation pass removed each of them in turn and
 // the whole suite stayed green. `console/src/main.ts` is the one module no
@@ -40,9 +40,9 @@ describe('the console as a long-running process', () => {
   // the refusal printed and the process then ran forever. A supervisor saw a
   // live console serving nothing.
   it('reads and refuses its configuration before it opens the pool', () => {
-    // The read-back adapter too (issue #102). A FreeScout adapter missing its
-    // key refuses where it is built, and built after the pool that refusal
-    // would hang the same way.
+    // The read-back adapter too. A FreeScout adapter missing its key refuses
+    // where it is built, and built after the pool that refusal would hang the
+    // same way.
     expect(MAIN.indexOf('readBackFor(')).toBeGreaterThan(-1);
     // The development reviewer as well (DEC-45). It refuses a console that
     // cannot honour the variable — a compiled entry, or a bind off loopback —
@@ -119,10 +119,9 @@ describe('the console as a long-running process', () => {
     expect(MAIN).toMatch(/undo: undoFor\(\{ pool, undoApproval \}\)/);
   });
 
-  // Issue #153: the twelve readers read through `boundedRead`, which refuses
-  // the writer's pool at the first read. Every call takes the readers' pool,
-  // and the pool comes from READER_DATABASE_URL, probed before the console
-  // listens.
+  // The twelve readers read through `boundedRead`, which refuses the writer's
+  // pool at the first read. Every call takes the readers' pool, and the pool
+  // comes from READER_DATABASE_URL, probed before the console listens.
   it('hands every reader the readers\' pool', () => {
     const readers = [
       'readConversation', 'turnAnsweredBy', 'conversationOfRun', 'readDocument', 'readQueueToday',
@@ -174,9 +173,9 @@ describe('the console as a long-running process', () => {
   it('closes the pools once, however many paths ask for it', () => {
     expect(MAIN).toContain('const endPool =');
     // One real call, inside the guard, over both pools: the writer's and the
-    // readers' (issue #153). Every other site goes through it. Counted over
-    // the statement rather than `pool.end()`, because the comment above the
-    // guard names the method it is guarding.
+    // readers'. Every other site goes through it. Counted over the statement
+    // rather than `pool.end()`, because the comment above the guard names the
+    // method it is guarding.
     expect(MAIN).toContain("for (const [each, which] of [[pool, 'console'], [readers, 'readers']] as const) {");
     expect(MAIN.split('await each.end();').length - 1).toBe(1);
     expect(MAIN.split('await pool.end();').length - 1).toBe(0);

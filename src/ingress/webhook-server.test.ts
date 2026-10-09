@@ -259,9 +259,9 @@ describe('webhook signature check', () => {
   });
 });
 
-// Issue #114: the webhook's own log path, with a value from the request in it.
-// Intake's fault quotes what it refused, as a Postgres constraint violation
-// quotes the key it saw, so the message id the caller sent reaches the line.
+// The webhook's own log path, with a value from the request in it. Intake's
+// fault quotes what it refused, as a Postgres constraint violation quotes the
+// key it saw, so the message id the caller sent reaches the line.
 describe('the webhook log', () => {
   it('escapes a value from the request, and the line parses back', async () => {
     const lines: string[] = [];

@@ -81,7 +81,7 @@ describe('actionProfileFromEnv', () => {
   it('accepts the two valid delivery rules and both visibility values', () => {
     for (const delivery of ['at_most_once', 'at_least_once']) {
       for (const visible of ['true', 'false']) {
-        // Issue #124: each visibility with the one class it pairs with.
+        // Each visibility with the one class it pairs with.
         const profile = actionProfileFromEnv(
           envWith({
             ACTION_CLASS: visible === 'true' ? 'customer_reply' : 'route_ticket',
@@ -138,11 +138,10 @@ describe('actionProfileFromEnv', () => {
   });
 });
 
-// Issue #124. The relay sends an approved draft only for the customer reply
-// class, and every other class it performs as an internal write. So a
-// customer-visible profile with another class parks a draft that is never
-// sent. The reply class without visibility can skip approval, and it parks
-// no draft to send.
+// The relay sends an approved draft only for the customer reply class, and
+// every other class it performs as an internal write. So a customer-visible
+// profile with another class parks a draft that is never sent. The reply class
+// without visibility can skip approval, and it parks no draft to send.
 describe('the pairing of ACTION_CLASS and ACTION_IS_CUSTOMER_VISIBLE', () => {
   const DISCLOSED = 'reviewed by a person';
 

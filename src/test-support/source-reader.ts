@@ -1,5 +1,4 @@
-// Source read as the compiler reads it, for the guards that check shipped
-// code (issue #146).
+// Source read as the compiler reads it, for the guards that check shipped code.
 //
 // A guard that strips comments and strings with patterns has to guess where
 // a string ends. Each guess in this tree failed on an ordinary line: a `//`

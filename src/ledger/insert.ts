@@ -30,11 +30,10 @@ export interface FencedRunInput {
    * DEC-28: fencing token. Must not decrease per ticket.
    *
    * `'next'` asks the ledger to allocate it — the ticket's highest accepted
-   * epoch plus one, read under the row lock this transaction already holds
-   * (issue #113). A caller that pre-reads the fence outside that lock hands
-   * two creations the same epoch, and the second then raises no fence at
-   * all. A supplied value keeps the refusal below, which is how an old
-   * owner's write is turned away.
+   * epoch plus one, read under the row lock this transaction already holds. A
+   * caller that pre-reads the fence outside that lock hands two creations the
+   * same epoch, and the second then raises no fence at all. A supplied value
+   * keeps the refusal below, which is how an old owner's write is turned away.
    */
   epoch: bigint | 'next';
   /** The state to commit when the insert succeeds (for example 'queued'). */
@@ -176,7 +175,7 @@ async function rollbackQuietly(client: PoolClient): Promise<unknown | null> {
 }
 
 /**
- * The `run` insert, with or without the explicit `created_at` (issue #22).
+ * The `run` insert, with or without the explicit `created_at`.
  *
  * Exported so `clock-statement.test.ts` can pin the plain form: its column
  * list must keep omitting `created_at`, because that is what leaves the
@@ -238,10 +237,10 @@ export async function fencedInsert(
   run: FencedRunInput,
   outbox: FencedOutboxInput | null,
   /**
-   * Issue #22: an explicit timing, for a seeder writing a backdated history
-   * through this same path. Omitted by every daemon, which is asserted off
-   * the import graph in `clock-reachability.test.ts`; the column DEFAULT
-   * then records the wall clock as before.
+   * An explicit timing, for a seeder writing a backdated history through this
+   * same path. Omitted by every daemon, which is asserted off the import graph
+   * in `clock-reachability.test.ts`; the column DEFAULT then records the wall
+   * clock as before.
    */
   clock?: SeededInsertClock,
 ): Promise<FencedInsertResult> {
@@ -279,13 +278,13 @@ export async function fencedInsert(
       const highest =
         current.rows.length > 0 ? BigInt(current.rows[0]!.epoch as string) : null;
 
-      // Issue #113: an allocation happens here, under the row lock taken
-      // above, so two creations on one ticket cannot take the same epoch.
-      // The null arm is unreachable, because this transaction materialised
-      // the row above; it stays so the arithmetic needs no assertion.
-      // A supplied epoch is subject to the refusal below, which is how an
-      // old owner — one whose value was read before the fence moved — is
-      // turned away. An allocated one is above the fence by construction.
+      // An allocation happens here, under the row lock taken above, so two
+      // creations on one ticket cannot take the same epoch. The null arm is
+      // unreachable, because this transaction materialised the row above; it
+      // stays so the arithmetic needs no assertion.
+      // A supplied epoch is subject to the refusal below, which is how an old
+      // owner — one whose value was read before the fence moved — is turned
+      // away. An allocated one is above the fence by construction.
       const epoch = run.epoch === 'next' ? (highest ?? 0n) + 1n : run.epoch;
 
       if (highest !== null && epoch < highest) {
@@ -473,10 +472,10 @@ export async function fencedTransition(
   pool: Pool,
   t: FencedTransitionInput,
   /**
-   * Issue #22: the finish instant a seeder gives a terminal transition. It
-   * is checked against the row's stored `created_at`, read under the same
-   * row lock, so the caller cannot disagree with the row. Ignored on a
-   * non-terminal state, which stamps no finish at all.
+   * The finish instant a seeder gives a terminal transition. It is checked
+   * against the row's stored `created_at`, read under the same row lock, so the
+   * caller cannot disagree with the row. Ignored on a non-terminal state, which
+   * stamps no finish at all.
    */
   clock?: SeededFinishClock,
 ): Promise<FencedTransitionResult> {
@@ -543,7 +542,7 @@ export async function fencedTransition(
         return { outcome: 'wrong_state', currentState };
       }
 
-      // Issue #113: the fence governs a run a consumer is still walking. A
+      // The fence governs a run a consumer is still walking. A
       // run parked for a person is in no consumer's hands — the walk ended at
       // the park, and the next writer is a person or the clock (DEC-48's
       // returner) — so a fence another run raised says nothing about it. Refusing here stranded the reply: it
@@ -702,8 +701,8 @@ export type ResumeStrandedResult =
   | { outcome: 'wrong_state'; currentState: string };
 
 /**
- * Hands a turn's draft back to the run that parked it, and stops the walk
- * that found it (#122).
+ * Hands a turn's draft back to the run that parked it, and stops the walk that
+ * found it.
  *
  * Two walks of one message on one ticket can overlap, after a rebalance or a
  * crash retry. The older walk parks a draft in the helpdesk, and then the

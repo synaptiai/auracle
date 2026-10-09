@@ -300,10 +300,10 @@ describe('approval completion path (DEC-12 end to end)', () => {
     expect(await outboxRows(runId)).toHaveLength(1);
   });
 
-  // Issue #113, criterion 4: the record an approval writes before a
-  // deployment restart is sent after it, exactly once. The restart leaves
-  // the ticket's fence alone (the run has finished), and the record's DEC-24
-  // key is what makes the single send provable.
+  // A restart strands nothing: the record an approval writes before a
+  // deployment restart is sent after it, exactly once. The restart leaves the
+  // ticket's fence alone (the run has finished), and the record's DEC-24 key is
+  // what makes the single send provable.
   it('sends an approved record after a consumer restart, exactly once', async () => {
     const ticketId = 'T-' + randomUUID().slice(0, 8);
     const { runId, draftExternalId, helpdesk } = await parkReply(ticketId);
@@ -330,7 +330,7 @@ describe('approval completion path (DEC-12 end to end)', () => {
     expect(helpdesk.listDeliveries()).toHaveLength(1);
   });
 
-  // Issue #113, criterion 3: a later run on the same ticket takes a higher
+  // A later run strands nothing: a later run on the same ticket takes a higher
   // epoch, and the reply parked before it must not wait forever. It stays
   // approvable — the branch this case pins — and its record keeps its own
   // epoch, which is what the relay reads.
@@ -653,11 +653,11 @@ describe('approval completion path (DEC-12 end to end)', () => {
     });
   });
 
-  // Issue #113, criterion 1: the defect through a real consumer start, not a
-  // hand-raised epoch. Every deployment claims its partitions, and a reply
-  // parked for a person is not in flight in any consumer — so the claim must
-  // leave it approvable. The count the claim returns is asserted in
-  // consumer.db.test.ts, beside the tickets it does and does not move.
+  // The stranded approval, through a real consumer start, not a hand-raised
+  // epoch. Every deployment claims its partitions, and a reply parked for a
+  // person is not in flight in any consumer — so the claim must leave it
+  // approvable. The count the claim returns is asserted in consumer.db.test.ts,
+  // beside the tickets it does and does not move.
   it('approves a reply parked before a consumer start', async () => {
     const ticketId = 'T-' + randomUUID().slice(0, 8);
     const { runId, draftExternalId } = await parkReply(ticketId);
@@ -685,10 +685,10 @@ describe('approval completion path (DEC-12 end to end)', () => {
     expect(outbox[0]!.payload).toEqual({ draftExternalId });
   });
 
-  // Issue #113 inverted this case. It pinned the refusal that stranded a
-  // reply: a person approving a parked draft has nothing to do with the
-  // fence another run raised. The record the approval writes still carries
-  // the parked run's own epoch, which is what the relay reads.
+  // The fix for stranded approvals inverted this case. It pinned the refusal
+  // that stranded a reply: a person approving a parked draft has nothing to do
+  // with the fence another run raised. The record the approval writes still
+  // carries the parked run's own epoch, which is what the relay reads.
   it('approves a parked run when the fencing epoch moved on (DEC-28)', async () => {
     const ticketId = 'T-' + randomUUID().slice(0, 8);
     const { runId, draftExternalId } = await parkReply(ticketId);
@@ -749,7 +749,7 @@ describe('approval completion path (DEC-12 end to end)', () => {
     expect(rows[0]?.approved_by_source).toBe('none');
   });
 
-  // Criterion 3 of #107, and DEC-46: sending ends the sender's hold on the
+  // The case reservation, under DEC-46: sending ends the sender's hold on the
   // case, and it does so in the transaction that records the send.
   it('releases the sender\'s hold in the transaction that sends', async () => {
     const ticket = `T-${randomUUID().slice(0, 8)}`;
@@ -774,10 +774,9 @@ describe('approval completion path (DEC-12 end to end)', () => {
       .toEqual(['take', 'send']);
   });
 
-  // Risk row "Release on send": an approval that does not commit must not
-  // release anything. A release written before the approval commits, or
-  // outside its transaction, leaves a case nobody holds and a send nobody
-  // made.
+  // The "Release on send" risk: an approval that does not commit must not
+  // release anything. A release written before the approval commits, or outside
+  // its transaction, leaves a case nobody holds and a send nobody made.
   it('leaves the hold in place when the approval does not commit', async () => {
     const ticket = `T-${randomUUID().slice(0, 8)}`;
     const parked = await parkReply(ticket);
@@ -799,12 +798,12 @@ describe('approval completion path (DEC-12 end to end)', () => {
     expect((await holdHistory(pool, parked.runId)).map((event) => event.kind)).toEqual(['take']);
   });
 
-  // Criterion 9, the risk row's own discriminating check. The reviewer read
-  // the reply on the case page and the console put a digest of that text in
-  // the form. The ledger recomputes it under the run's lock, so a reply
-  // rewritten after they read it is refused, named, and commits nothing —
-  // including the read-back's edit distance, which would otherwise measure a
-  // text the person never saw.
+  // The check for a reply that changed after it was read. The reviewer read the
+  // reply on the case page and the console put a digest of that text in the
+  // form. The ledger recomputes it under the run's lock, so a reply rewritten
+  // after they read it is refused, named, and commits nothing — including the
+  // read-back's edit distance, which would otherwise measure a text the person
+  // never saw.
   it('refuses a reply that changed since the reviewer read it', async () => {
     const ticket = `T-${randomUUID().slice(0, 8)}`;
     const parked = await parkReply(ticket);
@@ -835,7 +834,7 @@ describe('approval completion path (DEC-12 end to end)', () => {
     expect(run.rows[0]).toMatchObject({ approved_by: null, approved_by_source: null });
   });
 
-  // The risk row's exact wrong version: a guard that compares the reply the
+  // The wrong version of that check: a guard that compares the reply the
   // approval read when it started instead of the reply the ledger holds under
   // the lock. The window here is real — `readDraft` runs after the parked
   // record is read and before the transaction opens — and a guard reading
@@ -881,9 +880,9 @@ describe('approval completion path (DEC-12 end to end)', () => {
     expect(await outboxRows(parked.runId)).toHaveLength(1);
   });
 
-  // Criterion 9: `pnpm run approve` passes no digest and is exempt, and so is
-  // any other caller that names none. The guard is a statement about a page a
-  // person was reading, and a caller with no page has none to compare.
+  // `pnpm run approve` passes no digest and is exempt, and so is any other
+  // caller that names none. The guard is a statement about a page a person was
+  // reading, and a caller with no page has none to compare.
   it('approves without a digest, which is the command line\'s path', async () => {
     const ticket = `T-${randomUUID().slice(0, 8)}`;
     const parked = await parkReply(ticket);
@@ -948,11 +947,11 @@ describe('approval completion path (DEC-12 end to end)', () => {
       .toEqual([['take', 'anna@example.test'], ['send', 'unattributed']]);
   });
 
-  // Criterion 8, and the maintainer's ruling of 2026-09-18: the send ends the
-  // hold on the case it resolved, whoever holds it. The case has left the
-  // queue, so a hold on it would say somebody is still working it — and the
-  // history would read as a lapse twenty minutes later instead of the send
-  // that ended it, overstating the time the case held a person.
+  // The maintainer's ruling of 2026-09-18: the send ends the hold on the case
+  // it resolved, whoever holds it. The case has left the queue, so a hold on it
+  // would say somebody is still working it — and the history would read as a
+  // lapse twenty minutes later instead of the send that ended it, overstating
+  // the time the case held a person.
   it('ends the hold on the case a send resolves, whoever held it', async () => {
     const ticket = `T-${randomUUID().slice(0, 8)}`;
     const parked = await parkReply(ticket);
@@ -982,10 +981,10 @@ describe('approval completion path (DEC-12 end to end)', () => {
     });
   });
 
-  // Criterion 8: the reservation is advisory. An approval asks nobody to hold
-  // the case, so the reviewer who opens a case from a stale queue — or from a
-  // bookmark — still approves it. Nothing is recorded, because nothing
-  // happened: the case was simply nobody's.
+  // The reservation is advisory. An approval asks nobody to hold the case, so
+  // the reviewer who opens a case from a stale queue — or from a bookmark —
+  // still approves it. Nothing is recorded, because nothing happened: the case
+  // was simply nobody's.
   it('approves a case nobody holds, and records no hold', async () => {
     const ticket = `T-${randomUUID().slice(0, 8)}`;
     const parked = await parkReply(ticket);

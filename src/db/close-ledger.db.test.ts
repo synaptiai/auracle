@@ -1,4 +1,4 @@
-// One pool teardown for every job that owns a pool (issue #72).
+// One pool teardown for every job that owns a pool.
 //
 // Three jobs carried a copy of this block. Only `bands` set the exit code on
 // a failed close; `latency` and `seed-history` logged the failure and exited

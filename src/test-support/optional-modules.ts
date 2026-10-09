@@ -1,4 +1,4 @@
-// Loading a package a pruned install does not have (issue #80).
+// Loading a package a pruned install does not have.
 //
 // `testcontainers` and `@testcontainers/postgresql` are development
 // dependencies that 95 packages hang off — measured, and nothing else in this

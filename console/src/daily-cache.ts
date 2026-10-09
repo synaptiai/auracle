@@ -1,4 +1,4 @@
-// A daily count, held briefly (issue #101).
+// A daily count, held briefly.
 //
 // Its own module, as `views.ts` is: `main.ts` runs `main()` when it is
 // imported, so a rule defined there cannot be reached from a test.

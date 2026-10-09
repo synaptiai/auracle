@@ -1,4 +1,4 @@
-// Every write this console makes, proved structurally (issue #27, DEC-46).
+// Every write this console makes, proved structurally (DEC-46).
 //
 // `bands` and `latency` are safe against a live database because every
 // statement they issue is a SELECT. The console cannot inherit that claim: it
@@ -7,11 +7,11 @@
 //
 // The rule is structural rather than a matter of care at the call site,
 // following `src/ledger/clock-reachability.test.ts`. The console names no SQL
-// at all: it reads through the query modules the jobs use, and every write
-// goes through a function of `auracle/ledger-read` that the core declares in
+// at all: it reads through the query modules the jobs use, and every write goes
+// through a function of `auracle/ledger-read` that the core declares in
 // `LEDGER_WRITES`. Anything that looks like a statement in this package is a
-// second definition of a ledger read, which is the drift issue #27's non-goal
-// names.
+// second definition of a ledger read, which is the drift the console's first
+// design ruled out.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
@@ -74,10 +74,10 @@ function tree(file: string, text: string): ts.SourceFile | null {
  * A pattern or a character loop has to guess where a string ends, and each
  * guess failed: a regular expression cut at the `//` inside
  * `'http://console.invalid'`, and a loop that knew no regular-expression
- * literal paired the quote inside `/"/` with a later one (issue #146). Either
- * way the rest of the line was erased, and a statement written there went
- * unread. String contents are the one place the rule most needs to look,
- * because SQL travels as a string.
+ * literal paired the quote inside `/"/` with a later one. Either way the rest
+ * of the line was erased, and a statement written there went unread. String
+ * contents are the one place the rule most needs to look, because SQL travels
+ * as a string.
  *
  * The consequence is that HTML counts too. A `<select>` element in a surface
  * trips the SQL sweep below, and that is the sweep working rather than a
@@ -348,7 +348,7 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   // two read-back faults apart. A class, and no statement.
   PermanentEgressError: 'read',
   probeLedger: 'read',
-  // Issue #153: at startup, one bounded read on the readers' pool and one SELECT on
+  // At startup, one bounded read on the readers' pool and one SELECT on
   // the writer's, which refuse a pool that is not the readers' role or not this ledger.
   assertOneLedger: 'read',
   // DEC-47: the product catalogue, read once at startup for the labels the
@@ -368,13 +368,13 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   readKnowledge: 'read',
   readLatency: 'read',
   readQueueToday: 'read',
-  // Issue #112: what each product may do without a person, from the gate
-  // records, read in one READ ONLY transaction.
+  // What each product may do without a person, from the gate records, read in
+  // one READ ONLY transaction.
   readRouting: 'read',
   readRun: 'read',
   readRunJournal: 'read',
-  // Issue #112: the team screen, read in one READ ONLY transaction. The hold
-  // history it totals is read, never written: a lapse it meets stays unrecorded.
+  // The team screen, read in one READ ONLY transaction. The hold history it
+  // totals is read, never written: a lapse it meets stays unrecorded.
   readTeam: 'read',
   releaseHold: 'write',
   replyDigest: 'read',
@@ -389,8 +389,8 @@ const CALLED: Readonly<Record<string, 'read' | 'write'>> = {
   saveReply: 'write',
   selectReadBackAdapter: 'read',
   takeHold: 'write',
-  // Issue #112: the length of the team screen's week, so a product's cases a
-  // day are over the days the read counted. A value, and no statement.
+  // The length of the team screen's week, so a product's cases a day are over
+  // the days the read counted. A value, and no statement.
   TEAM_WEEK_DAYS: 'read',
   // DEC-51: the way back inside a held send. It removes the record, the
   // approver, the distance, the approved text and the finish time.
@@ -542,9 +542,8 @@ describe('the console against a live database', () => {
     expect(stripComments(line, 'm.ts')).toContain('SELECT 1');
   });
 
-  // Issue #146. A quote inside a regular expression shifted the pairing of
-  // quotes, so the `//` of a later URL read as a comment and blanked the rest
-  // of the line.
+  // A quote inside a regular expression shifted the pairing of quotes, so the
+  // `//` of a later URL read as a comment and blanked the rest of the line.
   it('keeps a statement written after a regular expression holding a quote', () => {
     const line = `const r = /"/; const u = "http://console.invalid"; const q = 'SELECT 1';`;
     expect(stripComments(line, 'm.ts')).toContain('SELECT 1');
@@ -609,7 +608,7 @@ describe('the console against a live database', () => {
   });
 
   // Both spellings reach the ledger, and neither hides behind a string or a
-  // comment, before it or around it (issue #146).
+  // comment, before it or around it.
   it('reads a query method handed on, and one a package script reaches', () => {
     expect(queryCalls("const run = pool['query'].bind(pool);", 'm.ts')).toHaveLength(1);
     expect(queryCalls('const run = pool.query.bind(pool);', 'm.ts')).toHaveLength(1);
@@ -657,10 +656,10 @@ describe('the console against a live database', () => {
     expect(() => queryCalls('{ "a": ', 'tsconfig.json')).toThrow(/tsconfig\.json does not parse/);
   });
 
-  // DEC-46, criterion 11. Every write is named above, and the sweep is what
-  // makes the naming a check rather than a habit: a symbol this console takes
-  // from the barrel and does not name fails here, so a new write cannot reach
-  // the ledger unnamed.
+  // DEC-46. Every write is named above, and the sweep is what makes the naming
+  // a check rather than a habit: a symbol this console takes from the barrel
+  // and does not name fails here, so a new write cannot reach the ledger
+  // unnamed.
   it('names every symbol it takes from the read barrel', () => {
     const unnamed = PARSED.flatMap(({ file, referenced }) =>
       [...referenced].filter((name) => !Object.hasOwn(CALLED, name)).map((name) => `${rel(file)} takes ${name}`),

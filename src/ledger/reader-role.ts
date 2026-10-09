@@ -1,4 +1,4 @@
-// The readers' role, restated on every migration (issue #153, DEC-04).
+// The readers' role, restated on every migration (DEC-04).
 //
 // Migration 041 creates `auracle_reader` and nothing more. The rest is stated
 // here and restated on every migration: its attributes, limits and settings,
@@ -239,11 +239,11 @@ export class ReaderRightsLeft extends Error {
 /**
  * Restates the role, commits, then reads back what it stated.
  *
- * The role is the barrier against code that holds the readers' URL or pool
- * (issue #153). It is not a barrier against a superuser who grants the role
- * more by hand: the restate takes back the attributes, settings and
- * memberships such a person could add, and states the role's own rights, but
- * it does not hunt for every other grant Postgres allows.
+ * The role is the barrier against code that holds the readers' URL or pool. It
+ * is not a barrier against a superuser who grants the role more by hand: the
+ * restate takes back the attributes, settings and memberships such a person
+ * could add, and states the role's own rights, but it does not hunt for every
+ * other grant Postgres allows.
  *
  * Postgres answers a REVOKE that matched nothing with a warning, and the
  * driver drops warnings, so what the restate states is read back after the

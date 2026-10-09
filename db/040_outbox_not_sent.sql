@@ -1,5 +1,4 @@
--- A record the relay escalated because it never reached the customer
--- (DEC-30, issue #159).
+-- A record the relay escalated because it never reached the customer (DEC-30).
 --
 -- DEC-30 escalates a send whose delivery state is unknown, as
 -- delivery_unknown. An adapter can prove that an attempt sent nothing. When a

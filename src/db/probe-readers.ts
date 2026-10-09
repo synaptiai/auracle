@@ -1,4 +1,4 @@
-// The readers' pool, proved at startup (issue #153).
+// The readers' pool, proved at startup.
 import type { Pool } from 'pg';
 
 import { boundedRead } from './bounded-read.js';

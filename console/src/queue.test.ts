@@ -1,4 +1,4 @@
-// Which group a waiting case belongs to, and in what order (issue #101).
+// Which group a waiting case belongs to, and in what order.
 //
 // The maintainer's rulings, 2026-09-14:
 // - First: the gate rule is `irreversible` or `high_risk`, the gate recorded
@@ -63,9 +63,9 @@ describe('the group a waiting case belongs to', () => {
     expect(queueGroupOf({ ...CLEAN, gateReason: 'a_rule_nobody_wrote' })).toBe('rest');
   });
 
-  // #123: the one-press batch holds each reply for an undo (DEC-51), and an
-  // internal write parks no reply and takes no hold (DEC-34). So a parked
-  // write never joins the group the batch confirms, however clean its gates.
+  // The one-press batch holds each reply for an undo (DEC-51), and an internal
+  // write parks no reply and takes no hold (DEC-34). So a parked write never
+  // joins the group the batch confirms, however clean its gates.
   it('never calls an internal write clean, however its gates read', () => {
     expect(queueGroupOf({ ...CLEAN, actionClass: 'route_ticket', draftExternalId: null })).toBe('rest');
     expect(queueGroupOf({ ...CLEAN, draftExternalId: null })).toBe('rest');
@@ -164,9 +164,9 @@ describe('the queue in groups', () => {
     expect(groups.map((g) => g.group)).toEqual(['clean']);
   });
 
-  // Criterion 4 (DEC-46). A case somebody else holds is not work this
-  // reviewer can start, so it leaves the group its gate facts put it in for
-  // the last one. It returns when the hold lapses or is released.
+  // DEC-46. A case somebody else holds is not work this reviewer can start, so
+  // it leaves the group its gate facts put it in for the last one. It returns
+  // when the hold lapses or is released.
   it('puts a case somebody else holds in its own group, after every other', () => {
     const groups = groupQueue(
       [
@@ -236,7 +236,7 @@ describe('the queue in groups', () => {
     expect(groupQueue(runs)[0]!.runs.map((r) => r.runId)).toEqual(['old', 'new']);
   });
 
-  // Issue #154: the sort a reviewer picks. Its failures, written first:
+  // The sort a reviewer picks. Its failures, written first:
   //   - oldest reorders inside each group only, so it draws as risk first;
   //   - oldest or my products lists a case somebody else holds as work;
   //   - my products drops age inside each half;

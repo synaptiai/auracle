@@ -259,9 +259,9 @@ describe('triage run', () => {
     expect(JSON.parse(synthetic)).toMatchObject({ gold_source: 'synthetic' });
   });
 
-  // Issue #114. A selection's reason is a sentence the judge model wrote
-  // about a customer's message, so it can carry any character, and this is
-  // the report a person reads in a terminal.
+  // A selection's reason is a sentence the judge model wrote about a customer's
+  // message, so it can carry any character, and this is the report a person
+  // reads in a terminal.
   it('prints the report with every raw character escaped, and it parses back', () => {
     const shape = makeArtifactShape();
     const selections = [{ ticket_id: 't-1', origin: 'report', reason: HOSTILE }];

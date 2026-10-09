@@ -1,4 +1,4 @@
-// The team screen's figures (issue #112).
+// The team screen's figures.
 //
 // A case is a turn, judged by its final attempt. The team's time is the hold
 // history: each interval runs from a take or a handover to the next event on
@@ -16,7 +16,7 @@ import { truncateLedger } from '../test-support/schema.js';
 import { readTeam } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl() });
-// The readers connect as the role that cannot act beyond a read (issue #153).
+// The readers connect as the role that cannot act beyond a read.
 const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 await pool.query('SELECT 1');
 

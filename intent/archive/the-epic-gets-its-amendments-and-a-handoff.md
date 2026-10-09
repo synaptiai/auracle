@@ -2,15 +2,15 @@
 
 ## Problem
 
-Epic #21 runs the system end to end so the evidence can close what evidence
+Epic 21 runs the system end to end so the evidence can close what evidence
 can close. Three of its six children cannot start.
 
-Two of them need a decision that does not exist. Issue #27 adds an operator
+Two of them need a decision that does not exist. Issue 27 adds an operator
 console that approves a parked draft, and DEC-11 rejects a new web queue by
-name. Issue #26 fits a threshold for each intent, and DEC-13 rejects a
+name. Issue 26 fits a threshold for each intent, and DEC-13 rejects a
 threshold the system learns for each intent. No code moves either row.
 
-The third child, issue #25, corrects head-of-line delay. Its design document
+The third child, issue 25, corrects head-of-line delay. Its design document
 leaves one question open: whether bounded intra-partition concurrency needs a
 register note. Nothing answers it.
 
@@ -36,7 +36,7 @@ canvas can change when the console does.
 
 ## Affected users and systems
 
-Anyone who implements epic #21. The maintainer, who owns section 2 of the
+Anyone who implements epic 21. The maintainer, who owns section 2 of the
 register and must rule on two proposed rows.
 
 ## Constraints

@@ -1,4 +1,4 @@
-// One construction of the model provider from the environment (issue #72).
+// One construction of the model provider from the environment.
 //
 // Six entry points built this for themselves. Two read OPENROUTER_BASE_URL
 // and four did not, so an adopter pointing the system at a gateway or a

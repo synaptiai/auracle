@@ -1,5 +1,5 @@
 // The one rule for reading an integer and a required string from the
-// environment (issue #72).
+// environment.
 //
 // Four parsers preceded this with three empty-string rules between them, and
 // all four accepted spellings nobody meant to allow. DEC-36 is why that

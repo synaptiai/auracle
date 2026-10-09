@@ -157,8 +157,8 @@ export interface Shell {
    */
   readonly approvals: number | null;
   /**
-   * Issue #154: the knowledge gaps, or null when this page did not count
-   * them. Null rather than zero, for the reason `approvals` gives.
+   * The knowledge gaps, or null when this page did not count them. Null rather
+   * than zero, for the reason `approvals` gives.
    */
   readonly gaps?: number | null;
   /** Which ledger this console is bound to, without its credentials. */
@@ -199,10 +199,10 @@ const GROUPS: readonly {
     title: 'Work',
     surfaces: [{ href: '/', title: 'Needs a person' }],
   },
-  // DEC-50: the gaps that sent cases to a person, and the documents that
-  // need one. Between the work and the admin surfaces.
-  // Issue #112: the team's time on support sits with the knowledge it
-  // writes, and what each product may do alone sits with the admin screens.
+  // DEC-50: the gaps that sent cases to a person, and the documents that need
+  // one. Between the work and the admin surfaces.
+  // The team's time on support sits with the knowledge it writes, and what each
+  // product may do alone sits with the admin screens.
   {
     title: 'Knowledge',
     surfaces: [{ href: '/knowledge', title: 'Knowledge base' }, { href: '/team', title: 'Team' }],
@@ -446,8 +446,8 @@ export function renderRuns(view: RunsPage): string {
   }
   const rows = view.runs.map((run) => [
     '<tr>',
-    // Issue #154: an id stays whole. The text columns break instead, so the
-    // table fits 907px without splitting a token a person reads as one.
+    // An id stays whole. The text columns break instead, so the table fits
+    // 907px without splitting a token a person reads as one.
     `<td class="m id"><a href="/run/${encodeURIComponent(run.runId)}">`,
     `${escapeHtml(run.runId.slice(0, 8))}</a></td>`,
     `<td class="m id">${isolated(run.ticketId)}</td>`,
@@ -642,11 +642,11 @@ export interface EvidenceView {
    */
   readonly draftBody: string | null;
   /**
-   * #123: whether the park is an internal write, which parks in the ledger
-   * alone with its payload and no customer text (DEC-34). Its composed text
-   * is the rationale a person reads before approving, never a reply, and the
-   * block names it so. Read from the payload and not from the handle: a
-   * reply the gate stopped before it parked has no handle either.
+   * Whether the park is an internal write, which parks in the ledger alone with
+   * its payload and no customer text (DEC-34). Its composed text is the
+   * rationale a person reads before approving, never a reply, and the block
+   * names it so. Read from the payload and not from the handle: a reply the
+   * gate stopped before it parked has no handle either.
    */
   readonly parkedAction: boolean;
   /**
@@ -822,8 +822,8 @@ function evidenceBlock(
   request: RequestView | null,
   edit: ReplyEdit | null = null,
 ): string {
-  // #123: what the composed text is. A customer reply is drafted; an
-  // internal write parks its rationale beside the action (DEC-34).
+  // What the composed text is. A customer reply is drafted; an internal write
+  // parks its rationale beside the action (DEC-34).
   const noun = view.parkedAction ? 'rationale' : 'reply';
   const from = edit === null ? '' : fromCase(edit.runId, edit.rule, edit.product);
   if (view.draftBody === null && view.sentences === null) {
@@ -990,13 +990,13 @@ function editorForm(edit: ReplyEdit): string {
     `<form class="editor" data-editor id="reply-editor" method="post" action="/edit${escapeHtml(filtersQuery(edit.rule, edit.product))}">`,
     `<input type="hidden" name="runId" value="${escapeHtml(edit.runId)}">`,
     `<input type="hidden" name="shown" value="${escapeHtml(edit.shown)}">`,
-    // Issue #154: the text this editor drew, as a typed copy of it reads. The
-    // send posts this form, and the approval refuses text that differs from
-    // it: a change nobody saved is never dropped, with or without the script.
+    // The text this editor drew, as a typed copy of it reads. The send posts
+    // this form, and the approval refuses text that differs from it: a change
+    // nobody saved is never dropped, with or without the script.
     `<input type="hidden" name="drawn" value="${escapeHtml(replyDigest(typedText(edit.text ?? '')))}">`,
     '<input type="hidden" name="edit" value="text">',
     `<textarea name="text" rows="12" spellcheck="false">${escapeHtml(edit.text ?? '')}</textarea>`,
-    // One filled control per page, and on the case it is the send (issue #154).
+    // One filled control per page, and on the case it is the send.
     '<button class="btn" type="submit">Save the reply</button>',
     '<p class="discl">The disclosure and the provenance travel with it, exactly as the'
       + ' helpdesk copy would have carried them.</p>',
@@ -1036,10 +1036,10 @@ function callouts(
       editFormFields(edit.runId, edit.shown, 'delete', claim.text),
       '<button class="btn" type="submit">Delete the sentence</button>',
       '</form>',
-      // The third way out, and the only one that asks for something. It opens
-      // a field rather than a page: the answer a person writes here replaces
-      // the sentence the document could not support (DEC-44, #109). The
-      // document itself is written on the case's knowledge card (DEC-50).
+      // The third way out, and the only one that asks for something. It opens a
+      // field rather than a page: the answer a person writes here replaces the
+      // sentence the document could not support (DEC-44). The document itself
+      // is written on the case's knowledge card (DEC-50).
       writing
         ? [
           `<form method="post" action="/edit${escapeHtml(filtersQuery(edit.rule, edit.product))}">`,
@@ -1109,9 +1109,9 @@ interface ReplyEdit {
  * draws nothing here rather than an absence about a turn that never existed.
  */
 /**
- * The query a link into a conversation carries from a case (issue #154): the
- * case, and the queue filters it was opened under, so the thread can link
- * back to it as the reviewer design's "← case" does.
+ * The query a link into a conversation carries from a case: the case, and the
+ * queue filters it was opened under, so the thread can link back to it as the
+ * reviewer design's "← case" does.
  */
 function fromCase(runId: string, rule: string | null, product: string | null): string {
   return `?from=${encodeURIComponent(runId)}${filtersQuery(rule, product).replace(/^\?/, '&')}`;
@@ -1217,7 +1217,7 @@ function claimSummary(
   unsupported: number,
   unread: number,
   courtesy: number,
-  // #123: an internal write's composed text is its rationale (DEC-34).
+  // An internal write's composed text is its rationale (DEC-34).
   noun: 'reply' | 'rationale' = 'reply',
 ): string {
   // A reply that cites nothing at all. `every claim of 0 carries a document
@@ -1367,9 +1367,9 @@ export function renderRunDetail(run: RunView): string {
       agreementDetail: run.agreementDetail,
       coverageBlock: run.coverageBlock,
       coverageReview: run.coverageReview,
-      // Null where no person rewrote it: the card's own absent line is the
-      // bare `not recorded`, and the case page carries the longer note.
-      // #123: and only on a run whose park holds a reply (DEC-34).
+      // Null where no person rewrote it: the card's own absent line is the bare
+      // `not recorded`, and the case page carries the longer note. And only on
+      // a run whose park holds a reply (DEC-34).
       coverageAbsent: run.replyRewritten && run.draftExternalId !== null ? REPLACED_DRAFT_ABSENT : null,
     }),
     gatesNotReadSays(run.policyReason),
@@ -1510,7 +1510,7 @@ function productChips(
   ].join('');
 }
 
-/** Why a take next took nothing, in the words the queue shows (issue #154). */
+/** Why a take next took nothing, in the words the queue shows. */
 const TOOK_NOTHING_SAYS: Readonly<Record<string, string>> = {
   nothing_waiting: 'Nothing is waiting in this queue, so nothing was taken.',
   all_yours: 'Every case left in this queue is one you hold already, so nothing was taken.',
@@ -1525,7 +1525,7 @@ function tookNothingSays(outcome: string | null): string {
   return `<p class="qaside">${escapeHtml(TOOK_NOTHING_SAYS[outcome]!)}</p>`;
 }
 
-/** What each sort is called on its segment (issue #154). */
+/** What each sort is called on its segment. */
 const SORT_LABELS: Readonly<Record<QueueSort, string>> = {
   risk: 'risk first',
   oldest: 'oldest',
@@ -1533,7 +1533,7 @@ const SORT_LABELS: Readonly<Record<QueueSort, string>> = {
 };
 
 /**
- * The sort control (issue #154).
+ * The sort control.
  *
  * Each segment is a link to the route that sets the sort and comes back to
  * `back`, the queue this page drew with its kept filters. The sort is a
@@ -1735,9 +1735,9 @@ export interface QueueView {
    * rule rather than by a preference it could not read, and it says so.
    */
   readonly mineUnread: string | null;
-  /** The order the reviewer chose (issue #154). Risk first is the queue's own. */
+  /** The order the reviewer chose. Risk first is the queue's own. */
   readonly sort: QueueSort;
-  /** Issue #154: why a take next took nothing, as the route answered, or null. */
+  /** Why a take next took nothing, as the route answered, or null. */
   readonly tookNothing?: string | null;
 }
 
@@ -1764,9 +1764,8 @@ const GROUP_LABELS: Readonly<Record<QueueGroup, { readonly label: string; readon
       + ' Neither gate decided these cases. Another rule sent each one to a person, and its row names the rule.',
   },
   rest: { label: 'Everything else waiting', note: null },
-  // Issue #154: the one list oldest first and my products set out, with the
-  // groups aside. The label names the order, since nothing else on the page
-  // does.
+  // The one list oldest first and my products set out, with the groups aside.
+  // The label names the order, since nothing else on the page does.
   waiting: { label: 'Oldest first', note: null },
   // Always drawn: the group is the one thing that says a case on this page is
   // somebody's, and the note says how a case leaves it.
@@ -1841,7 +1840,7 @@ function agreementSays(agreement: number | null, gateReason: string | null): str
 }
 
 /**
- * Surface 3: the approval queue, as a list (issue #102).
+ * Surface 3: the approval queue, as a list.
  *
  * Each row opens its case. The queue draws no case beside itself, because a
  * case needs a page of its own and the queue is deliberately uncapped:
@@ -1880,8 +1879,8 @@ export function renderApprovals(
     return hold === undefined || hold.reviewer === holds.reviewer ? null : hold;
   };
   const kept = escapeHtml(filtersQuery(keptRule, keptProduct));
-  // Issue #154: the take the server picks, from this queue as it is when the
-  // press arrives. Offered only while something here is waiting.
+  // The take the server picks, from this queue as it is when the press arrives.
+  // Offered only while something here is waiting.
   const takeNext = shownRuns.length === 0
     ? []
     : [`<form method="post" action="/take${kept}" class="takenext">`
@@ -1930,7 +1929,7 @@ export function renderApprovals(
       ? ''
       : `held by ${isolated(hold.reviewer)} · ${escapeHtml(ageSays(hold.takenAt))} · `;
   };
-  // Issue #154: the risk group's rows carry the risk colour down their edge.
+  // The risk group's rows carry the risk colour down their edge.
   const row = (run: RunDetail, pickable = false, risk = false): string => [
     `<div class="qrow${risk ? ' risk' : ''}">`,
     // DEC-51: the batch picks cases from this group. The box rides beside the
@@ -1976,19 +1975,18 @@ export function renderApprovals(
     // of the queue, because most of the queue is customer replies.
     `${agreementSays(run.agreement, run.gateReason)}`,
     // DEC-48: a rewritten reply has no coverage of its own, and the row says
-    // which of the two absences this is. The gate's verdict on the draft is
-    // not a fact about the reply, and a blank would read as a run that never
-    // gated.
-    // #123: the flag is the turn's. An internal write parks no reply (DEC-34),
-    // so a reply a person wrote for another run on the turn is not its own.
+    // which of the two absences this is. The gate's verdict on the draft is not
+    // a fact about the reply, and a blank would read as a run that never gated.
+    // The flag is the turn's. An internal write parks no reply (DEC-34), so a
+    // reply a person wrote for another run on the turn is not its own.
     `${run.replyRewritten && run.draftExternalId !== null
       ? ' · a person wrote this reply'
       : coverageSays(run.gateCoverage, run.gateReason)}`,
     '</div>',
     '</a>',
-    // Issue #154: the row's own take. It names a form outside the list,
-    // because the clean group's rows sit inside the batch form and a form
-    // cannot hold another. A case somebody else holds offers none.
+    // The row's own take. It names a form outside the list, because the clean
+    // group's rows sit inside the batch form and a form cannot hold another. A
+    // case somebody else holds offers none.
     heldByAnother(run.runId) === null
       ? `<button class="btn take" type="submit" form="take-${escapeHtml(run.runId)}">Take</button>`
       : '',
@@ -2051,16 +2049,16 @@ export function renderApprovals(
 /**
  * Only the keys that act in this release, because a legend that names a dead
  * key sends a reviewer to press it. Enter is native to the focused anchor;
- * c opens the case until a take exists (#107) and then takes it; a joins the
- * legend with the batch confirm it activates.
+ * c opens the case until a take exists and then takes it; a joins the legend
+ * with the batch confirm it activates.
  *
  * Drawn above the rows, not under them: the queue is uncapped, so a legend
  * under the list would sit under the fold of every queue that is the reason
  * the legend exists.
  */
 function keyLegend(sort: QueueSort): string {
-  // Issue #154: `a` acts only where a clean group is drawn, which is risk
-  // first alone, and Enter with nothing focused takes the next case.
+  // `a` acts only where a clean group is drawn, which is risk first alone, and
+  // Enter with nothing focused takes the next case.
   return '<div class="keys">j / k move · enter opens · c takes the case'
     + (sort === 'risk' ? ' · a confirms the clean cases' : '')
     + ' · enter on the page takes the next case</div>';
@@ -2219,8 +2217,8 @@ export function renderConfirmResult(
   const sent = answered.filter((one) => one.outcome === 'approved');
   const refused = answered.filter((one) => one.outcome !== 'approved');
   const faulted = outcomes.filter(isFault);
-  // #123: the batch's own refusals say nothing was approved, which no later
-  // read can change, so a case the result page could not read keeps them.
+  // The batch's own refusals say nothing was approved, which no later read can
+  // change, so a case the result page could not read keeps them.
   const refusedBeforeApproval = new Set(refused
     .filter((one) => one.outcome === 'batch_no_draft' || one.outcome === 'batch_unread')
     .map((one) => one.runId));
@@ -2245,8 +2243,8 @@ export function renderConfirmResult(
   const undoable = [...sent, ...faulted];
   return [
     '<div class="wrap">',
-    // Issue #154: the success colour only when something was approved. A
-    // batch every case of which was refused sent nothing.
+    // The success colour only when something was approved. A batch every case
+    // of which was refused sent nothing.
     `<div class="panel ${count > 0 ? 'ok' : 'refused'}"><span class="big">${escapeHtml(headline)}</span>`,
     // What became of the send, in the ledger's own words: `pending` is a send
     // still to come, and only `sent` is one that happened.
@@ -2473,22 +2471,22 @@ function gapLine(read: CaseGapRead, runId: string, rewritten: boolean): string {
 }
 
 /**
- * Issue #154: an outcome whose form opens in the case. Each one needs a field,
- * so each opens on its own page state rather than in the bar.
+ * An outcome whose form opens in the case. Each one needs a field, so each
+ * opens on its own page state rather than in the bar.
  */
 export type CaseStep = 'close' | 'snooze' | 'handover';
 
 export interface CaseOptions {
   /**
-   * Issue #154: where the case sits among those its queue would offer, with
-   * that queue's filters and sort, or null when it is not among them.
+   * Where the case sits among those its queue would offer, with that queue's
+   * filters and sort, or null when it is not among them.
    */
   readonly position?: { readonly at: number; readonly of: number } | null;
-  /** Issue #154: the outcome whose form is open in the case, or null. */
+  /** The outcome whose form is open in the case, or null. */
   readonly step?: CaseStep | null;
   /**
-   * Issue #154: take next chose this case without the reviewer's products,
-   * under this sort, or null.
+   * Take next chose this case without the reviewer's products, under this sort,
+   * or null.
    */
   readonly orderUnread?: QueueSort | null;
   /** DEC-50: whether a gap blocks the case, as the knowledge screen counts it. */
@@ -2854,14 +2852,14 @@ function copyChoice(
     // it as it guards a send.
     '<button class="btn" type="submit" data-send>Send the helpdesk copy</button>',
     '</form>',
-    // The other half of the choice, and it needs a control of its own: the
-    // copy is in a helpdesk this system cannot write into, so nothing a
-    // reviewer could do here would make the two texts agree. The digest is of
-    // the copy drawn above, which is what makes this a decision about text
-    // somebody read rather than a flag that discards whatever is there.
-    // Issue #154: where the editor is drawn, this send posts the editor's form
-    // as the bar's does, carrying its own answer as the button's value, so the
-    // approval refuses a change nobody saved.
+    // The other half of the choice, and it needs a control of its own: the copy
+    // is in a helpdesk this system cannot write into, so nothing a reviewer
+    // could do here would make the two texts agree. The digest is of the copy
+    // drawn above, which is what makes this a decision about text somebody read
+    // rather than a flag that discards whatever is there.
+    // Where the editor is drawn, this send posts the editor's form as the bar's
+    // does, carrying its own answer as the button's value, so the approval
+    // refuses a change nobody saved.
     postsEditor
       ? `<button class="btn" type="submit" form="reply-editor" formaction="/approve${filters}" formmethod="post"`
         + ` name="ack" value="${escapeHtml(replyDigest(copy.text))}" data-send>Send the reply above</button>`
@@ -2911,8 +2909,7 @@ export interface CaseHold {
 }
 
 /**
- * Surface 3a: one case, and everything a person needs to decide on it
- * (issue #102, DEC-40).
+ * Surface 3a: one case, and everything a person needs to decide on it (DEC-40).
  *
  * The main column is what the customer reads and what it rests on: their
  * message, the drafted reply sentence by sentence, and the documents it
@@ -3339,7 +3336,7 @@ export function renderCase(view: CaseView, options: CaseOptions): string {
       coverageBlock: view.coverageBlock,
       coverageReview: view.coverageReview,
       agreementAbsent: 'the journal holds no agreement for this run',
-      // #123: an internal write parks no reply to rewrite (DEC-34).
+      // An internal write parks no reply to rewrite (DEC-34).
       coverageAbsent: view.replyRewritten && view.draftExternalId !== null
         ? REPLACED_DRAFT_ABSENT
         : 'the journal holds no coverage for this run',
@@ -3376,8 +3373,8 @@ const WHY_YOURS: Readonly<Record<PolicyReason, string>> = {
   irreversible: 'The policy engine judged this write irreversible, so a person approves it.',
   high_risk: 'The policy engine judged this intent high risk, so a person approves it.',
   agreement: 'The classifier samples did not agree enough for the system to act alone.',
-  // #123: what the system composed, which is a reply or, for an internal
-  // write, its rationale (DEC-34). Coverage judges either (DEC-07).
+  // What the system composed, which is a reply or, for an internal write, its
+  // rationale (DEC-34). Coverage judges either (DEC-07).
   groundedness_block: 'Too little of what the system composed rests on its documents for the system to act alone.',
   groundedness_review: 'Less of what the system composed rests on its documents than the review line asks, so a person reads it.',
   auto: 'The policy engine let this act run alone. The ledger does not say why it waits for a person.',
@@ -3547,9 +3544,9 @@ function holdLine(view: CaseView, options: CaseOptions): string {
   // was reading. They travel on the action's query string, as the approval's
   // do, and never as a field.
   const filters = escapeHtml(filtersQuery(options.rule, options.product));
-  // Issue #154: the case's place among those its queue offers, beside the hold,
-  // as the reviewer design draws it. Not drawn for a case the queue would not
-  // offer, because a position in a list it is not on is no position.
+  // The case's place among those its queue offers, beside the hold, as the
+  // reviewer design draws it. Not drawn for a case the queue would not offer,
+  // because a position in a list it is not on is no position.
   const position = options.position === undefined || options.position === null
     ? ''
     : `<span class="chip m">${escapeHtml(String(options.position.at))} of ${escapeHtml(String(options.position.of))}</span>`;
@@ -3575,7 +3572,7 @@ function holdLine(view: CaseView, options: CaseOptions): string {
 }
 
 /**
- * The handover, opened from the bar (DEC-46, issue #154).
+ * The handover, opened from the bar (DEC-46).
  *
  * The identity is text rather than a list of the team: the console shows no
  * roster, and the core refuses a name that is not on it. A refused handover
@@ -3623,10 +3620,10 @@ function snoozeForm(view: CaseView, options: CaseOptions): string {
 /**
  * What a take, release or handover answered, in the words the case shows.
  *
- * A refusal that lost the hold names whoever holds it now (DEC-46, criterion
- * 6). "Somebody else holds this case" sends the reviewer looking for who, and
- * this page has just read that — so it says the name, and an earlier holder
- * learns of the move at their next action.
+ * A refusal that lost the hold names whoever holds it now (DEC-46). "Somebody
+ * else holds this case" sends the reviewer looking for who, and this page has
+ * just read that — so it says the name, and an earlier holder learns of the
+ * move at their next action.
  *
  * The read finds nobody when the hold moved again, or lapsed in the instant
  * between the refusal and this page. The sentence says that, rather than
@@ -3726,8 +3723,8 @@ const CLOSE_SAYS = {
 const UNKNOWN_CLOSE = 'That is not an answer this console knows.';
 
 /**
- * #123: DEC-46's refusal, for an internal write. The page drew its rationale
- * and not a reply (DEC-34), so the sentence names what the page showed.
+ * DEC-46's refusal, for an internal write. The page drew its rationale and not
+ * a reply (DEC-34), so the sentence names what the page showed.
  * Null for any other run, which keeps the table's own words.
  */
 function actionShownChanged(outcome: string, run: OutcomeRun | null, nothing: string): string | null {
@@ -3750,8 +3747,8 @@ function closeSays(outcome: string, run: OutcomeRun | null): string {
   if (outcome === 'not_awaiting_approval' && run !== null) {
     return `That run is not waiting for approval. It is ${run.state} now, so nothing was closed.`;
   }
-  // #123: an internal write parks no reply to close (DEC-34). What a close
-  // leaves undone is the action it parked.
+  // An internal write parks no reply to close (DEC-34). What a close leaves
+  // undone is the action it parked.
   if (outcome === 'closed' && run !== null && run.parkedAction) {
     return 'The case is closed, and the action it parked is not performed. The customer is sent nothing.';
   }
@@ -3923,8 +3920,8 @@ const REWRITE_SAYS = {
   // DEC-49: worded as the rule, for the reason the save's is.
   sent_back: 'A reply on an attempt a reviewer has already sent back cannot be rewritten,'
     + ' so nothing was written.',
-  // DEC-34: the park holds an action rather than a reply. The same sentence
-  // the edit route refuses this shape with, word for word (criterion 10).
+  // DEC-34: the park holds an action rather than a reply. The same sentence the
+  // edit route refuses this shape with, word for word.
   no_reply: 'This case holds no reply to edit: it parked an action rather than a reply,'
     + ' so nothing here would be sent.',
   // DEC-44: this adapter sends the copy it parks, so a reply written here
@@ -4207,8 +4204,8 @@ function sendBackOffered(view: CaseView, options: CaseOptions): boolean {
 
 function sendBackForm(view: CaseView, options: CaseOptions): string {
   return [
-    // #123: the new attempt produces what this one did, a reply or an
-    // internal write (DEC-34), so the note names neither.
+    // The new attempt produces what this one did, a reply or an internal write
+    // (DEC-34), so the note names neither.
     '<p class="discl">Sending this case back asks for a new attempt on the same turn.'
       + ' Your note is what it is asked to do differently, and nothing is sent or performed'
       + ' until a person approves what it produces.</p>',
@@ -4267,13 +4264,13 @@ function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
       // else's case, or one whose hold was not read, keeps a deliberate click.
       options.hold.kind === 'read' && (options.hold.hold === null || options.hold.hold.mine),
       // Where the editor is drawn, the send posts the editor's form, so its
-      // text reaches the approval (issue #154).
+      // text reaches the approval.
       drawsEditor(view, options),
     )
     : '';
-  // Issue #154: the other outcomes are links that open their form in the case,
-  // in the reviewer design's order. A field in the bar for each of them made
-  // the bar taller than a 540px window.
+  // The other outcomes are links that open their form in the case, in the
+  // reviewer design's order. A field in the bar for each of them made the bar
+  // taller than a 540px window.
   const open = openStep(view, options);
   const steps = offeredSteps(view, options).map(({ step, label }) => {
     const href = withQuery(caseHref(view.runId, options.rule, options.product), step, '1') + '#step';
@@ -4283,8 +4280,8 @@ function actionBar(view: CaseView, act: Act, options: CaseOptions): string {
   const says = !waiting
     ? `This run is ${escapeHtml(view.state)}, so there is nothing here to approve.${aside}`
     : escapeHtml(act.says);
-  // Drawn only where the editor is, and shown by the script when a send
-  // would drop changes the reviewer has not saved (issue #154).
+  // Drawn only where the editor is, and shown by the script when a send would
+  // drop changes the reviewer has not saved.
   const unsavedSays = approval !== '' && drawsEditor(view, options)
     ? '<p class="barsays refused" data-unsaved hidden>Save the reply first.'
       + ' A send carries the saved reply, and the changes above are not saved.</p>'
@@ -4340,7 +4337,7 @@ function openStep(view: CaseView, options: CaseOptions): OpenStep | null {
 }
 
 /**
- * The open outcome's form, at the head of the case (issue #154).
+ * The open outcome's form, at the head of the case.
  *
  * In the case and not in the bar, so the bar stays one row and the form has
  * the width of the column. Cancel returns to the case with nothing open.
@@ -4377,8 +4374,8 @@ function stepCard(view: CaseView, options: CaseOptions): string {
  * because a reviewer who submits it empty should be told before a round trip.
  */
 function closeForm(view: CaseView, options: CaseOptions): string {
-  // #123: an internal write parks no reply (DEC-34). Closing it leaves its
-  // action unperformed, and that is what the reviewer is choosing.
+  // An internal write parks no reply (DEC-34). Closing it leaves its action
+  // unperformed, and that is what the reviewer is choosing.
   const action = parksAnAction(view.payloadRecorded === true, view.actionClass ?? null, view.draftExternalId ?? null);
   return [
     '<div class="closebar">',
@@ -4451,10 +4448,10 @@ function actOf(run: RunDetail, ledgerReply: boolean): Act {
         + ' payload, so there is nothing here to approve. An operator reconciles it by hand.',
     };
   }
-  // #123: a reply parked in the ledger alone, under a profile that shows no
-  // customer. It names no helpdesk draft, and the relay refuses a reply
-  // record with none (DEC-44), so an approval here would send nothing and
-  // escalate. There is nothing to approve, as above.
+  // A reply parked in the ledger alone, under a profile that shows no customer.
+  // It names no helpdesk draft, and the relay refuses a reply record with none
+  // (DEC-44), so an approval here would send nothing and escalate. There is
+  // nothing to approve, as above.
   if (run.draftExternalId === null && run.actionClass === CUSTOMER_REPLY_ACTION_CLASS) {
     return {
       kind: 'none',
@@ -4546,9 +4543,9 @@ function payloadBlock(payload: Readonly<Record<string, unknown>> | null): string
  * rather than approved as shown.
  *
  * Where the page draws the editor, the send posts the editor's form instead,
- * which carries the same two fields and the editor's text (issue #154). The
- * approval reads that text only to refuse a change nobody saved. It never
- * records or sends it: the relay sends the reply the ledger holds.
+ * which carries the same two fields and the editor's text. The approval reads
+ * that text only to refuse a change nobody saved. It never records or sends it:
+ * the relay sends the reply the ledger holds.
  */
 function approveForm(
   runId: string,
@@ -4579,7 +4576,7 @@ function approveForm(
     `<form method="post" action="/approve${escapeHtml(filtersQuery(filters.rule, filters.product))}">`,
     `<input type="hidden" name="runId" value="${escapeHtml(runId)}">`,
     shown === null ? '' : `<input type="hidden" name="shown" value="${escapeHtml(shown)}">`,
-    // Issue #154: the one control a chord presses, named on the button.
+    // The one control a chord presses, named on the button.
     `<button class="btn primary" type="submit"${marks}>${label_}</button>`,
     '</form>',
   ].join('');
@@ -4630,9 +4627,9 @@ const REPLY_ABSENCE = {
   // DEC-48. A person decided the case needs no answer. Neither sentence above
   // is true of it: the system did not answer it, and no approval ran on it.
   closed_without_reply: 'a person closed this case without replying to the customer',
-  // #123: the park row says which. A customer reply parks as a draft in the
-  // helpdesk (DEC-11); an internal write parks in the ledger alone, with no
-  // draft and no customer text (DEC-34), so it never reads as a reply.
+  // The park row says which. A customer reply parks as a draft in the helpdesk
+  // (DEC-11); an internal write parks in the ledger alone, with no draft and no
+  // customer text (DEC-34), so it never reads as a reply.
   reply_awaiting_approval: 'a reply is drafted and waits for a person to approve it',
   action_awaiting_approval: 'an action waits for a person to approve it; no reply is drafted',
   // A park that names neither kind: no draft, and no internal write. The
@@ -4692,8 +4689,8 @@ function replyAbsenceSays(turn: TurnView): string {
 export function renderConversation(thread: ThreadView, back: string | null = null): string {
   return [
     '<div class="casehd">',
-    // Issue #154: the case this thread was opened from. In the case header's
-    // own place, so Esc follows it as it does on a case.
+    // The case this thread was opened from. In the case header's own place, so
+    // Esc follows it as it does on a case.
     back === null
       ? ''
       : `<div class="backrow"><a class="back" href="${escapeHtml(back)}">← case</a>`
@@ -4773,8 +4770,8 @@ function turnOutcome(turn: TurnView): { readonly says: string; readonly token: T
  *
  * A resolved run committed its row. A superseded run wrote none: it lost the
  * insert to a row another run holds (section 4.2, rule 2), or it stopped
- * because another run of the turn answered it or held its reply (#122). Either
- * way the turn's row belongs to another run, so that row is its outcome too.
+ * because another run of the turn answered it or held its reply. Either way the
+ * turn's row belongs to another run, so that row is its outcome too.
  */
 function settled(runState: string | null): runState is null | 'resolved' | 'superseded' {
   return runState === null || runState === 'resolved' || runState === 'superseded';
@@ -4837,8 +4834,8 @@ function replyHeading(turn: TurnView): string {
     // unless a relay deploy tightens the payload check after a send timed out.
     case 'malformed': return 'approved, never sent';
     // The fault recurs on every attempt, and no attempt can have reached the
-    // customer through it: a draft with nobody to send to, or a bad id
-    // (issue #159). The relay stopped retrying.
+    // customer through it: a draft with nobody to send to, or a bad id. The
+    // relay stopped retrying.
     case 'not_sent': return 'approved, never sent';
     case 'pending': return 'approved, send pending';
     case null: return 'a person approved this reply';
@@ -4958,8 +4955,8 @@ function casesSays(n: number): string {
  * One stat card: a label, the ledger's figure, and what it counts.
  *
  * The figure is coloured by the verdict the label names, as the reviewer design
- * colours it (issue #154). The label says it in words, so the colour is never
- * the only carrier.
+ * colours it. The label says it in words, so the colour is never the only
+ * carrier.
  */
 function statCard(label: string, figure: number | null, says: string, token: Token = 'mut'): string {
   return [
@@ -5224,8 +5221,7 @@ const ENDINGS = [
 ] as const;
 
 /**
- * The team screen (issue #112): how little reached a person, and how long a
- * case held one.
+ * The team screen: how little reached a person, and how long a case held one.
  *
  * Every figure is the ledger's. The share of cases that reached a person is a
  * live count over today, and it is not the published containment figure,
@@ -5421,8 +5417,8 @@ function routingHref(product: string | null): string {
 }
 
 /**
- * The routing screen (issue #112): what each product does on its own, and
- * what it hands to a person.
+ * The routing screen: what each product does on its own, and what it hands to a
+ * person.
  *
  * It reads, and it writes nothing. Each intent's figures are what the most
  * recent run of the product recorded at its gate. The first row is fixed:
@@ -5932,9 +5928,9 @@ const OUTCOMES = {
   // DEC-49: a turn takes one reply.
   turn_closed: 'This turn already has a reply that went out or is on its way, so a second one'
     + ' was not sent.',
-  // DEC-49: worded as the rule rather than as an event, so the sentence is
-  // true of any case a link names.
-  // #123: true of a reply and of an internal write alike (DEC-34).
+  // DEC-49: worded as the rule rather than as an event, so the sentence is true
+  // of any case a link names.
+  // True of a reply and of an internal write alike (DEC-34).
   sent_back: 'An attempt a reviewer has already sent back cannot be approved,'
     + ' so nothing was sent or performed.',
   // DEC-30: a fault a retry can clear. The page names both classes, because
@@ -5951,7 +5947,7 @@ const OUTCOMES = {
     + ' was sent. This does not clear by trying again: a process parked it with a different'
     + ' helpdesk setting, and the console, the relay and the consumer have to read the same one.'
     + ' The console log names the fault.',
-  // #123: the batch's own check, before its approval (DEC-51).
+  // The batch's own check, before its approval (DEC-51).
   batch_no_draft: 'This case holds no helpdesk draft, so the batch did not approve it. Nothing was'
     + ' sent or performed. Open its case page to see what it holds.',
   batch_unread: 'This case could not be read before its approval, so the batch did not approve it.'
@@ -6018,9 +6014,9 @@ export interface OutcomeRun {
    */
   readonly parkedDraft: boolean;
   /**
-   * #123: whether this run's park is an internal write, which parks in the
-   * ledger alone with its payload and no customer text (DEC-34). Read by
-   * `closed`, whose sentence says what a close leaves undone.
+   * Whether this run's park is an internal write, which parks in the ledger
+   * alone with its payload and no customer text (DEC-34). Read by `closed`,
+   * whose sentence says what a close leaves undone.
    *
    * Required, for the reason above it.
    */
@@ -6091,9 +6087,9 @@ function outcomeFits(outcome: string, run: OutcomeRun | null): boolean {
       return run.turnClosed && state === 'awaiting_approval';
     case 'unknown_run':
       return false;
-    // #123: the batch's own refusals, drawn on its result page alone. No
-    // route sends a case page here, so a link that names one describes
-    // nothing this page read, and gets the fallback.
+    // The batch's own refusals, drawn on its result page alone. No route sends
+    // a case page here, so a link that names one describes nothing this page
+    // read, and gets the fallback.
     case 'batch_no_draft':
     case 'batch_unread':
       return false;

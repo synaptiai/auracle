@@ -1,5 +1,5 @@
 // The arrival signal: intake tells the consumer a message is queued, so the
-// consumer stops sleeping through it (issue #25).
+// consumer stops sleeping through it.
 //
 // Why this exists. `pnpm run latency` over a synthetic history of 2397 runs
 // reported a mean queue wait of 2.78 s against a poll floor of 2.50 s, at

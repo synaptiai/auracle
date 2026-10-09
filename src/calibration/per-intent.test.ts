@@ -1,4 +1,4 @@
-// The per-intent fit, its trigger and its data floor (issue #26, DEC-41).
+// The per-intent fit, its trigger and its data floor (DEC-41).
 //
 // DEC-13 binds below the labelled-case trigger: one global threshold. DEC-41
 // governs above it: a threshold for each intent that has enough cases to fit

@@ -1,7 +1,7 @@
-// Issue #114: the mail daemon's own log path, with a value from inbound mail
-// in it. A message that fails intake is logged with the fault, and intake's
-// fault quotes what it refused — as a Postgres constraint violation quotes the
-// key it saw — so the subject the sender wrote reaches the line.
+// The mail daemon's own log path, with a value from inbound mail in it. A
+// message that fails intake is logged with the fault, and intake's fault quotes
+// what it refused — as a Postgres constraint violation quotes the key it saw —
+// so the subject the sender wrote reaches the line.
 import { describe, expect, it, vi } from 'vitest';
 
 import { SIMPLE_TEXT_EMAIL } from '../adapters/fixtures.js';

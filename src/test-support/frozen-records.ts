@@ -5,15 +5,15 @@
 // register and the README, and wrong for a record of why a decision was taken
 // on the day it was taken. A design record describing a superseded state is
 // still a record, and correcting it would be rewriting history rather than
-// fixing a document (issue #79).
+// fixing a document.
 //
 // `src/bands/bands.test.ts` reached this conclusion first, for
-// `docs/decisions/`. Issue #79 moved eleven design documents out of a
+// `docs/decisions/`. A cleanup moved eleven design documents out of a
 // tool-named directory into `docs/design/`, which put them inside three more
-// scans at once: the retired-model scan in `src/config/model-pin.test.ts`,
-// the partition-key scan in `src/coordinator/partition-statement.test.ts`,
-// and the baseline-claim scan in `bands.test.ts`. All three reported, and all
-// three were right that the text says what they said it says.
+// scans at once: the retired-model scan in `src/config/model-pin.test.ts`, the
+// partition-key scan in `src/coordinator/partition-statement.test.ts`, and the
+// baseline-claim scan in `bands.test.ts`. All three reported, and all three
+// were right that the text says what they said it says.
 //
 // So the exclusion is named once, here, rather than spelled three times.
 // A fourth guard that scans documents reads this list instead of learning the

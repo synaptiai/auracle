@@ -1,4 +1,4 @@
-// A backdated history is indistinguishable from a naturally-aged one (issue #22).
+// A backdated history is indistinguishable from a naturally-aged one.
 //
 // This is the acceptance criterion the seam exists for. Every run below is
 // written through the real fenced path with an explicit clock and is never
@@ -8,8 +8,8 @@
 //
 // The older latency suite writes its timings with an UPDATE after the insert,
 // because before the seam there was no other way. That proves the query. It
-// cannot prove that the write path can produce such a row, which is what
-// issue #23's seeder depends on.
+// cannot prove that the write path can produce such a row, which is what the
+// traffic simulator's seeder depends on.
 import { randomUUID } from 'node:crypto';
 
 import { Pool } from 'pg';
@@ -27,7 +27,7 @@ import {
 } from './insert.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
-// The readers connect as the role that cannot act beyond a read (issue #153).
+// The readers connect as the role that cannot act beyond a read.
 const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 await pool.query('SELECT 1');

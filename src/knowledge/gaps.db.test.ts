@@ -1,4 +1,4 @@
-// The cases a gap blocked, and the knowledge screen's figures (issue #111).
+// The cases a gap blocked, and the knowledge screen's figures.
 //
 // Every row here is synthetic (DEC-18). Each case seeds a turn, one or more
 // runs of it, and the journal rows the gap reads, then asks the ledger.
@@ -17,7 +17,7 @@ import {
 } from './gaps.js';
 
 const pool = new Pool({ connectionString: dbUrl() });
-// The readers connect as the role that cannot act beyond a read (issue #153).
+// The readers connect as the role that cannot act beyond a read.
 const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 await pool.query('SELECT 1');
 

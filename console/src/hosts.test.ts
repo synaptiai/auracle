@@ -1,4 +1,4 @@
-// The `Host` allowlist decides who may reach the approval (issue #27).
+// The `Host` allowlist decides who may reach the approval.
 //
 // The approval sends a customer reply and a sent reply cannot be recalled
 // (DEC-12, DEC-14), so the set of names this console answers to is a security

@@ -1,9 +1,9 @@
 // What a run is told when the throwaway-container packages are absent.
 //
-// `testcontainers` and `@testcontainers/postgresql` are optional dependencies
-// (issue #80): `pnpm install --no-optional` resolves neither, and the 95
-// packages they reach go with them. A run that names DATABASE_URL and
-// MAIL_HOST never loads either one.
+// `testcontainers` and `@testcontainers/postgresql` are development
+// dependencies. `pnpm install --prod` resolves neither, and the 95 packages
+// they reach go with them. A run that names DATABASE_URL and MAIL_HOST never
+// loads either one.
 //
 // A run that names neither does, and the message it gets is the whole of what
 // this file asserts. A static import would have failed the `db` and `mail`

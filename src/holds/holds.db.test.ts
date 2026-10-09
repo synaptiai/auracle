@@ -20,7 +20,7 @@ import {
 } from './hold.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 6 });
-// The readers connect as the role that cannot act beyond a read (issue #153).
+// The readers connect as the role that cannot act beyond a read.
 const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 await pool.query('SELECT 1');
@@ -124,8 +124,8 @@ describe('the case hold (DEC-46)', () => {
     await truncateLedger(pool);
   });
 
-  // Criterion 1. The take is the whole point: one reviewer marks the case as
-  // theirs, and the ledger remembers when the hold started and when it ends.
+  // The take is the whole point: one reviewer marks the case as theirs, and the
+  // ledger remembers when the hold started and when it ends.
   it('takes a waiting case, and stamps when the hold lapses', async () => {
     const runId = await runIn();
     expect(await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: LAPSE_MS }))
@@ -142,8 +142,8 @@ describe('the case hold (DEC-46)', () => {
     });
   });
 
-  // Criterion 1. The second reviewer is told who holds it, not merely that
-  // somebody does: the answer carries the holder and the time they took it.
+  // The second reviewer is told who holds it, not merely that somebody does:
+  // the answer carries the holder and the time they took it.
   it('tells a second reviewer who holds the case', async () => {
     const runId = await runIn();
     await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: LAPSE_MS });
@@ -157,9 +157,9 @@ describe('the case hold (DEC-46)', () => {
     expect((await rowOf(runId))!['reviewer']).toBe('anna@example.test');
   });
 
-  // Criterion 1, risk row "Takeover bookkeeping". A forced take is a
-  // handover, and the history has to say so — a takeover recorded as a plain
-  // take tells the team two people each took the case for the first time.
+  // The "Takeover bookkeeping" risk. A forced take is a handover, and the
+  // history has to say so — a takeover recorded as a plain take tells the team
+  // two people each took the case for the first time.
   it('moves the hold on a forced take, and records it as a handover', async () => {
     const runId = await runIn();
     await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: LAPSE_MS });
@@ -177,8 +177,8 @@ describe('the case hold (DEC-46)', () => {
       ]);
   });
 
-  // Criterion 1, and the maintainer's amendment of 2026-09-18: the lock is
-  // one case per person, because a reviewer reads one case at a time.
+  // The maintainer's amendment of 2026-09-18: the lock is one case per person,
+  // because a reviewer reads one case at a time.
   it('releases the taker\'s other hold when they take another case', async () => {
     const first = await runIn();
     const second = await runIn();
@@ -198,9 +198,9 @@ describe('the case hold (DEC-46)', () => {
       .toEqual(['take', 'release']);
   });
 
-  // Criterion 1, failure mode "invalid input". A case that is not waiting for
-  // a person is not a case anyone takes, and the answer names its state so
-  // the console can say which.
+  // Failure mode "invalid input". A case that is not waiting for a person is
+  // not a case anyone takes, and the answer names its state so the console can
+  // say which.
   it('refuses a case that is not waiting, and names its state', async () => {
     const runId = await runIn('resolved');
     expect(await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: LAPSE_MS }))
@@ -219,7 +219,7 @@ describe('the case hold (DEC-46)', () => {
     })).toEqual({ outcome: 'unknown_run' });
   });
 
-  // Risk row "Take race": two takes at one instant, on one case. One of them
+  // The "Take race" risk: two takes at one instant, on one case. One of them
   // wins, and exactly one live row exists afterwards. Without the run's row
   // lock both read no holder and both write one.
   it('lets one of two concurrent takes win, and leaves one live row', async () => {
@@ -239,10 +239,10 @@ describe('the case hold (DEC-46)', () => {
     expect(loser.outcome === 'held_by_other' && loser.holder.reviewer).toBe(winner);
   });
 
-  // Criterion 2, risk row "Lapse boundary". A hold whose period ends at this
-  // instant has ended: `lapses_at <= now()`, never `<`. The wrong version
-  // keeps the case held one instant past its lease, which is the instant a
-  // reader sees it as somebody's.
+  // The "Lapse boundary" risk. A hold whose period ends at this instant has
+  // ended: `lapses_at <= now()`, never `<`. The wrong version keeps the case
+  // held one instant past its lease, which is the instant a reader sees it as
+  // somebody's.
   it('treats a hold whose period ends now as lapsed', async () => {
     const runId = await runIn();
     await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: LAPSE_MS });
@@ -329,8 +329,8 @@ describe('the case hold (DEC-46)', () => {
     expect(await readHold(pool, first)).toBeNull();
   });
 
-  // Criterion 2's other half: the period is the console's, not the module's,
-  // so an operator who sets it gets it.
+  // The other half of the lapse rule: the period is the console's, not the
+  // module's, so an operator who sets it gets it.
   it('stamps the period it was given, and the lapse follows it', async () => {
     const runId = await runIn();
     await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: 60_000 });
@@ -341,10 +341,10 @@ describe('the case hold (DEC-46)', () => {
     expect((await readHolds(pool, [runId])).size).toBe(1);
   });
 
-  // Criterion 3: a holder can move the case to a teammate. The teammate has
-  // to be on the active roster — the roster is a parameter, because the
-  // holds module reads no roster of its own — and the move refreshes the
-  // period and records whose hold moved.
+  // A holder can move the case to a teammate. The teammate has to be on the
+  // active roster — the roster is a parameter, because the holds module reads
+  // no roster of its own — and the move refreshes the period and records whose
+  // hold moved.
   it('moves the hold to the named teammate, and records the move', async () => {
     const runId = await runIn();
     await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: LAPSE_MS });
@@ -369,11 +369,10 @@ describe('the case hold (DEC-46)', () => {
       ]);
   });
 
-  // Criterion 4, and DEC-48's row for this outcome: a hand-over moves the
-  // reservation and nothing else. The customer sees nothing — no record
-  // commits, no state moves, no reply text is written — and both published
-  // reports read the same before and after, which is what their "unchanged"
-  // cells claim.
+  // DEC-48's row for this outcome: a hand-over moves the reservation and
+  // nothing else. The customer sees nothing — no record commits, no state
+  // moves, no reply text is written — and both published reports read the same
+  // before and after, which is what their "unchanged" cells claim.
   it('hands the case over without anything reaching the customer', async () => {
     const runId = await caseWithACustomer();
     await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: LAPSE_MS });
@@ -632,10 +631,10 @@ describe('the case hold (DEC-46)', () => {
     })).rejects.toThrow('statement failed: connection terminated');
   });
 
-  // Criterion 8: the fence still refuses a stale write, and the hold changes
-  // nothing about it. A take and a release write no column of the run and no
-  // ticket epoch, so the comparison the ledger makes is the same before and
-  // after — and a fenced write stands or falls on the fence alone.
+  // The fence still refuses a stale write, and the hold changes nothing about
+  // it. A take and a release write no column of the run and no ticket epoch, so
+  // the comparison the ledger makes is the same before and after — and a fenced
+  // write stands or falls on the fence alone.
   it('leaves the run\'s epoch and the ticket\'s fence exactly as it found them', async () => {
     const runId = await runIn();
     await pool.query(
@@ -653,9 +652,9 @@ describe('the case hold (DEC-46)', () => {
     expect(BigInt(fence.rows[0]!.epoch as string)).toBe(5n);
   });
 
-  // Criterion 7. Every way a hold begins and ends is a row in the history,
-  // with the reviewer and the time. Every kind on one case, in order: a take,
-  // a takeover, a deliberate release, a send, a close, and a lapse.
+  // Every way a hold begins and ends is a row in the history, with the reviewer
+  // and the time. Every kind on one case, in order: a take, a takeover, a
+  // deliberate release, a send, a close, and a lapse.
   it('records every kind in order, each with its reviewer and time', async () => {
     const runId = await runIn();
     await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: LAPSE_MS });
@@ -712,8 +711,8 @@ describe('the case hold (DEC-46)', () => {
     expect([...times].sort((a, b) => a - b)).toEqual(times);
   });
 
-  // Criterion 3: a release is the holder's own. Somebody else's is refused,
-  // the holder keeps the case, and nothing is written to the history.
+  // A release is the holder's own. Somebody else's is refused, the holder keeps
+  // the case, and nothing is written to the history.
   it('refuses a release by a reviewer who does not hold the case', async () => {
     const runId = await runIn();
     await takeHold(pool, { runId, reviewer: 'anna@example.test', lapseMs: LAPSE_MS });
@@ -745,9 +744,9 @@ describe('the case hold (DEC-46)', () => {
     expect(await holdHistory(pool, runId)).toEqual([]);
   });
 
-  // Criterion 4, risk row "Queue query count". The queue holds hundreds of
-  // rows and reads every hold in one statement: a read per row put 476
-  // statements behind one page.
+  // The "Queue query count" risk. The queue holds hundreds of rows and reads
+  // every hold in one statement: a read per row put 476 statements behind one
+  // page.
   it('reads every hold for a list of runs in one statement', async () => {
     const runs: string[] = [];
     for (let i = 0; i < 40; i += 1) runs.push(await runIn());

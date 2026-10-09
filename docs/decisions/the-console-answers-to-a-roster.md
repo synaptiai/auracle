@@ -66,4 +66,4 @@ A name that fails the rules still records `unattributed`, which reads as
 ## Open questions
 
 The roster decides who may review, not what a reviewer may do. Every active
-reviewer has the same powers until the reservation in issue #107 ships.
+reviewer has the same powers until the reservation in issue 107 ships.

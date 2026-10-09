@@ -321,8 +321,8 @@ describe('email duplex flow end to end', () => {
   beforeEach(async () => {
     await truncateLedger(pool);
     // The mailbox is state this system keeps outside the ledger, and the
-    // compose GreenMail service outlives the run (issue #80). Without this
-    // the second run against it found four drafts where the case asserts one.
+    // compose GreenMail service outlives the run. Without this the second run
+    // against it found four drafts where the case asserts one.
     await resetMailboxes(
       { host: greenmail.host, imapPort: greenmail.imapPort, user: SUPPORT_USER, pass: 'synthetic-password' },
       ['INBOX', 'Drafts'],
@@ -619,9 +619,9 @@ describe('email duplex flow end to end', () => {
     artifact.finish();
   }, 120_000);
 
-  // Issue #159. The draft read fails before SMTP sees anything, so the
-  // delivery state is known: nothing went out. DEC-30 escalates an unknown
-  // state, and this one is not, so the record waits for the next scan.
+  // The draft read fails before SMTP sees anything, so the delivery state is
+  // known: nothing went out. DEC-30 escalates an unknown state, and this one is
+  // not, so the record waits for the next scan.
   it('leaves the reply pending when the draft cannot be read, and the next scan sends it once', async () => {
     const artifact = emailArtifact('draft-read-fails-then-sends', { refused: REFUSED, broken: 'imap' });
     await seedInboundThread();

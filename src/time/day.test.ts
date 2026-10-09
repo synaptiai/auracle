@@ -1,4 +1,4 @@
-// One definition of the last complete UTC day (issue #73).
+// One definition of the last complete UTC day.
 import { describe, expect, it } from 'vitest';
 
 import { lastCompleteDay } from './day.js';

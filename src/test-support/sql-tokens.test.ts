@@ -1,4 +1,4 @@
-// The lexer the reader guards read SQL with (issue #146).
+// The lexer the reader guards read SQL with.
 //
 // These are the ways it can fail, and each case names the one it holds:
 //

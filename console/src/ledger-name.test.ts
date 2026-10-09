@@ -1,4 +1,4 @@
-// What the rail is allowed to say about the ledger (issue #27).
+// What the rail is allowed to say about the ledger.
 //
 // The console draws pages for a reviewer, and `DATABASE_URL` carries a
 // password. Those two facts together are how a connection string ends up on a

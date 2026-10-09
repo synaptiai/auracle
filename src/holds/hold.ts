@@ -531,7 +531,7 @@ export async function readHolds(
   return holds;
 }
 
-/** Every event on one case, oldest first. The history criterion 7 asks for. */
+/** Every event on one case, oldest first: the history a case shows. */
 export async function holdHistory(pool: Pool, runId: string): Promise<HoldEvent[]> {
   if (!UUID.test(runId)) return [];
   const rows = await pool.query(

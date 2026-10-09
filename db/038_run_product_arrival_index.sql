@@ -1,8 +1,8 @@
--- The routing screen names each product's last arrival (issue #112). It read
--- every run to find it, grouped by product, so the read grew with the whole
--- history. This index lets it step from one product to the next and read
--- each product's newest arrival with one probe. A run with no arrival time
--- recorded counts from its start, as the screen reads it.
+-- The routing screen names each product's last arrival. It read every run to
+-- find it, grouped by product, so the read grew with the whole history. This
+-- index lets it step from one product to the next and read each product's
+-- newest arrival with one probe. A run with no arrival time recorded counts
+-- from its start, as the screen reads it.
 --
 -- The runs of no product get an index of their own. The planner will not
 -- read the second column of the first index in order under `product IS

@@ -1,4 +1,4 @@
-// Today's counts, held briefly (issue #101).
+// Today's counts, held briefly.
 //
 // The count runs on every load of the landing page. Held for a short time,
 // a reviewer reloading the queue costs the ledger one count per window rather

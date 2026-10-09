@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 // The console's own runner. The core suite excludes `console/**` so its file
 // and case counts are the ones it reported before this package existed, which
-// is what issue #27 asks for.
+// is what the console's first design asks for.
 //
 // No global setup and no container: every case here is pure. The console owns
 // no SQL, so what there is to test is the rendering and the one write's
@@ -18,8 +18,8 @@ export default defineConfig({
   test: {
     include: ['src/**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**'],
-    // Both URLs: the readers connect through READER_DATABASE_URL (issue #153),
-    // which the runbook tells an operator to export in the shell.
+    // Both URLs: the readers connect through READER_DATABASE_URL, which the
+    // runbook tells an operator to export in the shell.
     env: {
       DATABASE_URL: 'postgres://console-tests-must-not-connect@127.0.0.1:1/none',
       READER_DATABASE_URL: 'postgres://console-tests-must-not-connect@127.0.0.1:1/none',

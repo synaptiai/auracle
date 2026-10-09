@@ -10,7 +10,7 @@ import { dbUrl, readerDbUrl } from './config.js';
 import { truncateLedger } from '../test-support/schema.js';
 import { boundedRead } from './bounded-read.js';
 
-// The readers' role (issue #153): boundedRead refuses the writer's session.
+// The readers' role: boundedRead refuses the writer's session.
 const pool = new Pool({ connectionString: readerDbUrl(), max: 1 });
 const writer = new Pool({ connectionString: dbUrl(), max: 1 });
 await pool.query('SELECT 1');

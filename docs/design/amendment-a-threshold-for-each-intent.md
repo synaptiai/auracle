@@ -18,7 +18,7 @@ artifact records the count and the accuracy of each kind. Its rejected
 alternatives are one global threshold above the trigger, and per-intent
 thresholds with no record of what labelled the cases.
 
-The mechanism has not shipped. Issue #26 builds it, and open item 5 closes
+The mechanism has not shipped. Issue 26 builds it, and open item 5 closes
 then.
 
 ## Verdict

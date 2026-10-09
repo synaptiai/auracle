@@ -1,5 +1,5 @@
 /**
- * The explicit clock the fenced write path accepts (issue #22).
+ * The explicit clock the fenced write path accepts.
  *
  * `run.created_at` carries a `DEFAULT now()`, so every run row records the
  * wall clock of the process that wrote it. `pnpm run bands` judges one UTC

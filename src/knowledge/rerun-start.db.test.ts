@@ -39,7 +39,7 @@ import { RERUN_STALE_HOURS, readCaseReruns } from './rerun.js';
 import { startPublishedReruns } from './rerun-start.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 8 });
-// The readers connect as the role that cannot act beyond a read (issue #153).
+// The readers connect as the role that cannot act beyond a read.
 const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 await pool.query('SELECT 1');
 

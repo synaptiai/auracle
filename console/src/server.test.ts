@@ -1,4 +1,4 @@
-// Every route, against a server with no database (issue #27).
+// Every route, against a server with no database.
 //
 // The deps are injected, so these cases drive the real router and the real
 // surfaces while the ledger is a stub. What they prove is the routing, the
@@ -267,7 +267,7 @@ function deps(overrides: Partial<ConsoleDeps> = {}): ConsoleDeps {
     // DEC-50: a ledger with nothing in the gap window, and a case no gap blocks.
     readKnowledge: async () => EMPTY_KNOWLEDGE,
     readCaseGap: async () => null,
-    // Issue #112: a ledger with no case, no hold and no gate row.
+    // A ledger with no case, no hold and no gate row.
     readTeam: async () => EMPTY_TEAM,
     readRouting: async () => ({ products: [] }),
     holdLapseMs: 1_200_000,
@@ -958,7 +958,7 @@ describe('what a fault and a refusal tell the operator', () => {
         'sec-fetch-site': 'same-origin',
       },
       // Past the approval's own bound, which is larger than a save's because
-      // the send may carry an untouched draft (issue #154).
+      // the send may carry an untouched draft.
       body: `runId=${RUN}&pad=${'x'.repeat(1025 * 1024)}`,
     });
     expect(res.status).toBe(413);
@@ -1359,9 +1359,9 @@ describe('the reply an approver reads before they send it', () => {
     expect(html).toContain('Close, no reply');
   });
 
-  // #123: a reply parked in the ledger alone, under a profile that shows no
-  // customer, holds no helpdesk draft and no reply the relay can send: the
-  // relay refuses its record. So there is nothing here to approve.
+  // A reply parked in the ledger alone, under a profile that shows no customer,
+  // holds no helpdesk draft and no reply the relay can send: the relay refuses
+  // its record. So there is nothing here to approve.
   it('offers no approve button for a reply parked in the ledger alone', async () => {
     const base = await startGuarded(deps({
       readRun: caseOf({ reason: null, draftExternalId: null, payloadRecorded: true, actionClass: 'customer_reply' }),
@@ -1376,8 +1376,8 @@ describe('the reply an approver reads before they send it', () => {
     expect(html).not.toContain('Close, not performed');
   });
 
-  // #123: the page offers no approval for a reply parked in the ledger alone,
-  // and a request built by hand gets none either.
+  // The page offers no approval for a reply parked in the ledger alone, and a
+  // request built by hand gets none either.
   it('refuses a hand-built approval of a reply parked in the ledger alone', async () => {
     const approve = vi.fn().mockResolvedValue('approved');
     const base = await startGuarded(deps({
@@ -1471,8 +1471,8 @@ describe('the reply an approver reads before they send it', () => {
     expect(html).toContain('duplicate charge');
   });
 
-  // #123: an internal write's composed text is the rationale a person reads
-  // before approving, never a reply (DEC-34). The card names it so.
+  // An internal write's composed text is the rationale a person reads before
+  // approving, never a reply (DEC-34). The card names it so.
   it('names an internal write\'s composed text as its rationale, not a reply', async () => {
     const action = { reason: null, gateReason: 'irreversible', policyReason: 'irreversible', draftExternalId: null, payloadRecorded: true, actionClass: 'compensate', delivery: 'at_most_once' };
     const base = await startGuarded(deps({
@@ -1508,9 +1508,9 @@ describe('the reply an approver reads before they send it', () => {
     expect(mixedPage).not.toContain('closes the reply');
   });
 
-  // #123: an internal write with mediocre coverage waits too (DEC-07). The
-  // coverage rules read what the system composed, which for an internal
-  // write is its rationale, so neither calls it a reply.
+  // An internal write with mediocre coverage waits too (DEC-07). The coverage
+  // rules read what the system composed, which for an internal write is its
+  // rationale, so neither calls it a reply.
   for (const rule of ['groundedness_block', 'groundedness_review'] as const) {
     it(`words the ${rule} rule without calling an internal write a reply`, async () => {
       const base = await startGuarded(deps({
@@ -1978,8 +1978,8 @@ describe('the conversation a responder reads', () => {
       turnOf(4, { replyAbsence: 'in_flight', runState: 'composed', outboxStatus: null }),
       turnOf(5, { replyAbsence: 'no_reply_sent', runState: 'escalated', outboxStatus: 'delivery_unknown' }),
       turnOf(6, { replyAbsence: 'not_retained', runId: null, runState: null, runAttempts: 0, outboxStatus: null }),
-      // #123: an internal write waits with no draft (DEC-34), and a customer
-      // reply waits as a draft (DEC-11). The reader says which.
+      // An internal write waits with no draft (DEC-34), and a customer reply
+      // waits as a draft (DEC-11). The reader says which.
       turnOf(7, { replyAbsence: 'action_awaiting_approval', runState: 'awaiting_approval', outboxStatus: null }),
       turnOf(8, { replyAbsence: 'reply_awaiting_approval', runState: 'awaiting_approval', outboxStatus: null }),
     ],
@@ -2049,8 +2049,8 @@ describe('the conversation a responder reads', () => {
       /<p class="absent">a person put this case aside until its period ends<\/p>/,
     );
     expect(block).not.toContain('in flight');
-    // #123: a case put aside may be an internal write, which parks no reply
-    // (DEC-34), so its heading names what happened and not a reply.
+    // A case put aside may be an internal write, which parks no reply (DEC-34),
+    // so its heading names what happened and not a reply.
     expect(block).toContain('<div class="who">put aside</div>');
     expect(block).not.toContain('<div class="who">the reply</div>');
   });
@@ -2369,9 +2369,9 @@ describe('the conversation a responder reads', () => {
     expect(blocks.get(2)).not.toContain('waiting for a person</div>');
   });
 
-  // #123: a parked internal write holds no draft and no customer text
-  // (DEC-34), so it never reads as a drafted reply. A parked customer reply
-  // still says its reply is drafted (DEC-11).
+  // A parked internal write holds no draft and no customer text (DEC-34), so it
+  // never reads as a drafted reply. A parked customer reply still says its
+  // reply is drafted (DEC-11).
   it('tells a drafted reply from an internal write that waits', async () => {
     const base = await startGuarded(deps({ readConversation: async () => THREAD as never }));
     const blocks = turnBlocks(await (await fetch(`${base}/conversation/${CONVERSATION}`)).text());
@@ -2465,8 +2465,9 @@ describe('the design notes', () => {
     )].map((m) => ({ token: m[1]!, title: m[2]!, says: m[3]! }));
   }
 
-  // The maintainer's decision on #104: only cards the console already makes
-  // true ship now. Each of the other four ships with the issue that builds it.
+  // The maintainer's decision, when engineer surfaces moved under Admin: only
+  // cards the console already makes true ship now. Each of the other four ships
+  // with the issue that builds it.
   it('shows the cards the console makes true today, in order', async () => {
     const base = await startGuarded(deps());
     const html = await (await fetch(base + '/notes')).text();
@@ -2832,9 +2833,9 @@ describe('the knowledge screen (DEC-50)', () => {
     expect(html).toContain('2026-09-06 to 2026-09-20 UTC');
   });
 
-  // Issue #154: the reviewer design colours each figure by the verdict its
-  // label names: a gap and a waiting count warn, a lapsed review is hot, and
-  // what the team wrote and what it now answers is a good outcome.
+  // The reviewer design colours each figure by the verdict its label names: a
+  // gap and a waiting count warn, a lapsed review is hot, and what the team
+  // wrote and what it now answers is a good outcome.
   it('colours each figure by the verdict its card names', async () => {
     const html = await knowledgePage({ readKnowledge: async () => REPORT });
     const colours = [...html.matchAll(/<span class="metric" style="color:var\(--([a-z]+)\)">/g)].map((m) => m[1]);
@@ -3157,8 +3158,8 @@ describe('the one script this console ships', () => {
     // names only j, because k is its other half.
     expect(script).toContain("event.key === 'j'");
     expect(script).toContain("event.key !== 'j' && event.key !== 'k' && event.key !== 'c'");
-    // Enter stays the focused control's (#51). Issue #154 binds it with
-    // nothing focused and with ⌘ or Ctrl; `script.test.ts` runs both.
+    // Enter stays the focused control's. The console binds it with nothing
+    // focused and with ⌘ or Ctrl; `script.test.ts` runs both.
     expect(script).toContain('BUTTON: 1');
     expect(script).toContain("typing['SEL' + 'ECT'] = 1;");
     // No key acts while the reviewer types: the guard names every field.
@@ -3177,11 +3178,11 @@ describe('the one script this console ships', () => {
     expect(script).toContain("url.protocol === 'http:' || url.protocol === 'https:'");
   });
 
-  // Issue #154: the approval sends the reply the ledger holds, not the text
-  // in the editor. So a chord pressed in an editor holding changes saves
-  // them, and a send while changes are unsaved is stopped and says why.
-  // Issue #154: the markup the script's guards read. What the script does
-  // with it is tested by running it, in `script.test.ts`.
+  // The approval sends the reply the ledger holds, not the text in the editor.
+  // So a chord pressed in an editor holding changes saves them, and a send
+  // while changes are unsaved is stopped and says why. The markup the script's
+  // guards read. What the script does with it is tested by running it, in
+  // `script.test.ts`.
   it('marks the editor and draws the note a send shows over unsaved changes', async () => {
     const base = await startGuarded(deps(), undefined, undefined, true);
     const html = await (await fetch(base + CASE)).text();
@@ -3364,10 +3365,10 @@ describe('the gate every request passes (DEC-45)', () => {
   });
 });
 
-// DEC-46, criterion 9. The approval form carries a digest of the reply the
-// page drew, and the route refuses a post without one — so every console
-// approval is an approval of a reply some page showed, and the ledger can
-// refuse it when that reply has moved since.
+// DEC-46. The approval form carries a digest of the reply the page drew, and
+// the route refuses a post without one — so every console approval is an
+// approval of a reply some page showed, and the ledger can refuse it when that
+// reply has moved since.
 describe('the shown-text guard (DEC-46)', () => {
   /** The reply the case fixture drew, which the digest is of. */
   const DRAFT = 'We refunded the duplicate charge. Your bank decides when it lands.';
@@ -3430,9 +3431,9 @@ describe('the shown-text guard (DEC-46)', () => {
     expect(html).toContain('refused');
   });
 
-  // And the other half of criterion 9: a case whose state changed is refused
-  // with the state it moved to, so a reviewer reads which change happened
-  // rather than that something did.
+  // And the other half of that rule: a case whose state changed is refused with
+  // the state it moved to, so a reviewer reads which change happened rather
+  // than that something did.
   it('names the state a case moved to', async () => {
     const base = await startGuarded(deps({ readRun: caseOf({ state: 'resolved' }) }));
     const html = await (await fetch(base + `${CASE}?outcome=not_awaiting_approval`)).text();
@@ -3460,8 +3461,8 @@ describe('taking a case (DEC-46)', () => {
     expect(html).not.toContain('name="over"');
   });
 
-  // Criterion 1: the second reviewer is told who holds it, and the takeover
-  // is a second press — the form carries `over`, so the page asks.
+  // The second reviewer is told who holds it, and the takeover is a second
+  // press — the form carries `over`, so the page asks.
   it('names the holder, and asks before moving their hold', async () => {
     const base = await startGuarded(deps({
       readHold: async () => holdFor('anna@example.test', 8),
@@ -3473,8 +3474,7 @@ describe('taking a case (DEC-46)', () => {
     expect(html).toContain('name="over"');
   });
 
-  // Criterion 5 and 6: the holder sees their own hold and how long is left,
-  // and can let it go.
+  // The holder sees their own hold and how long is left, and can let it go.
   it('shows the holder their own hold, its remaining time, and the release', async () => {
     const base = await startGuarded(deps({
       readHold: async () => holdFor(REVIEWER, 1),
@@ -3486,9 +3486,9 @@ describe('taking a case (DEC-46)', () => {
     expect(html).toContain('name="release"');
   });
 
-  // Criterion 5: the case shows the holder's remaining time, and the console
-  // is what turns `lapses_at` into it. The figure rounds up, so a hold that
-  // has 90 seconds on it never reads "1 minute left" and then ends early.
+  // The case shows the holder's remaining time, and the console is what turns
+  // `lapses_at` into it. The figure rounds up, so a hold that has 90 seconds on
+  // it never reads "1 minute left" and then ends early.
   it('says how long is left, rounding up so a minute is never early', async () => {
     const endsIn = (ms: number) => deps({
       readHold: async () => ({
@@ -3585,8 +3585,8 @@ describe('taking a case (DEC-46)', () => {
       .toContain('You hold this case now.');
   });
 
-  // Risk row "Takeover bookkeeping", at the console's edge: the takeover is
-  // the confirmed press and nothing else. A free case takes with no `over`.
+  // The "Takeover bookkeeping" risk, at the console's edge: the takeover is the
+  // confirmed press and nothing else. A free case takes with no `over`.
   it('takes over only when the form confirms it', async () => {
     const seen: boolean[] = [];
     const base = await startGuarded(deps({
@@ -3608,8 +3608,8 @@ describe('taking a case (DEC-46)', () => {
     expect((await post(`runId=${RUN}&over=1`)).status).toBe(303);
     expect((await post(`runId=${RUN}`)).status).toBe(303);
     expect(seen).toEqual([true, false]);
-    // And the page says what happened, in the words a person reads: the
-    // refusal names whoever has it now (criterion 6).
+    // And the page says what happened, in the words a person reads: the refusal
+    // names whoever has it now.
     expect((await (await fetch(base + `/case/${RUN}?taken=held_by_other`)).text()))
       .toContain('anna@example.test holds this case now.');
   });
@@ -3636,11 +3636,11 @@ describe('taking a case (DEC-46)', () => {
     expect(released).toEqual([[RUN, REVIEWER]]);
   });
 
-  // Criterion 4 of issue #110, in its own words: hand to a teammate moves the
-  // reservation, and the customer sees nothing. The console half is the move
-  // and the words around it; the ledger half — no outbox record, no state
-  // change, no reply text, and both published reports reading the same before
-  // and after — is `src/holds/holds.db.test.ts`, which owns the write.
+  // A criterion of the case outcomes, in its own words: hand to a teammate
+  // moves the reservation, and the customer sees nothing. The console half is
+  // the move and the words around it; the ledger half — no outbox record, no
+  // state change, no reply text, and both published reports reading the same
+  // before and after — is `src/holds/holds.db.test.ts`, which owns the write.
   it('hands over a case, and reaches no customer', async () => {
     const handed: Array<[string, string, string]> = [];
     // The two writes that do reach a customer, spied rather than assumed.
@@ -3683,9 +3683,8 @@ describe('taking a case (DEC-46)', () => {
     expect(saveReply).not.toHaveBeenCalled();
   });
 
-  // Criterion 6, at the strength it has: a refusal keeps what the reviewer
-  // typed. Typing a colleague's identity twice to fix a typo is the failure
-  // this prevents.
+  // A refusal keeps what the reviewer typed. Typing a colleague's identity
+  // twice to fix a typo is the failure this prevents.
   it('keeps the identity it was given when the handover is refused', async () => {
     const base = await startGuarded(deps({
       readHold: async () => holdFor(REVIEWER, 8),
@@ -3708,10 +3707,10 @@ describe('taking a case (DEC-46)', () => {
     expect(html).toContain('value="typo@example.test"');
   });
 
-  // Criterion 6, the half a refusal owes: a reviewer whose hold moved is told
-  // who holds the case now. This is how the earlier holder learns of it at
-  // their next action, and it must name the person — "somebody else holds
-  // this" sends them looking for who.
+  // The half a refusal owes: a reviewer whose hold moved is told who holds the
+  // case now. This is how the earlier holder learns of it at their next action,
+  // and it must name the person — "somebody else holds this" sends them looking
+  // for who.
   it('tells the reviewer who holds the case now, when their hold moved', async () => {
     const base = await startGuarded(deps({
       readHold: async () => holdFor('anna@example.test', 8),
@@ -3732,8 +3731,8 @@ describe('taking a case (DEC-46)', () => {
     expect(res.status).toBe(303);
     const html = await (await fetch(base + res.headers.get('location')!)).text();
     expect(html).toContain('anna@example.test holds this case now.');
-    // Criterion 6's other half: the case is not taken away from them. The
-    // reply they were reading is still on the page, and so is the takeover.
+    // The other half: the case is not taken away from them. The reply they were
+    // reading is still on the page, and so is the takeover.
     expect(html).toContain('We refunded the duplicate charge.');
     expect(html).toContain('Take it over');
   });
@@ -4227,9 +4226,9 @@ describe('the queue a reviewer lands on', () => {
     waitingRun('33333333-3333-4333-8333-333333333333', 'SYN-RISK', { gateReason: 'irreversible' }),
   ];
 
-  // Issue #105. The legend names only the keys that act on this page: j and
-  // k move, Enter follows the focused row natively, c opens it, and `a`
-  // activates the batch confirm DEC-51 added.
+  // The legend names only the keys that act on this page: j and k move, Enter
+  // follows the focused row natively, c opens it, and `a` activates the batch
+  // confirm DEC-51 added.
   it('lists only the keys that act on it, and rows stay links', async () => {
     const base = await startGuarded(deps({ listApprovals: async () => queue() }));
     const html = await (await fetch(base + '/')).text();
@@ -4246,8 +4245,8 @@ describe('the queue a reviewer lands on', () => {
     expect(html).toMatch(/<a class="item" href="\/case\//);
   });
 
-  // Issue #154: the risk group's rows carry the risk colour down their edge, as
-  // the reviewer design draws them, and every row's wait reads in the waiting
+  // The risk group's rows carry the risk colour down their edge, as the
+  // reviewer design draws them, and every row's wait reads in the waiting
   // colour. A row in another group carries no risk edge.
   it('marks a risk row, and only a risk row, and puts every wait in the waiting colour', async () => {
     const base = await startGuarded(deps({ listApprovals: async () => queue() }));
@@ -4491,8 +4490,8 @@ describe('the queue a reviewer lands on', () => {
     }
   });
 
-  // The queue is a list. Each row opens its case, in working order, and no
-  // case is drawn beside the list (issue #102).
+  // The queue is a list. Each row opens its case, in working order, and no case
+  // is drawn beside the list.
   it('links each row to its case in working order, and draws no case beside the list', async () => {
     const base = await startGuarded(deps({ listApprovals: async () => queue() }));
     const html = await (await fetch(base + '/')).text();
@@ -4508,7 +4507,7 @@ describe('the queue a reviewer lands on', () => {
     expect(html).not.toContain('class="pane"');
     expect(html).not.toContain('The reply, as the system drafted it');
     expect(html).toContain('<form method="post" action="/confirm">');
-    // Issue #154: and one take per row, which holds a case and sends nothing.
+    // And one take per row, which holds a case and sends nothing.
     expect([...html.matchAll(/<form method="post" action="\/(?!take)/g)]).toHaveLength(1);
     expect([...html.matchAll(/type="checkbox" name="runId"/g)]).toHaveLength(1);
     expect([...html.matchAll(/type="checkbox"/g)]).toHaveLength(1);
@@ -4720,8 +4719,8 @@ describe('the approval queue', () => {
     expect(html).not.toContain('D-1');
     expect(html).not.toContain('D-2');
     // The one control on the page is the batch confirm of the clean group
-    // (DEC-51). What it does not draw is a case: no reply text, and no
-    // control that sends one on its own. A take (issue #154) sends nothing.
+    // (DEC-51). What it does not draw is a case: no reply text, and no control
+    // that sends one on its own. A take sends nothing.
     expect([...html.matchAll(/<form method="post" action="\/(?!take)/g)]).toHaveLength(1);
     expect(html).toContain('Confirm all');
     expect(html).not.toContain('The reply, as the system drafted it');
@@ -4751,9 +4750,9 @@ describe('the approval queue', () => {
   });
 });
 
-// Criterion 4 (DEC-46). Four reviewers pull from one uncapped list, and
-// nothing on it said which cases somebody was already reading. The queue now
-// says who holds each of those, and for how long.
+// DEC-46. Four reviewers pull from one uncapped list, and nothing on it said
+// which cases somebody was already reading. The queue now says who holds each
+// of those, and for how long.
 describe('the queue\'s held group (DEC-46)', () => {
   const RUN_B = '8a2d4c6e-1f3b-4a90-9c7e-2d5b8f0a1c34';
 
@@ -4821,9 +4820,9 @@ describe('the queue\'s held group (DEC-46)', () => {
     expect(rowFor(html, RUN_B)).toContain('held by bo@example.test · 9m');
   });
 
-  // Criterion 4, risk row "Queue query count". The queue is uncapped and the
-  // holds are read for the whole page at once: a read per row is one
-  // statement behind every row, and a 476-row queue cost 476 of them.
+  // The "Queue query count" risk. The queue is uncapped and the holds are read
+  // for the whole page at once: a read per row is one statement behind every
+  // row, and a 476-row queue cost 476 of them.
   it('reads the holds for the whole page in one call', async () => {
     const ids = Array.from(
       { length: 30 },
@@ -4871,8 +4870,8 @@ describe('the queue\'s held group (DEC-46)', () => {
   });
 });
 
-// Issue #63. The queue is a list a person triages, and it carried an opaque
-// ticket id and a reason that could never hold a value.
+// The queue is a list a person triages, and it carried an opaque ticket id and
+// a reason that could never hold a value.
 describe('what a queue row tells the person working it', () => {
   function waiting(...over: readonly Partial<Record<string, unknown>>[]) {
     return over.map((row, i) => ({
@@ -5231,7 +5230,7 @@ describe('the run an approver reads, and the run the button posts', () => {
       listApprovals: async () => two().map((run) => ({ ...run, gateReason: 'high_risk' })),
     }));
     const html = await (await fetch(base + '/')).text();
-    // The sort control is there (issue #154); no rule filter is.
+    // The sort control is there; no rule filter is.
     expect(html).not.toContain('href="/?rule=');
   });
 
@@ -5276,9 +5275,9 @@ describe('what the gate panel says when a threshold decided nothing', () => {
   });
 });
 
-// The case a reviewer decides on (issue #102). One page per run, holding the
-// customer's words, the reply and its documents, why it reached a person, the
-// two gates, the steps and the approval.
+// The case a reviewer decides on. One page per run, holding the customer's
+// words, the reply and its documents, why it reached a person, the two gates,
+// the steps and the approval.
 describe('the case a reviewer decides on', () => {
   /** The markup of the card whose label is `label`, up to the next card. */
   function cardOf(html: string, label: string): string {
@@ -5882,9 +5881,9 @@ describe('the case a reviewer decides on', () => {
   });
 });
 
-// The rail every surface shares (issue #100). Three groups in the reviewer
-// design; a group with no surface behind it is left out rather than drawn as
-// a heading over nothing.
+// The rail every surface shares. Three groups in the reviewer design; a group
+// with no surface behind it is left out rather than drawn as a heading over
+// nothing.
 describe('the rail', () => {
   /** The rail's markup, cut from a rendered page. */
   function railOf(html: string): string {
@@ -5985,15 +5984,15 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
     expect(html).toContain('<textarea name="text"');
     expect(html).toContain(EVIDENCE.draftBody);
 
-    // Criterion 2: every sentence the system drafted stays visible beside the
-    // editor, each with the judge's verdict on it.
+    // Every sentence the system drafted stays visible beside the editor, each
+    // with the judge's verdict on it.
     for (const verdict of ['accepted', 'refused', 'unread']) {
       expect(html).toContain(verdict);
     }
     expect(html).toContain('The sentences the system drafted');
 
-    // Criterion 3: the callout's own words, for the one claim that was
-    // refused, and no callout for the claim nobody judged.
+    // The callout's own words, for the one claim that was refused, and no
+    // callout for the claim nobody judged.
     expect(html).toContain('Replace with what the document says');
     expect(html).toContain('Delete the sentence');
     expect(html).toContain('Write the missing answer →');
@@ -6086,8 +6085,8 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
     expect(html).not.toContain('<textarea');
   });
 
-  // Criterion 1's reload half: the text a reviewer saved is the text the page
-  // draws, in the editor and in the form the approval carries.
+  // The reload half of editing a reply: the text a reviewer saved is the text
+  // the page draws, in the editor and in the form the approval carries.
   it('draws the reply a reviewer saved, and digests that one', async () => {
     const saved = 'A reply a reviewer saved a moment ago.';
     const base = await capable({
@@ -6399,9 +6398,9 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
     const html = await (await fetch(`${base}${CASE}?outcome=copy_changed`)).text();
 
     expect(html).toContain('Send the reply above');
-    // The route it posts to, read off the page: a control that posts nowhere
-    // is the defect the replace button shipped with. Issue #154: where the
-    // editor is drawn, it posts the editor's form to the approval.
+    // The route it posts to, read off the page: a control that posts nowhere is
+    // the defect the replace button shipped with. Where the editor is drawn, it
+    // posts the editor's form to the approval.
     expect(html).toMatch(/form="reply-editor" formaction="\/approve" formmethod="post" name="ack"/);
     // The digest the form carries is of the text drawn above it, which is
     // what makes the acknowledgement a decision about text somebody read.
@@ -6721,7 +6720,7 @@ describe('DEC-51: the batch confirm and its undo', () => {
     expect(page.status).toBe(200);
     const html = await page.text();
 
-    // Criterion 1: the confirm shows each reply in full.
+    // The confirm shows each reply in full.
     expect(html).toContain(FIRST_REPLY);
     expect(html).toContain(SECOND_REPLY);
     // And each case carries the digest of the text drawn above it (DEC-46),
@@ -6737,8 +6736,8 @@ describe('DEC-51: the batch confirm and its undo', () => {
     expect(html).toContain('12 seconds');
   });
 
-  // #123: a batch confirms replies alone, the only kind a hold and an undo
-  // cover (DEC-51). An internal write parks no reply (DEC-34).
+  // A batch confirms replies alone, the only kind a hold and an undo cover
+  // (DEC-51). An internal write parks no reply (DEC-34).
   it('keeps an internal write out of the batch, on the page and on the apply', async () => {
     const ACTION = '55555555-5555-4555-8555-555555555555';
     const RATIONALE = 'Route the ticket to the billing queue.';
@@ -6774,9 +6773,9 @@ describe('DEC-51: the batch confirm and its undo', () => {
     expect(approve).not.toHaveBeenCalled();
   });
 
-  // #123: the apply's own check reads each case before it approves it. A
-  // case the first read could not reach is read again there, so a hand-built
-  // post never approves an internal write through the batch.
+  // The apply's own check reads each case before it approves it. A case the
+  // first read could not reach is read again there, so a hand-built post never
+  // approves an internal write through the batch.
   it('never approves through the batch a case its first read could not reach', async () => {
     const ACTION = '55555555-5555-4555-8555-555555555555';
     const action = {
@@ -6904,9 +6903,9 @@ describe('DEC-51: the batch confirm and its undo', () => {
     expect(page).not.toContain('holds each one for');
   });
 
-  // Issue #154: the panel wears the success colour only when something was
-  // approved. A batch every case of which was refused sent nothing, and must
-  // not read as one that did.
+  // The panel wears the success colour only when something was approved. A
+  // batch every case of which was refused sent nothing, and must not read as
+  // one that did.
   it('draws a batch nobody approved without the success colour', async () => {
     const approve = vi.fn().mockResolvedValue('read_back_failed');
     const base = await startGuarded(deps(batchDeps({ approve })), undefined, undefined, true);
@@ -6991,12 +6990,12 @@ describe('DEC-51: the batch confirm and its undo', () => {
     expect(html).toContain('The reply changed since this page was drawn');
   });
 
-  // Criterion 1's last clause, and the reviewer design's own words: a primary
-  // control acting on zero objects is a defect. The button is drawn only where
-  // the clean group has rows, so a queue whose clean cases are gone draws none.
-  // SEC-8: a single approval holds its send too, and the case it approved is
-  // where a reviewer looks for the way back. Before this bar, that page said
-  // "Approved. The relay performs it next." while the relay was waiting.
+  // The reviewer design's own words: a primary control acting on zero objects
+  // is a defect. The button is drawn only where the clean group has rows, so a
+  // queue whose clean cases are gone draws none. SEC-8: a single approval holds
+  // its send too, and the case it approved is where a reviewer looks for the
+  // way back. Before this bar, that page said "Approved. The relay performs it
+  // next." while the relay was waiting.
   it('offers the undo on the case a single approval just resolved', async () => {
     const readApprovalHold = vi
       .fn()
@@ -7543,8 +7542,8 @@ describe('DEC-48: the console closes a case with no reply', () => {
     expect(close).not.toHaveBeenCalled();
   });
 
-  // #123: an internal write parks no reply (DEC-34). Its close says the
-  // action it parked is not performed, before and after the close.
+  // An internal write parks no reply (DEC-34). Its close says the action it
+  // parked is not performed, before and after the close.
   it('words the close of an internal write as an action left unperformed', async () => {
     const action = { draftExternalId: null, payloadRecorded: true, actionClass: 'compensate', delivery: 'at_most_once' };
     const base = await startGuarded(deps({ readRun: caseOf(action) }));
@@ -7562,9 +7561,9 @@ describe('DEC-48: the console closes a case with no reply', () => {
     expect(after).not.toContain('The case is closed with no reply.');
   });
 
-  // #123: DEC-46's refusal on an internal write names what the page showed,
-  // its rationale, and not a reply (DEC-34). On each outcome that can reach
-  // one: the approval, the close, the snooze and the send-back.
+  // DEC-46's refusal on an internal write names what the page showed, its
+  // rationale, and not a reply (DEC-34). On each outcome that can reach one:
+  // the approval, the close, the snooze and the send-back.
   it('words a changed page on an internal write without calling it a reply', async () => {
     const action = { draftExternalId: null, payloadRecorded: true, actionClass: 'route_ticket', evidence: { ...EVIDENCE, parkedAction: true } };
     const base = await startGuarded(deps({ readRun: caseOf(action) }));
@@ -8117,7 +8116,7 @@ describe('DEC-49: the console sends a case back for a new attempt', () => {
     expect(forgedHtml).not.toContain('data-sentback=');
   });
 
-  // #123: a sent-back internal write is not a reply (DEC-34), so neither the
+  // A sent-back internal write is not a reply (DEC-34), so neither the
   // send-back note nor the refusal of its approval calls it one.
   it('words the send-back and its refusal without calling an internal write a reply', async () => {
     const action = { draftExternalId: null, payloadRecorded: true, actionClass: 'route_ticket', evidence: { ...EVIDENCE, parkedAction: true } };
@@ -8460,7 +8459,7 @@ describe('DEC-48: the console rewrites the reply from scratch', () => {
     expect(page).toContain(
       'a person wrote this reply, so the verdict belongs to the draft it replaced',
     );
-    // The citations the draft used stay on the page (criterion 6).
+    // The citations the draft used stay on the page.
     expect(page).toContain('The documents these claims cite');
     // And the draft's verdicts are not drawn as the reply's.
     expect(page).not.toContain('class="vw refused"');
@@ -8484,9 +8483,9 @@ describe('DEC-48: the console rewrites the reply from scratch', () => {
     expect(queue).not.toContain(' · coverage 0.94');
   });
 
-  // #123: the flag is the turn's, so a reply a person wrote for another run
-  // on the turn sets it for an internal write too. That write parks no reply
-  // (DEC-34), so neither the row nor the gates card says a person wrote it.
+  // The flag is the turn's, so a reply a person wrote for another run on the
+  // turn sets it for an internal write too. That write parks no reply (DEC-34),
+  // so neither the row nor the gates card says a person wrote it.
   it('says no person wrote the reply of an internal write whose turn holds one', async () => {
     const action = {
       runId: RUN, ticketId: 'SYN-1', state: 'awaiting_approval', promptVer: 'p1', ...ROW,
@@ -8531,10 +8530,10 @@ describe('DEC-48: the console rewrites the reply from scratch', () => {
   });
 });
 
-// Issue #114. A value from outside can carry a bidi override. Drawn raw, it
-// reverses the text after it on the line, so a reviewer reads one case's text
-// as another's. Every outside value drawn as text is isolated in `<bdi>`, and
-// each control that opens or closes a run is drawn as its name.
+// A value from outside can carry a bidi override. Drawn raw, it reverses the
+// text after it on the line, so a reviewer reads one case's text as another's.
+// Every outside value drawn as text is isolated in `<bdi>`, and each control
+// that opens or closes a run is drawn as its name.
 describe('a value that could reorder the page around it', () => {
   // A stray PDI first: drawn raw, it closes the isolate `<bdi>` makes, and the
   // override after it reverses the rest of the line. Then an isolate never
@@ -9137,9 +9136,9 @@ describe('the team screen', () => {
     [...html.matchAll(/<span class="lbl">([^<]*)<\/span><\/header><div class="body"><span class="(metric|nofig)"(?: style="[^"]*")?>([^<]*)<\/span>/g)]
       .map((m) => [m[1]!, m[2]!, m[3]!]);
 
-  // Issue #154: the reviewer design's colours. How few cases reached a person
-  // and how short a case ran are good outcomes, the team's time is the accent,
-  // and the oldest wait warns.
+  // The reviewer design's colours. How few cases reached a person and how short
+  // a case ran are good outcomes, the team's time is the accent, and the oldest
+  // wait warns.
   it('colours each figure by the verdict its card names', async () => {
     const html = await teamPage({ readTeam: async () => TEAM });
     const colours = [...html.matchAll(/<span class="metric" style="color:var\(--([a-z]+)\)">/g)].map((m) => m[1]);
@@ -9386,9 +9385,9 @@ describe('the routing screen', () => {
   });
 });
 
-// Issue #154: the queue's sort, a reviewer preference kept as the theme is,
-// in a cookie a GET sets on its way back. So a take, a filter change and the
-// theme toggle keep it without every link carrying it.
+// The queue's sort, a reviewer preference kept as the theme is, in a cookie a
+// GET sets on its way back. So a take, a filter change and the theme toggle
+// keep it without every link carrying it.
 describe('the sort a reviewer picks', () => {
   const waiting = (runId: string, ticketId: string, over: Record<string, unknown>) => ({
     runId, ticketId, state: 'awaiting_approval', promptVer: 'p1', ...ROW,
@@ -9493,9 +9492,9 @@ describe('the sort a reviewer picks', () => {
   });
 });
 
-// Issue #154: "Take next case" and a Take on each row. Both are the take a
-// case page already posts (DEC-46): one press holds a free case, and a case
-// somebody else holds is never moved. Their failures, written first:
+// "Take next case" and a Take on each row. Both are the take a case page
+// already posts (DEC-46): one press holds a free case, and a case somebody else
+// holds is never moved. Their failures, written first:
 //   - take next takes a case somebody else holds, or stops at the first
 //     refusal instead of trying the next;
 //   - it reads the whole queue rather than the filters and the sort on the
@@ -9770,11 +9769,10 @@ describe('taking the next case, and a row\'s Take', () => {
   });
 });
 
-// Issue #154: the case reads as the reviewer design draws it. The hold and the
-// case's place in the queue sit in the header, the bar at the foot is one row
-// of controls with the send warning under it, and each outcome that needs a
-// field opens it in the case rather than in the bar. Their failures, written
-// first:
+// The case reads as the reviewer design draws it. The hold and the case's place
+// in the queue sit in the header, the bar at the foot is one row of controls
+// with the send warning under it, and each outcome that needs a field opens it
+// in the case rather than in the bar. Their failures, written first:
 //   - the bar carries a field for every outcome, so it covers the case;
 //   - a step opens its form in the bar, or opens none;
 //   - the position counts the whole queue rather than the filtered one, or
@@ -9922,9 +9920,9 @@ describe('the case as the reviewer design lays it out', () => {
   });
 });
 
-// Issue #154: the rail's knowledge badge, as the reviewer design draws it: the
-// number of gaps, in plain dim mono. On the pages that counted it, the queue
-// and the knowledge screen, and nowhere a count was not read.
+// The rail's knowledge badge, as the reviewer design draws it: the number of
+// gaps, in plain dim mono. On the pages that counted it, the queue and the
+// knowledge screen, and nowhere a count was not read.
 describe('the knowledge badge in the rail', () => {
   const report = (gaps: number): KnowledgeReport => ({
     from: '2026-09-06T12:00:00.000Z', to: '2026-09-20T12:00:00.000Z',
@@ -9977,9 +9975,9 @@ describe('the knowledge badge in the rail', () => {
   });
 });
 
-// Issue #154: the conversation links back to the case it was opened from, as
-// the reviewer design's "← case" does, and keeps that case's queue filters. Its
-// failures, written first:
+// The conversation links back to the case it was opened from, as the reviewer
+// design's "← case" does, and keeps that case's queue filters. Its failures,
+// written first:
 //   - the back link appears with no case named, or for a run that answered
 //     no turn of this conversation;
 //   - the filters fall off on the way back;
@@ -10020,8 +10018,8 @@ describe('the way back from a conversation', () => {
   });
 });
 
-// Issue #154: the branches a review named as untested. Each case fails if
-// its branch is removed or turned the wrong way.
+// The branches a review named as untested. Each case fails if its branch is
+// removed or turned the wrong way.
 describe('the branches a review named as untested', () => {
   const hold = (reviewer: string) => ({
     reviewer, takenAt: new Date(Date.now() - 60_000), lapsesAt: new Date(Date.now() + 600_000),
@@ -10169,10 +10167,10 @@ describe('the branches a review named as untested', () => {
   });
 });
 
-// Issue #154, SEC-3: the approval refuses to drop text the editor holds and
-// nobody saved, on the server, so a page whose script did not run cannot
-// send the old reply. The send button posts the editor's form, so its text
-// arrives with the approval. Its failures, written first:
+// The approval refuses to drop text the editor holds and nobody saved, on the
+// server, so a page whose script did not run cannot send the old reply. The
+// send button posts the editor's form, so its text arrives with the approval.
+// Its failures, written first:
 //   - an approval carrying changed text sends the saved reply anyway;
 //   - a reply nobody touched is refused because the browser sent CRLF;
 //   - an approval with no editor on its page is refused.

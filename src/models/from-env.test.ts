@@ -1,4 +1,4 @@
-// One construction of the model provider (issue #72).
+// One construction of the model provider.
 //
 // The provider keeps its config private, so these assert the behavior an
 // adopter actually observes: which host the call goes to, what the

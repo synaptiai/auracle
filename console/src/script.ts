@@ -1,5 +1,5 @@
 /**
- * The whole of the console's JavaScript (issue #51).
+ * The whole of the console's JavaScript.
  *
  * It buys four things, and it is bounded to those four. Everything else on
  * these surfaces is a link or a form post, and stays that way: this console
@@ -11,17 +11,17 @@
  *     There is no CSS that links two arbitrary regions of a page, and this is
  *     the interaction that makes a citation feel checked rather than listed.
  *   - **Queue navigation.** j and k move through the approval queue, c takes
- *     the focused case (DEC-46), and Enter opens it. Enter on a focused
- *     control stays that control's: a row is an anchor, so Enter already
- *     follows the focused one — and binding it there took it from the Approve
- *     button, from every citation and from every rail link. Enter with nothing
- *     focused takes the next case (issue #154).
+ *     the focused case (DEC-46), and Enter opens it. Enter on a focused control
+ *     stays that control's: a row is an anchor, so Enter already follows the
+ *     focused one — and binding it there took it from the Approve button, from
+ *     every citation and from every rail link. Enter with nothing focused takes
+ *     the next case.
  *   - **Esc leaves a case.** It follows the case's own back link, which keeps
  *     the queue rule the reviewer chose.
- *   - **⌘↵ sends**, Ctrl+Enter off macOS (issue #154). The chord presses the case's send button from
- *     the page, the send's form or the editor. In an editor with unsaved
- *     changes it saves them and sends nothing. It acts on no repeat, on no
- *     second press, and not while another outcome is open.
+ *   - **⌘↵ sends**, Ctrl+Enter off macOS. The chord presses the case's send
+ *     button from the page, the send's form or the editor. In an editor with
+ *     unsaved changes it saves them and sends nothing. It acts on no repeat, on
+ *     no second press, and not while another outcome is open.
  *
  * All four degrade. Every claim already carries an anchor to its source,
  * every queue row is already a link, a case keeps its back link, and the send
@@ -200,11 +200,11 @@ export const CONSOLE_SCRIPT = `
     })(undos[u]);
   }
 
-  // Issue #154: the case's primary control by chord, and the next case by
-  // Enter. The approval sends the reply the ledger holds, never the text in
-  // the editor, so changes the reviewer has not saved would be dropped by a
-  // send: the chord saves them instead, and a send while they are unsaved is
-  // stopped and says why.
+  // The case's primary control by chord, and the next case by Enter. The
+  // approval sends the reply the ledger holds, never the text in the editor, so
+  // changes the reviewer has not saved would be dropped by a send: the chord
+  // saves them instead, and a send while they are unsaved is stopped and says
+  // why.
   var editor = document.querySelector('form[data-editor]');
   var primary = document.querySelector('[data-primary]');
   var unsavedNote = document.querySelector('[data-unsaved]');

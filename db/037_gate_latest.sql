@@ -1,9 +1,9 @@
 -- The routing screen shows, for each product and intent, what the running
--- system last recorded at the gate (issue #112, DEC-41, DEC-47). Neither the
--- gate's journal row nor the journal records the product, the intent or a
--- time, so a read of the journal visits every gate row ever written. On a
--- ledger of a few weeks that read ran past its two-second budget, and the
--- screen then read nothing on every load.
+-- system last recorded at the gate (DEC-41, DEC-47). Neither the gate's journal
+-- row nor the journal records the product, the intent or a time, so a read of
+-- the journal visits every gate row ever written. On a ledger of a few weeks
+-- that read ran past its two-second budget, and the screen then read nothing on
+-- every load.
 --
 -- So the gate step keeps one row per product and intent here, written in the
 -- fenced transition that moves the run to 'gated' (DEC-28). A consumer the
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS gate_latest (
   CONSTRAINT gate_latest_record CHECK (gate_at IS NOT NULL OR (reason IS NULL AND thresholds IS NULL))
 );
 
-COMMENT ON TABLE gate_latest IS 'Issue #112, DEC-41, DEC-47: for each product and intent, the latest gate record, written by the gate step in its fenced transition to gated. The routing screen reads it.';
+COMMENT ON TABLE gate_latest IS 'DEC-41, DEC-47: for each product and intent, the latest gate record, written by the gate step in its fenced transition to gated. The routing screen reads it.';
 COMMENT ON COLUMN gate_latest.product IS 'The run''s product, or null for a channel that maps to none. One row per product and intent, null included.';
 COMMENT ON COLUMN gate_latest.intent_id IS 'The classified intent. The gate keys it as the policy engine does; the backfill keeps the classifier''s own spelling, and the reader merges spellings.';
 COMMENT ON COLUMN gate_latest.run_id IS 'The newest run of this product and intent whose gate row was considered. A later gate replaces the row only when its run is newer, by created_at and then run_id.';

@@ -234,9 +234,9 @@ export async function undoApproval(
     const conversationId = conversation.rows[0]?.conversation_id as string | null;
     const turnNumber = conversation.rows[0]?.turn_number as number | null;
     // The turn's lock, after the run's (run, then turn), before the record
-    // goes. The consumer's scan reads the turn's reply under the same lock
-    // when it ends a waiting run as answered, so it can never record a reply
-    // this undo is removing (#122).
+    // goes. The consumer's scan reads the turn's reply under the same lock when
+    // it ends a waiting run as answered, so it can never record a reply this
+    // undo is removing.
     if (conversationId !== null && turnNumber !== null) {
       await narrowWait(client, deadline);
       await lockTurnAttempt(client, { conversationId, turnNumber });

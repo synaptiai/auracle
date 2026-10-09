@@ -1,5 +1,5 @@
 /**
- * The product catalogue and the channel map (issue #108, DEC-47).
+ * The product catalogue and the channel map (DEC-47).
  *
  * DEC-47: "Each run records the product of the channel its message arrived
  * on. A run retrieves the documents of its product and the documents that

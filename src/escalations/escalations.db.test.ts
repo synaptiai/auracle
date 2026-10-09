@@ -16,7 +16,7 @@ import { listEscalations, parseSince, listRuns, readRun } from './query.js';
 import { readRunJournal } from '../journal/query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
-// The readers connect as the role that cannot act beyond a read (issue #153).
+// The readers connect as the role that cannot act beyond a read.
 const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 // src/test-support/db-global-setup.ts guarantees a reachable database before
@@ -98,9 +98,9 @@ describe('escalations CLI queries', () => {
     await truncateLedger(pool);
   });
 
-  // Issue #94: `internal_fault` names a defect inside the coordinator and not
-  // a step, so the invariant message is the whole of what an operator has. The
-  // runbook tells them to quote it into an issue, and this reader is the one
+  // `internal_fault` names a defect inside the coordinator and not a step, so
+  // the invariant message is the whole of what an operator has. The runbook
+  // tells them to quote it into an issue, and this reader is the one
   // `pnpm run escalations` goes through — before this the field reached the
   // ledger and no reader at all.
   it('surfaces the fault message of a run that met a defect', async () => {
@@ -133,8 +133,8 @@ describe('escalations CLI queries', () => {
       // produced one in the queue they work from.
       promptVer: 'p1',
       reason: 'limit_cost',
-      // Null for every reason but `internal_fault`, which is the only one
-      // that writes the key (issue #94).
+      // Null for every reason but `internal_fault`, which is the only one that
+      // writes the key.
       fault: null,
       // This run escalated and never gated, so the queue has no rule to
       // name and no coverage to report. Null and not a guess: a person
@@ -177,11 +177,11 @@ describe('escalations CLI queries', () => {
     expect(createdAt).toBeInstanceOf(Date);
   });
 
-  // #123: a handle names a draft only as a non-empty string on a finished
-  // park, as the conversation reader reads it. The approval refuses a park
-  // whose handle has another shape, so the queue never groups one as a
-  // drafted reply. Both selects read it so: the waiting queue, and the stuck
-  // records the relay left on a run that reads resolved.
+  // A handle names a draft only as a non-empty string on a finished park, as
+  // the conversation reader reads it. The approval refuses a park whose handle
+  // has another shape, so the queue never groups one as a drafted reply. Both
+  // selects read it so: the waiting queue, and the stuck records the relay left
+  // on a run that reads resolved.
   const SHAPES = [
     ['a number', 'done', 123],
     ['empty', 'done', ''],
@@ -254,9 +254,9 @@ describe('escalations CLI queries', () => {
     });
   });
 
-  // Issue #101: the queue sets apart a case whose two gates each cleared their
-  // own line. That needs both measured values and the lines the gate judged
-  // them against, read from the journal the run wrote, never blended (DEC-05).
+  // The queue sets apart a case whose two gates each cleared their own line.
+  // That needs both measured values and the lines the gate judged them against,
+  // read from the journal the run wrote, never blended (DEC-05).
   it('carries the agreement and the thresholds the gate judged a waiting run against', async () => {
     const run = await seedRun('awaiting_approval');
     await journalStep(run.runId, 'classify', { intentId: 'refund_request', agreement: 0.91 });

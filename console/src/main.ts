@@ -1,4 +1,4 @@
-// The console entry point (issue #27). Run with `pnpm --filter @auracle/console start`.
+// The console entry point. Run with `pnpm --filter @auracle/console start`.
 //
 // This is where the surfaces meet the ledger, and it is the only file that
 // holds a pool. Every read goes through a query module the jobs already use —
@@ -130,7 +130,7 @@ async function requestFor(readers: Pool, runId: string): Promise<RequestView | n
  * The run detail surface's view of one run, or null when there is no run.
  *
  * `readers` serves the reads that run through `boundedRead`, as the readers'
- * role (issue #153). `readRun` reads with the console's own pool.
+ * role. `readRun` reads with the console's own pool.
  */
 async function readRunView(pool: Pool, readers: Pool, runId: string): Promise<RunView | null> {
   const found = await readRun(pool, runId, LEDGER_STATES);
@@ -199,8 +199,8 @@ async function readRunView(pool: Pool, readers: Pool, runId: string): Promise<Ru
  * value that was wrong.
  */
 /**
- * How long the queue header's counts are held (issue #101). A figure for the
- * day stays true enough for this long, and a reloaded page costs no count.
+ * How long the queue header's counts are held. A figure for the day stays true
+ * enough for this long, and a reloaded page costs no count.
  */
 const QUEUE_TODAY_HOLD_MS = 30_000;
 
@@ -328,17 +328,17 @@ async function main(): Promise<void> {
   const catalogue = productCatalogueFromEnv();
   // DEC-46: the period a case counts as held after its last take.
   const lapseMs = requireHoldLapse(process.env['CONSOLE_HOLD_LAPSE_MS']);
-  // Issue #112: the intents a person curated, with their risk tiers, for the
-  // routing screen. Read and checked here, as the consumer checks them, so a
-  // taxonomy the check refuses stops the console before it opens the pool.
+  // The intents a person curated, with their risk tiers, for the routing
+  // screen. Read and checked here, as the consumer checks them, so a taxonomy
+  // the check refuses stops the console before it opens the pool.
   const taxonomy = loadTaxonomy();
   // DEC-51: the period a batch's sends wait before the relay may post them.
   // Read here, so a value the console refuses stops it before it opens the
   // pool rather than on the first confirm.
   const sendHoldMs = requireSendHold(process.env['CONSOLE_SEND_HOLD_MS']);
   const connectionString = requireDbUrl('the operator console');
-  // Issue #153: the readers connect as a role that cannot act beyond a read,
-  // and refuse any other. Asked for before either pool opens.
+  // The readers connect as a role that cannot act beyond a read, and refuse any
+  // other. Asked for before either pool opens.
   const readerConnectionString = requireReaderDbUrl('the operator console');
 
   // A connection that fails while a request holds it would otherwise end the
@@ -599,9 +599,9 @@ async function main(): Promise<void> {
       'readCaseReruns',
       (error, wait) => lateFault('readCaseReruns', error, wait),
     ),
-    // Issue #112: the team and routing screens. Each page gives up on its read
-    // at the knowledge screen's limit, and reviewers loading a screen together
-    // share one read.
+    // The team and routing screens. Each page gives up on its read at the
+    // knowledge screen's limit, and reviewers loading a screen together share
+    // one read.
     readTeam: givingUp(
       sharedRead(async () => readTeam(readers, { lapseMs })),
       KNOWLEDGE_GIVE_UP_MS,

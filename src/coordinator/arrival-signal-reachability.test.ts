@@ -1,4 +1,4 @@
-// The listener must never take a client from a daemon's pool (issue #25).
+// The listener must never take a client from a daemon's pool.
 //
 // Every daemon builds its pool with `max: 1`. A `LISTEN` connection is held
 // for the process lifetime, so a listener that asked that pool for a client

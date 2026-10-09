@@ -1,4 +1,4 @@
-// The console's one script, run against the pages it binds to (issue #154).
+// The console's one script, run against the pages it binds to.
 //
 // The script decides whether a key press sends a customer reply, so its
 // behavior is tested by running it, not by reading its text. It runs in a

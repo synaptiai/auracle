@@ -1,4 +1,4 @@
-// Every structured line a process writes goes through the escaping (#114).
+// Every structured line a process writes goes through the escaping.
 //
 // `logLine` and `reportJson` escape the characters JSON leaves raw. A line
 // written with `JSON.stringify` straight to the console or a stream does not,

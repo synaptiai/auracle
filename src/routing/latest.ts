@@ -1,4 +1,4 @@
-// The gate's latest record for each product and intent (issue #112).
+// The gate's latest record for each product and intent.
 //
 // The routing screen shows what the running system last did for each product
 // and intent. The journal cannot answer that cheaply: a gate row records

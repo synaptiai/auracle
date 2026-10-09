@@ -35,7 +35,7 @@ export function logLine(entry: Readonly<Record<string, unknown>>): string {
 }
 
 /**
- * The indented JSON of `value`, escaped as a log line is (issue #114).
+ * The indented JSON of `value`, escaped as a log line is.
  *
  * For the report a command prints for a person to read in a terminal: the
  * approval's outcome, the escalations list, the replay and gold reports.

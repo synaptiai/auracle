@@ -21,8 +21,8 @@ export function dbUrl(): string {
 }
 
 /**
- * The compose ledger as the readers' role sees it (issue #153). The password
- * is the compose stack's local default, as `auracle` is the writer's.
+ * The compose ledger as the readers' role sees it. The password is the compose
+ * stack's local default, as `auracle` is the writer's.
  */
 const COMPOSE_READER_DEFAULT_URL = 'postgres://auracle_reader:auracle_reader@localhost:5433/auracle';
 
@@ -71,7 +71,7 @@ export function requireReaderDbUrl(processName: string): string {
 
 /**
  * Proves the readers' pool connects as the readers' role, to the ledger the
- * writer's pool reaches, or throws saying which it does not (issue #153).
+ * writer's pool reaches, or throws saying which it does not.
  *
  * Both pools would pass a probe of their own when the two URLs name two
  * ledgers. A page would then join a run read from one to a journal read from

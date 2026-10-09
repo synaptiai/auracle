@@ -1,4 +1,4 @@
-// Which paths the document guards skip, and which they must not (issue #79).
+// Which paths the document guards skip, and which they must not.
 //
 // Three guards read this module, so a mistake here silently exempts shipped
 // documentation from every one of them at once. The first version matched a

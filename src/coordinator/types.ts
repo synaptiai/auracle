@@ -1,10 +1,10 @@
 // What a run is, and what one may be told to do (section 4.3).
 //
-// The state machine's vocabulary, with no behavior beside it. The step
-// modules under `steps/` read these types and `coordinator.ts` sequences
-// them, so neither has to import the other to agree on what a run is
-// (issue #75). `coordinator.ts` re-exports every name here, because callers
-// outside this directory address the coordinator and not its parts.
+// The state machine's vocabulary, with no behavior beside it. The step modules
+// under `steps/` read these types and `coordinator.ts` sequences them, so
+// neither has to import the other to agree on what a run is.
+// `coordinator.ts` re-exports every name here, because callers outside this
+// directory address the coordinator and not its parts.
 import type { EgressAdapter } from '../adapters/types.js';
 import type { ConversationTurn } from '../domain/conversation-turn.js';
 import type { ModelProvider, PinnedVersions } from '../models/provider.js';
@@ -105,9 +105,9 @@ export interface CoordinateInput {
    * DEC-28: fencing token for this run's writes. Must not decrease per ticket.
    *
    * `'next'` asks the ledger to allocate it inside the insert transaction,
-   * under the ticket row lock (issue #113). The consumer asks; a replay or a
-   * test supplies the value it means to write, and a value below the ticket's
-   * fence is refused.
+   * under the ticket row lock. The consumer asks; a replay or a test supplies
+   * the value it means to write, and a value below the ticket's fence is
+   * refused.
    */
   epoch: bigint | 'next';
   actionClass: string;
@@ -208,7 +208,7 @@ export type EscalationReason =
   /** The embedder answered with something the retriever could not read. */
   | 'retriever_unreadable'
   /**
-   * An invariant inside the coordinator did not hold (issue #94).
+   * An invariant inside the coordinator did not hold.
    *
    * A defect in this system, not a model answer and not a limit. The
    * escalate row carries the fault message beside the reason, because the

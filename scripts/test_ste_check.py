@@ -89,9 +89,9 @@ CASES = [
     ("code fence is ignored", PASS, f"```\n{LONG}\n```\n"),
     ("inline code counts as one word", PASS,
      "The file `src/coordinator/coordinator.ts` holds it.\n"),
-    # Issue #117. Code drops out exactly where a markdown reader sees code.
-    # Each case below was a shape where pairing markers across the whole file
-    # hid prose a reader sees, or read code a reader sees as prose.
+    # Code drops out exactly where a markdown reader sees code. Each case below
+    # was a shape where pairing markers across the whole file hid prose a reader
+    # sees, or read code a reader sees as prose.
     ("a tilde fence is ignored", PASS, f"~~~\n{LONG}\n~~~\n"),
     ("backticks inside a sentence open no fence", FAIL,
      "Type ``` to open one.\n\n" + LONG.strip() + ".\n\n```\ncode\n```\n"),

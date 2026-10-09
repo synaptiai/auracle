@@ -1,4 +1,4 @@
-// What the runbook says a consumer restart does (issue #113, criterion 7).
+// What the runbook says a consumer restart does.
 //
 // The claim lives in a document no build reads, and an operator reads it
 // before deciding whether a deploy is safe. So it is pinned here, the way

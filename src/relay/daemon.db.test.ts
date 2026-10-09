@@ -211,9 +211,9 @@ describe('relay daemon loop', () => {
     expect(logs.some((e) => e.event === 'record_failed')).toBe(false);
   });
 
-  // Issue #114: the relay's own log path, with an adapter's error text in it.
-  // An SMTP rejection quotes the recipient it refused, and the relay logs the
-  // cause beside the outcome, so text the far side wrote reaches the line.
+  // The relay's own log path, with an adapter's error text in it. An SMTP
+  // rejection quotes the recipient it refused, and the relay logs the cause
+  // beside the outcome, so text the far side wrote reaches the line.
   it('escapes an adapter error on the default log, and the line parses back', async () => {
     const key = 'idem:hostile-send';
     await seedPending('T-' + randomUUID().slice(0, 8), key);

@@ -9,7 +9,7 @@
 //                         milliseconds (default: 5000). Intake signals an
 //                         arrival and the loop wakes on it, so this bounds
 //                         the wait when a signal is lost rather than setting
-//                         it (issue #25).
+//                         it.
 // - TICKET_DEADLINE_MS    per-ticket clock budget in milliseconds (DEC-25,
 //                         default: 60000)
 // - OPENROUTER_API_KEY    provider credential
@@ -52,9 +52,9 @@
 //
 // Startup performs the deployment-time rebalance step (claimPartition): each
 // claimed partition has the fences of the tickets holding an in-flight run
-// bumped, so an old owner still mid-run fails its next write with
-// stale_epoch (DEC-28). A reply parked for a person and a record whose run
-// has finished keep their fence (issue #113), so a restart strands neither.
+// bumped, so an old owner still mid-run fails its next write with stale_epoch
+// (DEC-28). A reply parked for a person and a record whose run has finished
+// keep their fence, so a restart strands neither.
 import { Pool } from 'pg';
 
 import { FreeScoutEgressAdapter, freeScoutConfigFromEnv } from '../adapters/freescout.js';
@@ -97,7 +97,7 @@ export const EGRESS_ADAPTER_NAMES: readonly string[] = Object.keys(EGRESS_ADAPTE
 
 /**
  * Refuses a hidden profile whose internal action the egress adapter cannot
- * perform with the payload this consumer sends (issue #144, DEC-06).
+ * perform with the payload this consumer sends (DEC-06).
  *
  * The relay performs every internal class through `performAction`, and an
  * adapter refuses a class it does not declare, or a declared field that is
@@ -198,12 +198,11 @@ export function parsePartitions(raw: string | undefined): number[] {
 /**
  * Refuses a partition this deployment can never receive work on.
  *
- * The queue partitions on `hash(conversation_id) % PARTITION_COUNT`
- * (DEC-36), so a partition at or above the count takes no ticket ever. A
- * consumer claiming one starts cleanly, reports health and processes
- * nothing — the silent kind of wrong this issue exists to remove. It is
- * checked here rather than in `parsePartitions`, because only the caller
- * holds both values.
+ * The queue partitions on `hash(conversation_id) % PARTITION_COUNT` (DEC-36),
+ * so a partition at or above the count takes no ticket ever. A consumer
+ * claiming one starts cleanly, reports health and processes nothing — the
+ * silent kind of wrong this check exists to stop. It is checked here rather
+ * than in `parsePartitions`, because only the caller holds both values.
  */
 export function refuseUnreachablePartitions(
   partitions: number[],
@@ -243,11 +242,11 @@ export function requirePromptVer(): string {
 
 async function main(): Promise<void> {
   loadDotEnv();
-  // First, as it was before this issue moved the preflight into
-  // `openRouterFromEnv`. Building the provider is what refuses a missing
-  // OPENROUTER_API_KEY, and it belongs ahead of everything: nothing here
-  // acquires a handle, but when two things are misconfigured the operator
-  // should read the same first error they always did.
+  // First, as it was before the preflight moved into `openRouterFromEnv`.
+  // Building the provider is what refuses a missing OPENROUTER_API_KEY, and it
+  // belongs ahead of everything: nothing here acquires a handle, but when two
+  // things are misconfigured the operator should read the same first error they
+  // always did.
   const provider = openRouterFromEnv();
   const partitions = parsePartitions(process.env['CONSUMER_PARTITIONS']);
   // One read, used by both the ownership check and the hash below. Read
@@ -283,9 +282,9 @@ async function main(): Promise<void> {
   const taxonomy = loadTaxonomy();
 
   // Deployment-time rebalance: raise the fence of every ticket holding an
-  // in-flight run in the claimed partitions, so the previous owner's writes
-  // are refused (DEC-27 cost, DEC-28 safety). A reply parked for a person and
-  // a record whose run has finished keep their fence (issue #113).
+  // in-flight run in the claimed partitions, so the previous owner's writes are
+  // refused (DEC-27 cost, DEC-28 safety). A reply parked for a person and a
+  // record whose run has finished keep their fence.
   const pool = guardLedgerPool(new Pool({ connectionString: requireDbUrl('the consumer'), max: 1 }), logLedgerPoolError('the consumer'));
   let bumped = 0;
   for (const partition of partitions) {
@@ -335,11 +334,11 @@ async function main(): Promise<void> {
     }),
   );
 
-  // Issue #25: intake signals an arrival and the loop wakes on it, instead
-  // of sleeping the full interval through a message that landed just after a
-  // scan. Its own connection, never the pool above: that pool is `max: 1`,
-  // and a LISTEN client is held for the process lifetime, so taking it from
-  // there would leave the consumer with no client for its actual work.
+  // Intake signals an arrival and the loop wakes on it, instead of sleeping the
+  // full interval through a message that landed just after a scan. Its own
+  // connection, never the pool above: that pool is `max: 1`, and a LISTEN
+  // client is held for the process lifetime, so taking it from there would
+  // leave the consumer with no client for its actual work.
   //
   // `intervalMs` stays as the ceiling. A dropped notification costs the
   // latency this daemon had before the signal existed, and nothing more.
@@ -383,10 +382,10 @@ async function main(): Promise<void> {
           // said the process had failed cleanly.
           //
           // `closeLedger`, like the other three jobs. It swallowed the
-          // rejection outright before, which is the defect this issue fixed
-          // in bands, latency and seed-history: a pool that would not close
-          // reported nothing and exited 0. It never rejects, so the `finally`
-          // contract above still holds.
+          // rejection outright before, which is the defect the shared pool
+          // teardown fixed in bands, latency and seed-history: a pool that
+          // would not close reported nothing and exited 0. It never rejects, so
+          // the `finally` contract above still holds.
           await closeLedger(pool, 'consumer');
           resolve();
         });

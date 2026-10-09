@@ -251,8 +251,8 @@ describe('a turn that took more than one attempt (DEC-49)', () => {
     expect(days[1]!.runs).toBe(1);
   });
 
-  // Issue #23. The provider is read off the compose journal row, so it must
-  // survive the round trip through the query, not merely be written.
+  // The provider is read off the compose journal row, so it must survive the
+  // round trip through the query, not merely be written.
   it('reads back one provider for a day whose runs agree', async () => {
     await seedRun({ day: '2026-03-01', abstained: false, provider: 'stub' });
     await seedRun({ day: '2026-03-01', abstained: true, provider: 'stub' });

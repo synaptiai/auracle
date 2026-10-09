@@ -8,7 +8,7 @@
 // The ways the role and its check can fail, each with the cases that hold it:
 //
 //   1. The role keeps a right that acts beyond a read: the four effects a
-//      review of PR #152 found, and what PUBLIC holds.
+//      review of the bounded read found, and what PUBLIC holds.
 //   2. It reads a table the readers do not read, or misses one they do.
 //   3. An attribute, a setting or a membership added by hand outlives the
 //      restate, whoever granted it.
@@ -278,7 +278,7 @@ describe("the readers' role", () => {
     }]);
   });
 
-  // The four effects a review of PR #152 found passing READ ONLY.
+  // The four effects a review of the bounded read found passing READ ONLY.
   it('refuses to end another session', async () => { // 1
     const other = await writer.connect();
     try {
@@ -441,7 +441,7 @@ describe('the restate', () => {
     );
     expect(rows[0]).toEqual({
       rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolreplication: false, rolbypassrls: false,
-      // The maintainer chose ten connections (issue #153).
+      // The maintainer chose ten connections.
       rolconnlimit: 10,
       rolconfig: ['temp_file_limit=1GB'],
       // One row, the role-wide one: the per-database setting is gone.
@@ -483,8 +483,8 @@ describe('the restate', () => {
     expect(rows[0]!.create).toBe(false);
   });
 
-  // Commit, then sort (issue #153): the restate strips what it can, and what
-  // it states and finds otherwise stops the migrate with its name.
+  // Commit, then sort: the restate strips what it can, and what it states and
+  // finds otherwise stops the migrate with its name.
   it('commits what it took, then names what it states and finds otherwise', async () => { // 5
     const { role, pool } = await scratchLogin('CREATEDB');
     await pool.end();

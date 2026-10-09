@@ -19,8 +19,8 @@
 //                  committing the rest of it.
 //
 // Forcing those three into start-then-finish would put a second statement
-// inside `consumer.ts` and `relay.ts`'s open transactions and change what
-// they commit, which issue #75 lists as a non-goal.
+// inside `consumer.ts` and `relay.ts`'s open transactions and change what they
+// commit, which the step split lists as a non-goal.
 //
 // DEC-28 is not weakened here and not extended here. `step_journal` carries
 // no epoch column: the fence lives on `run` and `outbox`, through

@@ -27,7 +27,7 @@ import { logLine } from '../log/line.js';
  * One structured line about the connection, written as the daemon's are.
  *
  * The error text is the server's or the network's, so it is a value from
- * outside, and `logLine` escapes it (issue #114).
+ * outside, and `logLine` escapes it.
  */
 export type ImapFetcherLogEntry =
   | { readonly event: 'imap_client_error'; readonly at: string; readonly error: string }

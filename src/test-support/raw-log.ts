@@ -1,10 +1,9 @@
-// What each process's log test sends and checks (#114).
+// What each process's log test sends and checks.
 //
-// A value from outside a process — a header, a message, an adapter's error
-// text — can carry a character JSON leaves raw. These are the ones a log
-// reader treats as a line break or a reordering, in the order the issue
-// names them: a C1 control (NEL), the Unicode line and paragraph separators,
-// and a bidi override.
+// A value from outside a process — a header, a message, an adapter's error text
+// — can carry a character JSON leaves raw. These are the ones a log reader
+// treats as a line break or a reordering, in this order: a C1 control (NEL),
+// the Unicode line and paragraph separators, and a bidi override.
 import { expect } from 'vitest';
 
 export const HOSTILE = [
@@ -25,10 +24,10 @@ export const HOSTILE = [
 ].join('');
 
 /**
- * The class the issue names, written out here rather than imported, so a
- * sink that escapes a narrower set fails. The C1 controls, the line and
- * paragraph separators, and every bidi control: the marks, the embeddings
- * and overrides, the isolates and the Arabic letter mark.
+ * The class above, written out here rather than imported, so a sink that
+ * escapes a narrower set fails. The C1 controls, the line and paragraph
+ * separators, and every bidi control: the marks, the embeddings and overrides,
+ * the isolates and the Arabic letter mark.
  */
 const RAW = /[\u0080-\u009f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]/u;
 

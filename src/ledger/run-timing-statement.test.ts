@@ -62,9 +62,9 @@ describe('the register on the run-timing columns', () => {
     // `-- db/005: queue wait = created_at - enqueued_at` behind, so the case
     // stayed green with the statement gutted to `SELECT partition` — which is
     // precisely the reader it exists to forbid. Falsified by that mutation.
-    // A column named only in a message string passes nothing either, and a
-    // `//` in a literal no longer blanks the rest of its line (issue #146).
-    // The statements the report sends, from its read-only path. It sends one.
+    // A column named only in a message string passes nothing either, and a `//`
+    // in a literal no longer blanks the rest of its line. The statements the
+    // report sends, from its read-only path. It sends one.
     const calls = boundedReads(`${REPO_ROOT}src/latency/query.ts`).statements;
     expect(calls.length, 'the latency reader sends a different number of statements').toBe(1);
     expect(calls.map((call) => call.statement), 'a statement the scan cannot read').not.toContain(null);

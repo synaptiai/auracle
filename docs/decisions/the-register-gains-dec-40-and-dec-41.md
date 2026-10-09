@@ -2,12 +2,12 @@
 
 ## Problem
 
-Two children of epic #21 cannot start. Issue #27 adds an operator console that
-approves a parked draft, and DEC-11 rejects a new web queue by name. Issue #26
+Two children of epic 21 cannot start. Issue 27 adds an operator console that
+approves a parked draft, and DEC-11 rejects a new web queue by name. Issue 26
 fits a threshold for each intent, and DEC-13 rejects a threshold the system
 learns for each intent.
 
-PR #28 landed a proposal for each. A proposal is not a decision. A document
+PR 28 landed a proposal for each. A proposal is not a decision. A document
 becomes a decision only when a row enters the table in section 2.
 
 ## Proposed outcome
@@ -35,7 +35,7 @@ left alone, because DEC-40 keeps the rule they state.
 
 ## Affected users and systems
 
-Anyone who reads the register. Issues #26 and #27, which this unblocks. No
+Anyone who reads the register. Issues 26 and 27, which this unblocks. No
 runtime component changes.
 
 ## Constraints

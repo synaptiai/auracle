@@ -61,10 +61,11 @@ export default defineConfig({
           exclude: [...SHARED_EXCLUDE, ...MAIL_SUITES],
           globalSetup: ['./src/test-support/db-global-setup.ts'],
           setupFiles: ['./src/test-support/db-url.setup.ts'],
-          // Files run in parallel. They truncate tables between cases, which
-          // is why this project ran one file at a time until issue #68 —
-          // src/test-support/db-url.setup.ts now clones the migrated template
-          // into a database of each file's own, so no two files share one.
+          // Files run in parallel. They truncate tables between cases, which is
+          // why this project ran one file at a time until per-file databases
+          // arrived — src/test-support/db-url.setup.ts now clones the migrated
+          // template into a database of each file's own, so no two files share
+          // one.
           hookTimeout: 60_000,
           // Higher than the other projects, because parallel files share one
           // Postgres and the heaviest case is a seeded history. Measured:

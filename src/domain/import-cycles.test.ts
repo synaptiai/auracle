@@ -1,4 +1,4 @@
-// No module in `src/` imports itself back (issue #75).
+// No module in `src/` imports itself back.
 //
 // Three cycles ran through the coordinator. `classifier.ts` and
 // `composer.ts` read the conversation turn type and the prompt renderer from
@@ -158,7 +158,7 @@ describe('the module graph', () => {
   });
 
   // The leaf rule, stated separately. The cycle above is the symptom; this is
-  // the property issue #75 asked for, and it stays true even if some other
+  // the property the step split asked for, and it stays true even if some other
   // module later imports the coordinator and no cycle results.
   it('keeps the model-call modules clear of the orchestrator', () => {
     for (const leaf of [

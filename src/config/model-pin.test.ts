@@ -53,15 +53,15 @@ function shippedFiles(dir: string, acc: string[] = []): string[] {
 function shipped(): string[] {
   const acc = SHIPPED_TREES.flatMap((tree) => shippedFiles(join(REPO_ROOT, tree)));
   // A frozen record is dated reasoning, not guidance. Two design records name
-  // the model pinned when they were written, and that is what they are for
-  // (issue #79). `src/test-support/frozen-records.ts` says which directories.
+  // the model pinned when they were written, and that is what they are for.
+  // `src/test-support/frozen-records.ts` says which directories.
   return [...acc, ...SHIPPED_FILES.map((name) => join(REPO_ROOT, name))]
     .filter((path) => !isFrozenRecord(path));
 }
 
 /**
  * Every call to a model's `complete` in a module, read from the tree, with the
- * text of each whole call (issue #146).
+ * text of each whole call.
  *
  * The scan used to blank comments and strings with one pattern, and then walk
  * parentheses to find a call's end. A pattern has to guess where a string
@@ -159,11 +159,11 @@ const DEFAULTING = new Set([
 ]);
 
 /**
- * Every model id `text` pins as a default, read from the tree (issue #146):
+ * Every model id `text` pins as a default, read from the tree:
  * a literal that is a fallback (`?? 'x'`), an assignment or an initializer,
  * a property's value, or a returned value, in any quote. A literal that is an
- * object key is none: a price or dimension table keys by model, and a key
- * pins nothing. The pattern this replaced matched single quotes alone, so a
+ * object key is none: a price or dimension table keys by model, and a key pins
+ * nothing. The pattern this replaced matched single quotes alone, so a
  * double-quoted default was invisible.
  */
 function pinnedDefaults(text: string, vendor: string, file: string): string[] {
@@ -370,23 +370,23 @@ function coordinatorSources(): string[] {
 
 describe('the escalation reasons the runbook explains', () => {
   it('names every reason the coordinator can record', () => {
-    // The runbook enumerated the causes in prose and the enumeration went
-    // stale the moment a reason was added. An operator reads these out of
+    // The runbook enumerated the causes in prose and the enumeration went stale
+    // the moment a reason was added. An operator reads these out of
     // `pnpm run escalations` and needs to know what to do about each.
-    // Read the reasons the coordinator actually escalates with, not a slice
-    // of a type declaration. A union member written without a leading pipe,
-    // or contributed by a helper declared after the slice's end marker, was
+    // Read the reasons the coordinator actually escalates with, not a slice of
+    // a type declaration. A union member written without a leading pipe, or
+    // contributed by a helper declared after the slice's end marker, was
     // invisible to the earlier scan and passed silently.
     // The declaration moved to `src/coordinator/types.ts` and the escalate
-    // answers to the step modules under `steps/` (issue #75), so the scan
-    // reads the directory rather than one file. A step added there with a
-    // reason of its own is seen; a scan pinned to `coordinator.ts` would
+    // answers to the step modules under `steps/`, so the scan reads the
+    // directory rather than one file. A step added there with a reason of its
+    // own is seen; a scan pinned to `coordinator.ts` would
     // have silently stopped seeing any of them.
     // The declaration, read from the tree. A member written without a leading
     // pipe was invisible to a pipe-anchored scan, a member after the old end
-    // marker fell outside the slice, and a semicolon in a doc comment
-    // truncated it; each passed silently. The compiler reads the union whole,
-    // and a comment in it is trivia (issue #146).
+    // marker fell outside the slice, and a semicolon in a doc comment truncated
+    // it; each passed silently. The compiler reads the union whole, and a
+    // comment in it is trivia.
     const union = unionMembers(readFileSync(join(REPO_ROOT, 'src/coordinator/types.ts'), 'utf8'), 'EscalationReason');
     expect(union, 'the EscalationReason declaration was not found').not.toBeNull();
     const declared = union!.literals;
@@ -419,9 +419,8 @@ describe('the escalation reasons the runbook explains', () => {
     // The table row, not the file. A mention anywhere satisfied the earlier
     // scan, so prose that named a reason made its own operator-facing row
     // deletable in silence — and the row is what carries "what you do about
-    // it". An adversarial pass deleted the `internal_fault` row with this
-    // suite green, because the paragraph beside the table held the token
-    // (issue #94).
+    // it". An adversarial pass deleted the `internal_fault` row with this suite
+    // green, because the paragraph beside the table held the token.
     const rows = new Set(
       [...runbook.matchAll(/^\|\s*`([a-z_]+)`\s*\|/gm)].map((m) => m[1] as string),
     );

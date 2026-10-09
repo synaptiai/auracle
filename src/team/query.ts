@@ -1,5 +1,5 @@
-// What the team screen shows: how little reached a person, and how long a
-// case held one (issue #112).
+// What the team screen shows: how little reached a person, and how long a case
+// held one.
 //
 // Every figure comes from the ledger. The team's time on support is the hold
 // history DEC-46 records: each take, handover, release, send and lapse, with

@@ -18,11 +18,10 @@
 //      work (DEC-25).
 //
 // This file is the sequencer, and nothing else. Each step is a module under
-// `steps/`, and each does all three of those tasks for itself; the walk
-// below is the only statement of their order. Before this the walk and the
-// six steps were one 592-line function, and testing the gate branch needed
-// a pool, a provider and an egress adapter because there was no smaller
-// thing to call (issue #75).
+// `steps/`, and each does all three of those tasks for itself; the walk below
+// is the only statement of their order. Before this the walk and the six steps
+// were one 592-line function, and testing the gate branch needed a pool, a
+// provider and an egress adapter because there was no smaller thing to call.
 
 import { randomUUID } from 'node:crypto';
 
@@ -49,12 +48,11 @@ import type {
   CoordinatorDeps,
 } from './types.js';
 
-// The vocabulary is declared beside this file and re-exported here, so a
-// caller still addresses the coordinator rather than its parts. The turn
-// type sits further out again, in `src/domain/conversation-turn.ts`: the
-// classifier, the composer and the triage judge each read a turn, this
-// module reads all three, and a type declared here made every one of them
-// import the orchestrator (issue #75).
+// The vocabulary is declared beside this file and re-exported here, so a caller
+// still addresses the coordinator rather than its parts. The turn type sits
+// further out again, in `src/domain/conversation-turn.ts`: the classifier, the
+// composer and the triage judge each read a turn, this module reads all three,
+// and a type declared here made every one of them import the orchestrator.
 export { RUN_STATES, partitionOf } from './types.js';
 export type {
   ActiveRunState,
@@ -93,8 +91,8 @@ export async function coordinateTicket(
   const runId = randomUUID();
   const meter = meterProvider(deps.provider);
   // The context every step reads. The closures below delegate to it, so the
-  // steps still inline here and the extracted ones share one step counter,
-  // one meter and one journal path (issue #75).
+  // steps still inline here and the extracted ones share one step counter, one
+  // meter and one journal path.
   const ctx = createRunContext(deps, input, runId, meter);
 
   // Run creation through the existing ledger insert path. No outbox record:
@@ -139,8 +137,8 @@ export async function coordinateTicket(
 
   // A defect inside the walk ends the run like every other failure: an
   // `escalate` row an operator reads out of `pnpm run escalations`, and a
-  // terminal state (issue #94). Four checks raise `CoordinatorFaultError`,
-  // and only those are caught here.
+  // terminal state. Four checks raise `CoordinatorFaultError`, and only those
+  // are caught here.
   //
   // Caught and not rethrown, because a fault is deterministic. Rethrowing
   // sends the message round the consumer's retry ceiling, which spends a

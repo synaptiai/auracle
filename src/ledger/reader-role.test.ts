@@ -1,4 +1,4 @@
-// The readers' URL and the migrator's login as the role (issue #153).
+// The readers' URL and the migrator's login as the role.
 //
 // The role suite runs the migrator once with a bad URL and sees it stop
 // before any file. It cannot reach each shape of bad URL that way, so the

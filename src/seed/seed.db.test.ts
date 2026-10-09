@@ -28,7 +28,7 @@ import {
 import { writeDocuments, writeHistory } from './write.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 8 });
-// The readers connect as the role that cannot act beyond a read (issue #153).
+// The readers connect as the role that cannot act beyond a read.
 const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 await pool.query('SELECT 1');
@@ -476,9 +476,9 @@ describe('the journal a seeded run leaves', () => {
       [r.step_id, { status: r.status, result: r.result }]));
   }
 
-  // Issue #112: the routing screen reads the latest gate of each product and
-  // intent from one row, which the gate step writes. A seeded run has no
-  // product, so each intent's row is its newest gated run.
+  // The routing screen reads the latest gate of each product and intent from
+  // one row, which the gate step writes. A seeded run has no product, so each
+  // intent's row is its newest gated run.
   it('records the latest gate of each intent, as the gate step does', async () => {
     const newest = new Map<string, PlannedRun>();
     for (const run of plan) {

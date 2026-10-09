@@ -1,5 +1,5 @@
-// Which partitions a consumer claims, and whether it can ever receive work
-// on them (issue #72).
+// Which partitions a consumer claims, and whether it can ever receive work on
+// them.
 //
 // DEC-27 gives each partition one owner and DEC-36 routes on
 // `hash(conversation_id) % PARTITION_COUNT`. Both rules are only as good as

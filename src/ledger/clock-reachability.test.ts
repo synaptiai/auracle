@@ -1,4 +1,4 @@
-// The clock seam must not be reachable from anything that ships (issue #22).
+// The clock seam must not be reachable from anything that ships.
 //
 // `webhook`, `imap`, `consumer` and `relay` write production rows. A clock
 // passed from one of them would stamp a caller's wall clock onto a live run,
@@ -20,8 +20,8 @@
 // The guard reads each module with the TypeScript compiler. It used to strip
 // strings and comments with patterns, and a double-quoted string holding an
 // apostrophe paired with the next single quote on its line, which blanked a
-// call between them (issue #146). A parsed tree has no such pairing to get
-// wrong: a string is a node and a comment is trivia, and neither is a call.
+// call between them. A parsed tree has no such pairing to get wrong: a string
+// is a node and a comment is trivia, and neither is a call.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
@@ -49,7 +49,7 @@ const DAEMON_ENTRIES = [
 const SEAM_MODULES = ['src/ledger/clock.ts', 'src/ledger/insert.ts'];
 
 /**
- * The one module allowed to supply a clock (issue #23).
+ * The one module allowed to supply a clock.
  *
  * The traffic seeder writes a backdated history through the real path, which
  * is what the seam was built for. It is offline tooling, run by hand against
@@ -744,8 +744,8 @@ describe('offendingMentions', () => {
   });
 });
 
-// Issue #146. The guard reads a comment as trivia and a string as a string,
-// so neither can hide a call from it nor invent one.
+// The guard reads a comment as trivia and a string as a string, so neither can
+// hide a call from it nor invent one.
 describe('a call the old patterns could not see', () => {
   it('reads no call written in a comment of either kind', () => {
     expect(callArities('const a = 1; // f(a, b, c, d)', 'f')).toEqual([]);

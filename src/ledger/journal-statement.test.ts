@@ -1,4 +1,4 @@
-// What the one step_journal statement may and may not name (issue #75).
+// What the one step_journal statement may and may not name.
 //
 // Four modules wrote this table with three different column lists. One list
 // exists now, and this suite is what keeps it one: a column added to

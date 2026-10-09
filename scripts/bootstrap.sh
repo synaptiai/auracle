@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Brings a fresh clone to a state where `pnpm run verify` can run (issue #80).
+# Brings a fresh clone to a state where `pnpm run verify` can run.
 #
 # Setup was a list in a document: enable corepack, install, copy the commit
 # hook, copy .env.example, start compose, migrate. Six manual steps, and the

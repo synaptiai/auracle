@@ -1156,7 +1156,7 @@ def denies_permission() -> bool:
 
 
 
-# --- dec-range (issue #79) ---------------------------------------------
+# --- dec-range ---------------------------------------------------------
 
 RANGE_REGISTER = """## 2. Decision register
 
@@ -1222,7 +1222,7 @@ def case_dec_register_skips_a_number(root):
     return "dec-range", FAIL, "skips DEC-02"
 
 
-# --- script-index (issue #79) ------------------------------------------
+# --- script-index ------------------------------------------------------
 
 def script_repo(root, scripts, runbook):
     write(root, "package.json", '{"scripts": ' + scripts + '}')
@@ -1314,9 +1314,9 @@ def case_script_index_pnpm_subcommand_collision(root):
 
 
 def case_script_claim_runbook_says_the_console_ships_no_script(root):
-    # Issue #105: the claim was true once and went stale. Every wording that
-    # could return it is refused, because the console's own guard reads its
-    # source files and never the runbook.
+    # The claim was true once and went stale. Every wording that could return it
+    # is refused, because the console's own guard reads its source files and
+    # never the runbook.
     script_repo(root, '{"build": "tsc"}',
                 "The console ships no script. Run `pnpm run build`.\n")
     return "script-claim", FAIL, "claims the console ships no script"

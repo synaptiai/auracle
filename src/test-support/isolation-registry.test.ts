@@ -1,4 +1,4 @@
-// What the isolation record can and cannot see (issue #80).
+// What the isolation record can and cannot see.
 //
 // The property is "every test file got a database of its own", and no single
 // file can check it about itself. The run's teardown reads the record back.

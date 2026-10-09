@@ -1,4 +1,4 @@
-// The ordering rules an explicit ledger clock must obey (issue #22).
+// The ordering rules an explicit ledger clock must obey.
 //
 // A seeder writes a backdated history through the real fenced path, so the
 // three timing columns come from a caller instead of `now()`. A caller that

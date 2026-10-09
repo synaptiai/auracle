@@ -1,11 +1,10 @@
 /**
- * Writes a planned history through the real ledger path (issue #23).
+ * Writes a planned history through the real ledger path.
  *
- * Every run goes in through `fencedInsert` with an explicit clock, so it
- * takes the same epoch check, the same transaction boundary and the same
- * journal writes a live run takes. The rows a report then describes are rows
- * the system actually produced, which is the whole reason the clock seam
- * exists (issue #22).
+ * Every run goes in through `fencedInsert` with an explicit clock, so it takes
+ * the same epoch check, the same transaction boundary and the same journal
+ * writes a live run takes. The rows a report then describes are rows the system
+ * actually produced, which is the whole reason the clock seam exists.
  *
  * This module is the one place in `src/` that supplies a clock.
  * `src/ledger/clock-reachability.test.ts` names it as the single exception to
@@ -336,8 +335,8 @@ async function writeJournal(client: PoolClient, run: PlannedRun): Promise<void> 
       // the thresholds records a decision nobody can reproduce.
       thresholds: SEED_THRESHOLDS,
     });
-    // Issue #112: the latest gate of this product and intent, as the gate
-    // step records it, so the routing screen reads a seeded ledger too.
+    // The latest gate of this product and intent, as the gate step records it,
+    // so the routing screen reads a seeded ledger too.
     await recordGateLatest(client, {
       runId: run.runId,
       intentId: run.classification.intentId,

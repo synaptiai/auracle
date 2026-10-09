@@ -1,5 +1,5 @@
-// The two rules the console must never break, and the one number it must
-// never invent (issue #27).
+// The two rules the console must never break, and the one number it must never
+// invent.
 //
 // The design's own brief states the first: "No screen anywhere combines
 // agreement and coverage into one confidence score." That is DEC-05 as a
@@ -102,7 +102,7 @@ describe('the gate display', () => {
   });
 
   // The reason is text beside the dash, never a tooltip a keyboard or touch
-  // reader cannot open (issue #102).
+  // reader cannot open.
   it('draws each absent value with the reason its caller gave', () => {
     const html = renderGates({
       agreement: null, coverage: 0.94,
@@ -250,9 +250,8 @@ describe('an escalation reason on an operator surface', () => {
   });
 });
 
-// The rail's avatar (issue #100). Characters, not UTF-16 units: a name that
-// opens with a letter outside the basic plane must not render half of a
-// surrogate pair.
+// The rail's avatar. Characters, not UTF-16 units: a name that opens with a
+// letter outside the basic plane must not render half of a surrogate pair.
 describe('initialsOf', () => {
   it('takes the first character of each of the first two words, upper-cased', () => {
     expect(initialsOf('Ida Synthetic')).toBe('IS');

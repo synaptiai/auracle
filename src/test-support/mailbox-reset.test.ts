@@ -1,4 +1,4 @@
-// Which hosts a test run will empty mailboxes on (issue #80).
+// Which hosts a test run will empty mailboxes on.
 //
 // `MAIL_HOST` used to mean "read mail here". It now also means "delete every
 // message in the mailboxes these suites own here", and the reachability probe

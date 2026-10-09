@@ -1,4 +1,4 @@
-// The console's connection pool (issue #101).
+// The console's connection pool.
 //
 // The queue is the landing page, and every load reads the ledger. A wait for a
 // connection with no bound queues requests without end once the pool is busy,

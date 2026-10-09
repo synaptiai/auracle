@@ -1,4 +1,4 @@
-// Which ledger the console says it is bound to (issue #27).
+// Which ledger the console says it is bound to.
 //
 // Its own module rather than a function in `main.ts`, because `main.ts` runs
 // its `main()` on import: no test can load that file without opening a pool

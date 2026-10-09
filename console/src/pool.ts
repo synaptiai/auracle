@@ -1,4 +1,4 @@
-// The console's connection pool (issue #101).
+// The console's connection pool.
 //
 // Its own module, as `views.ts` is: `main.ts` runs `main()` when it is
 // imported, so a setting defined there cannot be reached from a test.

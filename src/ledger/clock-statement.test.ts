@@ -1,4 +1,4 @@
-// What the widened run insert may and may not name (issue #22).
+// What the widened run insert may and may not name.
 //
 // The seam is a fourth parameter, not a field on FencedRunInput, so the
 // no-clock statement stays the statement that shipped before it: the column

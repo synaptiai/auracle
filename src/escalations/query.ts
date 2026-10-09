@@ -31,11 +31,10 @@ export interface EscalationItem {
    * What the reason does not say, from the same `escalate` row.
    *
    * `internal_fault` names a defect inside the coordinator rather than a step,
-   * so the invariant message is the whole of what an operator has to go on
-   * (issue #94). The runbook tells them to quote it into an issue, and it was
-   * written to the ledger and projected by nothing — reachable only by
-   * hand-written SQL, which this repository's own session hooks refuse against
-   * a live database.
+   * so the invariant message is the whole of what an operator has to go on. The
+   * runbook tells them to quote it into an issue, and it was written to the
+   * ledger and projected by nothing — reachable only by hand-written SQL, which
+   * this repository's own session hooks refuse against a live database.
    *
    * Null for every other reason: no other escalate row writes the key.
    *
@@ -275,9 +274,9 @@ const RUN_SELECT_BODY = `
          -- its turn has moved to a later one (db/033).
          COALESCE(saved.attempt > r.attempt, false) AS attempt_rejected,
          -- DEC-49: whether this run is a reply on a turn that already holds
-         -- a reply that went out, may have, or will: the approval refuses it.
-         -- A reply is a park that names a draft, or one of the reply's class
-         -- parked in the ledger alone, the way the approval reads it (#122).
+         -- a reply that went out, may have, or will: the approval refuses it. A
+         -- reply is a park that names a draft, or one of the reply's class
+         -- parked in the ledger alone, the way the approval reads it.
          ((park.result ? 'draftExternalId'
            OR park.result ->> 'actionClass' = '${CUSTOMER_REPLY_ACTION_CLASS}')
           AND EXISTS (SELECT 1 FROM outbox co JOIN run cr ON cr.run_id = co.run_id
@@ -296,7 +295,7 @@ const RUN_SELECT_BODY = `
          (jsonb_typeof(park.result -> 'payload') = 'object') AS payload_recorded,
          CASE WHEN jsonb_typeof(park.result -> 'payload') = 'object'
               THEN park.result -> 'payload' END AS payload,
-         -- #123: a handle is a non-empty string on a finished park, as the
+         -- A handle is a non-empty string on a finished park, as the
          -- conversation reader reads it. The approval refuses a park whose
          -- handle has another shape, so no surface offers it as a draft.
          CASE WHEN park.status = 'done'
@@ -331,8 +330,8 @@ const RUN_SELECT_BODY = `
  *
  * One statement serves the escalation queue and the console's runs list. A
  * second copy would be two definitions of what a run row is, and the console
- * exists to display what the jobs produce rather than to redefine it — which
- * is why issue #27 forbids the console its own SQL.
+ * exists to display what the jobs produce rather than to redefine it — which is
+ * why the console's first design forbids the console its own SQL.
  */
 export function runSelectFor(states: readonly string[]): string {
   if (states.length === 0) {
@@ -375,9 +374,9 @@ const OUTBOX_SELECT = `
          -- its turn has moved to a later one (db/033).
          COALESCE(saved.attempt > r.attempt, false) AS attempt_rejected,
          -- DEC-49: whether this run is a reply on a turn that already holds
-         -- a reply that went out, may have, or will: the approval refuses it.
-         -- A reply is a park that names a draft, or one of the reply's class
-         -- parked in the ledger alone, the way the approval reads it (#122).
+         -- a reply that went out, may have, or will: the approval refuses it. A
+         -- reply is a park that names a draft, or one of the reply's class
+         -- parked in the ledger alone, the way the approval reads it.
          ((park.result ? 'draftExternalId'
            OR park.result ->> 'actionClass' = '${CUSTOMER_REPLY_ACTION_CLASS}')
           AND EXISTS (SELECT 1 FROM outbox co JOIN run cr ON cr.run_id = co.run_id
@@ -396,7 +395,7 @@ const OUTBOX_SELECT = `
          (jsonb_typeof(park.result -> 'payload') = 'object') AS payload_recorded,
          CASE WHEN jsonb_typeof(park.result -> 'payload') = 'object'
               THEN park.result -> 'payload' END AS payload,
-         -- #123: a handle is a non-empty string on a finished park, as the
+         -- A handle is a non-empty string on a finished park, as the
          -- conversation reader reads it. The approval refuses a park whose
          -- handle has another shape, so no surface offers it as a draft.
          CASE WHEN park.status = 'done'
@@ -522,7 +521,7 @@ export function parseSince(value: string): Date {
  * run id, newest ticket arrival first when the intake row is known.
  */
 /**
- * Every run in the given states, for the console's runs surface (issue #27).
+ * Every run in the given states, for the console's runs surface.
  *
  * Shares `runSelectFor` with the escalation queue, so a run row means one
  * thing. The console owns no SQL: this is the module it reads through, beside
@@ -544,7 +543,7 @@ export async function listRuns(
 }
 
 /**
- * One run by id, or null (issue #27).
+ * One run by id, or null.
  *
  * Exact rather than a scan. The console's first version read the newest
  * thousand runs and searched them, so a run outside that window answered

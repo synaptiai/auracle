@@ -33,11 +33,11 @@ CASES = [
     ("migration against the compose database", ALLOW,
      "DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle npm run db:migrate"),
     ("client inside the compose container", ALLOW, "docker exec db psql -U auracle"),
-    # Issue #74 changed this. A migration reaches a database only through
-    # DATABASE_URL, and src/ledger/migrate.ts exits 1 when it is absent. With
-    # nothing to resolve there is nothing to approve, and blocking it made the
-    # documented setup command unrunnable. check_migration_target below holds
-    # the other half of the rule.
+    # Narrowing the hook changed this. A migration reaches a database only
+    # through DATABASE_URL, and src/ledger/migrate.ts exits 1 when it is absent.
+    # With nothing to resolve there is nothing to approve, and blocking it made
+    # the documented setup command unrunnable. check_migration_target below
+    # holds the other half of the rule.
     ("migration with nothing to resolve", ALLOW, "npm run db:" + "migrate"),
     # The default keeps a body in scope. Only a known data consumer drops it.
     ("unknown command keeps its body in scope", BLOCK,
@@ -71,7 +71,7 @@ CASES = [
      "cat > notes.md <<'EOF'\nRun psql against production only by hand.\nEOF"),
     ("gh issue body is inert", ALLOW,
      "gh issue create --body-file - <<'EOF'\nThe db:migrate step fails.\nEOF"),
-    # --- issue #74: precision ---
+    # --- precision ---
     # The documented setup command. AGENTS.md and README.md both carried a
     # paragraph teaching a workaround for this being blocked.
     ("the documented setup command", ALLOW, "pnpm run db:" + "migrate"),
@@ -90,11 +90,11 @@ CASES = [
     ("a client behind ssh", BLOCK, "ssh bastion psql -h prod.example.com"),
 
     # --- the differential set ---
-    # A first attempt at issue #74 made the client names positional, like the
-    # migration rule. That bought no precision and dropped every form where
+    # A first attempt at that narrowing made the client names positional, like
+    # the migration rule. That bought no precision and dropped every form where
     # the name is not a bare token at a segment head. Each line below was
-    # measured allowing against that attempt and blocking on the rule before
-    # it, so this set is what keeps the precision work from costing strength.
+    # measured allowing against that attempt and blocking on the rule before it,
+    # so this set is what keeps the precision work from costing strength.
     ("a client inside sh -c", BLOCK, 'sh -c "psql -h prod.example.com -c \'select 1\'"'),
     ("a client inside bash -c", BLOCK, "bash -c 'psql -h prod.example.com'"),
     ("a client inside eval", BLOCK, "eval 'psql -h prod.example.com'"),
@@ -165,10 +165,10 @@ def load_hook():
 def check_migration_target() -> int:
     """A migration counts exactly when it can resolve a database.
 
-    This exemption is the part of issue #74 that could be wrong in the unsafe
-    direction, so both sides are asserted. Absent means nothing to approve.
-    Present -- in the shell, or in ./.env, which migrate.ts loads before it
-    reads the variable -- means a real target.
+    This exemption is the part of the hook's narrowing that could be wrong in
+    the unsafe direction, so both sides are asserted. Absent means nothing to
+    approve. Present -- in the shell, or in ./.env, which migrate.ts loads
+    before it reads the variable -- means a real target.
 
     The ./.env half runs against a temporary directory rather than the real
     file. An earlier version of this test wrote the repository's own .env and
@@ -179,8 +179,8 @@ def check_migration_target() -> int:
     `isolated_hook` gives. It did not, and "nothing to resolve" therefore read
     the real ./.env: a checkout that had followed the documented setup failed
     this case and CI passed it, with no code change between them. `.env.example`
-    names DATABASE_URL, and `scripts/bootstrap.sh` copies it on a fresh clone
-    (issue #80), so every new contributor met a failing `pnpm run verify`.
+    names DATABASE_URL, and `scripts/bootstrap.sh` copies it on a fresh clone,
+    so every new contributor met a failing `pnpm run verify`.
     """
     failures = 0
     command = "pnpm run db:" + "migrate"

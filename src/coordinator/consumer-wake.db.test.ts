@@ -1,15 +1,15 @@
-// The consumer wakes on arrival instead of sleeping through it (issue #25).
+// The consumer wakes on arrival instead of sleeping through it.
 //
-// This suite measures the thing the issue exists to change, and it measures
-// it the way `pnpm run latency` does: `run.created_at - run.enqueued_at`,
-// read back off stored rows after a real loop picked a real queued message
-// up. Nothing here is drawn from a model of the loop. The seeder models the
-// loop and is checked separately; a model that agreed with itself would
-// prove nothing about the code.
+// This suite measures the queue wait the arrival signal shortens, and it
+// measures it the way `pnpm run latency` does:
+// `run.created_at - run.enqueued_at`, read back off stored rows after a real
+// loop picked a real queued message up. Nothing here is drawn from a model of
+// the loop. The seeder models the loop and is checked separately; a model that
+// agreed with itself would prove nothing about the code.
 //
 // The default poll interval below is short, so most cases finish in
-// milliseconds. Issue #68 cut it from 4000 ms, because the whole suite was
-// paying for a regime only some of its cases need.
+// milliseconds. Running the database suites in parallel cut it from 4000 ms,
+// because the whole suite was paying for a regime only some of its cases need.
 //
 // Three cases do need a slow poll, and each names its own interval rather
 // than imposing one on the file. They assert that the tick is what picked a
@@ -213,8 +213,8 @@ describe('the consumer loop', () => {
     await truncateLedger(pool);
   });
 
-  // The measurement this issue exists to move. A message arriving just after
-  // a scan waits for the next tick today; with the signal it is picked up at
+  // The measurement the signal exists to move. A message arriving just after a
+  // scan waits for the next tick today; with the signal it is picked up at
   // once.
   //
   // The wake is fired in process rather than over a real notification. The
@@ -255,9 +255,9 @@ describe('the consumer loop', () => {
   // today, and it is the falsification of the case above: if the assertion
   // above passed without the signal doing any work, this one would fail.
   // This case owns a slow interval, because its property is that the wait is
-  // the interval. The suite's default is a few hundred milliseconds (issue
-  // #68), and at that speed a message is picked up so quickly that "it waited
-  // for a tick" and "it was picked up at once" are indistinguishable.
+  // the interval. The suite's default is a few hundred milliseconds, and at
+  // that speed a message is picked up so quickly that "it waited for a tick"
+  // and "it was picked up at once" are indistinguishable.
   it('waits for the poll tick when no signal is supplied', async () => {
     const slowPoll = 2_000;
     const consumer = startConsumer(deps(), options({ intervalMs: slowPoll }));
@@ -317,8 +317,8 @@ describe('the consumer loop', () => {
     expect(waited).toBeLessThan(slowPoll * 2);
   });
 
-  // A signal landing while a scan runs must not be dropped. Dropping it
-  // costs a full interval, which is the defect this issue removes.
+  // A signal landing while a scan runs must not be dropped. Dropping it costs a
+  // full interval, which is the defect the signal removes.
   //
   // The timing is forced rather than hoped for. The first scan's poll is
   // held open after it has read — so it saw an empty queue — and the message

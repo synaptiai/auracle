@@ -98,7 +98,7 @@ records reply text only in the transaction that writes a row naming the draft.
 So a turn with reply text reads that row alone.
 
 The relay sends that draft only for the customer reply action. A profile that
-pairs a draft with another action is a startup defect (#124).
+pairs a draft with another action is a startup defect (issue 124).
 
 DEC-28 checks the fencing epoch again at each scan. A send can time out and
 leave its row pending, and a later scan can then fence that row. The first send

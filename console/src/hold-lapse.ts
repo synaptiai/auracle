@@ -1,5 +1,5 @@
 /**
- * How long a case counts as held (DEC-46, issue #107).
+ * How long a case counts as held (DEC-46).
  *
  * Its own module for the reason `ledger-name.ts` and `hosts.ts` are: `main.ts`
  * runs `main()` when it is imported, so nothing there can be reached from a

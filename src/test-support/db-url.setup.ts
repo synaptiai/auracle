@@ -28,7 +28,7 @@ const runId = inject('dbRunId');
 
 const url = await cloneTemplate(inject('dbUrl'), runId, label);
 process.env['DATABASE_URL'] = url;
-// The same database as the readers' role sees it (issue #153).
+// The same database as the readers' role sees it.
 process.env['READER_DATABASE_URL'] = asReader(url);
 
 // The run's teardown reads these back and fails when one database served two

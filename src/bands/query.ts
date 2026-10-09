@@ -36,8 +36,8 @@ export interface DayRow {
   /** Runs the day held, across every metric. */
   runs: number;
   /**
-   * What answered the model calls behind the day, or null when the day
-   * recorded none or recorded more than one (issue #23).
+   * What answered the model calls behind the day, or null when the day recorded
+   * none or recorded more than one.
    */
   provider: string | null;
   /**
@@ -113,7 +113,7 @@ const SELECT_BY_DAY = `
      WHERE step_id = 'compose' AND result ? 'abstained'
        AND run_id IN (SELECT run_id FROM day_run)
   ),
-  -- What answered the model calls behind each run (issue #23).
+  -- What answered the model calls behind each run.
   --
   -- The composer is what calls the model, so the marker sits on its journal
   -- row beside the abstained key. Read from the row rather than derived from

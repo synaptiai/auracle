@@ -5,13 +5,12 @@
 // DEC-14: a customer-visible profile must carry a non-empty DISCLOSURE_TEXT,
 // so a missing one fails fast here, before any state change.
 //
-// Issue #124: the class and the visibility must agree. The relay sends a
-// parked draft only for the customer reply class, and performs every other
-// class as an internal write (DEC-11, DEC-12). A visible profile with another
-// class parks a draft that is never sent. The reply class shown to no
-// customer is gated as an internal write, so one that is not high risk can
-// skip approval (DEC-12). Either way it parks no draft, and the relay refuses
-// its record.
+// The class and the visibility must agree. The relay sends a parked draft only
+// for the customer reply class, and performs every other class as an internal
+// write (DEC-11, DEC-12). A visible profile with another class parks a draft
+// that is never sent. The reply class shown to no customer is gated as an
+// internal write, so one that is not high risk can skip approval (DEC-12).
+// Either way it parks no draft, and the relay refuses its record.
 import {
   CONSUMER_ACTION_PAYLOAD, DEFAULT_EGRESS_ADAPTER, EGRESS_PERFORMS, classesRun, ownEntry,
 } from '../adapters/performs.js';
@@ -141,9 +140,8 @@ export function actionProfileFromEnv(env: NodeJS.ProcessEnv = process.env): Acti
   const repliesToCustomer = actionClass === CUSTOMER_REPLY_ACTION_CLASS;
   if (isCustomerVisible && !repliesToCustomer) {
     // The hidden way out is named only where the consumer's own adapter runs
-    // the class with its payload, so an operator who takes it is not refused
-    // at the next check (issue #144). None runs a compensation with that
-    // payload.
+    // the class with its payload, so an operator who takes it is not refused at
+    // the next check. None runs a compensation with that payload.
     const egressName = env['EGRESS_ADAPTER'] ?? DEFAULT_EGRESS_ADAPTER;
     const runsHere = classesRun(ownEntry(EGRESS_PERFORMS, egressName) ?? new Map(), CONSUMER_ACTION_PAYLOAD)
       .includes(actionClass);

@@ -1,5 +1,5 @@
 // The artifact carries the per-intent fit, and refuses a malformed one
-// (issue #26, DEC-41).
+// (DEC-41).
 //
 // DEC-41 requires the artifact to record the count and the accuracy of each
 // kind of label, and to state which path ran. A reader who cannot tell a

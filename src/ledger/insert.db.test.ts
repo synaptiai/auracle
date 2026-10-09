@@ -183,12 +183,12 @@ describe('fencedInsert', () => {
     expect(outboxCount.rows[0]!.n).toBe(1);
   });
 
-  // Issue #113: the epoch is allocated under the ticket row lock, inside the
-  // insert's own transaction. A creation that read the fence first — outside
-  // that lock — hands two creations the same epoch, and the second then
-  // raises no fence at all.
-  // DEC-47: the product of the channel the run's message arrived on. Absent
-  // on the input means the run records none, which is what a caller with no
+  // The epoch is allocated under the ticket row lock, inside the insert's own
+  // transaction. A creation that read the fence first — outside that lock —
+  // hands two creations the same epoch, and the second then raises no fence at
+  // all.
+  // DEC-47: the product of the channel the run's message arrived on. Absent on
+  // the input means the run records none, which is what a caller with no
   // channel — a replay, a test — honestly has.
   it('records the product it was given, and none when given none', async () => {
     const withProduct = makeRun('next');
@@ -379,10 +379,10 @@ describe('fencedTransition and the runs the fence still governs', () => {
     return run.runId;
   }
 
-  // Issue #113: a parked run waits for a person, and no consumer holds it.
-  // The fence a later run raised says nothing about it, so the approval must
-  // still commit. Before this, the write was refused and the reply stayed
-  // parked with every approval bouncing.
+  // A parked run waits for a person, and no consumer holds it. The fence a
+  // later run raised says nothing about it, so the approval must still commit.
+  // Before this, the write was refused and the reply stayed parked with every
+  // approval bouncing.
   it('accepts a parked run when the fence moved on (DEC-28)', async () => {
     const runId = await runBehindARaisedFence('awaiting_approval');
     const moved = await fencedTransition(pool, {

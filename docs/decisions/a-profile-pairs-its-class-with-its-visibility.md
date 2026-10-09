@@ -48,7 +48,7 @@ control, format and space characters, and two hieroglyph blanks. The consumer
 also ignores a Khitan filler, a Duployan selector and a Tifinagh joiner.
 
 Every other pairing starts as before. The consumer does not check that the
-egress adapter performs an internal class. Issue #144 records that gap.
+egress adapter performs an internal class. Issue 144 records that gap.
 
 ## Affected users and systems
 

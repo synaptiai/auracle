@@ -1,4 +1,4 @@
-// The public surface is the whole of what another package may import (#73).
+// The public surface is the whole of what another package may import.
 //
 // Three rules, none of which stays true by itself. This reads the files
 // rather than trusting a review: `package.json` used to publish `./dist/*`,
@@ -141,11 +141,11 @@ describe('the public surface', () => {
   });
 
   it('never re-exports from a module that starts a process', () => {
-    // The defect this issue names. The console imported `bands/run.js` and
-    // `latency/run.js` — modules that parse argv and set `process.exitCode` —
-    // to format a rate and a duration. A barrel pointing at one would put
-    // that back with a tidier name, and pointing at `relay/main.js` would
-    // hand a consumer the outbox drainer.
+    // The defect this case guards against. The console imported `bands/run.js`
+    // and `latency/run.js` — modules that parse argv and set `process.exitCode`
+    // — to format a rate and a duration. A barrel pointing at one would put
+    // that back with a tidier name, and pointing at `relay/main.js` would hand
+    // a consumer the outbox drainer.
     const offenders: string[] = [];
     for (const file of BARRELS) {
       for (const specifier of specifiersOf(readFileSync(join(PUBLIC_DIR, file), 'utf8'))) {

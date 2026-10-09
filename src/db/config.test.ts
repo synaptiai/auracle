@@ -1,4 +1,4 @@
-// Which readers' URL a long-running process takes (issue #153).
+// Which readers' URL a long-running process takes.
 //
 // No database suite can reach these paths: the test setup always publishes
 // READER_DATABASE_URL. The ways the choice can fail:

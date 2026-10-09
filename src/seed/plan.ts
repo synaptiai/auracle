@@ -1,5 +1,5 @@
 /**
- * A synthetic traffic history, planned before anything is written (issue #23).
+ * A synthetic traffic history, planned before anything is written.
  *
  * Pure. It opens no connection, reads no clock and calls no model, so the
  * same seed always yields the same history. That is the whole point: a band
@@ -7,10 +7,10 @@
  *
  * ## What this models, and why it is not tuned
  *
- * Issue #25's evidence gate reads `pnpm run latency` against this history and
- * decides which correction head-of-line delay needs. So a history built to
- * make one rule fire would seed the check with the material meant to verify
- * it, and the gate would be reading its own answer back.
+ * The arrival wake's evidence gate read `pnpm run latency` against this history
+ * and decided which correction head-of-line delay needs. So a history built to
+ * make one rule fire would seed the check with the material meant to verify it,
+ * and the gate would be reading its own answer back.
  *
  * Every parameter below therefore comes from the system's shape, never from a
  * wanted verdict:
@@ -27,10 +27,10 @@
  * - **Queue wait is not drawn at all.** It is computed from the consumer's
  *   real loop, and three facts of that loop shape it:
  *     1. Intake signals the consumer inside the enqueue transaction and the
- *        loop wakes on it (issue #25), so a message is visible the instant
- *        it is queued. `CONSUMER_INTERVAL_MS` remains as a ceiling for a
- *        lost signal. Set `wakeOnArrival: false` for the loop before that
- *        change, where a message waited for the next tick at any load.
+ *        loop wakes on it, so a message is visible the instant it is queued.
+ *        `CONSUMER_INTERVAL_MS` remains as a ceiling for a lost signal. Set
+ *        `wakeOnArrival: false` for the loop before that change, where a
+ *        message waited for the next tick at any load.
  *     2. `pollPartition` takes every queued message across the partitions one
  *        consumer owns, and `scanBatchSize` defaults to the whole queue.
  *     3. `processQueuedTickets` awaits each `coordinateTicket` before the
@@ -806,10 +806,10 @@ export interface PlanOptions {
   /** The consumer's poll period, CONSUMER_INTERVAL_MS. */
   pollIntervalMs?: number;
   /**
-   * Whether the consumer wakes on arrival (issue #25). True models the loop
-   * that ships: intake signals on enqueue and the consumer scans at once,
-   * with the poll period left as a ceiling. False models the loop before it,
-   * where a message was invisible until the next tick.
+   * Whether the consumer wakes on arrival. True models the loop that ships:
+   * intake signals on enqueue and the consumer scans at once, with the poll
+   * period left as a ceiling. False models the loop before it, where a message
+   * was invisible until the next tick.
    *
    * Both regimes stay expressible on purpose. The wait figures this planner
    * produces are the evidence for what the poll floor costs, and evidence

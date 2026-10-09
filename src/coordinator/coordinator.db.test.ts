@@ -234,10 +234,10 @@ describe('section 4.3 run coordinator', () => {
       'gate',
       'retrieve',
     ]);
-    // Issue #23: the compose row records what answered the model calls, so
+    // The compose row records what answered the model calls, so
     // `pnpm run bands` can refuse to compare a day against a baseline from a
-    // different provider. Read from the provider, never derived from the
-    // pins, which are an independent option.
+    // different provider. Read from the provider, never derived from the pins,
+    // which are an independent option.
     //
     // 'stub', because `FakeProvider` now declares itself one. It declared no
     // kind before, and `provider.ts` says an absent kind means 'model', so
@@ -640,11 +640,11 @@ describe('section 4.3 run coordinator', () => {
     });
   });
 
-  // Issue #94: a defect inside the walk reaches the same place every other
-  // failure does. The four checks are invariants this system owns, so none is
-  // reachable by feeding the run bad input — this one is driven by taking the
-  // intent away between the step that classified it and the step that gates
-  // on it, which is exactly the state the check exists to name.
+  // A defect inside the walk reaches the same place every other failure does.
+  // The four checks are invariants this system owns, so none is reachable by
+  // feeding the run bad input — this one is driven by taking the intent away
+  // between the step that classified it and the step that gates on it, which is
+  // exactly the state the check exists to name.
   //
   // End to end, against the real ledger, because the claim is about the row
   // an operator reads and the state the run stops in. A stub can assert the
@@ -1117,9 +1117,9 @@ describe('section 4.3 run coordinator', () => {
     );
     expect(drafts.rows).toHaveLength(0);
 
-    // Issue #94: the refusal comes before the write-before-act row, so the
-    // run leaves no 'park' row at status 'started' with a null result. The
-    // step refuses rather than acts, so DEC-04 still holds.
+    // The refusal comes before the write-before-act row, so the run leaves no
+    // 'park' row at status 'started' with a null result. The step refuses
+    // rather than acts, so DEC-04 still holds.
     const parkRows = (await journalRows(result.runId)).filter((row) => row.step_id === 'park');
     expect(parkRows).toEqual([]);
   });
@@ -1203,9 +1203,9 @@ describe('section 4.3 run coordinator', () => {
     });
 
     // DEC-13 sets risk per intent, and a customer reply is gated before the
-    // high-risk rule is read. So the reason alone never says a waiting reply
-    // is high risk. The gate row records the tier it judged the intent at, so
-    // the queue can put that reply first (issue #101).
+    // high-risk rule is read. So the reason alone never says a waiting reply is
+    // high risk. The gate row records the tier it judged the intent at, so the
+    // queue can put that reply first.
     it('records the risk tier of the intent it judged, beside the rule that decided', async () => {
       await indexFixtureDoc();
       const ticketId = 'T-' + randomUUID().slice(0, 8);

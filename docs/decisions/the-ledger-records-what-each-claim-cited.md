@@ -30,7 +30,7 @@ The coordinator's write path, at the `retrieve`, `compose` and `gate` steps.
 The approval bridge. Two migrations on `run`. The seeder, so every new reader
 has rows to read.
 
-No reader and no surface changes here. Those are issues #50 and #51.
+No reader and no surface changes here. Those are issues 50 and 51.
 
 ## Constraints
 
@@ -72,4 +72,4 @@ change are implementation details.
 
 Retention. This stores model-written claim text and cited document bodies for the life of
 the row. The customer text `db/010` stores sits beside them. No purge job ships, per DEC-19. The runbook states what is stored and
-gives the statements an adopter runs to remove it, in issue #52.
+gives the statements an adopter runs to remove it, in issue 52.

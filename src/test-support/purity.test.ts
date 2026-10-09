@@ -95,11 +95,11 @@ const KNOWN_PURE_MENTIONERS = [
  * closed that, and this file is what the closure found. An entry here is a
  * claim that a reader checked the import and it opens no connection.
  *
- * `db/config.test.ts` calls `requireReaderDbUrl`, which reads the
- * environment and returns a string (issue #153).
+ * `db/config.test.ts` calls `requireReaderDbUrl`, which reads the environment
+ * and returns a string.
  *
- * `test-support/local-host.test.ts` calls `prepareTemplate` with a remote
- * host, which refuses before it opens a pool (issue #153).
+ * `test-support/local-host.test.ts` calls `prepareTemplate` with a remote host,
+ * which refuses before it opens a pool.
  */
 const KNOWN_PURE_LEDGER_IMPORTERS: ReadonlyMap<string, string> = new Map([
   ['src/ledger/clock-statement.test.ts', "imports 'ledger/insert', which opens a connection"],
@@ -117,10 +117,10 @@ const KNOWN_PURE_LEDGER_IMPORTERS: ReadonlyMap<string, string> = new Map([
  * `test-support/template-db.js` creates databases and migrates them.
  *
  * `public/ledger-read` is here because the rule reads one level deep. It
- * re-exports `db/config`, so without this entry a pure suite could reach a
- * live pool through the barrel while the guard stayed green — the barrel
- * would be a hole cut in the guard by the very change that added it (#73).
- * Any future barrel that re-exports a module on this list belongs on it too.
+ * re-exports `db/config`, so without this entry a pure suite could reach a live
+ * pool through the barrel while the guard stayed green — the barrel would be a
+ * hole cut in the guard by the very change that added it. Any future barrel
+ * that re-exports a module on this list belongs on it too.
  */
 const LEDGER_MODULES = [
   'db/config',
@@ -316,11 +316,11 @@ describe('the detector', () => {
     expect(impurityReasons("import { humanMs } from 'auracle/format';")).toEqual([]);
     expect(impurityReasons("import { CLASSIFIER_K } from 'auracle/domain';")).toEqual([]);
 
-    // A barrel is a one-level path of its own. `public/ledger-read`
-    // re-exports `db/config`, so a pure suite importing the barrel reaches a
-    // live pool; without the entry the guard reads the specifier, finds
-    // nothing on the list and passes. Issue #73 added the barrel and this
-    // case together for that reason.
+    // A barrel is a one-level path of its own. `public/ledger-read` re-exports
+    // `db/config`, so a pure suite importing the barrel reaches a live pool;
+    // without the entry the guard reads the specifier, finds nothing on the
+    // list and passes. One change added the barrel and this case together for
+    // that reason.
     expect(
       impurityReasons("import { readRun } from '../public/ledger-read.js';", 'src/policy/a.test.ts'),
     ).toEqual([

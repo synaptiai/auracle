@@ -15,10 +15,9 @@ minimumReleaseAge: 1440
 #
 #   esbuild        vitest's bundler
 #
-# Three entries read `false`: protobufjs, ssh2 and cpu-features. All three
-# exist for `testcontainers` alone, which is a development dependency that 95
-# packages hang off and which a run naming DATABASE_URL and MAIL_HOST never
-# loads (issue #80).
+# Three entries read `false`: protobufjs, ssh2 and cpu-features. All three exist
+# for `testcontainers` alone, which is a development dependency that 95 packages
+# hang off and which a run naming DATABASE_URL and MAIL_HOST never loads.
 #
 # Declined rather than deleted. A resolved package with a build script and no
 # entry makes `pnpm install` exit 1 with ERR_PNPM_IGNORED_BUILDS, and `pnpm
@@ -30,10 +29,10 @@ minimumReleaseAge: 1440
 # JavaScript implementation. The throwaway container path was run with all
 # three unbuilt.
 #
-# The repository is a workspace since issue #27. `console/` is the operator
-# console, and it is a separate package for one reason: DEC-11 keeps the core
-# free of a new interface, and a package boundary is the only way to state
-# that a console dependency can never reach the daemons. The core `build`,
+# The repository is a workspace since the console arrived. `console/` is the
+# operator console, and it is a separate package for one reason: DEC-11 keeps
+# the core free of a new interface, and a package boundary is the only way to
+# state that a console dependency can never reach the daemons. The core `build`,
 # `lint` and `test` targets cover `src/` alone, so the console package adds
 # nothing to any of them.
 allowBuilds:

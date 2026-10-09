@@ -1,4 +1,4 @@
-// The labeller, and the score that makes its labels readable (issue #26).
+// The labeller, and the score that makes its labels readable.
 //
 // DEC-41 requires two things of a threshold fitted for each intent: each case
 // says what labelled it, and the artifact says how accurate that labeller

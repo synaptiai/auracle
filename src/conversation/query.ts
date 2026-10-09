@@ -221,7 +221,7 @@ const SELECT_TURNS = `
     FROM turn t
     LEFT JOIN LATERAL (
            SELECT run.run_id, run.state, run.approved_by,
-                  -- #123: what this run's park is. Only a finished park names
+                  -- What this run's park is. Only a finished park names
                   -- either kind: the crash marker records an intent, and a
                   -- refusal records an error. A draft is a non-empty string
                   -- handle in the helpdesk (DEC-11), as the approval requires. An internal write records a payload
@@ -249,14 +249,15 @@ const SELECT_TURNS = `
     -- by step anyway, so a second row could never make the answer depend on
     -- a plan.
     --
-    -- A turn with reply text reads only the reply's own row. The key comes
-    -- from the action (DEC-24), so a later run that took another action holds
-    -- a row with its own status, and that status says nothing about whether
-    -- the customer has the reply. The approval records reply text only for a
+    -- A turn with reply text reads only the reply's own row. The key comes from
+    -- the action (DEC-24), so a later run that took another action holds a row
+    -- with its own status, and that status says nothing about whether the
+    -- customer has the reply. The approval records reply text only for a
     -- draft-backed park, in the transaction that writes a row whose payload
     -- names that draft. So the draft marks the reply's row, and a reply turn
     -- reads that row or none. The relay sends the draft only for the customer
-    -- reply action; a profile that pairs a draft with another class is #124.
+    -- reply action; a profile that pairs a draft with another class is refused
+    -- at startup.
     LEFT JOIN LATERAL (
            SELECT o.status
              FROM run rr
@@ -305,9 +306,9 @@ function replyAbsenceFor(
   parkedKind: 'draft' | 'action' | null,
 ): ReplyAbsence {
   if (runState === null) return 'not_retained';
-  // #123: the park row says what waits. A customer reply parks as a draft
-  // (DEC-11); an internal write parks with its payload (DEC-34). A park that
-  // names neither reads as neither.
+  // The park row says what waits. A customer reply parks as a draft (DEC-11);
+  // an internal write parks with its payload (DEC-34). A park that names
+  // neither reads as neither.
   if (runState === 'awaiting_approval') {
     if (parkedKind === 'draft') return 'reply_awaiting_approval';
     return parkedKind === 'action' ? 'action_awaiting_approval' : 'awaiting_approval';

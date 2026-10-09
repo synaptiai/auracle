@@ -1,5 +1,5 @@
-// The one reading of a fault, proved against the cases the four deleted
-// copies disagreed on (issue #72).
+// The one reading of a fault, proved against the cases the four deleted copies
+// disagreed on.
 import { describe, expect, it } from 'vitest';
 
 import { errorMessage } from './errors.js';

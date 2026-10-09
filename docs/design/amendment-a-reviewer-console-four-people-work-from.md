@@ -204,9 +204,9 @@ approval records the source of its name. The sources are the roster, a header
 claim under DEC-42, and no one.
 
 This proposal asked for a development reviewer to be a source of its own. The
-maintainer's answer, recorded as issue #106's third acceptance criterion, is
+maintainer's answer, recorded as issue 106's third acceptance criterion, is
 three sources: an approval a development reviewer makes is a name the roster
-holds, so it records `roster` like any other. Issue #106 shipped it that way
+holds, so it records `roster` like any other. Issue 106 shipped it that way
 on 2026-09-18.
 
 A console started from source and bound to its own loopback address may name

@@ -1,4 +1,4 @@
-// Whether the console reads a parked draft back before it approves (issue #102).
+// Whether the console reads a parked draft back before it approves.
 //
 // Section 4.10 measures how far a person edited a draft before it was sent.
 // The approval can only measure that by reading the draft back from the

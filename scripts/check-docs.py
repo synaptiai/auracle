@@ -116,9 +116,9 @@ LICENCE_TERMS_SHA256 = "59d8f0ba87ad9a2f1a431123c8d16646e5b89ba53653e818f16d136d
 # them. A file may also end at the terms. This is the digest of the same
 # apache.org appendix, taken the same way.
 LICENCE_APPENDIX_SHA256 = "15e0e14d590e112dcf1801fb0ca4a74c6178f468147941bfe6840cb55fa84ca4"
-# The documents that state the register's range. Each says it in prose a
-# reader believes, and each went stale when DEC-43 arrived: two said DEC-42
-# while the register defined 43 (issue #79).
+# The documents that state the register's range. Each says it in prose a reader
+# believes, and each went stale when DEC-43 arrived: two said DEC-42 while the
+# register defined 43.
 RANGE_DOCS = ("README.md", "CONTRIBUTING.md", "AGENTS.md", "docs/quick-map.md")
 DIAGRAM_COUNT = 3
 
@@ -985,7 +985,7 @@ def check_dec_range(root: str, findings: list[str]) -> None:
     README.md said DEC-01 to DEC-42 in two places while the register defined
     43, and CONTRIBUTING.md and AGENTS.md said 43. Three documents, two
     answers, and the register settles it — so nothing but drift kept them
-    apart (issue #79).
+    apart.
 
     The register is read the way `decisions` reads it, through section 2's
     table rows, so one parse decides both checks.
@@ -1063,7 +1063,7 @@ def check_script_index(root: str, findings: list[str]) -> None:
     """Every script the manifest defines is a command the runbook names.
 
     `seed-history` existed in `package.json` and in no document at all, so the
-    only way to learn of it was to read the manifest (issue #79).
+    only way to learn of it was to read the manifest.
 
     The match is on the command a reader would type — `pnpm run <name>` or
     `pnpm <name>` — not on the bare word. "build", "check" and "test" are
@@ -1119,8 +1119,7 @@ def check_map_coverage(root: str, findings: list[str]) -> None:
 
     The map said two decisions appeared in no row. Four did. A sentence
     counting rows of a table beside it is exactly the claim a checker should
-    decide, and this file's whole argument is that such claims get checked
-    (issue #79).
+    decide, and this file's whole argument is that such claims get checked.
 
     The list is read as a set of ids, not a count, so a number in prose never
     has to be kept in step with it.
@@ -1250,9 +1249,9 @@ def check_script_claim(root: str, findings: list[str]) -> None:
     """The runbook never claims the console ships no script.
 
     The claim was true once and went stale when the console gained its one
-    pinned script (issue #105). A reader who meets it again is sent to a false
-    statement, and the console's own guard reads its source files rather than
-    the runbook, so the phrasing rule lives here.
+    pinned script. A reader who meets it again is sent to a false statement,
+    and the console's own guard reads its source files rather than the
+    runbook, so the phrasing rule lives here.
 
     Each phrase is read against the runbook with its whitespace collapsed and
     its case folded. The runbook is wrapped prose, and a claim that returns

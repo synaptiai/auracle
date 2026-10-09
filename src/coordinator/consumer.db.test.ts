@@ -146,9 +146,9 @@ type QueryFn = (text: string | unknown, values?: unknown[]) => Promise<unknown>;
  * A pool view that runs `match`-triggered `hook` once, before the query that
  * matches it. Used to land a claimPartition bump at a precise point inside a
  * walk, which is where a concurrent rebalance would hit in production — and,
- * since issue #113, to prove that no fence read happens outside the insert at
- * all. Ledger writes themselves go through pool.connect() and bypass the
- * wrapper, so only coordinator-level queries are intercepted.
+ * since the fix for stranded approvals, to prove that no fence read happens
+ * outside the insert at all. Ledger writes themselves go through pool.connect()
+ * and bypass the wrapper, so only coordinator-level queries are intercepted.
  */
 function wrappedPool(real: Pool, match: string, hook: () => Promise<void>): Pool {
   let fired = false;
@@ -380,8 +380,8 @@ describe('section 4.3 partition consumer', () => {
     expect(runPartition).toBe(filedUnder);
 
     // The proof that matters: the rebalance of the partition the ticket was
-    // filed under finds this ticket's fence and bumps it. The run the scan
-    // just resolved is not in flight, so issue #113 leaves its fence alone:
+    // filed under finds this ticket's fence and bumps it. The run the scan just
+    // resolved is not in flight, so the claim leaves its fence alone:
     // what a claim moves is a pickup still walking the ticket, which is what
     // the run below stands for.
     await fencedInsert(
@@ -1456,7 +1456,7 @@ describe('section 4.3 partition consumer', () => {
     expect(fence.rows[0]?.epoch).toBe('2');
 
     // The next creation's epoch comes from the ledger, under the ticket row
-    // lock (issue #113), and it raises the fence with it.
+    // lock, and it raises the fence with it.
     const third = await fencedInsert(
       pool,
       {
@@ -1483,8 +1483,8 @@ describe('section 4.3 partition consumer', () => {
     await processQueuedTickets(makeDeps(happyScript(), 'old-owner'), optionsFor([partition]));
 
     // The customer replies, and that pickup is still walking when deployment
-    // moves ownership. Issue #113: the claim raises the fence of the tickets
-    // whose runs are in flight, and this ticket holds one.
+    // moves ownership. The claim raises the fence of the tickets whose runs are
+    // in flight, and this ticket holds one.
     await enqueueTicket(
       pool,
       { ticketId, messageId: `${ticketId}-follow-up`, ticketText: TICKET_TEXT },
@@ -1544,10 +1544,10 @@ describe('section 4.3 partition consumer', () => {
   });
 
   it('cuts off a run in every state a consumer drives, after a claim (DEC-28)', async () => {
-    // Criterion 5 of issue #113: narrowing the claim left the guarantee
-    // whole. A run in flight is exactly what a claim cuts off, wherever the
-    // walk stopped, and the ticket pays one fence for it. Each state gets its
-    // own partition, so the count proves the claim moved that ticket alone.
+    // Narrowing the claim left the guarantee whole. A run in flight is exactly
+    // what a claim cuts off, wherever the walk stopped, and the ticket pays one
+    // fence for it. Each state gets its own partition, so the count proves the
+    // claim moved that ticket alone.
     const nextHop: Readonly<Record<string, string>> = {
       received: 'classified',
       classified: 'retrieved',
@@ -1725,9 +1725,9 @@ describe('section 4.3 partition consumer', () => {
     expect(setup.map((r) => r.outcome)).toEqual(['resolved']);
 
     await enqueueTicket(pool, { ticketId, messageId: ticketId, ticketText: TICKET_TEXT }, PARTITION_COUNT);
-    // Hook fires just before the first step_journal write, i.e. right after
-    // the old owner's fencedInsert allocated epoch 2 and raised the fence to
-    // 2 (issue #113: the ledger allocates under the row lock).
+    // Hook fires just before the first step_journal write, i.e. right after the
+    // old owner's fencedInsert allocated epoch 2 and raised the fence to 2 (the
+    // ledger allocates under the row lock).
     const hookedDeps = {
       ...makeDeps(happyScript(), 'old-owner'),
       pool: wrappedPool(
@@ -1950,9 +1950,9 @@ describe('a snoozed case comes back when the period ends', () => {
 });
 });
 
-// Issue #114: the consumer's own log path, with a provider's error text in it.
-// A model provider answers a refused call with a body the far side wrote, and
-// the consumer logs the failed ticket with that fault, so it reaches the line.
+// The consumer's own log path, with a provider's error text in it. A model
+// provider answers a refused call with a body the far side wrote, and the
+// consumer logs the failed ticket with that fault, so it reaches the line.
 describe('the consumer log', () => {
   beforeEach(async () => {
     await truncateLedger(pool);

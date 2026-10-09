@@ -52,9 +52,8 @@ describe('the partition key the repository states (DEC-36)', () => {
       ...SHIPPED_FILES.map((name) => join(REPO_ROOT, name)),
     ]
       .filter((path) => path !== SELF)
-      // A frozen record states the partition key as it stood when the
-      // record was written. Two do say the ticket id alone, and both
-      // predate DEC-36 (issue #79).
+      // A frozen record states the partition key as it stood when the record
+      // was written. Two do say the ticket id alone, and both predate DEC-36.
       .filter((path) => !isFrozenRecord(path));
     const naming = files
       .filter((path) =>

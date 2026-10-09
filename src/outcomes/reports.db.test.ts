@@ -44,7 +44,7 @@ import { sendBackRun } from './send-back.js';
 import { snoozeRun } from './snooze.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
-// The readers connect as the role that cannot act beyond a read (issue #153).
+// The readers connect as the role that cannot act beyond a read.
 const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 // src/test-support/db-global-setup.ts guarantees a reachable database before

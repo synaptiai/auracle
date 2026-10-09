@@ -1,4 +1,4 @@
-// How long a stopping console waits for a request still in flight (issue #27).
+// How long a stopping console waits for a request still in flight.
 //
 // Its own module so a bound that must stay inside it can be held to it: the
 // read-back gives up before this wait ends, which leaves the rest of the wait

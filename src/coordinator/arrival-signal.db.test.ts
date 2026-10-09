@@ -1,4 +1,4 @@
-// The arrival signal, proved against a real Postgres (issue #25).
+// The arrival signal, proved against a real Postgres.
 //
 // The signal is an optimisation and never an authority: the queue row is the
 // authority. So the two properties that matter are both about agreement
@@ -49,11 +49,11 @@ async function listeners(): Promise<number[]> {
 /**
  * Waits until a session other than `old` listens, and `old` itself is gone.
  *
- * Issue #118. `pg_terminate_backend` returns once the signal is sent, not
- * once the backend has exited, so the terminated session can still be listed
- * as listening. A wait that took any listening session could return on it at
- * once, the ticket went out before the new listener existed, and the
- * notification reached nobody. The wait names the session it is waiting for.
+ * `pg_terminate_backend` returns once the signal is sent, not once the backend
+ * has exited, so the terminated session can still be listed as listening. A
+ * wait that took any listening session could return on it at once, the ticket
+ * went out before the new listener existed, and the notification reached
+ * nobody. The wait names the session it is waiting for.
  */
 async function awaitNewListener(old: number): Promise<number> {
   const deadline = Date.now() + 20_000;

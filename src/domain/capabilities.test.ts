@@ -1,4 +1,4 @@
-// The contract stays single-sourced (issue #70, DEC-06).
+// The contract stays single-sourced (DEC-06).
 //
 // `AdapterCapabilities` was defined in `src/policy/policy.ts` and again in
 // `src/adapters/types.ts`, both comments claiming to be "the exact shape from

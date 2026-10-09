@@ -1,4 +1,4 @@
-// Each test file gets a database of its own (issue #68).
+// Each test file gets a database of its own.
 //
 // That is what lets the db project run its files in parallel. The suites
 // truncate tables between cases, so two files sharing a database corrupt each

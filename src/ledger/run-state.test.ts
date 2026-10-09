@@ -1,4 +1,4 @@
-// The one predicate the three fence callers read (issue #113, DEC-28).
+// The one predicate the three fence callers read (DEC-28).
 //
 // The consumer's claim, the ledger's transition and the relay's send all ask
 // the same question — is this run still in flight, or has it left a

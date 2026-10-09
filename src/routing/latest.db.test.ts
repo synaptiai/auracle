@@ -1,4 +1,4 @@
-// The gate's latest record per product and intent (issue #112).
+// The gate's latest record per product and intent.
 //
 // The gate step writes one row per product and intent, and the routing screen
 // reads only those rows. A later gate replaces the row only when its run is

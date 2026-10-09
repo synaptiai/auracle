@@ -1,4 +1,4 @@
-// What a failed draft read means for a send (issue #159, DEC-30).
+// What a failed draft read means for a send (DEC-30).
 //
 // Its own module because it names IMAP response codes, and the guard that
 // keeps `.env.example` complete reads every capitalised word in a module that

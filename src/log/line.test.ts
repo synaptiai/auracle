@@ -63,10 +63,10 @@ describe('a structured log line', () => {
   });
 });
 
-// Issue #114: a command prints a report for a person to read in a terminal,
-// indented across lines. It is not one line, and it carries values from
-// outside — an escalation reason quoting an adapter, a helpdesk copy a
-// person edited. The same characters reorder or hide what a person reads.
+// A command prints a report for a person to read in a terminal, indented across
+// lines. It is not one line, and it carries values from outside — an escalation
+// reason quoting an adapter, a helpdesk copy a person edited. The same
+// characters reorder or hide what a person reads.
 describe('a printed report', () => {
   it('is the indented JSON of the value when every string is plain', () => {
     const value = { outcome: 'approved', items: [{ reason: 'policy_escalated' }] };

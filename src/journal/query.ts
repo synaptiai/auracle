@@ -156,7 +156,7 @@ export interface ComposeRecord {
    * was written rather than a run that cited nothing.
    */
   readonly citedBodies: Readonly<Record<string, string>> | null;
-  /** What answered the run's model calls: `stub` or `model` (issue #23). */
+  /** What answered the run's model calls: `stub` or `model`. */
   readonly provider: string | null;
 }
 
@@ -332,7 +332,7 @@ export interface JournalStep {
   readonly close: CloseRecord | null;
   /** Present on a `send_back` row: who asked for a new attempt, and why (DEC-49). */
   readonly sendBack: SendBackRecord | null;
-  /** Present on a `supersede` row: why the run stopped with no send (#122). */
+  /** Present on a `supersede` row: why the run stopped with no send. */
   readonly supersede: SupersedeRecord | null;
   /** DEC-24: the action-derived key, on an `execute` row. */
   readonly idemKey: string | null;
@@ -934,7 +934,7 @@ export interface SendBackRecord {
 }
 
 /**
- * Why a run stopped superseded, on its `supersede` row (#122).
+ * Why a run stopped superseded, on its `supersede` row.
  *
  * `turn_answered`: the turn already held a customer reply, and `answeredBy`
  * names the run that held it. `reply_waiting`: another run of the attempt

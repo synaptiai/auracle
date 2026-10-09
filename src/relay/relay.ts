@@ -17,11 +17,10 @@
  *
  * When a send fails and the delivery state
  * is unknown, the relay must not retry: it sets the record to
- * `delivery_unknown` and escalates the run to the approval path (DEC-30).
- * When the adapter supports read-back, the relay reconciles instead of
- * escalating. When the adapter proves that nothing was sent, the state is
- * known: the record stays pending, or escalates as `not_sent` when no retry
- * can clear the fault (issue #159).
+ * `delivery_unknown` and escalates the run to the approval path (DEC-30). When
+ * the adapter supports read-back, the relay reconciles instead of escalating.
+ * When the adapter proves that nothing was sent, the state is known: the record
+ * stays pending, or escalates as `not_sent` when no retry can clear the fault.
  */
 import type { Pool, PoolClient } from 'pg';
 
@@ -489,14 +488,14 @@ export async function relayOne(
   // that expired between insert and send. A fenced record can never become
   // valid again (epochs never decrease), so it leaves the pending scan.
   //
-  // Issue #113: the check sends a record whose run has finished, whatever the
-  // fence says. Such a record is settled by its DEC-24 key and its DEC-29
-  // delivery rule, and refusing it dropped an approved reply the relay had
-  // never sent — nothing escalated, and the run read `resolved` as if the
-  // customer had been answered. Every other run keeps the refusal: an
-  // in-flight run because the fence moved under it, and a parked one because
-  // nothing approved its record (DEC-12) — which is unreachable in this
-  // codebase, since a park inserts none, and refused all the same.
+  // The check sends a record whose run has finished, whatever the fence says.
+  // Such a record is settled by its DEC-24 key and its DEC-29 delivery rule,
+  // and refusing it dropped an approved reply the relay had never sent —
+  // nothing escalated, and the run read `resolved` as if the customer had been
+  // answered. Every other run keeps the refusal: an in-flight run because the
+  // fence moved under it, and a parked one because nothing approved its record
+  // (DEC-12) — which is unreachable in this codebase, since a park inserts
+  // none, and refused all the same.
   //
   // A refusal escalates the run in the same transaction, because a person has
   // to see a record that will never send. The escalation is also the recovery
@@ -659,13 +658,12 @@ export async function relayOne(
     // call manufactures delivery_unknown escalations that look exactly like
     // genuine ones.
     sendFailure = errorText(sendError);
-    // Issue #159: the adapter proved this attempt sent nothing, so DEC-30's
-    // matrix is not asked. A transient fault leaves the record pending under
-    // either delivery rule: at most once forbids a second delivery, and this
-    // attempt made none. A permanent fault, which no attempt can ever pass,
-    // escalates under its own status, or every scan would retry it. A key that
-    // makes a retry safe does not change that, so the adapter's capabilities
-    // are not read here.
+    // The adapter proved this attempt sent nothing, so DEC-30's matrix is not
+    // asked. A transient fault leaves the record pending under either delivery
+    // rule: at most once forbids a second delivery, and this attempt made none.
+    // A permanent fault, which no attempt can ever pass, escalates under its
+    // own status, or every scan would retry it. A key that makes a retry safe
+    // does not change that, so the adapter's capabilities are not read here.
     if (sendError instanceof NothingSentError) {
       if (!sendError.permanent) {
         return { idemKey, sendError: sendFailure, outcome: 'left_pending_retry' };
@@ -774,11 +772,10 @@ function causeOf(debt: OwedEscalation): string {
  * `status` states what went wrong on the record, and the run stops in a state
  * an operator reads. Terminal for the relay — a later scan finds nothing.
  *
- * Four cases reach it, and the reason names which: a send whose delivery
- * state is unknown (DEC-30), a payload matching no known shape, a send that
- * provably sent nothing and cannot succeed on a retry (issue #159), and —
- * since issue #113 — a record the fence refuses while its run is still in
- * flight.
+ * Four cases reach it, and the reason names which: a send whose delivery state
+ * is unknown (DEC-30), a payload matching no known shape, a send that provably
+ * sent nothing and cannot succeed on a retry, and — since the fix for stranded
+ * approvals — a record the fence refuses while its run is still in flight.
  *
  * `escalated` is a terminal state, so the move stamps `finished_at` exactly
  * as the ledger path does (db/005_run_timing.sql). Without the stamp the

@@ -357,10 +357,10 @@ describe('section 4.4 outbox relay', () => {
     expect(adapter.sendCalls).toHaveLength(1);
   });
 
-  // Issue #159. An adapter that proves nothing went out has a known delivery
-  // state, so DEC-30's matrix is not asked. At most once forbids a second
-  // delivery, and there was no first: the matrix would escalate this record,
-  // and a person would reconcile a reply the next scan can send.
+  // An adapter that proves nothing went out has a known delivery state, so
+  // DEC-30's matrix is not asked. At most once forbids a second delivery, and
+  // there was no first: the matrix would escalate this record, and a person
+  // would reconcile a reply the next scan can send.
   it('leaves an at-most-once record pending when the adapter proves nothing was sent', async () => {
     const ticket = 'T-' + randomUUID().slice(0, 8);
     const idemKey = await seedPending(ticket, 10n, 'at_most_once');
@@ -782,10 +782,10 @@ describe('section 4.4 outbox relay', () => {
 
   it('fences a record whose run is in flight, and leaves that run visible', async () => {
     // DEC-28, the second check: the lease expired between insert and send,
-    // ticket_epoch moved on, so the record leaves the pending queue unsent.
-    // Issue #113: the check refuses a record whose run is still mid-walk,
-    // because the new owner redoes the ticket — and the run it leaves behind
-    // is one an operator reads, never a silent drop.
+    // ticket_epoch moved on, so the record leaves the pending queue unsent. The
+    // check refuses a record whose run is still mid-walk, because the new owner
+    // redoes the ticket — and the run it leaves behind is one an operator
+    // reads, never a silent drop.
     const ticket = 'T-' + randomUUID().slice(0, 8);
     const idemKey = await seedPending(ticket, 10n, 'at_least_once', 'executing');
     await pool.query('UPDATE ticket_epoch SET epoch = 11 WHERE ticket_id = $1', [ticket]);
@@ -822,11 +822,10 @@ describe('section 4.4 outbox relay', () => {
     expect(rows[0]!.reason).toMatch(/^fenced_stale_epoch:/);
   });
 
-  // Issue #113, criterion 6: one scan, two records behind the same raised
-  // fence, and the branch keys on each record's own run. The finished run's
-  // record goes out; the in-flight run's record is refused and that run is
-  // moved where an operator reads it. The invariant query at the end is the
-  // criterion's own sentence.
+  // One scan, two records behind the same raised fence, and the branch keys on
+  // each record's own run. The finished run's record goes out; the in-flight
+  // run's record is refused and that run is moved where an operator reads it.
+  // The invariant query at the end is the criterion's own sentence.
   it('refuses one record and moves only its run, in one scan', async () => {
     const finishedTicket = 'T-' + randomUUID().slice(0, 8);
     const inFlightTicket = 'T-' + randomUUID().slice(0, 8);
@@ -1034,11 +1033,11 @@ describe('section 4.4 outbox relay', () => {
     expect(await runState(idemKey)).toBe('executing');
   });
 
-  // Issue #113, criterion 4: an approved record written before a consumer
-  // restart is sent after the restart. The restart leaves the fence alone
-  // (the run has finished), and even a fence another run raised does not
-  // drop the record: the run completed, so its DEC-24 key and DEC-29 rule
-  // decide the record, not the ticket's fence.
+  // A restart strands nothing: an approved record written before a consumer
+  // restart is sent after the restart. The restart leaves the fence alone (the
+  // run has finished), and even a fence another run raised does not drop the
+  // record: the run completed, so its DEC-24 key and DEC-29 rule decide the
+  // record, not the ticket's fence.
   it('sends a finished run\'s record at a raised fence, exactly once', async () => {
     const ticket = 'T-' + randomUUID().slice(0, 8);
     const idemKey = await seedPending(ticket, 10n, 'at_least_once', 'resolved');

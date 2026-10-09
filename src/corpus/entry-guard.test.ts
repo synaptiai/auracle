@@ -61,9 +61,9 @@ describe('a CLI module does not run when it is imported', () => {
   // header describes. Unguarded, that import would open a pool and query the
   // ledger inside the test process.
   //
-  // `humanMs` was the other reason for that import until issue #73 moved it
-  // to `src/latency/format.ts`, which is pure. The guard still matters,
-  // because the two argument parsers stayed here.
+  // `humanMs` was the other reason for that import until a cleanup moved it to
+  // `src/latency/format.ts`, which is pure. The guard still matters, because
+  // the two argument parsers stayed here.
   //
   // The observable is the catch handler, as in the induction case above, and
   // not a written artifact. A first version watched the artifact directory
@@ -100,10 +100,9 @@ describe('a CLI module does not run when it is imported', () => {
   // unguarded, that import would open a pool and query the ledger inside the
   // test process.
   //
-  // `humanValue` and `lastCompleteDay` were also reasons for that import
-  // until issue #73 moved them to `src/bands/format.ts` and
-  // `src/time/day.ts`. Both are pure now, and the two that stayed keep the
-  // guard load-bearing.
+  // `humanValue` and `lastCompleteDay` were also reasons for that import until
+  // a cleanup moved them to `src/bands/format.ts` and `src/time/day.ts`. Both
+  // are pure now, and the two that stayed keep the guard load-bearing.
   //
   // The observable is `--day` with no value, which this CLI alone reads and
   // which is refused before any pool is built. It touches no shared state, so

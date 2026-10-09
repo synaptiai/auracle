@@ -1,4 +1,4 @@
-// The reader the source guards share (issue #146).
+// The reader the source guards share.
 //
 // A guard that strips comments and strings with patterns has to guess where
 // a string ends, and every guess in this tree failed on an ordinary line. The

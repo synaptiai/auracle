@@ -1,4 +1,4 @@
-// What the per-intent fit does on the shipped corpus (issue #39, DEC-41).
+// What the per-intent fit does on the shipped corpus (DEC-41).
 //
 // DEC-41 fits a threshold for each intent above the labelled-case trigger.
 // The shipped corpus clears that trigger, so the path runs. This file records

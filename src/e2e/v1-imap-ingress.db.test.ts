@@ -72,9 +72,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  // The compose GreenMail service outlives the run (issue #80), so the
-  // mailbox this suite reads carries the previous run's mail unless it is
-  // emptied. A throwaway container was empty by construction and hid it.
+  // The compose GreenMail service outlives the run, so the mailbox this suite
+  // reads carries the previous run's mail unless it is emptied. A throwaway
+  // container was empty by construction and hid it.
   await resetMailboxes(
     { host: greenmail.host, imapPort: greenmail.imapPort, user: SUPPORT_USER, pass: 'synthetic-password' },
     ['INBOX'],

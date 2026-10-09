@@ -1,8 +1,7 @@
 // How a latency reads to an operator.
 //
 // Pure, and its own module because the operator console needs it. It used to
-// live in `src/latency/run.ts`, which is a CLI entry point (DEC-11, issue
-// #73).
+// live in `src/latency/run.ts`, which is a CLI entry point (DEC-11).
 
 /** A duration as an operator reads it, not as the ledger stores it. */
 export function humanMs(ms: number | null): string {

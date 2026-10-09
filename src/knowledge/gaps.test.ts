@@ -1,5 +1,5 @@
 // What makes a case blocked by a gap, and how a document's change flag reads
-// (issue #111, DEC-50).
+// (DEC-50).
 //
 // The classifier reads journal rows through the parsers the run page uses, so
 // the case and the knowledge screen cannot count a case two ways.

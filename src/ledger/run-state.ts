@@ -1,4 +1,4 @@
-// What a run state means to the fencing epoch (DEC-28, issue #113).
+// What a run state means to the fencing epoch (DEC-28).
 //
 // The fence exists for one hazard: a partition owner that lost its partition
 // and has not noticed. That hazard only exists while a run is in flight —

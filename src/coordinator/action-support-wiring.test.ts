@@ -1,5 +1,5 @@
 // The consumer's entry point runs the action check before it opens anything,
-// with the payload and the adapter every run then uses (issue #144).
+// with the payload and the adapter every run then uses.
 //
 // `refuseUnperformedAction` has its own cases, and they prove nothing if the
 // daemon never calls it, calls it after the pool opens, or checks another

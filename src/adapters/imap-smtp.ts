@@ -796,7 +796,7 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
 
   /**
    * The first step of a send: the draft, read and checked before SMTP sees
-   * anything (issue #159, DEC-30).
+   * anything (DEC-30).
    *
    * A fault here throws `NothingSentError` only when this attempt sent nothing.
    * A permanent one also says that no attempt, by this relay or from a mail
@@ -943,7 +943,7 @@ export class SmtpEgressAdapter implements EgressAdapter, DraftReadBack {
     } catch (error) {
       // imapflow keeps the server's goodbye on the client, not on every error
       // it raises after one. A login failure after a goodbye carries no code,
-      // and reads as a refusal without it (issue #159).
+      // and reads as a refusal without it.
       const goodbye = (client as unknown as { byeReason?: unknown }).byeReason;
       if (typeof error === 'object' && error !== null && typeof goodbye === 'string') {
         (error as { serverGoodbye?: string }).serverGoodbye ??= goodbye;

@@ -1,4 +1,4 @@
-// Who may write `step_journal`, and with what handle (issue #75).
+// Who may write `step_journal`, and with what handle.
 //
 // Two rules that the review found nothing holding. Both are properties of
 // the source rather than of a run, so both are parsed here rather than
@@ -167,8 +167,8 @@ describe('the step_journal write path', () => {
       'src/relay/relay.ts': 'client',
       'src/seed/write.ts': 'client',
       'src/coordinator/steps/context.ts': 'ctx.pool',
-      // #122: the park's record of a turn already answered. It journals in
-      // the commit that ends the run superseded, so it passes that client.
+      // The park's record of a turn already answered. It journals in the commit
+      // that ends the run superseded, so it passes that client.
       'src/coordinator/steps/park.ts': 'client',
     };
     const seen: Record<string, string[]> = {};

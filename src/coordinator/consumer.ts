@@ -10,13 +10,12 @@
 //   - DEC-28: every write carries a fencing epoch that only increases per
 //     ticket. A pickup asks the ledger for the next one, and the ledger
 //     allocates highest + 1 under the ticket row lock, in the insert's own
-//     transaction (issue #113). The
-//     rebalance procedure (claimPartition) bumps the fence of every ticket
-//     whose run is in flight in a partition when ownership moves at
-//     deployment, so an old owner still walking one has its writes refused
+//     transaction. The rebalance procedure (claimPartition) bumps the fence of
+//     every ticket whose run is in flight in a partition when ownership moves
+//     at deployment, so an old owner still walking one has its writes refused
 //     by the fenced ledger path (src/ledger/insert.ts).
 //
-//     The bump is scoped to runs in flight (issue #113). A run parked for a
+//     The bump is scoped to runs in flight. A run parked for a
 //     person and a run that finished are held by no consumer, so no owner is
 //     stale with respect to them: their fences stay, their approvals still
 //     commit, and the relay still sends their records. `runStateClass` in
@@ -26,14 +25,13 @@
 // operation, the fencing epoch gives safety during a rebalance overlap.
 //
 // Why the overlap cannot double-process. A fresh run asks the ledger for its
-// epoch, and the ledger allocates it under the ticket row lock — highest + 1
-// — in the same transaction as the insert (issue #113). Two creations on one
-// ticket therefore never share an epoch, and a creation either lands above
-// the fence the new owner raised or is refused by it. Equality is still
-// accepted for callers that supply a value (a replay, a test), because
-// refusing it would break the serialized-writer semantics pinned in
-// src/ledger/concurrency.db.test.ts. The window still resolves to a single
-// effective owner:
+// epoch, and the ledger allocates it under the ticket row lock — highest + 1 —
+// in the same transaction as the insert. Two creations on one ticket therefore
+// never share an epoch, and a creation either lands above the fence the new
+// owner raised or is refused by it. Equality is still accepted for callers that
+// supply a value (a replay, a test), because refusing it would break the
+// serialized-writer semantics pinned in src/ledger/concurrency.db.test.ts. The
+// window still resolves to a single effective owner:
 //   - if the new owner picks the still-queued ticket up first, its commit
 //     raises the fence above the old run's epoch, and every later hop of the
 //     old run — including its outbox insert — is refused mid-run;
@@ -76,11 +74,11 @@ import { logLine } from '../log/line.js';
  * its next fenced write with stale_epoch. Returns the number of fences
  * bumped.
  *
- * Only an in-flight run is bumped (issue #113). A reply parked for a person
- * and a record whose run has finished are not in flight in any consumer, so
- * no owner is stale with respect to them: raising their fence would refuse
- * an approval a person still has to make, and would drop a record the relay
- * has not sent. `runStateClass` states which states those are.
+ * Only an in-flight run is bumped. A reply parked for a person and a record
+ * whose run has finished are not in flight in any consumer, so no owner is
+ * stale with respect to them: raising their fence would refuse an approval a
+ * person still has to make, and would drop a record the relay has not sent.
+ * `runStateClass` states which states those are.
  *
  * A ticket's fence exists only after its first fenced write, which always
  * also wrote a run row carrying the partition — hence the join through run.
@@ -149,9 +147,9 @@ export interface ConsumerOptions {
   /** Overrides MAX_INTAKE_ATTEMPTS. Tests set it low; operators may lower it. */
   readonly maxIntakeAttempts?: number;
   /**
-   * Issue #25: an arrival signal, so the loop stops sleeping through a
-   * message that landed just after a scan. Optional, and omitting it gives
-   * the loop that shipped before: `intervalMs` alone.
+   * An arrival signal, so the loop stops sleeping through a message that landed
+   * just after a scan. Optional, and omitting it gives the loop that shipped
+   * before: `intervalMs` alone.
    *
    * The signal is an optimisation and never an authority. The queued row is
    * the authority, and `intervalMs` still bounds the wait when a
@@ -637,8 +635,8 @@ async function endRejectedAttempts(
         stepsUsed: row.steps_used,
         fromState: row.state,
         // Why, on the run's own record, so a reviewer who opens it reads the
-        // reason rather than a bare state (#122). A turn answered by another
-        // run names that run, read in this commit.
+        // reason rather than a bare state. A turn answered by another run names
+        // that run, read in this commit.
         afterWrite: async (client) => {
           // The runs were chosen before this commit. An undo inside a held
           // send can delete the record that closed the turn in between, and
@@ -1025,9 +1023,9 @@ export async function processQueuedTickets(
       const input: CoordinateInput = {
         ticketId: polled.ticketId,
         ticketText: polled.ticketText,
-        // The ledger allocates this one, under the ticket row lock it takes
-        // for the insert (issue #113). A value read here could go stale in
-        // the window before that lock.
+        // The ledger allocates this one, under the ticket row lock it takes for
+        // the insert. A value read here could go stale in the window before
+        // that lock.
         epoch: 'next',
         // Open item 7: the arrival time rides from intake to the run row,
         // so queue wait survives the ack that follows.
@@ -1236,8 +1234,8 @@ export interface ConsumerHandle {
  * deployment — so every restart raises the fence of the tickets holding an
  * in-flight run in its partitions, which is safe because bumps are monotonic
  * and only pre-restart epochs go stale. A reply parked for a person and a run
- * that finished keep theirs (issue #113), so a restart strands neither. The
- * loop itself never re-claims mid-process.
+ * that finished keep theirs, so a restart strands neither. The loop itself
+ * never re-claims mid-process.
  */
 export function startConsumer(
   deps: CoordinatorDeps,
@@ -1254,9 +1252,9 @@ export function startConsumer(
   // Set by an arrival that this consumer has not yet scanned for. Cleared at
   // the top of each scan, because a scan covers every row queued before it.
   let pending = false;
-  // Issue #25: only this consumer's own partitions. Every consumer in a
-  // deployment hears every arrival, so without the filter one busy partition
-  // wakes the whole fleet for work none of them owns.
+  // Only this consumer's own partitions. Every consumer in a deployment hears
+  // every arrival, so without the filter one busy partition wakes the whole
+  // fleet for work none of them owns.
   const owned = new Set(options.partitions);
 
   /**

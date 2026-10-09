@@ -15,7 +15,7 @@ import { truncateLedger } from '../test-support/schema.js';
 import { conversationOfRun, readConversation, turnAnsweredBy } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 4 });
-// The readers connect as the role that cannot act beyond a read (issue #153).
+// The readers connect as the role that cannot act beyond a read.
 const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 afterAll(async () => {
@@ -431,8 +431,8 @@ describe('the reasons a turn shows no reply', () => {
     expect(thread?.turns[0]?.replyAbsence).toBe('handled_automatically');
   });
 
-  // #123: a customer reply parks as a draft in the helpdesk (DEC-11), and an
-  // internal write parks in the ledger alone (DEC-34). Both wait for a
+  // A customer reply parks as a draft in the helpdesk (DEC-11), and an internal
+  // write parks in the ledger alone (DEC-34). Both wait for a
   // person, and only the first holds a drafted reply. The park row says which.
   it('names a drafted reply waiting for a person', async () => {
     const id = await conversation();

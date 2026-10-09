@@ -1,4 +1,4 @@
-// A redelivered message never earns its turn a second customer reply (#122).
+// A redelivered message never earns its turn a second customer reply.
 //
 // A message source delivers at least once, so a message the system already
 // answered can arrive again. Intake files it on the same turn (DEC-38), and

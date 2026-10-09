@@ -2,8 +2,8 @@
 //
 // The command itself commits nothing new: it hands the approval the options
 // these functions build and prints the sentence they return. So the case for
-// criterion 11 lives here — which text the command approves — and the ledger
-// half lives in `ledger-reply.db.test.ts`, where a real parked reply is sent.
+// which text the command approves lives here, and the ledger half lives in
+// `ledger-reply.db.test.ts`, where a real parked reply is sent.
 import { describe, expect, it } from 'vitest';
 
 import { approvalOptionsFor, refusalSays } from './cli.js';

@@ -1,4 +1,4 @@
-// The explicit clock, against a real database (issue #22).
+// The explicit clock, against a real database.
 //
 // The clock is a trailing parameter on the two fenced writes. These cases
 // read the row back, because a statement test proves what was sent and not

@@ -343,9 +343,9 @@ describe('the history it plans', () => {
   });
 });
 
-// The queue wait is the property issue #25 reads, and it is not drawn. It is
-// what the serial walk produces, so these cases assert the walk rather than
-// a number.
+// The queue wait is the property the arrival wake's evidence gate read, and it
+// is not drawn. It is what the serial walk produces, so these cases assert the
+// walk rather than a number.
 describe('the queue wait the serial walk produces', () => {
   const plan = planHistory(OPTIONS);
 
@@ -379,10 +379,11 @@ describe('the queue wait the serial walk produces', () => {
 
   // The two regimes, measured side by side.
   //
-  // These are the figures issue #25 turns on, so both are pinned and neither
-  // is quoted from the other. `wakeOnArrival: false` is the loop that the
-  // #23 reading measured: intake queued a row and the consumer did not look
-  // until its next tick. True is the loop that ships after #25.
+  // These are the figures the arrival wake turns on, so both are pinned and
+  // neither is quoted from the other. `wakeOnArrival: false` is the loop that
+  // the traffic simulator measured: intake queued a row and the consumer did
+  // not look until its next tick. True is the loop that ships with the arrival
+  // wake.
   //
   // The pair is what makes each number evidence. A wake that did nothing
   // would leave the two columns equal, and every assertion below that names
@@ -528,8 +529,8 @@ describe('the queue wait the serial walk produces', () => {
 
   // Heavy-tailed because a run makes twelve model calls. Asserted as a shape,
   // not as a wanted verdict: the p99 of a log-normal at this sigma sits well
-  // above its median, and a change that flattened it would change what issue
-  // #25 reads.
+  // above its median, and a change that flattened it would change what the
+  // arrival wake's evidence gate read.
   it('draws a heavy-tailed service time', () => {
     // The work, not `finished_at - created_at`. An approved run's stored
     // service time includes the wait for the person, which is a different
@@ -1154,8 +1155,8 @@ describe('the history this change was not allowed to move', () => {
   });
 });
 
-// Issue #63. A seeded ticket is the first thing anybody reading this console
-// sees, and it read "I need help with a api usage question on ticket T-...".
+// A seeded ticket is the first thing anybody reading this console sees, and it
+// read "I need help with a api usage question on ticket T-...".
 describe('the message a seeded ticket carries', () => {
   const plan = planHistory(OPTIONS);
 

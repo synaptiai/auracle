@@ -27,7 +27,7 @@ const COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
 ).options;
 
 /**
- * One module as the compiler reads it (issue #146).
+ * One module as the compiler reads it.
  *
  * The guards below used to blank prose with patterns. A pattern has to guess
  * where a string ends, and a `//` inside a URL, or a quote inside a regular
@@ -143,8 +143,8 @@ const READ_FUNCTIONS = new Set([
   // Functions.
   'array_position', 'coalesce', 'convert_to', 'count', 'encode', 'extract', 'jsonb_typeof', 'max',
   'percentile_disc', 'sha256', 'to_char', 'unnest',
-  // Which database and which running server: the readers' probe compares
-  // them with the writer's (issue #153).
+  // Which database and which running server: the readers' probe compares them
+  // with the writer's.
   'current_database', 'pg_postmaster_start_time',
   // Keywords.
   'all', 'and', 'as', 'exists', 'filter', 'from', 'group', 'in', 'lateral', 'not', 'or', 'ordinality', 'select',
@@ -288,7 +288,7 @@ describe('the canonical step order', () => {
   // missed here would sort last as unrecognised, which is safe, but the
   // console would show the pipeline in the wrong shape for every run.
   //
-  // One module per step since issue #75, so the scan reads the directory.
+  // One module per step since the step split, so the scan reads the directory.
   // The escalate row is written by the sequencer's own helper in
   // `steps/context.ts`, and that file is in the walk too.
   //
@@ -395,14 +395,13 @@ describe('the read modules never write', () => {
   });
 
   /**
-   * The modules that read through `boundedRead` and that this scan cannot
-   * read. Each hands the statement function to helpers, or builds a
-   * statement at runtime from parts, so no literal holds what it sends. The
-   * database holds them to one read-only statement at a time. Nothing here
-   * refuses, for these modules, what READ ONLY lets through: a function that
-   * acts on another session, and a superuser's write to the catalog or a
-   * replication slot. The readers' role holds none of those rights, so the
-   * database refuses them (issue #153).
+   * The modules that read through `boundedRead` and that this scan cannot read.
+   * Each hands the statement function to helpers, or builds a statement at
+   * runtime from parts, so no literal holds what it sends. The database holds
+   * them to one read-only statement at a time. Nothing here refuses, for these
+   * modules, what READ ONLY lets through: a function that acts on another
+   * session, and a superuser's write to the catalog or a replication slot. The
+   * readers' role holds none of those rights, so the database refuses them.
    */
   const BUILT_AT_RUNTIME = [
     'src/knowledge/gaps.ts',
@@ -637,12 +636,12 @@ describe('the read modules never write', () => {
   // approve it. It comes out of the `step_journal.result` object this module
   // already selects, so no statement names it.
   //
-  // Scoped to this module on purpose, and not over `readers`. The
-  // conversation reader selects `turn.body_text` and returns it, which is its
-  // whole job: issue #48 decided the console shows the customer's message and
-  // the runbook states the posture that follows. A shared list would have to
-  // carry an exemption for the one module the rule was never about, which
-  // reads as a rule with a hole rather than two rules.
+  // Scoped to this module on purpose, and not over `readers`. The conversation
+  // reader selects `turn.body_text` and returns it, which is its whole job: the
+  // console epic decided the console shows the customer's message and the
+  // runbook states the posture that follows. A shared list would have to carry
+  // an exemption for the one module the rule was never about, which reads as a
+  // rule with a hole rather than two rules.
   //
   // What this cannot check: everything the module returns from a park or a
   // compose row travels inside the `step_journal.result` object, which the

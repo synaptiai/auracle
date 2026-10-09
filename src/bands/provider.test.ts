@@ -1,4 +1,4 @@
-// A band never compares across a provider change (issue #23).
+// A band never compares across a provider change.
 //
 // The bulk history composes through the offline stand-in, and a demo day
 // composes through a real model. A band across that boundary measures the

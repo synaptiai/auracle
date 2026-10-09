@@ -46,7 +46,7 @@ seeder writes a history that demonstrates them.
 
 ## Constraints
 
-- The console owns no SQL (issue #27). Every new field comes from the query
+- The console owns no SQL (issue 27). Every new field comes from the query
   module the CLI reads through.
 - `console/src/select-only.test.ts` holds the console to SELECT statements.
 - Approving a ledger-parked action changes no approval rule. `approveRun`

@@ -3,8 +3,8 @@
 // The job, and not the command. `main.ts` beside it reads the environment,
 // prints and sets the exit code; this module exports functions and holds no
 // entry point. Before the split, `scoring.ts` imported `scoreDraft` from a
-// module that ran a CLI guard on import, and that module imported
-// `scoring.ts` back: importing the scorer loaded the command (issue #75).
+// module that ran a CLI guard on import, and that module imported `scoring.ts`
+// back: importing the scorer loaded the command.
 //
 // Runs the real gate over every labelled draft in the fit half, then fits the
 // two coverage thresholds on what it measured against what was true.

@@ -16,8 +16,7 @@
 //
 // Argv, printing and the exit code live here and nowhere else. `job.ts` holds
 // the fit itself. Before the split they shared one file, and `scoring.ts`
-// imported the scorer from it: importing the scorer loaded a command
-// (issue #75).
+// imported the scorer from it: importing the scorer loaded a command.
 //
 // The job may refuse. Classes that do not separate produce a threshold any
 // candidate would satisfy, and a refusal leaves section 6's caveat standing

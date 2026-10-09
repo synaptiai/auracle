@@ -1,5 +1,5 @@
 /**
- * `pnpm run seed-history` — a backdated synthetic history (issue #23).
+ * `pnpm run seed-history` — a backdated synthetic history.
  *
  * The bands report judges one UTC day against the thirty measured days before
  * it, and the latency report windows on the same column. Neither can be

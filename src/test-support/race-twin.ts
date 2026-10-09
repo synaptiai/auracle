@@ -1,4 +1,4 @@
-// Two runs of one turn and attempt waiting at once, each with a reply (#122).
+// Two runs of one turn and attempt waiting at once, each with a reply.
 //
 // A reply park refuses a twin: a redelivered message that finds another run
 // of its turn and attempt waiting with a reply parks nothing. On one ticket,

@@ -147,11 +147,11 @@ async function main(): Promise<void> {
 
   // `requireReaderDbUrl`, never a fallback. The compose default would let an
   // operator who lost the variable read a versioned, plausible report about a
-  // throwaway container and take it for production. Every other entry point
-  // in this repository refuses to guess, and this one reads a live ledger.
-  // The readers' role, because the report reads through `boundedRead`, which
-  // refuses a session that can act beyond a read (issue #153). One
-  // connection, because the job issues one statement.
+  // throwaway container and take it for production. Every other entry point in
+  // this repository refuses to guess, and this one reads a live ledger. The
+  // readers' role, because the report reads through `boundedRead`, which
+  // refuses a session that can act beyond a read. One connection, because the
+  // job issues one statement.
   const pool = guardLedgerPool(
     new Pool({ connectionString: requireReaderDbUrl('the latency report'), max: 1 }),
     logLedgerPoolError('the latency report'),

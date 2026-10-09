@@ -1,4 +1,4 @@
-// Empties the mailboxes a mail suite owns, before it runs (issue #80).
+// Empties the mailboxes a mail suite owns, before it runs.
 //
 // The mail suites address a fixed account — `support@acme.example` and
 // `support-ingress@acme.example` — and assert on what is in it. That held

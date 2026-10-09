@@ -1,5 +1,5 @@
-// The corpus clears the per-intent trigger, and every case says what
-// labelled it (issue #26).
+// The corpus clears the per-intent trigger, and every case says what labelled
+// it.
 //
 // Section 3.3's arithmetic puts the rank-20 intent at about 7 700 cases, and
 // DEC-41 fits a threshold for each intent above that trigger. A corpus below

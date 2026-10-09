@@ -1,4 +1,4 @@
-// The console's one write (issue #27, DEC-11, DEC-40).
+// The console's one write (DEC-11, DEC-40).
 //
 // DEC-11 rejected "a Slack queue; a new web queue" by name, and section 4.2
 // says adopters do not install a new interface. DEC-40 permits this console

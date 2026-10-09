@@ -1,4 +1,4 @@
-// One validator, one argument order, one whitespace rule (issue #69).
+// One validator, one argument order, one whitespace rule.
 //
 // Each adapter used to carry a private `requireNonEmpty`, and the three had
 // drifted into disagreeing about all three of those:

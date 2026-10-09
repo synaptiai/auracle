@@ -1,5 +1,5 @@
 // Whether the consumer's egress adapter can perform the internal action its
-// profile names, with the payload the consumer sends (issue #144).
+// profile names, with the payload the consumer sends.
 //
 // The relay performs every internal class through `performAction`. A class
 // the adapter refuses there never completes: on an adapter that takes an

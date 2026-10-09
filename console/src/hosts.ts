@@ -1,5 +1,5 @@
 /**
- * The `Host` values this console answers to (issue #27).
+ * The `Host` values this console answers to.
  *
  * Its own module for the reason `ledger-name.ts` is: `main.ts` runs `main()`
  * when it is imported, so nothing there can be reached from a test. This

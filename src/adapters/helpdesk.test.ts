@@ -142,8 +142,8 @@ describe('HelpdeskAdapter.readDraft and editDraft', () => {
     const { draftExternalId } = await adapter.createDraft(reply());
 
     // One validator means one message. This adapter used to phrase its own
-    // ("helpdesk field 'body' must be a non-empty string"); issue #69 replaced
-    // the three private copies with `requireNonEmpty` in types.ts.
+    // ("helpdesk field 'body' must be a non-empty string"); a later change
+    // replaced the three private copies with `requireNonEmpty` in types.ts.
     await expect(adapter.editDraft(draftExternalId, '')).rejects.toThrow(
       'body must not be empty',
     );
@@ -341,8 +341,8 @@ describe('helpdesk fixtures', () => {
   });
 });
 
-// Issue #144: the consumer checks its class against this declaration at
-// startup, so the declaration must say exactly what performAction does.
+// The consumer checks its class against this declaration at startup, so the
+// declaration must say exactly what performAction does.
 describe('HelpdeskAdapter.performs', () => {
   it('declares its three internal classes and the payload fields each needs', () => {
     // From the helpdesk API: a close needs the ticket alone, a route needs the

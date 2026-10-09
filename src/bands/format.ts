@@ -2,8 +2,8 @@
 //
 // Pure, and its own module because the operator console needs it. It used to
 // live in `src/bands/run.ts`, which is a CLI entry point: importing it ran a
-// module that parses argv and sets `process.exitCode`, so the console loaded
-// a command-line program to format a number (DEC-11, issue #73).
+// module that parses argv and sets `process.exitCode`, so the console loaded a
+// command-line program to format a number (DEC-11).
 //
 // Nothing here touches a ledger, a clock or the environment.
 

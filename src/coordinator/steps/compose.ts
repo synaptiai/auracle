@@ -118,7 +118,7 @@ export async function compose(ctx: RunContext): Promise<StepResult> {
     // bodies however many claims it makes.
     citedBodies: citedBodiesOf(composed.claims, docs),
     staleDocumentIds: composed.staleDocuments.map((doc) => doc.docId),
-    // What actually answered this run's model calls (issue #23).
+    // What actually answered this run's model calls.
     //
     // Read from the provider rather than derived from the pins: this module's
     // own import states that the provider and the model version are

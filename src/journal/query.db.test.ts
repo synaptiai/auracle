@@ -20,7 +20,7 @@ import { truncateLedger } from '../test-support/schema.js';
 import { readRunJournal } from './query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 4 });
-// The readers connect as the role that cannot act beyond a read (issue #153).
+// The readers connect as the role that cannot act beyond a read.
 const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 // The global setup guarantees a reachable database before the workers fork.
@@ -1154,9 +1154,9 @@ describe('the close a person made (DEC-48)', () => {
   });
 });
 
-// #122: why a run stopped superseded. The row is written by the park step
-// and by the consumer's scan, outside the walk's own step list, and the run
-// page reads it through here.
+// Why a run stopped superseded. The row is written by the park step and by the
+// consumer's scan, outside the walk's own step list, and the run page reads it
+// through here.
 describe('the reason a run was superseded', () => {
   it('returns the reason and the run it names, outside the walk', async () => {
     const runId = await journal([

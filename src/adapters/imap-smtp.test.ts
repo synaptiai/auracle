@@ -403,7 +403,7 @@ describe('the IMAP connection a draft read opens', () => {
   // A draft that is not there never sends on a retry. The FreeScout adapter
   // says the same of a missing draft. It does not prove that nothing reached
   // the customer: a person can send the draft from a mail client, which moves
-  // it out of Drafts. So it is not reported as a send that sent nothing (#159).
+  // it out of Drafts. So it is not reported as a send that sent nothing.
   it('refuses a missing draft as permanent, and never as a send that sent nothing', async () => {
     const { server, port } = await fakeImap({ 'UID FETCH': 'nothing' });
     try {
@@ -555,8 +555,8 @@ describe('the IMAP connection a draft read opens', () => {
     }
   });
 
-  // Issue #159. A draft that names nobody could never have been sent, by this
-  // relay or from a mail client, so nothing reached a recipient on any attempt.
+  // A draft that names nobody could never have been sent, by this relay or from
+  // a mail client, so nothing reached a recipient on any attempt.
   it('reports a draft with no To address as a permanent send that sent nothing', async () => {
     const imap = await fakeImap({ 'UID FETCH': 'unaddressed' });
     const smtp = await fakeSmtp();

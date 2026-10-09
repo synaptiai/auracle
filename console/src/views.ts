@@ -1,4 +1,4 @@
-// What a ledger row and a journal step say on a page (issue #27).
+// What a ledger row and a journal step say on a page.
 //
 // Its own module for the reason `hosts.ts` and `ledger-name.ts` have one:
 // `main.ts` runs `main()` when it is imported, so nothing defined there can
@@ -73,10 +73,10 @@ export function toRow(item: {
 /**
  * A waiting run as the queue and the run detail read it.
  *
- * Both gate values come from the same statement as the row, each beside its
- * own line, so the queue can group on them without a journal read per row
- * (issue #101). Null stays null: zero agreement says the samples disagreed
- * completely, which is a measurement rather than its absence.
+ * Both gate values come from the same statement as the row, each beside its own
+ * line, so the queue can group on them without a journal read per row. Null
+ * stays null: zero agreement says the samples disagreed completely, which is a
+ * measurement rather than its absence.
  */
 export function toDetail(
   item: Parameters<typeof toRow>[0] & {
@@ -139,7 +139,7 @@ function sampleCountOf(agreement: number): number | null {
 }
 
 /**
- * #123: the draft a park step names, or null. A handle names a draft only as a
+ * The draft a park step names, or null. A handle names a draft only as a
  * non-empty string on a park that finished, as the conversation reader and the
  * queue read it, and as the approval requires.
  */
@@ -192,9 +192,9 @@ export function stepSays(step: JournalStep, journal: RunJournal): string | null 
       // reconcile. The refusal records the adapter's error, withheld because
       // it can quote a customer address, but its presence is not withheld.
       //
-      // #123: the handle names a draft, and the body does not. An internal
-      // write parks in the ledger alone and journals its rationale as a body
-      // too (DEC-34), so a body beside a payload is an action, not a draft.
+      // The handle names a draft, and the body does not. An internal write
+      // parks in the ledger alone and journals its rationale as a body too
+      // (DEC-34), so a body beside a payload is an action, not a draft.
       const draft = draftOf(step);
       const held = draft !== null
         ? 'draft held in the helpdesk'
@@ -242,10 +242,10 @@ export function stepSays(step: JournalStep, journal: RunJournal): string | null 
       return `sent back by ${sentBack.reviewer ?? 'nobody named'} · ${sentBack.note}`;
     }
     case 'supersede': {
-      // #122: why the run stopped with nothing sent. The reason is the one
-      // the ledger recorded, worded for a reader, and never invented. The
-      // past tense, because it says what held when the run stopped: an undo
-      // inside a held send can open the turn again later.
+      // Why the run stopped with nothing sent. The reason is the one the ledger
+      // recorded, worded for a reader, and never invented. The past tense,
+      // because it says what held when the run stopped: an undo inside a held
+      // send can open the turn again later.
       const why = step.supersede;
       if (why === null || why.reason === null) return null;
       if (why.reason === 'turn_answered' && why.answeredBy !== null) {
@@ -431,7 +431,7 @@ export function evidenceOf(journal: RunJournal): EvidenceView {
 
   return {
     draftBody: park?.draftBody ?? null,
-    // #123: only an internal write parks a payload (DEC-34).
+    // Only an internal write parks a payload (DEC-34).
     // The payload read as an object, as the queue and the reader read it.
     parkedAction: parksAnAction(
       (park?.payload ?? null) !== null, park?.actionClass ?? null,

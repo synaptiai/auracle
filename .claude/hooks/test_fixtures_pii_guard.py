@@ -39,9 +39,9 @@ CASES = [
     ("no personal data", CLEAN, 'queue: "billing", tier: "high"'),
 ]
 
-# Issue #74: the rule is absolute inside the corpus and advisory outside it.
-# The guard used to fail a pull request for any hit in any changed text file,
-# so a document or a test that named a plausible identifier failed the run.
+# The rule is absolute inside the corpus and advisory outside it. The guard used
+# to fail a pull request for any hit in any changed text file, so a document or
+# a test that named a plausible identifier failed the run.
 SCOPE_CASES = [
     ("fixtures/gold/case.json", True, "a gold fixture"),
     ("fixtures/taxonomy.json", True, "a fixture file"),

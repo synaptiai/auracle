@@ -1,7 +1,7 @@
-// The ledger write that hands a turn back to the run that parked its draft
-// (#122). Its rules are checked here directly, against runs seeded through
-// the same insert every run takes, because the walks that reach it can only
-// build some of the states the rules exist for. Synthetic data only (DEC-18).
+// The ledger write that hands a turn back to the run that parked its draft. Its
+// rules are checked here directly, against runs seeded through the same insert
+// every run takes, because the walks that reach it can only build some of the
+// states the rules exist for. Synthetic data only (DEC-18).
 import { randomUUID } from 'node:crypto';
 
 import { Pool } from 'pg';

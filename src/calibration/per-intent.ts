@@ -1,4 +1,4 @@
-// The per-intent agreement fit (issue #26, DEC-41).
+// The per-intent agreement fit (DEC-41).
 //
 // DEC-13 and DEC-41 divide on one boundary, and the register states it since
 // the amendment: below the labelled-case trigger one global threshold binds;
@@ -13,10 +13,10 @@
 // figure is the trigger, because it is the number the register and the
 // roadmap both quote.
 //
-// The shipped corpus carries that shape since issue #40. Its intents follow
-// a Zipf curve at exponent 1, so a half gives rank 1 about 1074 cases and
-// rank 25 about 43. Four intents clear the sample floor at the shipped
-// target and 21 fall back, so the fixture exercises both routes.
+// The shipped corpus has carried that shape since it was regenerated. Its
+// intents follow a Zipf curve at exponent 1, so a half gives rank 1 about
+// 1074 cases and rank 25 about 43. Four intents clear the sample floor at the
+// shipped target and 21 fall back, so the fixture exercises both routes.
 //
 // What the fixture cannot show is what a real classifier reaches. The offline
 // stand-in answers every sample of one ticket alike, so agreement is one

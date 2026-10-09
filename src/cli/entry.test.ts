@@ -1,4 +1,4 @@
-// The tail every CLI and daemon now ends with (issue #72).
+// The tail every CLI and daemon now ends with.
 //
 // Twenty entry points had four different answers to "what does this print and
 // what does it exit with". These cases pin the one answer, including the two
@@ -185,9 +185,9 @@ describe('runEntry', () => {
     expect(stderr).toHaveBeenCalledWith('the ledger refused the row');
   });
 
-  // Issue #114. A fault's text is often a provider's or a server's, so it
-  // reaches the operator's terminal and a CI log carrying whatever that side
-  // sent: an escape sequence, a bidi override, a line separator.
+  // A fault's text is often a provider's or a server's, so it reaches the
+  // operator's terminal and a CI log carrying whatever that side sent: an
+  // escape sequence, a bidi override, a line separator.
   it('prints the fault with every character a terminal acts on escaped', async () => {
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const esc = String.fromCharCode(0x1b);

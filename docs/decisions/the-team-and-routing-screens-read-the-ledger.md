@@ -49,7 +49,7 @@ first row, any reply to a customer, is fixed, and nobody can change it.
   team read windows on time, and the routing read reads one row per product
   and intent.
 - A figure the ledger does not record is a named absence, never a zero.
-- The queue header keeps its two counts and no share (#101).
+- The queue header keeps its two counts and no share (issue 101).
 
 ## Decisions affected
 

@@ -1,5 +1,5 @@
 // The agreement gate reads a per-intent threshold where one was fitted
-// (issue #26, DEC-41).
+// (DEC-41).
 //
 // DEC-13 binds below the labelled-case trigger and DEC-41 governs above it.
 // The engine does not know which side of the trigger it is on, and it must

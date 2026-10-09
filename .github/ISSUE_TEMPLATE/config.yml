@@ -3,6 +3,9 @@ contact_links:
   - name: Report a vulnerability
     url: https://github.com/synaptiai/auracle/security/advisories/new
     about: Report it privately, never in a public issue. If the form is unavailable, email support@synapti.ai. SECURITY.md says what to include.
+  - name: Ask a question
+    url: https://github.com/synaptiai/auracle/discussions
+    about: Use Discussions for a question about running or adapting the system. Open an issue for a defect or a missing step.
   - name: A step in the contributing guide is unclear
     url: https://github.com/synaptiai/auracle/blob/main/CONTRIBUTING.md
     about: Read the guide first, then open an issue saying which section failed you. Every issue is public, so redact each credential before you paste output.

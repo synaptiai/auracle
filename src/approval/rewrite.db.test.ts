@@ -36,7 +36,7 @@ import { rewriteReply } from './rewrite.js';
 import { replyDigest } from './shown.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
-// The readers connect as the role that cannot act beyond a read (issue #153).
+// The readers connect as the role that cannot act beyond a read.
 const readers = new Pool({ connectionString: readerDbUrl(), max: 4 });
 
 afterAll(async () => {
@@ -165,8 +165,8 @@ async function parkAgain(parked: Parked): Promise<{ runId: string }> {
       status: 'open', customerAddress: null,
     },
   ]);
-  // A twin as a race leaves it: the park refuses a redelivered reply on a
-  // turn whose reply already waits (#122).
+  // A twin as a race leaves it: the park refuses a redelivered reply on a turn
+  // whose reply already waits.
   const result = await asIfRacing(pool, parked.runId, () => coordinateTicket(makeDeps(helpdesk), {
     ticketId: parked.ticketId,
     ticketText: TICKET_TEXT,

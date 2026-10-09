@@ -512,9 +512,10 @@ describe('configuration comes from the environment and has no default', () => {
   });
 });
 
-// AC of issue #24: with no idempotency key declared, every write action of
-// this adapter reaches the approval path. Asserted against the real engine
-// and the adapter's real declaration, so a widened flag breaks it here.
+// A criterion of the FreeScout adapter: with no idempotency key declared, every
+// write action of this adapter reaches the approval path. Asserted against the
+// real engine and the adapter's real declaration, so a widened flag breaks it
+// here.
 describe('the policy engine routes every write of this adapter to a person (DEC-06)', () => {
   const thresholds = SEED_THRESHOLDS;
 

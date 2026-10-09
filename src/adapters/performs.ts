@@ -1,6 +1,6 @@
 /**
- * What each egress adapter performs as an internal write, and what the
- * consumer sends with one (issue #144, DEC-06).
+ * What each egress adapter performs as an internal write, and what the consumer
+ * sends with one (DEC-06).
  *
  * The declarations live here, apart from the adapters, so a check can read
  * every adapter's without building one. The SMTP and FreeScout adapters read
