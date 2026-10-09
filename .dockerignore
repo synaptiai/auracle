@@ -25,11 +25,15 @@ bands/
 calibration/
 groundedness/
 
-# Local state of agent tools.
+# Local state of agent tools, and local working notes.
 .claude/
 .decisions/
 .trail/
 .flow/
+.agents/
+.codex/
+.gstack/
+docs/internal/
 # Python caches and macOS folder metadata.
 __pycache__/
 **/__pycache__/

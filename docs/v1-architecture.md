@@ -8,11 +8,12 @@ TypeScript. Postgres. No orchestration framework.
 ## 1. Scope
 
 This document specifies each component that processes a support request. The
-flow starts at the inbound message. The flow stops at one of three results. The
-first result is an internal write that the system does automatically. The second
-result is an action that a person approves, such as a reply to the customer.
-The third result is a case that a person takes over: an escalation, a close or
-a snooze.
+flow starts at the inbound message.
+
+The flow stops at one of three results. The first result is an internal write
+that the system does automatically. The second result is an action that a person
+approves, such as a reply to the customer. The third result is a run that a
+person takes over. The run escalates, or a reviewer closes or snoozes its case.
 
 ### 1.1 In V1
 
@@ -307,7 +308,7 @@ control flow from the model.
 ```
 received -> classified -> retrieved -> composed -> gated
   -> executing          (automatic path, reversible internal writes only)
-  -> awaiting_approval  (customer replies, DEC-12)
+  -> awaiting_approval  (every parked action, DEC-06, DEC-07, DEC-12, DEC-13, DEC-34)
   -> resolved | escalated | superseded | abandoned | closed
   -> snoozed           (waiting for a period or the customer, DEC-48)
 ```
@@ -941,9 +942,10 @@ never sufficient.
 
 A draft below block is escalated, and a person handles the escalation.
 
-**No shipped artifact measures the report half at this pair.** DEC-31 exists for this.
-The numbers above choose the threshold, so they carry a selection effect. Only
-the report half can check them. DEC-31 forbids fit-half figures in that place.
+**No shipped artifact measures the report half at this pair.** DEC-31 exists for
+this. The numbers above choose the threshold, so they carry a selection effect.
+Only the report half can check them. DEC-31 forbids fit-half figures in that
+place.
 
 So this register states no residual error figure for an adopter to plan around.
 It also makes no claim about whether the review threshold of 0.83 can tighten.

@@ -43,6 +43,7 @@ __pycache__/
 .flow/
 .agents/
 .codex/
+.gstack/
 .claude/agent-memory/
 .claude/agent-memory-local
 /.claude/worktrees/
@@ -51,6 +52,10 @@ __pycache__/
 
 # Agent session transcripts.
 .trail/
+
+# A database dump at the root, such as a snapshot taken before a migration.
+# The migrations live under db/, so this never hides one.
+/*.sql
 
 # Local working notes.
 docs/internal/

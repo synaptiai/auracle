@@ -220,28 +220,55 @@ already applied.
 Migrations are forward-only by design. A failed migration rolls itself back.
 You only need a plan for a migration that succeeds and then proves wrong.
 
-Take a snapshot before you run any migration.
+Take a snapshot before you run any migration. The snapshot holds customer
+text, so keep it outside the checkout, readable by its owner alone:
 
 ```sh
-pg_dump "$DATABASE_URL" > pre-migrate.sql
+umask 077
+mkdir -p "$HOME/auracle-backups"
+pg_dump "$DATABASE_URL" > "$HOME/auracle-backups/pre-migrate.sql"
 ```
 
 If a migration succeeds and then causes a problem in production, restore that
 snapshot into a new, empty database. A restore into the old database fails on
-the tables it already holds. Every write after the snapshot is lost.
+the tables it already holds. The commands below assume the ledger database is
+named `auracle`, as in the compose stack.
 
-1. Stop every daemon and the console. A database with an open connection
-   cannot be dropped.
+1. Stop every daemon and the console. The relay stays stopped until step 4.
+   Postgres renames no database that has an open connection.
 2. Check out the commit before the faulty migration, or run its image.
-3. Recreate the database, restore the snapshot, and migrate. Connect to the
-   `postgres` database to drop and create `auracle`:
+3. Rename the faulty database, create an empty one, restore the snapshot into
+   it, and migrate. The rename keeps every write after the snapshot in
+   `auracle_faulty`:
 
 ```sh
-psql postgres://auracle:auracle@localhost:5433/postgres \
-  -c 'DROP DATABASE auracle;' -c 'CREATE DATABASE auracle;'
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 < pre-migrate.sql
+ADMIN_URL="${DATABASE_URL%/*}/postgres"
+FAULTY_URL="${DATABASE_URL%/*}/auracle_faulty"
+psql "$ADMIN_URL" -v ON_ERROR_STOP=1 \
+  -c 'ALTER DATABASE auracle RENAME TO auracle_faulty;' -c 'CREATE DATABASE auracle;'
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 < "$HOME/auracle-backups/pre-migrate.sql"
 pnpm run db:migrate   # applies nothing new, and restates auracle_reader
 ```
+
+4. Before the relay starts, carry over each action the relay settled after the
+   snapshot. The snapshot holds such an action as `pending`, so without this
+   step the relay sends it again:
+
+```sh
+psql "$FAULTY_URL" -At -F "$(printf '\t')" -v ON_ERROR_STOP=1 \
+  -c "SELECT idem_key, status FROM outbox WHERE status <> 'pending'" \
+  > "$HOME/auracle-backups/settled.tsv"
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<SQL
+CREATE TEMP TABLE settled (idem_key text, status text);
+\copy settled FROM '$HOME/auracle-backups/settled.tsv'
+UPDATE outbox o SET status = s.status FROM settled s
+ WHERE o.idem_key = s.idem_key AND o.status = 'pending';
+SQL
+```
+
+5. Start the daemons. Read `auracle_faulty` for the other writes after the
+   snapshot, such as approvals and reviewer actions. Drop it when you no
+   longer need them.
 
 Do not run `db:migrate` from the commit that holds the faulty migration. It
 applies that migration again.
@@ -495,7 +522,7 @@ The consumer reads this configuration:
 | `OPENROUTER_API_KEY` | The model provider's key. Required. | none |
 | `OPENROUTER_BASE_URL` | The provider's endpoint. | `https://openrouter.ai/api/v1` |
 | `AURACLE_ZDR_ONLY` | `1` asks the provider for zero data retention on every call (DEC-17). Absence means off. | off |
-| `PRODUCTS_FILE` | The product catalogue. A relative path reads from the working directory. | `products.json` |
+| `PRODUCTS_FILE` | The product catalog. A relative path reads from the working directory. | `products.json` |
 | `CONSUMER_PARTITIONS` | Comma-separated partitions this process owns. Required. | none |
 | `CONSUMER_INTERVAL_MS` | Ceiling on the wait between scans, in milliseconds. Intake signals an arrival and the consumer wakes on it, so this bounds the wait when a signal is lost. | 5000 |
 | `TICKET_DEADLINE_MS` | Per-ticket clock budget (DEC-25). | 60000 |
@@ -1439,8 +1466,8 @@ history. The `model_ver` and `prompt_ver` fields name the pins the fit ran
 under.
 
 Read those two. The consumer checks the model behind each fitted gate: the
-coverage pair and the agreement threshold. It refuses to start when either
-was fitted under a model other than the one `MODEL_VER` names.
+coverage pair and the agreement threshold. It refuses to start when the
+artifact of either names a model other than the one `MODEL_VER` names.
 
 A threshold is one model's judgment of what coverage means. A model that
 reads claims more generously reaches the same number on weaker evidence.
@@ -1818,7 +1845,7 @@ names one cause, because each sends you somewhere different.
 | `unstamped` | The run carries no finish time. | Nothing, unless it grows. |
 | `never_ran` | The run reaches a terminal state without executing, such as an intake abandonment. | Read `pnpm run escalations`. This count rises when a partition is failing. |
 | `snoozed` | A reviewer puts the case aside (DEC-48). Its duration is the wait, not work. | Nothing. It is the wait the distribution leaves out, and it falls as reviewers answer those cases. |
-| `rejected` | A reviewer sent the case back for a new attempt (DEC-49). Its duration is a person's reading time, not work. | Nothing. A rise says reviewers disagree with more drafts, so read those cases. |
+| `rejected` | A reviewer sends the case back for a new attempt (DEC-49). Its duration is a person's reading time, not work. | Nothing. A rise says reviewers disagree with more drafts, so read those cases. |
 
 A run the job cannot measure never enters a figure as a zero. A zero would
 flatter exactly the runs the ledger understands least.
@@ -2382,8 +2409,8 @@ escalates (DEC-30).
 
 The warning reads the action, not the rule that stopped the run. The engine
 tests five rules in order before it reads either gate, and it reports the
-first that fired. So a compensation
-can stop on a rule that says nothing about permanence.
+first that fires. So a compensation can stop on a rule that says nothing
+about permanence.
 
 A case reads one journal, for its own run. The queue reads none. Reading one
 for every waiting run would be a statement for each row of an uncapped list.
@@ -3125,11 +3152,12 @@ helpdesk. The console offers no editor there. A member of staff who typed there 
 text that never sends. Nobody can recall a sent reply (DEC-12).
 
 The console reads the draft back when `APPROVE_ADAPTER` names `imap-smtp` or
-`freescout`. That is the path `pnpm run approve -- --run <run-id> --read-back` takes. The approval
-reads the draft the helpdesk holds and records the approval-edit distance
-against it. Export the adapter's own variables too, because the console reads no
-`.env`. Name the adapter the consumer parks through. The console cannot read a
-draft id another adapter minted, so every approval would refuse.
+`freescout`. That is the path `pnpm run approve -- --run <run-id> --read-back`
+takes. The approval reads the draft the helpdesk holds and records the
+approval-edit distance against it. Export the adapter's own variables too,
+because the console reads no `.env`. Name the adapter the consumer parks
+through. The console cannot read a draft id another adapter minted, so every
+approval would refuse.
 
 An unset `APPROVE_ADAPTER` reads nothing back, and so does the reference
 adapter `helpdesk`. That adapter keeps its drafts in the memory of the process

@@ -206,19 +206,19 @@ The figures in that design document do not describe the shipped corpus. Read
 the register and this item instead.
 
 The shipped corpus holds 8,200 synthetic cases, which clears the trigger. Its
-intent frequencies follow a Zipf shape at exponent 1, the long tail that
-section 3.3 assumes. So the per-intent path runs end to end on synthetic data, and the stub
-labeler labels the cases (DEC-18).
+intent frequencies follow a Zipf shape at exponent 1, the long tail that section
+3.3 assumes. So the per-intent path runs end to end on synthetic data, and the
+stub labeler labels the cases (DEC-18).
 
 The fit refuses a threshold whose 95 percent lower bound cannot hold the
 target precision. The shipped target precision is 0.985, and
 `CALIBRATION_TARGET_PRECISION` overrides it. A perfect sample needs 253 cases
 to hold 0.985.
 
-On the shipped fit half, the four most frequent intents hold that many, and
-the other 21 do not. So the fit sets a threshold for four of the 25 intents,
-and the other 21 keep the global threshold. The case count settles each refusal before the fit
-reads precision.
+On the shipped fit half, the four most frequent intents hold that many, and the
+other 21 do not. So the fit sets a threshold for four of the 25 intents, and the
+other 21 keep the global threshold. The case count settles each refusal before
+the fit reads precision.
 
 ### The next step
 
@@ -235,7 +235,7 @@ precision of 0.9 fits all 25 intents, each at a threshold of 1.0.
 
 No fitted agreement threshold gates the shipped gold report either. That
 report records a gate source of `seed`, which names the section 4.5 seed, and
-no calibration version. Its coverage pair is fitted: it records a coverage
+no calibration version. A fit sets its coverage pair: it records a coverage
 source of `groundedness` and the fit version.
 
 ---

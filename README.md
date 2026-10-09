@@ -121,7 +121,7 @@ next section, [Run the live pipeline](#run-the-live-pipeline), adds the key.
 
 ### Prerequisites
 
-- **Node 22.22 or later, on release line 22, 24, or 26 and later.** vitest
+- **Node 22.22 or later, on major version 22, 24, or 26 and later.** vitest
   does not run on Node 23 or 25. `.nvmrc` names the major version CI uses.
 - **pnpm 11.20.0.** On Node 22 or 24, run `corepack enable`. Node 26 and
   later ship no corepack, so run `npm install -g pnpm@11.20.0` there.
