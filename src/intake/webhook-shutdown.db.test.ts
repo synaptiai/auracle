@@ -68,7 +68,8 @@ describe('the webhook shutdown with a stuck insert', () => {
     } finally {
       clearTimeout(killer);
       child.kill('SIGKILL');
-      // A connection whose rollback failed goes back to the pool as broken.
+      // A connection whose rollback failed is released with its error, and the
+      // pool destroys it rather than handing it out again.
       const rollback = await holder?.query('ROLLBACK').then(() => undefined, (error: unknown) => error);
       holder?.release(rollback instanceof Error ? rollback : undefined);
     }
