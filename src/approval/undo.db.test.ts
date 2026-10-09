@@ -614,21 +614,24 @@ describe('DEC-51: the undo', () => {
     // yet written, and the run's row is locked for the whole of it.
     let release: () => void = () => undefined;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let reached: () => void = () => undefined;
+    const inFlight = new Promise<void>((resolve) => { reached = resolve; });
     const egress = new LedgerEgress();
     const original = egress.sendLedgerReply.bind(egress);
     egress.sendLedgerReply = async (reply: LedgerReply): Promise<{ readonly externalId: string }> => {
       const sent = await original(reply);
+      reached();
       await blocked;
       return sent;
     };
 
     const scanning = relayPending(pool, egress);
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await inFlight;
 
     // The undo begins while the send is in flight. It waits on the lock, and
     // it refuses: by the time it reads the record, the send has landed.
     const undone = undoApproval(pool, runId, { reviewer: 'synthetic-reviewer@example.test' });
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await waitForALockWait();
     release();
 
     expect((await scanning).map((result) => result.outcome)).toEqual(['sent']);
@@ -636,6 +639,19 @@ describe('DEC-51: the undo', () => {
     expect(egress.sends).toHaveLength(1);
     expect((await runRow(runId)).state).toBe('resolved');
   });
+
+  /** Resolves once a session on this file's database waits on a lock. */
+  async function waitForALockWait(): Promise<void> {
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      const waiting = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+      );
+      if ((waiting.rows[0]?.n ?? 0) > 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error('the undo never waited on the run row lock');
+  }
 
   // A scan reads its rows, then walks up to one. If an undo removes the row
   // in between, the send re-reads it under the lock and sends nothing.

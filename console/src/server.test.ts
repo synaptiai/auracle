@@ -7,7 +7,7 @@
 import type { AddressInfo } from 'node:net';
 import { connect } from 'node:net';
 import type { Server } from 'node:http';
-import { request } from 'node:http';
+import { createServer, request } from 'node:http';
 import { createHash } from 'node:crypto';
 
 import { COMPENSATION_ACTION_CLASS } from 'auracle/domain';
@@ -434,13 +434,38 @@ async function startGuarded(
   readBack?: string,
   ledgerReply = false,
 ): Promise<string> {
-  const probe = createConsole(d, '.root{}', {
-    allowedHosts: [], readBack: null, states: [...STATES], ledger: LEDGER, ledgerReply,
-    sendHoldMs: SEND_HOLD_MS,
+  // The allowed hosts name the port, so a probe finds a free one first. It is
+  // closed before the console binds it, and another process can take the
+  // port in between. A bind that fails then tries a fresh port, rather than
+  // leaving the case to time out.
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await bindGuarded(d, await freeLoopbackPort(), namedProxy, readBack, ledgerReply);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE' || attempt === 5) throw error;
+    }
+  }
+}
+
+/** A loopback port that was free a moment ago, once its probe has closed. */
+async function freeLoopbackPort(): Promise<number> {
+  const probe = createServer();
+  await new Promise<void>((resolve, reject) => {
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', resolve);
   });
-  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
   const { port } = probe.address() as AddressInfo;
-  probe.close();
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  return port;
+}
+
+async function bindGuarded(
+  d: ConsoleDeps,
+  port: number,
+  namedProxy: string | undefined,
+  readBack: string | undefined,
+  ledgerReply: boolean,
+): Promise<string> {
   const server = createConsole(d, '.root{}', {
     // Derived through `allowedHosts` when a proxy is named, so this harness
     // builds the same set `main.ts` would rather than restating it.
@@ -456,8 +481,14 @@ async function startGuarded(
     ledgerReply,
     sendHoldMs: SEND_HOLD_MS,
   });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
   opened.push(server);
-  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
   allowedPort = port;
   return `http://127.0.0.1:${port}`;
 }
@@ -10018,9 +10049,9 @@ describe('the way back from a conversation', () => {
   });
 });
 
-// The branches a review named as untested. Each case fails if its branch is
-// removed or turned the wrong way.
-describe('the branches a review named as untested', () => {
+// Branches no other case reaches. Each case fails if its branch is removed or
+// turned the wrong way.
+describe('the branches no other case reaches', () => {
   const hold = (reviewer: string) => ({
     reviewer, takenAt: new Date(Date.now() - 60_000), lapsesAt: new Date(Date.now() + 600_000),
   });

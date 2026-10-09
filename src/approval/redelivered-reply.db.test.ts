@@ -548,10 +548,12 @@ describe('a message redelivered on a turn that is answered, or about to be', () 
         expect(await undo).toEqual({ outcome: 'busy' });
         // The undo waited its budget: about three seconds on the first lock,
         // then what was left on the next. Five seconds in all, not three and
-        // then five more, with room for a loaded host between the two.
+        // then five more. A budget restarted on the next lock takes at least
+        // eight, so the ceiling sits between the two with room for a loaded
+        // host.
         const took = Date.now() - started;
         expect(took).toBeGreaterThanOrEqual(4_500);
-        expect(took).toBeLessThan(7_000);
+        expect(took).toBeLessThan(7_500);
       } finally {
         await firstHolder.query('ROLLBACK').catch(() => undefined);
         await nextHolder.query('ROLLBACK');

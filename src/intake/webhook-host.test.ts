@@ -34,8 +34,23 @@ interface Webhook {
   stderr(): string;
 }
 
-/** Starts the webhook from source with WEBHOOK_HOST set as given. */
+/**
+ * Starts the webhook from source with WEBHOOK_HOST set as given.
+ *
+ * The port was free when the probe closed, and another process can take it
+ * before the child binds. A start that fails on exactly that tries a fresh
+ * port. Any other outcome, a refusal included, goes to the case.
+ */
 async function startWebhook(host: string | undefined): Promise<Webhook> {
+  for (let attempt = 1; ; attempt += 1) {
+    const webhook = await startWebhookOnce(host);
+    const taken = await webhook.listening.then(() => false, () => webhook.stderr().includes('EADDRINUSE'));
+    if (!taken || attempt === 5) return webhook;
+    await webhook.closed;
+  }
+}
+
+async function startWebhookOnce(host: string | undefined): Promise<Webhook> {
   const port = await freePort();
   const env: NodeJS.ProcessEnv = {
     ...process.env,

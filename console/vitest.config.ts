@@ -1,8 +1,7 @@
 import { defineConfig } from 'vitest/config';
 
-// The console's own runner. The core suite excludes `console/**` so its file
-// and case counts are the ones it reported before this package existed, which
-// is what the console's first design asks for.
+// The console's own runner. The core suite excludes `console/**`, so each
+// package reports its own file and case counts.
 //
 // No global setup and no container: every case here is pure. The console owns
 // no SQL, so what there is to test is the rendering and the one write's
@@ -18,6 +17,10 @@ export default defineConfig({
   test: {
     include: ['src/**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**'],
+    // The core projects' budget. A case that waits out a bound, or parses the
+    // package, takes a few seconds, and vitest's default of 5 s leaves it no
+    // room on a loaded machine.
+    testTimeout: 30_000,
     // Both URLs: the readers connect through READER_DATABASE_URL, which the
     // runbook tells an operator to export in the shell.
     env: {

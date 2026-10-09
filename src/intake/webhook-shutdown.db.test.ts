@@ -31,30 +31,21 @@ afterAll(async () => {
 describe('the webhook shutdown with a stuck insert', () => {
   it('exits 1 and says so when its pool cannot end in time', async () => {
     await truncateLedger(pool);
-    const port = await freePort();
-    const { child, closed, stdout, stderr } = startFromSource('src/intake/webhook-main.ts', {
-      cwd: SCRATCH,
-      env: {
-        ...process.env,
-        DATABASE_URL: dbUrl(),
-        WEBHOOK_PORT: String(port),
-        PRODUCTS_FILE: `${REPO_ROOT}products.json`,
-      },
-    });
+    // The port was free when the probe closed, and another process can take
+    // it before the child binds. A start that fails on exactly that tries a
+    // fresh port.
+    let started: Awaited<ReturnType<typeof startListening>> | undefined;
+    for (let attempt = 1; started === undefined; attempt += 1) {
+      const port = await freePort();
+      const run = startListening(port);
+      const failed = await run.listening.then(() => null, (error: unknown) => error);
+      if (failed === null) started = run;
+      else if (!run.stderr().includes('EADDRINUSE') || attempt === 5) throw failed;
+    }
+    const { child, closed, stderr, port } = started;
     const killer = setTimeout(() => child.kill('SIGKILL'), 40_000);
     const holder = await pool.connect();
     try {
-      await new Promise<void>((resolve, reject) => {
-        const poll = setInterval(() => {
-          if (!stdout().includes('"listening"')) return;
-          clearInterval(poll);
-          resolve();
-        }, 50);
-        void closed.then(() => {
-          clearInterval(poll);
-          reject(new Error(`the webhook exited before listening: ${stderr()}`));
-        });
-      });
       // The lock the delivery's insert waits behind, held for the whole case.
       await holder.query('BEGIN');
       await holder.query('LOCK TABLE intake IN ACCESS EXCLUSIVE MODE');
@@ -63,8 +54,8 @@ describe('the webhook shutdown with a stuck insert', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(WEBHOOK_MINIMAL_PAYLOAD),
       }).catch(() => undefined);
-      // Long enough for the insert to reach the lock and wait there.
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      // The insert has reached the lock and waits there.
+      await waitForALockWait();
       const asked = Date.now();
       child.kill('SIGTERM');
       const ended = await closed;
@@ -81,3 +72,41 @@ describe('the webhook shutdown with a stuck insert', () => {
     }
   }, 60_000);
 });
+
+/** Starts the webhook from source on `port`, and settles once it listens. */
+function startListening(port: number) {
+  const run = startFromSource('src/intake/webhook-main.ts', {
+    cwd: SCRATCH,
+    env: {
+      ...process.env,
+      DATABASE_URL: dbUrl(),
+      WEBHOOK_PORT: String(port),
+      PRODUCTS_FILE: `${REPO_ROOT}products.json`,
+    },
+  });
+  const listening = new Promise<void>((resolve, reject) => {
+    const poll = setInterval(() => {
+      if (!run.stdout().includes('"listening"')) return;
+      clearInterval(poll);
+      resolve();
+    }, 50);
+    void run.closed.then(() => {
+      clearInterval(poll);
+      reject(new Error(`the webhook exited before listening: ${run.stderr()}`));
+    });
+  });
+  return { ...run, port, listening };
+}
+
+/** Resolves once a session on this file's database waits on a lock. */
+async function waitForALockWait(): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    const waiting = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+    );
+    if ((waiting.rows[0]?.n ?? 0) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error('the delivery never waited on the intake lock');
+}

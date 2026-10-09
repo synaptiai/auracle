@@ -49,9 +49,8 @@ const POLL_MS = 300;
  * makes those cases deterministic: the pickup is either the signal's doing or
  * it does not happen, so nothing rests on a wall-clock margin.
  *
- * A margin was the first approach and it did not survive a loaded machine.
- * The assertion `waited < 500` failed at 3896 ms during review and at 1943 ms
- * on a later run, both times on code that was working.
+ * A margin does not survive a loaded machine. An assertion of `waited < 500`
+ * fails at 1943 ms and at 3896 ms on code that works.
  */
 const NO_TICK_MS = 120_000;
 
@@ -224,9 +223,9 @@ describe('the consumer loop', () => {
   // `arrival-signal.db.test.ts` owns that end of it against a real Postgres.
   //
   // That seam is what makes the case deterministic. With the notification
-  // round trip inside the budget, this assertion failed on unmutated code
-  // during review at 3896 ms: the wall time ran past the 4 s tick and the
-  // tick-produced run read as a wake.
+  // round trip inside the budget, this assertion fails on working code under
+  // load, at 3896 ms: the wall time runs past the 4 s tick and the
+  // tick-produced run reads as a wake.
   it('picks a message up with no poll tick available to do it', async () => {
     const manual = signalByHand();
     const counted = countingPool();
@@ -260,9 +259,12 @@ describe('the consumer loop', () => {
   // and "it was picked up at once" are indistinguishable.
   it('waits for the poll tick when no signal is supplied', async () => {
     const slowPoll = 2_000;
-    const consumer = startConsumer(deps(), options({ intervalMs: slowPoll }));
+    const counted = countingPool();
+    const consumer = startConsumer({ ...deps(), pool: counted.pool }, options({ intervalMs: slowPoll }));
     try {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      // After the first scan has polled, so that scan cannot pick the message
+      // up however slowly a loaded host runs it. The next tick is the only way.
+      await awaitPolls(counted.polls, 1);
       await enqueueOne();
       // Generous, for a loaded host where coordinating the run takes longer.
       // The ceiling is the stored wait below, stamped at pickup, which bounds
@@ -272,9 +274,9 @@ describe('the consumer loop', () => {
       await consumer.stop();
     }
     const waited = await storedWaitMs();
-    // Enqueued 300ms into a 2s interval, so the message waits most of what is
-    // left. Half the interval is the floor that separates a wait from a
-    // pickup without one.
+    // Enqueued just after the first scan of a 2s interval, so the message
+    // waits most of it. Half the interval is the floor that separates a wait
+    // from a pickup without one.
     expect(waited).toBeGreaterThan(slowPoll / 2);
     // And within the next tick, so a loop that waited longer than its
     // interval fails here and not only against a wall-clock budget.
@@ -291,15 +293,15 @@ describe('the consumer loop', () => {
     };
     // This case owns a slow interval, for the same reason as the poll-tick
     // case above: its property is that the ceiling is what picked the message
-    // up. At the suite's default the settle below would equal the interval,
-    // the enqueue would land on a tick boundary, and the measured wait would
-    // be the few milliseconds to the next scan — a number that says nothing
-    // about the ceiling. Measured at 8 to 15ms before this was fixed.
+    // up. At the suite's default the enqueue could land on a tick boundary,
+    // and the measured wait would be the few milliseconds to the next scan: a
+    // number that says nothing about the ceiling.
     const slowPoll = 2_000;
-    const settleMs = 200;
-    const consumer = startConsumer(deps(), options({ signal: silent, intervalMs: slowPoll }));
+    const counted = countingPool();
+    const consumer = startConsumer({ ...deps(), pool: counted.pool }, options({ signal: silent, intervalMs: slowPoll }));
     try {
-      await new Promise((resolve) => setTimeout(resolve, settleMs));
+      // After the first scan has polled, as in the case above.
+      await awaitPolls(counted.polls, 1);
       await enqueueOne();
       // Generous, for a loaded host where coordinating the run takes longer.
       // The ceiling is the stored wait below, stamped at pickup, which bounds
@@ -331,6 +333,12 @@ describe('the consumer loop', () => {
     const held = new Promise<void>((resolve) => {
       gate.release = resolve;
     });
+    // Resolves once the first poll has read and is held, so the case queues
+    // the message mid-scan by construction and not by a guessed delay.
+    let entered: () => void = (): void => undefined;
+    const isHeld = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
     let holdsLeft = 1;
     const holding = {
       ...deps(),
@@ -341,6 +349,7 @@ describe('the consumer loop', () => {
             const result = await (target.query as (...a: unknown[]) => Promise<unknown>)(...args);
             if (holdsLeft > 0) {
               holdsLeft -= 1;
+              entered();
               await held;
             }
             return result;
@@ -350,8 +359,8 @@ describe('the consumer loop', () => {
     };
     const consumer = startConsumer(holding, options({ signal: manual, intervalMs: NO_TICK_MS }));
     try {
-      // The first poll has now run and returned nothing, and it is held.
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      // The first poll has run and returned nothing, and it is held.
+      await isHeld;
       await enqueueOne();
       manual.fire(0);
       gate.release();
