@@ -270,8 +270,8 @@ good one.
   : "${DATABASE_URL:?set and export DATABASE_URL}"
   ask() { psql "$DATABASE_URL" -X -At -v ON_ERROR_STOP=1 -c "$1"; }
   check() {
-    sessions=$(ask "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND backend_type = 'client backend' AND pid <> pg_backend_pid();")
-    pending=$(ask "SELECT count(*) FROM outbox WHERE status = 'pending';")
+    sessions=$(ask "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND backend_type = 'client backend' AND pid <> pg_backend_pid();") || exit
+    pending=$(ask "SELECT count(*) FROM outbox WHERE status = 'pending';") || exit
     if [ "$sessions" != 0 ]; then
       echo "$sessions other client(s) are connected to the ledger; stop every writer first" >&2
       exit 1
@@ -347,7 +347,7 @@ old database fails on the tables it already holds.
   }
   trap undo EXIT
   trap 'exit 130' INT TERM HUP
-  admin 'CREATE DATABASE auracle;'
+  admin 'CREATE DATABASE auracle;' || exit
   psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 --single-transaction -q < "$SNAPSHOT"
   pnpm run db:migrate   # brings the snapshot to this commit, and restates auracle_reader
   pending=$(psql "$DATABASE_URL" -X -At -v ON_ERROR_STOP=1 \
