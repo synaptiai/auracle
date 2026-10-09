@@ -6,6 +6,7 @@ The guard requires a commit that changes the design register to name a DEC
 the register defines. The commit-msg hook and the pull-request range mode
 must agree on where a citation may appear and on what counts as one.
 """
+import json
 import os
 import subprocess
 import sys
@@ -210,6 +211,33 @@ for name, make_range in UNREADABLE_CASES:
     else:
         print(f"FAIL range: {name}: want {BLOCK} got {got}")
         failures += 1
+
+# The commit-msg hook and the session hook read the staged files too. When git
+# cannot answer, nothing reads as staged, and the commit would pass unread.
+def run_without_git(args, stdin=""):
+    env = dict(os.environ, GIT_DIR=os.path.join(tempfile.gettempdir(), "no-such-git-dir"))
+    done = subprocess.run([sys.executable, HOOK, *args], input=stdin,
+                          capture_output=True, text=True, cwd=ROOT, env=env)
+    said = done.stdout + done.stderr
+    return done.returncode if "cannot read" in said else f"{done.returncode}, unnamed"
+
+
+with tempfile.NamedTemporaryFile("w", suffix=".msg", delete=False) as handle:
+    handle.write("docs: a change\n")
+    message_path = handle.name
+try:
+    for name, args, stdin in [
+        ("the commit-msg hook when git cannot list the staged files", ["--commit-msg", message_path], ""),
+        ("the session hook when git cannot list the staged files", [], json.dumps({"tool_input": {"command": "git commit -m x"}})),
+    ]:
+        got = run_without_git(args, stdin)
+        if got == BLOCK:
+            print(f"pass: {name}")
+        else:
+            print(f"FAIL: {name}: want {BLOCK} got {got}")
+            failures += 1
+finally:
+    os.unlink(message_path)
 
 got = run_unreadable_commit()
 if got == BLOCK:

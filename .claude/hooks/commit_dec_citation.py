@@ -45,10 +45,8 @@ ROUTE = (
 
 
 def commit_msg_mode(msg_file):
-    staged = subprocess.run(
-        ["git", "diff", "--cached", "--name-only"],
-        capture_output=True, text=True,
-    ).stdout.split()
+    staged = read_git(["diff", "--cached", "--name-only"], "the staged files",
+                      sys.stderr).split()
     if ARCH_DOC not in staged:
         sys.exit(0)
     message = open(msg_file, errors="replace").read()
@@ -61,15 +59,17 @@ def commit_msg_mode(msg_file):
     sys.exit(0)
 
 
-def read_git(args, what):
+def read_git(args, what, stream=None):
     """The output of a git command, or a block when git cannot answer.
 
     A commit the guard cannot read is a commit it has not checked, so an
-    error here blocks rather than reading as an empty answer.
+    error here blocks rather than reading as an empty answer. The hooks print
+    to stderr, and the range mode to stdout, as each already does.
     """
     done = subprocess.run(["git", *args], capture_output=True, text=True)
     if done.returncode != 0:
-        print(f"BLOCKED: cannot read {what}: {done.stderr.strip()}")
+        print(f"BLOCKED: cannot read {what}: {done.stderr.strip()}",
+              file=stream or sys.stdout)
         sys.exit(2)
     return done.stdout
 
@@ -130,10 +130,8 @@ def hook_mode():
     cmd = json.load(sys.stdin).get("tool_input", {}).get("command", "")
     if not re.search(r"\bgit\b[^&|;]*\bcommit\b", cmd):
         sys.exit(0)
-    staged = subprocess.run(
-        ["git", "diff", "--cached", "--name-only"],
-        capture_output=True, text=True,
-    ).stdout.split()
+    staged = read_git(["diff", "--cached", "--name-only"], "the staged files",
+                      sys.stderr).split()
     if ARCH_DOC not in staged:
         sys.exit(0)
     if not cites_a_real_dec(cmd):

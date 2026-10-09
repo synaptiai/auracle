@@ -174,10 +174,26 @@ describe('the bootstrap script', () => {
   // The macOS stub without the developer tools, or a pyenv shim for a version
   // that is not installed. The bootstrap still says what failed.
   it('names a python3 that cannot report its version, and keeps its reason on the terminal', () => {
-    const run = bootstrap({ python: { stderr: 'xcrun: error: invalid active developer path', exit: 1 } });
+    const run = bootstrap({ python: { version: '', stderr: 'xcrun: error: invalid active developer path', exit: 1 } });
     expect(run.stdout).toMatch(/python3\s+present but fails: exit 1\n/);
     expect(run.stderr).toContain('xcrun: error: invalid active developer path');
     expect(run.status).toBe(1);
+  });
+
+  // An answer with no text is named as such, and a failure's own reason on
+  // stdout is shown, as the pnpm step shows one.
+  it('names a node that prints nothing, and one that fails with a reason', () => {
+    const silent = bootstrap({ node: { stdout: '', exit: 0 } });
+    expect(silent.stdout).toContain('printed nothing — not a version this script can read');
+    const failing = bootstrap({ node: { stdout: 'nodenv: version 22 is not installed', exit: 1 } });
+    expect(failing.stdout).toMatch(/node\s+present but fails: nodenv: version 22 is not installed\n/);
+  });
+
+  it('names a python3 that prints nothing, and one that fails with a reason', () => {
+    const silent = bootstrap({ python: { version: '' } });
+    expect(silent.stdout).toContain('printed nothing — not a version this script can read');
+    const failing = bootstrap({ python: { version: 'pyenv: python3: command not found', exit: 127 } });
+    expect(failing.stdout).toMatch(/python3\s+present but fails: pyenv: python3: command not found\n/);
   });
 
   it('names a node that cannot report its version', () => {

@@ -86,7 +86,8 @@ is_version_field() {
 NODE_EXIT=0
 NODE_VERSION="$(node -v)" || NODE_EXIT=$?
 if [ "$NODE_EXIT" -ne 0 ]; then
-  step "node" "present but fails: exit $NODE_EXIT"
+  NODE_REASON="$(first_line "$NODE_VERSION")"
+  step "node" "present but fails: ${NODE_REASON:-exit $NODE_EXIT}"
   exit 1
 fi
 NODE_LINE="$(first_line "$NODE_VERSION")"
@@ -100,7 +101,7 @@ esac
 # A build suffix such as -nightly follows the patch number.
 NODE_PATCH="${NODE_PATCH%%[!0-9]*}"
 if ! is_version_field "$NODE_MAJOR" || ! is_version_field "$NODE_MINOR" || ! is_version_field "$NODE_PATCH"; then
-  step "node" "$NODE_LINE — not a version this script can read; install Node 22.22 or later"
+  step "node" "${NODE_LINE:-printed nothing} — not a version this script can read; install Node 22.22 or later"
   exit 1
 fi
 NODE_SHOWN="v$NODE_MAJOR.$NODE_MINOR.$NODE_PATCH"
@@ -127,7 +128,8 @@ fi
 PY_EXIT=0
 PY_PARTS="$(python3 -c 'import sys; print("%d %d %d" % tuple(sys.version_info[:3]))')" || PY_EXIT=$?
 if [ "$PY_EXIT" -ne 0 ]; then
-  step "python3" "present but fails: exit $PY_EXIT"
+  PY_REASON="$(first_line "$PY_PARTS")"
+  step "python3" "present but fails: ${PY_REASON:-exit $PY_EXIT}"
   exit 1
 fi
 PY_MAJOR="" PY_MINOR="" PY_PATCH=""
@@ -135,7 +137,8 @@ read -r PY_MAJOR PY_MINOR PY_PATCH PY_REST <<EOF_PY || true
 $(first_line "$PY_PARTS")
 EOF_PY
 if ! is_version_field "$PY_MAJOR" || ! is_version_field "$PY_MINOR" || ! is_version_field "$PY_PATCH"; then
-  step "python3" "$(first_line "$PY_PARTS") — not a version this script can read; install Python 3.10 or later"
+  PY_LINE="$(first_line "$PY_PARTS")"
+  step "python3" "${PY_LINE:-printed nothing} — not a version this script can read; install Python 3.10 or later"
   exit 1
 fi
 PY_VERSION="Python $PY_MAJOR.$PY_MINOR.$PY_PATCH"
