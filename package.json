@@ -94,7 +94,7 @@
     "typescript-7": "npm:typescript@^7.0.2",
     "typescript-eslint": "^8.71.1",
     "vitest": "^5.0.3",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.1"
   },
   "dependencies": {
     "imapflow": "^2.2.6",
