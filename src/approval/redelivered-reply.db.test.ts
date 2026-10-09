@@ -608,9 +608,14 @@ describe('a message redelivered on a turn that is answered, or about to be', () 
         return client;
       },
     } as unknown as Pool;
-    await startSentBackAttempts({ ...d, pool: inScan }, OPTIONS);
+    try {
+      await startSentBackAttempts({ ...d, pool: inScan }, OPTIONS);
+    } finally {
+      // The undo settles before the case ends, whatever fails above.
+      await (undo as Promise<unknown> | null)?.catch(() => undefined);
+    }
     // While the scan held the turn, the undo waited and removed nothing.
-    expect(waitedInScan).toBe(true);
+    expect(waitedInScan, 'the undo waits on the turn the scan holds').toBe(true);
     expect(settledInScan).toBe(false);
     expect(recordsInScan).toBe(1);
     expect(await supersedeRecord(older!.runId))

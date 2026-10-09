@@ -516,10 +516,12 @@ describe('the consumer loop', () => {
             scans += 1;
             running += 1;
             try {
-              return await (target.query as (...a: unknown[]) => Promise<unknown>)(...args);
+              const result = await (target.query as (...a: unknown[]) => Promise<unknown>)(...args);
+              // A poll counts once it returns, as in `countingPool`.
+              if (typeof args[0] === 'string' && args[0].includes('FROM intake i')) polls += 1;
+              return result;
             } finally {
               running -= 1;
-              if (typeof args[0] === 'string' && args[0].includes('FROM intake i')) polls += 1;
             }
           };
         },
