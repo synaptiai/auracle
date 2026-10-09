@@ -92,9 +92,18 @@ def changed_files(sha):
 
 
 def range_mode(rng):
-    shas = subprocess.run(
+    # A range the guard cannot read is a range it has not checked, so it
+    # blocks. An empty base is what a step that reads a pull request's base
+    # gets on a push, and an unknown base is a shallow checkout.
+    base = rng.split("..")[0]
+    listed = subprocess.run(
         ["git", "rev-list", rng], capture_output=True, text=True,
-    ).stdout.split()
+    )
+    if not base or listed.returncode != 0:
+        reason = "it names no base commit" if not base else listed.stderr.strip()
+        print(f"BLOCKED: cannot read the range '{rng}': {reason}.")
+        sys.exit(2)
+    shas = listed.stdout.split()
     bad = []
     for sha in shas:
         if ARCH_DOC in changed_files(sha) and not cites_a_real_dec(commit_message(sha)):

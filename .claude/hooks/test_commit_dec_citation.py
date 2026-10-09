@@ -166,6 +166,32 @@ for name, expected, kwargs in RANGE_CASES:
         print(f"FAIL range: {name}: want {expected} got {got}")
         failures += 1
 
+# A range the guard cannot read is a range it has not checked. An empty base
+# is what a push event gives a step that reads the pull request's base, and an
+# unknown one is a shallow checkout. Both must fail, never pass unread.
+def run_unreadable_range(make_range):
+    with tempfile.TemporaryDirectory() as repo:
+        rng = build_repo(repo, feature_edits_register=True, citation=False, evil_merge=False)
+        head = rng.split("...")[1]
+        return subprocess.run(
+            [sys.executable, HOOK, f"--range={make_range(head)}"],
+            capture_output=True, text=True, cwd=repo,
+        ).returncode
+
+
+UNREADABLE_CASES = [
+    ("a range with an empty base", lambda head: f"...{head}"),
+    ("a range whose base is not a commit", lambda head: "0" * 40 + "..." + head),
+]
+
+for name, make_range in UNREADABLE_CASES:
+    got = run_unreadable_range(make_range)
+    if got == BLOCK:
+        print(f"pass range: {name}")
+    else:
+        print(f"FAIL range: {name}: want {BLOCK} got {got}")
+        failures += 1
+
 print()
 if failures:
     print(f"{failures} failure(s)")

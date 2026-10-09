@@ -36,10 +36,11 @@ on:
   push:
     branches: [main]
 
-# A newer push to a pull request cancels the run it replaces. On main every
-# commit runs to the end, so each merge has a result.
+# A newer push to a pull request cancels the run it replaces. On main each
+# commit has a group of its own, because GitHub keeps one waiting run per
+# group and cancels it when a newer one queues. So every merge has a result.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Every job only reads the repository.
@@ -90,17 +91,15 @@ jobs:
           --health-timeout 3s
           --health-retries 10
 
-      # GreenMail used to start through testcontainers inside the test step,
-      # so the JVM's boot sat on the critical path and the job needed a Docker
-      # socket. As a service it starts alongside checkout and install.
+      # GreenMail runs as a service, so its JVM boots alongside checkout and
+      # install, and the job needs no Docker socket.
       #
       # The health check names bash explicitly. The image holds no curl, no nc
       # and no wget, so `/dev/tcp` is the only way to test its own IMAP port —
       # and that is a bash feature, while `--health-cmd "sh -c ..."` runs
-      # dash. The first version of this file used `sh`, the check could never
-      # pass, and the job failed on `unhealthy` while the server was serving
-      # correctly. Verified both ways against a running container: the open
-      # port exits 0 and a closed one exits 1.
+      # dash. Under `sh` the check never passes, and the job fails on
+      # `unhealthy` while the server serves. Against a running container, the
+      # open port exits 0 and a closed one exits 1.
       mail:
         image: greenmail/standalone:2.1.14
         env:

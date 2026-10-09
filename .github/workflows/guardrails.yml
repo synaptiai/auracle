@@ -5,10 +5,10 @@ on:
   push:
     branches: [main]
 
-# A newer push to a pull request cancels the run it replaces. On main every
-# commit runs to the end.
+# A newer push to a pull request cancels the run it replaces. On main each
+# commit has a group of its own, as in tests.yml, so every merge has a result.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Every job only reads the repository.
@@ -27,15 +27,33 @@ jobs:
         with:
           python-version: "3.12"
 
-      # The two checks below are the only ones scoped to the pull request
-      # rather than to the tree, so they cannot be plain `pnpm run` targets:
-      # they need the base commit, which exists only here. Everything else
-      # this job runs is also in `pnpm run verify`, deliberately — this job
+      # The two range checks below are the only ones scoped to the commits a
+      # run adds rather than to the tree, so they cannot be plain `pnpm run`
+      # targets: they need a base commit, which only the event names. Everything
+      # else this job runs is also in `pnpm run verify`, deliberately: this job
       # answers in about fifteen seconds and that one takes minutes.
+      #
+      # A pull request compares with its base. A push to main compares with the
+      # commit main held before it. Both checks refuse a range they cannot
+      # read, so a missing base fails the job rather than passing it unread.
+      - name: The commits this run adds
+        id: range
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base="${PR_BASE:-$PUSH_BEFORE}"
+          case "$base" in
+            ""|0000000000000000000000000000000000000000)
+              echo "this event names no base commit to compare with" >&2
+              exit 1 ;;
+          esac
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
       - name: Synthetic fixture rule (DEC-18)
         run: |
           scripts/check-changed-pii.sh \
-            ${{ github.event.pull_request.base.sha }}...${{ github.sha }}
+            ${{ steps.range.outputs.base }}...${{ github.sha }}
 
       - name: Synthetic-fixture guard cases (DEC-18)
         run: python3 .claude/hooks/test_fixtures_pii_guard.py
@@ -43,7 +61,7 @@ jobs:
       - name: DEC citation on register changes (section 2)
         run: |
           python3 .claude/hooks/commit_dec_citation.py \
-            --range=${{ github.event.pull_request.base.sha }}...${{ github.sha }}
+            --range=${{ steps.range.outputs.base }}...${{ github.sha }}
 
       - name: Live-database guard cases (DEC-17, DEC-19)
         run: python3 .claude/hooks/test_live_db_approval.py
