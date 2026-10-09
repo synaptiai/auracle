@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       imapflow:
-        specifier: ^2.2.6
-        version: 2.2.6
+        specifier: ^2.2.7
+        version: 2.2.7
       nodemailer:
         specifier: ^10.0.15
         version: 10.0.15
@@ -1151,8 +1151,8 @@ packages:
     resolution: {integrity: sha512-BAg6QkE8W+TuQLrrw0Ugr7HegXduRuuj8/ti2kSOc+jz1dmx8/WNcjr6XGnq5YpDWxFwwaavqD0+jIUOKelTsw==}
     engines: {node: '>= 4'}
 
-  imapflow@2.2.6:
-    resolution: {integrity: sha512-8yMy5Pe9CfWGGrs8z+GzJ3q7DVCD6hNiiuUjxNTUJHM/QwwMHLYiVmTfcwWKSPaf8Aim/IPkcMK0I1thDdjgWg==}
+  imapflow@2.2.7:
+    resolution: {integrity: sha512-5vb8I+e5kJN6K7VXotH4escg33CoKuj9MteFGK6rf7q1GaExJzQCdltrklshNvLp69/dlDeemMR2MxhCWjBAqQ==}
     engines: {node: '>=20.0.0'}
 
   imurmurhash@0.1.4:
@@ -2749,7 +2749,7 @@ snapshots:
 
   ignore@7.0.6: {}
 
-  imapflow@2.2.6:
+  imapflow@2.2.7:
     dependencies:
       '@zone-eu/mailsplit': 5.4.20
       encoding-japanese: 2.4.0
