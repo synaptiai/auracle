@@ -21,6 +21,7 @@ jobs:
     # main alone: a dispatch from another branch would push that branch.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # A group for each commit. GitHub keeps one waiting run per group and
     # cancels it when a newer one queues, so a group shared by the branch
     # would skip a commit. Each commit pushes its own tag, so two builds do
@@ -96,6 +97,7 @@ jobs:
   not-main:
     if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions: {}
     steps:
       - name: Refuse a branch other than main

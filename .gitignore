@@ -37,10 +37,17 @@ src/e2e/artifacts/**/*.actual.json
 __pycache__/
 *.pyc
 
-# Local state of the workflow tools: journals, agent memory, worktrees.
+# Local state of the workflow tools: journals, run records, agent memory,
+# worktrees and session files.
 .decisions/
+.flow/
+.agents/
+.codex/
 .claude/agent-memory/
+.claude/agent-memory-local
 /.claude/worktrees/
+/.claude/checkpoints/
+/.claude/scheduled_tasks.*
 
 # Agent session transcripts.
 .trail/

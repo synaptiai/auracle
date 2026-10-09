@@ -2,11 +2,14 @@ name: Guardrails
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
-# A superseded push cancels the run it replaced.
+# A newer push to a pull request cancels the run it replaces. On main every
+# commit runs to the end.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Every job only reads the repository.
 permissions:
@@ -60,8 +63,8 @@ jobs:
 
       # A document drifts quietly. These checks decide the claims a machine
       # can decide: every diagram box is declared and explained, the parked
-      # reply reaches a person through the adapter, every relative link
-      # resolves, section 7.1 accounts for every open item, and every design
+      # reply reaches a person through the adapter, every linked file
+      # exists, section 7.1 accounts for every open item, and every design
       # record declares a decision the register defines.
       - name: Documentation claims (diagrams, links, design index, design records)
         run: python3 scripts/check-docs.py
@@ -69,9 +72,8 @@ jobs:
       - name: Documentation checker cases
         run: python3 scripts/test_check_docs.py
 
-      # The live-database rule still blocks inside a session only. The step
-      # above tests its logic; it does not enforce the rule on a pull
-      # request. No hook enforces the test-edit rule any more: it blocked the
-      # regression test a bug fix exists to add, so REVIEW.md holds it now.
-      # The commit-msg hook covers the citation rule locally. See
-      # hooks/commit-msg for install instructions.
+      # The live-database rule blocks inside a session only. The step above
+      # tests its logic, and it does not enforce the rule on a pull request.
+      # REVIEW.md holds the test-edit rule, and no hook enforces it. The
+      # commit-msg hook covers the citation rule locally: hooks/commit-msg
+      # says how to install it.
