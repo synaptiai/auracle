@@ -3,6 +3,8 @@
 // (fencedInsert, section 4.2) so each test exercises insert -> pending ->
 // relay -> terminal status exactly as production would.
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { beforeConnect, failingConnects } from '../test-support/failing-pool.js';
 import { truncateLedger } from '../test-support/schema.js';
@@ -1676,6 +1678,39 @@ describe('DEC-51: the relay and a send the ledger holds back', () => {
     // second time.
     expect(await outboxStatus(idemKey)).toBe('sent');
     expect(await runState(idemKey)).toBe('queued');
+  });
+});
+
+// The runbook takes a snapshot only once the relay has sent every action, so
+// a restore of it holds nothing the relay can send a second time. Its block
+// counts what is left to send. A send under its hold period is left to send,
+// though the relay's own scan skips it until the period ends, so a count that
+// read the scan would take the snapshot too early.
+describe('the runbook snapshot', () => {
+  it('counts every action left to send, a held one included', async () => {
+    await truncateLedger(pool);
+    const runbook = readFileSync(fileURLToPath(new URL('../../docs/operations.md', import.meta.url)), 'utf8');
+    const section = runbook.slice(runbook.indexOf('### Rollback story'));
+    const statement = /"(SELECT count\(\*\) FROM outbox WHERE [^"]*)"/.exec(section);
+    expect(statement, 'the snapshot block counts the actions left to send').not.toBeNull();
+    const left = async (): Promise<number> => Number((await pool.query(statement![1]!)).rows[0]!.count);
+
+    const held = 'idem-' + randomUUID();
+    for (const [key, status, notBefore] of [
+      [held, 'pending', new Date(Date.now() + 600_000)],
+      ['idem-' + randomUUID(), 'sent', null],
+    ] as const) {
+      await pool.query(
+        `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class, delivery, payload, status, not_before)
+         VALUES ($1, 'approve', $2, 1, 'customer_reply', 'at_most_once', '{}', $3, $4)`,
+        [randomUUID(), key, status, notBefore],
+      );
+    }
+    expect(await pendingRows(pool)).toEqual([]);
+    expect(await left()).toBe(1);
+
+    await pool.query("UPDATE outbox SET status = 'sent' WHERE idem_key = $1", [held]);
+    expect(await left()).toBe(0);
   });
 });
 

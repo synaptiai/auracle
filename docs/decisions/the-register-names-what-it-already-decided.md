@@ -19,8 +19,8 @@ The register says some things that its own decisions replace.
 
 ## Proposed outcome
 
-The register states each of these as its decisions already decide. No
-decision changes.
+The register and the runbook state each of these as the decisions already
+decide. No decision changes.
 
 ## Affected users and systems
 

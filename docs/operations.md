@@ -222,23 +222,41 @@ already applied.
 Migrations are forward-only by design. A failed migration rolls itself back.
 You only need a plan for a migration that succeeds and then proves wrong.
 
-Take a snapshot before you run any migration. The snapshot holds customer
-text, so keep it outside the checkout, readable by its owner alone. The block
-runs in a subshell, so its settings end with it. It writes a new file each
-time, so a failed dump never replaces a good one:
+Take a snapshot before you run any migration, with no action left to send. A
+restore of that snapshot then holds nothing the relay can send a second time.
+
+1. Give `DATABASE_URL` without a password, and keep the password in
+   `~/.pgpass`. A URL on the command line shows in the process list.
+2. Stop the webhook, the IMAP intake, the consumer and the console. Keep the
+   relay running until it sends every pending action. A send under its hold
+   period waits for that period first.
+3. Stop the relay, and run the block below. It refuses while an action is
+   still pending. The snapshot holds customer text, so the block keeps it
+   outside the checkout, readable by its owner alone. It writes a new file each
+   time, and it removes a partial file. So a failed dump never replaces a good
+   one.
 
 ```sh
 (
   set -euo pipefail
+  pending=$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 \
+    -c "SELECT count(*) FROM outbox WHERE status = 'pending';")
+  if [ "$pending" != 0 ]; then
+    echo "the relay still has $pending action(s) to send; start it again and wait" >&2
+    exit 1
+  fi
   umask 077
   mkdir -p "$HOME/auracle-backups"
   chmod 700 "$HOME/auracle-backups"
   snapshot="$HOME/auracle-backups/pre-migrate-$(date +%Y%m%dT%H%M%S).sql"
+  trap 'rm -f "$snapshot.part"' EXIT
   pg_dump "$DATABASE_URL" > "$snapshot.part"
   mv "$snapshot.part" "$snapshot"
   echo "$snapshot"
 )
 ```
+
+4. Run the migration, and start every daemon.
 
 If a migration succeeds and then causes a problem in production, restore that
 snapshot into a new, empty database. A restore into the old database fails on
@@ -250,45 +268,43 @@ compose stack gives the ledger database.
    left: `SELECT pid, application_name FROM pg_stat_activity WHERE datname =
    'auracle';`
 2. Check out the commit before the faulty migration, or run its image.
-3. Set `ADMIN_URL` to the `postgres` database on the ledger's server, with
-   the user and the connection settings of `DATABASE_URL`. On a shared host,
-   keep each password in `~/.pgpass`. A URL on the command line shows in the
-   process list. Set `SNAPSHOT` to the file the snapshot block printed.
-4. Run the block below. It stops at the first command that fails.
+3. Set `ADMIN_URL` to the `postgres` database on the ledger's server. Give it
+   the user and the connection settings of `DATABASE_URL`, and no password.
+   Set `SNAPSHOT` to the file that the snapshot block prints.
+4. Run the block below. It checks its inputs first, and it stops at the first
+   command that fails.
 
 ```sh
 (
   set -euo pipefail
+  : "${ADMIN_URL:?set ADMIN_URL}" "${DATABASE_URL:?set DATABASE_URL}"
+  test -r "${SNAPSHOT:?set SNAPSHOT}"
   psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -c 'ALTER DATABASE auracle RENAME TO auracle_faulty;'
   psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE auracle;'
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction -q < "$SNAPSHOT"
   pnpm run db:migrate   # applies nothing new, and restates auracle_reader
-  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
-    -c "UPDATE outbox SET status = 'not_sent' WHERE status = 'pending';"
 )
 ```
 
-The rename keeps every write after the snapshot in `auracle_faulty`. If the
-block stops after the rename, rename that database back to `auracle` before
-you start anything.
+The rename keeps every write after the snapshot in `auracle_faulty`. The block
+can stop after the rename. Then remove the new database, and rename the old
+one back before you start anything:
 
-The last command holds every action the snapshot left pending. The relay
-never sends a `not_sent` action, and `pnpm run escalations` lists each one for
-a person. The snapshot cannot tell an action that is still due from one that
-the relay sent after it. Nor can it tell one that a reviewer undid. So no
-restored action reaches a customer without a person.
+```sh
+psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -c 'DROP DATABASE IF EXISTS auracle;' \
+  -c 'ALTER DATABASE auracle_faulty RENAME TO auracle;'
+```
 
-5. Start the daemons, the relay included. Then settle each listed action
-   against `auracle_faulty`. An action that `auracle_faulty` records as `sent`
-   reached the customer. An action that `auracle_faulty` no longer holds was
-   undone.
-6. Read `auracle_faulty` for the other writes after the snapshot. Before you
-   approve a case again, look up its action there. A reply that is already
-   `sent` there reaches the customer a second time if you approve it again.
-   The IMAP intake marks each message it takes in as read. A message it took
-   in after the snapshot therefore never comes back to it. Answer each one from
-   `auracle_faulty`. Drop `auracle_faulty` when nothing in it is left to
-   settle.
+The snapshot holds no pending action, so the restored ledger gives the relay
+nothing to send again.
+
+5. Start every daemon.
+6. Settle the writes after the snapshot from `auracle_faulty`, because the
+   restored ledger does not hold them. Each run that `auracle_faulty` holds and
+   the restored ledger lacks needs a person. Its outbox row says whether its
+   reply reached the customer: a `sent` reply did. The IMAP intake marks each
+   message that it takes in as read, so it never fetches such a message again.
+   Drop `auracle_faulty` when nothing in it is left to settle.
 
 Do not run `db:migrate` from the commit that holds the faulty migration. It
 applies that migration again.
