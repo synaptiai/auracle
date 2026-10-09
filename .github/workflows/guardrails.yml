@@ -48,20 +48,29 @@ jobs:
               echo "this event names no base commit to compare with" >&2
               exit 1 ;;
           esac
+          # A commit id is 40 hex characters. Anything else is not one, so it
+          # never reaches a command line below.
+          if ! printf '%s' "$base" | grep -Eqx '[0-9a-f]{40}'; then
+            echo "the base '$base' is not a commit id" >&2
+            exit 1
+          fi
           echo "base=$base" >> "$GITHUB_OUTPUT"
 
+      # `base...head` reads the files the run changes since the merge base.
       - name: Synthetic fixture rule (DEC-18)
-        run: |
-          scripts/check-changed-pii.sh \
-            ${{ steps.range.outputs.base }}...${{ github.sha }}
+        env:
+          BASE: ${{ steps.range.outputs.base }}
+        run: scripts/check-changed-pii.sh "$BASE...$GITHUB_SHA"
 
       - name: Synthetic-fixture guard cases (DEC-18)
         run: python3 .claude/hooks/test_fixtures_pii_guard.py
 
+      # `base..head` lists the commits the run adds, and no commit the base
+      # holds alone.
       - name: DEC citation on register changes (section 2)
-        run: |
-          python3 .claude/hooks/commit_dec_citation.py \
-            --range=${{ steps.range.outputs.base }}...${{ github.sha }}
+        env:
+          BASE: ${{ steps.range.outputs.base }}
+        run: python3 .claude/hooks/commit_dec_citation.py "--range=$BASE..$GITHUB_SHA"
 
       - name: Live-database guard cases (DEC-17, DEC-19)
         run: python3 .claude/hooks/test_live_db_approval.py

@@ -61,13 +61,23 @@ def commit_msg_mode(msg_file):
     sys.exit(0)
 
 
+def read_git(args, what):
+    """The output of a git command, or a block when git cannot answer.
+
+    A commit the guard cannot read is a commit it has not checked, so an
+    error here blocks rather than reading as an empty answer.
+    """
+    done = subprocess.run(["git", *args], capture_output=True, text=True)
+    if done.returncode != 0:
+        print(f"BLOCKED: cannot read {what}: {done.stderr.strip()}")
+        sys.exit(2)
+    return done.stdout
+
+
 def commit_message(sha):
     """Subject and body. The commit-msg hook reads the whole message, so this
     mode must too: a DEC cited in the body is the normal case."""
-    return subprocess.run(
-        ["git", "log", "-1", "--format=%s%n%b", sha],
-        capture_output=True, text=True,
-    ).stdout
+    return read_git(["log", "-1", "--format=%s%n%b", sha], f"the message of {sha[:10]}")
 
 
 def changed_files(sha):
@@ -84,11 +94,10 @@ def changed_files(sha):
     merge that edited the register on its own still lists it and is checked.
     An ordinary commit is unaffected.
     """
-    return subprocess.run(
-        ["git", "diff-tree", "-r", "--no-commit-id", "--name-only",
-         "--cc", sha],
-        capture_output=True, text=True,
-    ).stdout.split()
+    return read_git(
+        ["diff-tree", "-r", "--no-commit-id", "--name-only", "--cc", sha],
+        f"the files of {sha[:10]}",
+    ).split()
 
 
 def range_mode(rng):

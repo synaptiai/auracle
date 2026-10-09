@@ -169,14 +169,33 @@ for name, expected, kwargs in RANGE_CASES:
 # A range the guard cannot read is a range it has not checked. An empty base
 # is what a push event gives a step that reads the pull request's base, and an
 # unknown one is a shallow checkout. Both must fail, never pass unread.
+#
+# The fixture cites its change, so a guard that read the history anyway would
+# pass it: only a refusal of the range itself blocks here.
 def run_unreadable_range(make_range):
     with tempfile.TemporaryDirectory() as repo:
-        rng = build_repo(repo, feature_edits_register=True, citation=False, evil_merge=False)
+        rng = build_repo(repo, feature_edits_register=True, citation=True, evil_merge=False)
         head = rng.split("...")[1]
-        return subprocess.run(
+        done = subprocess.run(
             [sys.executable, HOOK, f"--range={make_range(head)}"],
             capture_output=True, text=True, cwd=repo,
-        ).returncode
+        )
+        return done.returncode if "cannot read the range" in done.stdout else f"{done.returncode}, unnamed"
+
+
+# A commit in a readable range whose files git cannot list has not been read
+# either. Removing the tree object of the feature commit leaves the range
+# listable and the commit's files unreadable.
+def run_unreadable_commit():
+    with tempfile.TemporaryDirectory() as repo:
+        rng = build_repo(repo, feature_edits_register=False, citation=True, evil_merge=False)
+        tree = git(repo, "rev-parse", "feature^{tree}").stdout.strip()
+        os.remove(os.path.join(repo, ".git", "objects", tree[:2], tree[2:]))
+        done = subprocess.run(
+            [sys.executable, HOOK, f"--range={rng}"],
+            capture_output=True, text=True, cwd=repo,
+        )
+        return done.returncode if "cannot read" in done.stdout else f"{done.returncode}, unnamed"
 
 
 UNREADABLE_CASES = [
@@ -191,6 +210,13 @@ for name, make_range in UNREADABLE_CASES:
     else:
         print(f"FAIL range: {name}: want {BLOCK} got {got}")
         failures += 1
+
+got = run_unreadable_commit()
+if got == BLOCK:
+    print("pass range: a commit whose files git cannot list")
+else:
+    print(f"FAIL range: a commit whose files git cannot list: want {BLOCK} got {got}")
+    failures += 1
 
 print()
 if failures:
