@@ -50,7 +50,7 @@ jobs:
           esac
           # A commit id is 40 hex characters. Anything else is not one, so it
           # never reaches a command line below.
-          if ! printf '%s' "$base" | grep -Eqx '[0-9a-f]{40}'; then
+          if ! [[ "$base" =~ ^[0-9a-f]{40}$ ]]; then
             echo "the base '$base' is not a commit id" >&2
             exit 1
           fi

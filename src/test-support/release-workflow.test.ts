@@ -33,10 +33,10 @@ interface Job {
 
 const workflow = parse(readFileSync(WORKFLOW, 'utf8')) as { on: unknown; env: Record<string, string>; jobs: Record<string, Job> };
 
-/** The commit a run builds: the one Tests ran on, or the dispatched one. */
-const COMMIT = '${{ github.event.workflow_run.head_sha || github.sha }}';
+/** The commit a run builds: the one Tests ran on. */
+const COMMIT = '${{ github.event.workflow_run.head_sha }}';
 const image = workflow.jobs.image!;
-const refusal = workflow.jobs['not-main']!;
+const refusal = workflow.jobs['no-image']!;
 const steps = image.steps ?? [];
 
 /** What a step is: its name, or the action it uses without the pin, or its id. */
@@ -55,22 +55,23 @@ function stringsOf(value: unknown): string[] {
 describe('the release workflow', () => {
   // An image of a commit whose tests failed never reaches the registry: the
   // build starts only after Tests passes on that commit.
-  it('runs after Tests completes on main, and on a dispatch, and nothing else', () => {
+  // No dispatch: a build by hand would skip the gate. A failed release run is
+  // re-run from its own page, against the same Tests result.
+  it('runs after Tests completes on main, and nothing else', () => {
     expect(workflow.on).toEqual({
       workflow_run: { workflows: ['Tests'], types: ['completed'], branches: ['main'] },
-      workflow_dispatch: null,
     });
   });
 
-  it('builds only a commit pushed to main whose tests passed, or one dispatched from main', () => {
-    expect(Object.keys(workflow.jobs).sort()).toEqual(['image', 'not-main']);
+  it('builds only a commit pushed to main whose tests passed, and says why another has no image', () => {
+    expect(Object.keys(workflow.jobs).sort()).toEqual(['image', 'no-image']);
     expect(image.if).toBe(
-      "(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'"
-        + " && github.event.workflow_run.event == 'push')"
-        + " || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')",
+      "github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'",
     );
     expect(image.permissions).toEqual({ contents: 'read', packages: 'write' });
-    expect(refusal.if).toBe("github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'");
+    expect(refusal.if).toBe(
+      "github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion != 'success'",
+    );
     expect(refusal.permissions).toEqual({});
     expect(refusal.steps).toHaveLength(1);
     const run = refusal.steps![0]!.run ?? '';

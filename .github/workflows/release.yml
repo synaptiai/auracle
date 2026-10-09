@@ -8,27 +8,25 @@
 name: Release
 
 # After Tests completes on main, so a commit whose tests fail publishes no
-# image. The job below reads whether it passed.
+# image. The jobs below read whether it passed. There is no dispatch, because a
+# build by hand would skip that gate: re-run a failed release from its own run.
 on:
   workflow_run:
     workflows: [Tests]
     types: [completed]
     branches: [main]
-  # Re-run the build for the tip of main by hand.
-  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
   IMAGE: ${{ github.repository }}
-  # The commit Tests ran on, or the dispatched one.
-  COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+  # The commit Tests ran on.
+  COMMIT: ${{ github.event.workflow_run.head_sha }}
 
 jobs:
   image:
     # A push to main whose tests passed. A pull request's Tests run never
-    # builds, and neither does a dispatch from another branch, which would
-    # push that branch.
-    if: (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    # builds, a fork's branch named main included.
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # A group for each commit. GitHub keeps one waiting run per group and
@@ -36,7 +34,7 @@ jobs:
     # would skip a commit. Each commit pushes its own tag, so two builds do
     # not collide.
     concurrency:
-      group: image-${{ github.event.workflow_run.head_sha || github.sha }}
+      group: image-${{ github.event.workflow_run.head_sha }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -44,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - id: meta
         # The SHA, not `latest`. A tag that moves cannot be rolled back to,
@@ -103,15 +101,17 @@ jobs:
       - name: Publish the image
         run: docker push "${{ steps.meta.outputs.tag }}"
 
-  # A dispatch from another branch runs no build. This job says so and fails,
-  # so the run does not read as a build that passed.
-  not-main:
-    if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+  # A commit on main whose tests did not pass gets no image. This job says so
+  # and fails, so the run does not read as a build that passed.
+  no-image:
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion != 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
     steps:
-      - name: Refuse a branch other than main
+      - name: Say why this commit has no image
+        env:
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
         run: |
-          echo "The release workflow builds main alone. Dispatch it from main." >> "$GITHUB_STEP_SUMMARY"
+          echo "No image for $COMMIT: Tests concluded $CONCLUSION." >> "$GITHUB_STEP_SUMMARY"
           exit 1
