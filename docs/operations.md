@@ -229,108 +229,125 @@ writes after it: right after the migration, before any daemon starts. Once
 traffic runs on the new schema, do not restore. Write a migration that
 corrects the faulty one, and apply it forward.
 
+The blocks below use `auracle`, the name the compose stack gives the ledger
+database. They need a database user that owns `auracle` and may create
+databases.
+
 Run a migration in this order:
 
-1. Give `DATABASE_URL` without a password, and keep the password in
-   `~/.pgpass`. A URL on the command line shows in the process list.
+1. Export `DATABASE_URL` without a password. Keep the password in
+   `~/.pgpass`, one line per server in the form
+   `host:port:database:user:password`, and run `chmod 600 ~/.pgpass`. A URL on
+   the command line shows in the process list. A client ignores a `~/.pgpass`
+   that other users can read.
 2. Stop every writer except the relay. The daemons that write are the
-   webhook, the IMAP intake, the consumer and the console. A command such as
-   `pnpm run approve` writes too. Keep the relay running until it sends every
-   pending action. A send in its hold period waits for that period first. A
-   send that keeps failing stays pending. If the count does not fall, read the
-   relay's log and `pnpm run escalations`.
-3. Stop the relay, and run the snapshot block below. It counts the pending
-   actions before and after the dump. It keeps the snapshot only when both
-   counts are 0. A count above 0 after the dump means that a writer still runs.
-4. Run `pnpm run db:migrate`, and check what it changed before you start any
-   daemon. If the check passes, start every daemon. If it fails, restore the
-   snapshot as below while every daemon is still stopped.
+   webhook, the IMAP intake, the consumer and the console. The commands
+   `approve`, `reviewers`, `load-docs` and `seed-history` write too.
+3. Keep the relay running until it sends every pending action. A send in its
+   hold period waits for that period first. A send that keeps failing stays
+   pending: the relay logs `left_pending_retry` with its `sendError`. Fix the
+   cause and wait, or postpone the migration.
+4. Stop the relay, and run the snapshot block below. It refuses while another
+   session is connected to the ledger, or while an action is pending. It
+   checks both again after the dump, and it keeps the snapshot only when every
+   check passes.
+5. Run `pnpm run db:migrate`, and check the result before you start any
+   daemon. The migration's number is the newest row of `schema_version`.
+   `pnpm run escalations` and `pnpm run latency` only read, so each one runs
+   against the new schema without a write. If the check passes, start every
+   daemon. If it fails, restore the snapshot as below while every daemon is
+   still stopped.
 
 The snapshot holds customer text, so the block keeps it outside the checkout,
 readable by its owner alone. It writes a new file each time, and it removes a
-partial file. So a failed dump never replaces a good one.
+partial file, an interrupted one included. So a failed dump never replaces a
+good one.
 
 ```sh
 (
   set -euo pipefail
-  pending() {
-    psql "$DATABASE_URL" -X -At -v ON_ERROR_STOP=1 \
-      -c "SELECT count(*) FROM outbox WHERE status = 'pending';"
+  : "${DATABASE_URL:?set and export DATABASE_URL}"
+  ask() { psql "$DATABASE_URL" -X -At -v ON_ERROR_STOP=1 -c "$1"; }
+  check() {
+    sessions=$(ask "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid();")
+    pending=$(ask "SELECT count(*) FROM outbox WHERE status = 'pending';")
+    if [ "$sessions" != 0 ]; then
+      echo "$sessions other session(s) are connected to the ledger; stop every writer first" >&2
+      exit 1
+    fi
+    if [ "$pending" != 0 ]; then
+      echo "$pending action(s) are pending $1" >&2
+      exit 1
+    fi
   }
-  if [ "$(pending)" != 0 ]; then
-    echo "the relay still has actions to send; start it again and wait" >&2
-    exit 1
-  fi
+  check "now; let the relay send them, then stop it"
   umask 077
   mkdir -p "$HOME/auracle-backups"
   chmod 700 "$HOME/auracle-backups"
-  snapshot="$HOME/auracle-backups/pre-migrate-$(date +%Y%m%dT%H%M%S).sql"
+  snapshot="$HOME/auracle-backups/pre-migrate-$(date +%Y%m%dT%H%M%S)-$$.sql"
   trap 'rm -f "$snapshot.part"' EXIT
+  trap 'exit 130' INT TERM HUP
   pg_dump "$DATABASE_URL" > "$snapshot.part"
-  if [ "$(pending)" != 0 ]; then
-    echo "a writer added an action during the dump; stop it and run this again" >&2
-    exit 1
-  fi
+  check "after the dump, so a writer still runs; stop it"
   mv "$snapshot.part" "$snapshot"
   echo "$snapshot"
 )
 ```
 
 To restore, put the snapshot into a new, empty database. A restore into the
-old database fails on the tables it already holds. The commands below use
-`auracle`, the name the compose stack gives the ledger database.
+old database fails on the tables it already holds.
 
-1. Check that every daemon and every writer is still stopped. Postgres renames
-   no database that has an open connection. A query to the `postgres`
-   database lists any that are left: `SELECT pid, application_name FROM
-   pg_stat_activity WHERE datname = 'auracle';`
-2. Check out the commit before the faulty migration, or run its image.
+1. Check that every daemon and every writer is still stopped. If any writer
+   ran after the snapshot, do not restore: write a corrective migration.
+2. Check out the commit before the faulty migration, and run the block from
+   that checkout.
 3. Set `ADMIN_URL` to the `postgres` database on the ledger's server. Give it
    the user and the connection settings of `DATABASE_URL`, and no password.
    Set `SNAPSHOT` to the file that the snapshot block prints.
-4. Run the block below. It checks its inputs first, and it stops at the first
-   command that fails. Last, it checks that the restored ledger holds no
-   pending action.
+4. Run the block below. It refuses if an `auracle_faulty` from an earlier
+   rollback still exists. It renames the migrated ledger to `auracle_faulty`,
+   and restores the snapshot into a new `auracle`. If any later command fails,
+   it renames the new database to `auracle_partial` with a time. Then it
+   renames `auracle_faulty` back to `auracle`. It drops no database.
 
 ```sh
 (
   set -euo pipefail
   : "${ADMIN_URL:?set ADMIN_URL}" "${DATABASE_URL:?set DATABASE_URL}" "${SNAPSHOT:?set SNAPSHOT}"
+  export DATABASE_URL
   test -r "$SNAPSHOT" || { echo "cannot read $SNAPSHOT" >&2; exit 1; }
-  psql "$ADMIN_URL" -X -v ON_ERROR_STOP=1 -c 'ALTER DATABASE auracle RENAME TO auracle_faulty;'
-  psql "$ADMIN_URL" -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE auracle;'
+  admin() { psql "$ADMIN_URL" -X -At -v ON_ERROR_STOP=1 -c "$1"; }
+  earlier=$(admin "SELECT count(*) FROM pg_database WHERE datname = 'auracle_faulty';")
+  if [ "$earlier" != 0 ]; then
+    echo "auracle_faulty exists from an earlier rollback; drop or rename it first" >&2
+    exit 1
+  fi
+  admin 'ALTER DATABASE auracle RENAME TO auracle_faulty;'
+  restored=no
+  undo() {
+    [ "$restored" = yes ] && return
+    partial="auracle_partial_$(date +%Y%m%d_%H%M%S)"
+    admin "ALTER DATABASE auracle RENAME TO $partial;" || true
+    admin 'ALTER DATABASE auracle_faulty RENAME TO auracle;'
+    echo "the restore failed; auracle is the migrated ledger again, and $partial holds the attempt" >&2
+  }
+  trap undo EXIT
+  trap 'exit 130' INT TERM HUP
+  admin 'CREATE DATABASE auracle;'
   psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 --single-transaction -q < "$SNAPSHOT"
   pnpm run db:migrate   # applies nothing new, and restates auracle_reader
   pending=$(psql "$DATABASE_URL" -X -At -v ON_ERROR_STOP=1 \
     -c "SELECT count(*) FROM outbox WHERE status = 'pending';")
   if [ "$pending" != 0 ]; then
-    echo "the restored ledger holds $pending pending action(s); keep the relay stopped" >&2
+    echo "the snapshot holds $pending pending action(s); the snapshot block did not take it" >&2
     exit 1
   fi
+  restored=yes
 )
 ```
 
-The rename keeps the migrated ledger in `auracle_faulty`. If the block stops
-after the rename, run the block below before you start anything. It changes
-nothing unless `auracle_faulty` exists, because without it the rename never
-ran and `auracle` is still the ledger.
-
-```sh
-(
-  set -euo pipefail
-  : "${ADMIN_URL:?set ADMIN_URL}"
-  faulty=$(psql "$ADMIN_URL" -X -At -v ON_ERROR_STOP=1 \
-    -c "SELECT count(*) FROM pg_database WHERE datname = 'auracle_faulty';")
-  if [ "$faulty" != 1 ]; then
-    echo "no auracle_faulty: the rename never ran, so auracle is the ledger; change nothing" >&2
-    exit 1
-  fi
-  psql "$ADMIN_URL" -X -v ON_ERROR_STOP=1 -c 'DROP DATABASE IF EXISTS auracle;'
-  psql "$ADMIN_URL" -X -v ON_ERROR_STOP=1 -c 'ALTER DATABASE auracle_faulty RENAME TO auracle;'
-)
-```
-
-5. Start every daemon. Drop `auracle_faulty` once you no longer need it.
+5. Start every daemon. Drop `auracle_faulty`, and any `auracle_partial`, once
+   you no longer need them.
 
 Do not run `db:migrate` from the commit that holds the faulty migration. It
 applies that migration again.

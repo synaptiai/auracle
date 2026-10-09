@@ -1691,9 +1691,12 @@ describe('the runbook snapshot', () => {
     await truncateLedger(pool);
     const runbook = readFileSync(fileURLToPath(new URL('../../docs/operations.md', import.meta.url)), 'utf8');
     const section = runbook.slice(runbook.indexOf('### Rollback story'));
-    const statement = /"(SELECT count\(\*\) FROM outbox WHERE [^"]*)"/.exec(section);
-    expect(statement, 'the snapshot block counts the actions left to send').not.toBeNull();
-    const left = async (): Promise<number> => Number((await pool.query(statement![1]!)).rows[0]!.count);
+    // The snapshot block counts, and so does the restore block. Each copy is
+    // held to the same answers, so one cannot drift from the other.
+    const statements = [...section.matchAll(/"(SELECT count\(\*\) FROM outbox WHERE [^"]*)"/g)].map((match) => match[1]!);
+    expect(statements.length, 'the snapshot and restore blocks count the actions left to send').toBeGreaterThanOrEqual(2);
+    const left = async (): Promise<number[]> =>
+      Promise.all(statements.map(async (statement) => Number((await pool.query(statement)).rows[0]!.count)));
 
     // Three actions on real runs: one due, one under its hold period, one sent.
     const due = await seedPending(`T-${randomUUID().slice(0, 8)}`, 1n, 'at_most_once');
@@ -1704,10 +1707,10 @@ describe('the runbook snapshot', () => {
 
     // The relay's scan sees the due action alone. The held one waits outside it.
     expect((await pendingRows(pool)).map((row) => row.idem_key)).toEqual([due]);
-    expect(await left()).toBe(2);
+    expect(await left()).toEqual(statements.map(() => 2));
 
     await pool.query("UPDATE outbox SET status = 'sent' WHERE idem_key IN ($1, $2)", [due, held]);
-    expect(await left()).toBe(0);
+    expect(await left()).toEqual(statements.map(() => 0));
   });
 });
 
