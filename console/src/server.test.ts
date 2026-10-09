@@ -864,10 +864,10 @@ describe('the console against a page it did not serve', () => {
   });
 
   // A console behind an authenticating proxy answers the proxy and nobody
-  // else. The allowlist used to add the proxy's name to the derived loopback
-  // names rather than replacing them, so a request that reached the port
-  // directly passed by claiming to be loopback — and the approval behind it
-  // sends a customer reply that cannot be recalled (DEC-12, DEC-14).
+  // else. The proxy's name replaces the derived loopback names. If it joined
+  // them, a request that reaches the port directly would pass by claiming to
+  // be loopback. The approval behind it sends a customer reply that cannot be
+  // recalled (DEC-12, DEC-14).
   it('refuses a direct approval once the operator names a proxy', async () => {
     const approved: string[] = [];
     await startGuarded(
@@ -974,9 +974,9 @@ describe('what a fault and a refusal tell the operator', () => {
     }
   });
 
-  // Refused, not failed. It used to reach the catch-all and answer 500 with
-  // the bound's own sentence, which reports the console as broken by a
-  // request it correctly declined.
+  // Refused, not failed. A 500 from the catch-all would carry the bound's own
+  // sentence. It would report the console as broken by a request it
+  // correctly declined.
   it('answers an oversized approval form with a refusal', async () => {
     const approved: string[] = [];
     const base = await startGuarded(deps({
@@ -1234,8 +1234,8 @@ describe('what a fault and a refusal tell the operator', () => {
   // An approval that answered anything else wrote no approver to the ledger,
   // and the log must not read as though one were written.
   //
-  // A claim and a record cannot differ here, which is what used to need its
-  // own case: the gate refuses a value DEC-42 would reduce to
+  // A claim and a record cannot differ here, so this file needs no case for
+  // a difference. The gate refuses a value DEC-42 would reduce to
   // `unattributed`, so the reviewer reaching this route is always a name the
   // ledger keeps. `reviewer.test.ts` holds that refusal.
   it('names no recorded approver when the approval did not happen', async () => {
@@ -1730,8 +1730,8 @@ describe('the evidence states that are not a list of claims', () => {
     expect(html).toContain('could not be read');
   });
 
-  // Two different facts, and the more alarming one used to render as the
-  // other: a reply citing a document the retriever never returned.
+  // Two different facts. The more alarming one, a reply citing a document
+  // the retriever never returned, must not render as the other.
   it('separates a document that left the index from one never retrieved', async () => {
     const html = await caseWith({
       draftBody: 'a reply', parkedAction: false, documentsMalformed: false,
@@ -6570,8 +6570,8 @@ describe('DEC-44: the console edits the reply the ledger holds', () => {
     expect(draftPath).toContain('Approving sends the helpdesk draft to the customer.');
   });
 
-  // A read that failed is not a write that may have committed. The 500 used
-  // to say the save might have landed about a fault that never reached one.
+  // A read that failed is not a write that may have committed. The 500 must
+  // not say the save might have landed about a fault that never reached one.
   it('says nothing was saved when the failure was a read', async () => {
     const base = await capable({
       readRun: async () => { throw new Error('the ledger did not answer'); },

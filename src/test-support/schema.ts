@@ -1,18 +1,17 @@
 // Applies the real ledger schema to a test database, and clears it between
 // cases.
 //
-// Every database suite used to name the migration files it wanted, so a new
-// migration reached none of them and the suites ran against a stale shape.
-// This walks db/*.sql in version order through the same discovery the
-// migrator uses, so a suite always sees the schema an adopter would get.
+// A suite that names the migration files it wants misses every new
+// migration, and runs against a stale shape. This walks db/*.sql in version
+// order through the same discovery the migrator uses, so a suite always sees
+// the schema an adopter would get.
 //
-// Cleanup had the same problem one level down. `TRUNCATE` was written 49
-// times across 30 files in ten different table lists: fourteen omitted
-// `intake`, five omitted `conversation` and `turn`. A suite that skips a
-// table leaves rows for the next file, which is an order-dependent flake and
-// the reason the database project could not run its files in parallel.
-// Adding a table under `db/` meant editing twenty-two files, and nothing
-// failed when that was missed.
+// Cleanup has the same problem one level down. A hand-written `TRUNCATE`
+// table list drifts from the schema. A suite that skips a table leaves rows
+// for the next file. That is an order-dependent flake, and it stops the
+// database project from running its files in parallel. A new table under
+// `db/` would need an edit to every such list, and nothing fails when one is
+// missed.
 //
 // `truncateLedger` asks the database what tables exist instead. A table added
 // by a migration is cleared by every suite from the moment it exists, with no
@@ -56,7 +55,7 @@ export async function applyLedgerSchema(pool: Pool): Promise<void> {
  *
  * The list comes from `information_schema.tables` at call time. That is the
  * whole point: a hand-written list is a second declaration of the schema, and
- * it had already drifted ten ways.
+ * it drifts from the first.
  */
 export async function truncateLedger(db: Pool | PoolClient): Promise<void> {
   const { rows } = await db.query<{ table_name: string }>(

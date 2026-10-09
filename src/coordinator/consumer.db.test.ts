@@ -716,9 +716,9 @@ describe('section 4.3 partition consumer', () => {
     expect(drained.rows[0]?.n).toBe(0);
   });
 
-  // A message that always throws used to be retried on every scan forever:
-  // a classifier budget spent each time, one orphan run per attempt, and one
-  // identical log line as the only signal.
+  // Without an attempt limit, a message that always throws is retried on
+  // every scan forever: a classifier budget spent each time, one orphan run
+  // per attempt, and one identical log line as the only signal.
   it('abandons a message that fails MAX_INTAKE_ATTEMPTS times, and files why', async () => {
     const ticketId = `T-${randomUUID().slice(0, 8)}`;
     await enqueueTicket(
@@ -1061,9 +1061,9 @@ describe('section 4.3 partition consumer', () => {
     expect(history.map((t) => t.bodyText)).toEqual(['My card was charged twice.']);
   });
 
-  // A conversation that names nobody used to accept every sender for ever, so
-  // once one existed on a ticket it absorbed every later sender the first
-  // conversation refused, and their messages mixed.
+  // A conversation that names nobody must not accept every sender for ever.
+  // If it did, it would absorb every later sender that the first conversation
+  // on the ticket refused. Their messages would mix.
   it('does not let an unclaimed conversation absorb every later sender (DEC-35)', async () => {
     const ticketId = `T-${randomUUID().slice(0, 8)}`;
     await enqueueTicket(
@@ -1341,10 +1341,10 @@ describe('section 4.3 partition consumer', () => {
   });
 
   it('still gives the run an earlier turn whose queue row was acked', async () => {
-    // The case the previous test cannot see. History used to read the text
-    // from the queue row, and the consumer deletes that row as soon as a run
-    // completes. So in every ordinary path each earlier turn had already been
-    // acked and contributed nothing, and the prompts of DEC-37 saw nothing.
+    // The case the previous test cannot see. The consumer deletes the queue
+    // row as soon as a run completes. History that reads the text from the
+    // queue row gets nothing for each acked earlier turn. In every ordinary
+    // path, the prompts of DEC-37 would then see no history.
     const ticketId = `T-${randomUUID().slice(0, 8)}`;
     const first = await enqueueTicket(
       pool,
@@ -1656,11 +1656,11 @@ describe('section 4.3 partition consumer', () => {
   });
 
   it('plans no epoch outside the insert, so the pre-bump window is closed', async () => {
-    // What this test used to pin: the old owner read the fence, planned an
-    // epoch, and a rebalance landed between that read and its insert — after
-    // which the insert could pass at an epoch equal to the bumped fence. The
-    // read is gone (the ledger allocates the epoch under the row lock it
-    // already takes), so the window is closed rather than merely survivable.
+    // The window this test checks: an owner reads the fence and plans an
+    // epoch, and then a rebalance lands before its insert. The insert could
+    // then pass at an epoch equal to the bumped fence. The ledger allocates
+    // the epoch under the row lock it already takes. So no separate read
+    // exists, and the window is closed.
     // The wrapper fires on a pool-level fence read, and there is none.
     const ticketId = `T-${randomUUID().slice(0, 8)}`;
 

@@ -154,7 +154,7 @@ describe('what a park step says', () => {
 
   // The crash marker. It records a park key and no body, which means a draft
   // may exist in the helpdesk that nobody can name — the thing a person has
-  // to reconcile. It used to read `nothing recorded`.
+  // to reconcile. It must not read `nothing recorded`.
   it('names a park key with no draft behind it, rather than reporting nothing', () => {
     const { step, journal: j } = park({ parkKey: 'send_reply:SYN-1:abc', status: 'parking' });
     const said = stepSays(step, j);

@@ -1,8 +1,8 @@
 // The public surface is the whole of what another package may import.
 //
 // Three rules, none of which stays true by itself. This reads the files
-// rather than trusting a review: `package.json` used to publish `./dist/*`,
-// so every compiled file was public API and nothing said otherwise.
+// rather than trusting a review. A `package.json` that publishes `./dist/*`
+// makes every compiled file public API, and nothing says otherwise.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';

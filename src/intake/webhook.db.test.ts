@@ -154,14 +154,13 @@ describe('webhook → intake path', () => {
   it('answers 500 and leaves the queue untouched when the insert fails', async () => {
     const url = await start();
     // Remove the table so enqueueTicket's INSERT fails outright, then put it
-    // back. A `beforeEach` used to re-apply the whole schema, so the drop
-    // repaired itself and nobody had to think about it; per-file databases
-    // replaced that hook with a truncate, because each file now receives an
-    // already migrated database. This case is the one place that changes the
-    // schema rather than the rows, so it is the one place that must restore it.
+    // back. Each file receives an already migrated database, and the hook
+    // between cases truncates rows rather than re-applying the schema. This
+    // case is the one place that changes the schema rather than the rows, so
+    // it is the one place that must restore it.
     //
     // Leaving it dropped is invisible in the default order, where this case
-    // runs last. Under `--sequence.shuffle` it broke two later cases, and
+    // runs last. Under `--sequence.shuffle` it breaks two later cases, and
     // `truncateLedger` reports nothing about it: the helper reads the table
     // list from `information_schema`, so a missing table is simply absent
     // rather than an error.

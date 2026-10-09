@@ -35,8 +35,9 @@ describe('scanArtifactNames', () => {
   });
 
   it('reads a capitalised name rather than minting over it', () => {
-    // The gold report used to skip 'V5.json' and mint version 1 over a
-    // directory already holding v5, then publish v1 while v5 sat unread.
+    // A scan that skips 'V5.json' would let the gold report mint version 1
+    // over a directory that holds v5. It would then publish v1 while v5 sits
+    // unread.
     expect(scanArtifactNames(['V5.json'], 'gold report')).toEqual([
       { name: 'V5.json', version: 5 },
     ]);

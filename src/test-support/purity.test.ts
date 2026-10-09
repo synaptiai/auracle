@@ -4,30 +4,29 @@
 // A `*.test.ts` file is pure: it runs in the `unit` project, which has no
 // global setup and no Docker socket. A file that reaches for Postgres and
 // keeps the pure suffix makes `pnpm run test:unit` useless on the very machine
-// the split exists to serve. Two files had already drifted that way
-// (`src/ledger/insert.test.ts` and `src/relay/daemon.test.ts`, both renamed
-// with this guard).
+// the split exists to serve. Nothing but this guard stops a file from
+// drifting that way.
 //
 // ## Why the TypeScript parser, and not a scan
 //
-// The first version of this guard matched regular expressions over the source
-// with comments blanked by hand. Three holes followed from that, and all three
-// are the silent direction — an impure file keeping the pure suffix:
+// A guard that matches regular expressions over the source, with comments
+// blanked by hand, has three holes. All three are the silent direction — an
+// impure file keeping the pure suffix:
 //
-//   - `import {\n  Pool,\n} from 'pg';` matched nothing, because the pattern
-//     was anchored per line and could not cross a newline. This is ordinary
+//   - `import {\n  Pool,\n} from 'pg';` matches nothing, because a pattern
+//     anchored per line cannot cross a newline. This is ordinary
 //     hand-wrapping, not a contrived evasion, and no formatter in the
-//     devDependencies would have produced or repaired it.
-//   - `const r = /\/\//;` and `const x = a /b/ c;` blanked the rest of the
+//     devDependencies produces or repairs it.
+//   - `const r = /\/\//;` and `const x = a /b/ c;` blank the rest of the
 //     line, because a scanner cannot tell a regular expression from a
 //     division without parsing.
-//   - `import type { Pool } from 'pg';` was flagged, which is the opposite
+//   - `import type { Pool } from 'pg';` is flagged, which is the opposite
 //     error: a type-only import is erased at compile time and opens nothing,
-//     so a correct pure suite was told to become a database suite.
+//     so a correct pure suite is told to become a database suite.
 //
 // `typescript` is already a direct devDependency, so the parser costs nothing
-// to reach. It also removes the need for the self-exemption the scanning
-// version required: the detector cases below hold offending sources as string
+// to reach. It also removes the need for the self-exemption a scanner
+// requires: the detector cases below hold offending sources as string
 // data, and a parser sees a string literal rather than an import.
 //
 // ## Why the rules are direct and not transitive
@@ -88,12 +87,12 @@ const KNOWN_PURE_MENTIONERS = [
  * `clock-statement.test.ts` calls `runInsertStatement`, which builds a SQL
  * string and touches no pool. The suite is genuinely pure.
  *
- * It is listed rather than merely allowed, because it used to pass by
- * accident: the matcher compared path suffixes, so a sibling import spelled
- * `./insert.js` matched nothing and the whole `src/ledger/` directory was
- * invisible to this rule. Resolving specifiers against the importing file
- * closed that, and this file is what the closure found. An entry here is a
- * claim that a reader checked the import and it opens no connection.
+ * It is listed rather than merely allowed. A matcher that compares path
+ * suffixes misses a sibling import spelled `./insert.js`. That hides the
+ * whole `src/ledger/` directory from this rule. Resolving specifiers against
+ * the importing file finds such an import, and this entry is the one it
+ * finds. An entry here is a claim that a reader checked the import and it
+ * opens no connection.
  *
  * `db/config.test.ts` calls `requireReaderDbUrl`, which reads the environment
  * and returns a string.

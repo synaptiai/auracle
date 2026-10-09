@@ -348,9 +348,9 @@ describe('section 4.4 outbox relay', () => {
     expect(adapter.sendCalls).toHaveLength(1);
     expect(await outboxStatus(idemKey)).toBe('delivery_unknown');
     expect(await runState(idemKey)).toBe('escalated');
-    // 'escalated' is terminal, so the service time must be measurable. The
-    // relay used to move the state without the stamp, which dropped every
-    // escalated run out of any latency measurement (db/005_run_timing.sql).
+    // 'escalated' is terminal, so the service time must be measurable. A
+    // state move without the stamp would drop every escalated run out of any
+    // latency measurement (db/005_run_timing.sql).
     expect(await runFinishedAt(idemKey)).toBeInstanceOf(Date);
 
     // A later scan finds nothing pending: escalation is terminal for the
@@ -1538,9 +1538,9 @@ describe('DEC-51: the relay and a send the ledger holds back', () => {
   // A connection that is not given back is a pool that empties. The
   // escalation path takes a client of its own, so a release missing from one
   // of its paths leaks one per escalation: the pool here holds ten, and this
-  // walks twelve records through it. Before the fix this case did not fail —
-  // it stopped, on the eleventh `connect()`, which is what the daemon would
-  // do in production.
+  // walks twelve records through it. A leak does not fail this case. It
+  // hangs on the eleventh `connect()`, which is what the daemon would do in
+  // production.
   it('gives its connection back on every escalation, so the pool does not empty', async () => {
     const keys: string[] = [];
     for (let i = 0; i < 12; i += 1) {

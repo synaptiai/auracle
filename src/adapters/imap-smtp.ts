@@ -513,9 +513,9 @@ async function ensureMailbox(client: ImapFlow, path: string): Promise<void> {
  * IMAP has no primary key for an appended message, so the park's DEC-24 key
  * travels as a header and this searches for it.
  *
- * A search that fails is NOT the same as a search that found nothing. This
- * used to swallow every throw and answer null, which `createDraft` reads as
- * "no draft exists" and appends a second one. The ledger-side guard does not
+ * A search that fails is NOT the same as a search that found nothing. A
+ * search that swallows a throw and answers null makes `createDraft` read "no
+ * draft exists" and append a second one. The ledger-side guard does not
  * cover that: `priorParkUnresolved` matches a journal row still in status
  * 'parking', so a park that reached 'done', or a retry before the journal
  * write, passes it untouched. This guard is the whole defence, so it fails

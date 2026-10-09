@@ -194,10 +194,10 @@ describe('the arrival signal', () => {
     expect(seen).toEqual([]);
   });
 
-  // The half of that guard a `Number()` parse used to let through. An empty
-  // payload gives `Number('') === 0`, an integer, so a bare `NOTIFY
-  // ticket_arrived` woke partition 0 specifically. `'0x10'` and `'1e3'`
-  // passed the same way.
+  // The half of that guard a `Number()` parse lets through. An empty payload
+  // gives `Number('') === 0`, an integer, so a bare `NOTIFY ticket_arrived`
+  // would wake partition 0 specifically. `'0x10'` and `'1e3'` pass the same
+  // way.
   it('ignores an empty payload and other shapes the emitter never sends', async () => {
     const seen = await collect(1, 1500, async () => {
       for (const payload of ['', ' ', '0x10', '1e3', '-1', '2.5']) {

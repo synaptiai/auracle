@@ -204,9 +204,9 @@ async function resolveConversation(
  * message. Concurrent messages of one conversation therefore serialize on
  * `conversation.turn_counter`.
  *
- * The epoch row is created here at 0, below any epoch a run carries. It used
- * to appear lazily on the first fenced write, so two first messages of one
- * ticket had nothing to serialize on. Creating it here gives them a lock,
+ * The epoch row is created here at 0, below any epoch a run carries. A row
+ * that appeared only on the first fenced write would give two first messages
+ * of one ticket nothing to serialize on. Creating it here gives them a lock,
  * and the first fenced write still raises the epoch above 0 (DEC-28).
  *
  * Idempotent on `(ticket_id, message_id)`: an at-least-once source may

@@ -18,10 +18,10 @@ import { describeFault } from 'auracle/cli';
 /**
  * One case's answer from a batch, under the id the batch asked about.
  *
- * A fault is an answer too. A ledger that stops answering half-way through a
- * batch used to discard every outcome the batch had collected, so the page
- * could not say which cases had committed; every case now gets a row, and a
- * faulted one carries the fault instead of an outcome.
+ * A fault is an answer too. A ledger can stop answering half-way through a
+ * batch. If that discarded the outcomes already collected, the page could not
+ * say which cases committed. So every case gets a row, and a faulted one
+ * carries the fault instead of an outcome.
  */
 export type BatchOutcome<TOutcome> =
   | { readonly runId: string; readonly outcome: TOutcome }

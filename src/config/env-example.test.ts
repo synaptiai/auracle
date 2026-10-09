@@ -6,11 +6,10 @@
 // forgets it. Nothing would fail: the process would read `undefined` and
 // take a default nobody chose.
 //
-// The source is parsed, not matched, because this repository has been caught
-// by pattern-matched guards before. But parsing precisely is not enough
-// either. The first version of this file resolved `process.env.NAME`,
-// `process.env['NAME']` and the two shared helpers, and it passed against an
-// example missing twelve variables:
+// The source is parsed, not matched, because a pattern can misread a string
+// or a comment and miss a read. But parsing precisely is not enough either.
+// A scan that resolves only `process.env.NAME`, `process.env['NAME']` and the
+// two shared helpers passes against an example that lacks twelve variables:
 //
 //   - `src/config/action-profile.ts` reads `env['ACTION_CLASS']` through a
 //     parameter, not `process.env` directly.
@@ -293,9 +292,9 @@ describe('.env.example', () => {
   });
 
   it('reaches the reads no simple rule finds', () => {
-    // The three shapes that defeated the first version of this guard. Each
-    // is asserted by name, so narrowing the scan later fails here rather
-    // than quietly reducing what it covers.
+    // The shapes that a scan of direct reads alone misses. Each is asserted
+    // by name, so narrowing the scan later fails here rather than quietly
+    // reducing what it covers.
     expect([...PRECISE.keys()]).toContain('AURACLE_ALLOW_COMPOSE_DEFAULT'); // a constant
     expect([...PRECISE.keys()]).toContain('ACTION_CLASS'); // an `env` parameter
     expect([...PRECISE.keys()]).toContain('SMTP_PORT'); // a helper calling a helper

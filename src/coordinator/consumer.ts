@@ -378,9 +378,9 @@ async function abandonMessage(
 /**
  * The turns of one conversation before the turn being processed.
  *
- * Text comes from the turn itself (DEC-37). It used to come from the queue
- * row, which the ack deletes, so every earlier turn contributed nothing and
- * the prompts saw an empty history in every ordinary path.
+ * Text comes from the turn itself (DEC-37), not from the queue row. The ack
+ * deletes the queue row, so text read from it is gone for every earlier
+ * turn. The prompts would then see an empty history in every ordinary path.
  *
  * One turn yields the customer's message and, when a person approved one,
  * the reply that answered it. Either may be absent: a turn recorded before

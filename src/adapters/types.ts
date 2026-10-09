@@ -247,8 +247,8 @@ export interface DraftReply {
    * ticket, never from the run.
    *
    * `createDraft` reaches the target system before the ledger can record
-   * what it made. A crash in that window used to leave a draft nobody could
-   * name, and the retry parked a second one in front of the customer. The
+   * what it made. A crash in that window leaves a draft nobody can name.
+   * Without a key, the retry parks a second one in front of the customer. The
    * key lets the adapter recognise the repeat and return the first draft.
    */
   idemKey: string;
@@ -374,14 +374,15 @@ export class AdapterCapabilityError extends Error {
 /**
  * Rejects an empty or whitespace-only field, and returns it trimmed.
  *
- * Each adapter used to carry its own copy, and the three had drifted into
- * disagreeing. `helpdesk.ts` took `(value, field)`, threw a `TypeError`, did
- * not trim and returned the value; `freescout.ts` took `(field, value)`, threw
- * an `Error`, trimmed and returned nothing; `imap-smtp.ts` took a third
- * signature again. Both parameters were `string`, so a line copied from one
- * adapter into another compiled, and the field name is never empty, so the
- * swapped call always passed. An empty `idemKey` could reach the outbox that
- * way, and DEC-24 is the guarantee that key carries.
+ * One function serves every adapter, because a private copy in each one
+ * drifts. Three copies can disagree: a `helpdesk.ts` copy takes `(value,
+ * field)`, throws a `TypeError`, does not trim and returns the value. A
+ * `freescout.ts` copy takes `(field, value)`, throws an `Error`, trims and
+ * returns nothing. An `imap-smtp.ts` copy takes a third signature again.
+ * With both parameters typed `string`, a line copied from one adapter into
+ * another compiles. The field name is never empty, so the swapped call always
+ * passes. An empty `idemKey` can reach the outbox that way, and DEC-24 is the
+ * guarantee that key carries.
  *
  * Two positions, two guards, and what each one actually catches:
  *
@@ -392,10 +393,10 @@ export class AdapterCapabilityError extends Error {
  * is aimed at the swap, not at forbidding every indirection.
  *
  * `value` stays `string | null | undefined` rather than `unknown`. Widening it
- * would have surrendered the position's own guard: `requireNonEmpty('reply.body',
- * reply)` — the whole object — and `requireNonEmpty('x', 42)` both compiled
- * under `unknown`, and neither did before this was one function. The null and
- * undefined arms are what `imap-smtp.ts` needed from its own copy.
+ * would surrender the position's own guard: `requireNonEmpty('reply.body',
+ * reply)` — the whole object — and `requireNonEmpty('x', 42)` both compile
+ * under `unknown`, and neither compiles under the narrower type. The null and
+ * undefined arms are what `imap-smtp.ts` needs.
  *
  * A branded type was tried for `field` first and does not work: an optional
  * brand still accepts a plain string, so the swap compiled. Measured, not

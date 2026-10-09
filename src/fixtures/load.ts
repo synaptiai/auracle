@@ -6,10 +6,9 @@
 // in ./validate.js, the digests and the DEC-31 check are in ./digest.js, and
 // the types are in ../domain/gold-types.js.
 //
-// This file used to hold all four. It was the most-imported file in the
-// repository, 37 exports reached by 18 production modules, so any module that
-// wanted a type imported file I/O to get it and the blast radius of an edit
-// here was the whole corpus toolchain.
+// The four live in separate files. A module that wants a type then does not
+// import file I/O to get it. An edit to the loader does not reach a module
+// that needs only a type or a rule.
 //
 // Decisions obeyed: DEC-18 (synthetic only), DEC-31 (one gold set, split in
 // two), DEC-35 (a case belongs to a conversation).

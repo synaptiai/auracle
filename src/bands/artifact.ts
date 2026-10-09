@@ -399,8 +399,8 @@ export async function loadBandsArtifact(
   } catch (error: unknown) {
     // `readArtifactText` goes to trouble to name the artifact and the errno,
     // and a bare SyntaxError discards all of it: it names neither the file nor
-    // the directory. A truncated artifact is exactly what an interrupted write
-    // used to leave behind, so this is the message that would explain one.
+    // the directory. A truncated artifact is what an interrupted write from an
+    // earlier version can leave behind, and this message explains one.
     throw new Error(`${LABEL} artifact ${found.name} is not valid JSON`, { cause: error });
   }
   return validateBandsArtifact(parsed);

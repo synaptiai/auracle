@@ -343,8 +343,8 @@ describe('resolveThresholds (DEC-05, DEC-13, DEC-31)', () => {
   });
 
   it('refuses a threshold of zero at the artifact boundary, not inside a daemon', async () => {
-    // A gate at zero passes every ticket. The validator used to accept it and
-    // makeThresholds refused it later, so a file that validated still stopped
+    // A gate at zero passes every ticket. The validator refuses it here. If
+    // only makeThresholds refused it, a file that validated would still stop
     // a process that had already read it.
     await write(artifact({ threshold: 0 }));
 
@@ -385,8 +385,8 @@ describe('resolveThresholds error posture', () => {
   }
 
   it.each([
-    // Parses to 1, so the loader used to open v1.json instead: a different
-    // file, or none, and a daemon died on a bare ENOENT.
+    // Parses to 1, so a loader that accepts it opens v1.json instead. That is
+    // a different file, or none, and a daemon dies on a bare ENOENT.
     ['v01.json'],
     // nextVersion never mints v0.
     ['v0.json'],
@@ -470,8 +470,8 @@ describe('resolveThresholds error posture', () => {
   });
 
   it('checks the artifact directory before the run spends a model call', async () => {
-    // nextVersion used to run after the sampling loop, so a fault threw away
-    // a run the operator had already paid for over a listing that was
+    // nextVersion runs before the sampling loop. After it, a fault would throw
+    // away a run the operator had already paid for. The listing it reads is
     // readable before the first call.
     await write('v0.json', artifact({ version: 0 }));
     const provider = new FakeProvider([]);
@@ -493,8 +493,8 @@ describe('resolveThresholds error posture', () => {
   it.each([[0], [1.5], [Number.NaN], [-1]])(
     'refuses an explicit version of %s instead of naming a file that never existed',
     async (version) => {
-      // The explicit branch used to build the name by hand, so it applied no
-      // canonical check and reported 'vNaN.json cannot be read'.
+      // An explicit branch that builds the name by hand applies no canonical
+      // check, and reports 'vNaN.json cannot be read'.
       await expect(loadCalibrationArtifact(version, dir)).rejects.toThrow(
         /must be a positive integer/,
       );

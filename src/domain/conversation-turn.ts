@@ -10,11 +10,11 @@
 //
 // The type and its renderers live together, in `domain/`, because the leaf
 // modules that read a turn must not load the orchestrator to learn what one is.
-// The type used to be declared in `src/coordinator/coordinator.ts` and the
-// renderers in `src/coordinator/history.ts`, so the classifier, the composer
-// and the triage judge each imported the coordinator — and the coordinator
-// imports all three. Three import cycles, and loading the classifier pulled in
-// the state machine, the ledger and the egress adapters.
+// If the type or its renderers lived under `src/coordinator/`, the
+// classifier, the composer and the triage judge would each import the
+// coordinator — and the coordinator imports all three. That makes three
+// import cycles. Loading the classifier would then pull in the state machine,
+// the ledger and the egress adapters.
 //
 // This module imports nothing. That is the property that closes the cycles,
 // and `src/domain/import-cycles.test.ts` holds it shut, together with the

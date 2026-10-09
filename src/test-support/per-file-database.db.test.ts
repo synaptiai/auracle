@@ -53,10 +53,10 @@ describe('the database this file was given', () => {
   });
 
   it('is recorded, so the run can check the whole set', () => {
-    // This case used to truncate and then assert the row count was zero,
-    // which is true by construction however many files share the database.
-    // With every file pointed at one clone, this file stays green while a
-    // DEC-28 case breaks next door.
+    // A case that truncates and then asserts a row count of zero proves
+    // nothing. The count is zero by construction however many files share the
+    // database. With every file pointed at one clone, such a case stays green
+    // while a DEC-28 case breaks next door.
     //
     // A file cannot see whether another file shares its database. So each
     // file records the one it was given, and the run's teardown asserts the

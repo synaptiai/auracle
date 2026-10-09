@@ -577,10 +577,10 @@ describe('buildCorpusTickets turn structure', () => {
     expect(tickets).toHaveLength(1);
   });
 
-  // A message first seen under a thread that is then discarded used to claim
-  // its id for good, so the surviving copy in a real thread was dropped as a
-  // duplicate. A customer turn vanished, and the record showed only a
-  // duplicate count.
+  // A message first seen under a thread that is then discarded must not claim
+  // its id for good. If it did, the surviving copy in a real thread would be
+  // dropped as a duplicate. A customer turn would vanish, and the record would
+  // show only a duplicate count.
   it('does not let a discarded thread claim a message id', async () => {
     const { events } = await collectEvents([{ sourceId: '1', rfc5322Text: SIMPLE_TEXT_EMAIL }]);
     const seed = events[0]!;
@@ -632,8 +632,8 @@ describe('buildCorpusTickets turn structure', () => {
   // to zero on any ')' leaves ' GMT' behind, so a date that states no zone at
   // all is accepted and parsed against the exporter host's clock. Nesting the
   // comment at the end of the header does not discriminate: both versions
-  // then produce identical output, which is how the first version of this
-  // case passed against the bug it was written for.
+  // then produce identical output, so a case built that way passes against
+  // the bug it is written for.
   it('does not let a nested comment leave a zone name behind', async () => {
     const nested = LATE_FOLLOWUP_EMAIL.replace(
       'Date: Tue, 7 Jan 2025 10:00:00 +0000',
@@ -658,9 +658,9 @@ describe('buildCorpusTickets turn structure', () => {
     expect(buildCorpusTickets(events).stats.orderFallbackThreads).toBe(0);
   });
 
-  // A message this thread itself discarded used to claim its id, so the same
-  // message positioned as a genuine reply elsewhere was dropped and that turn
-  // lost its agent half (DEC-37).
+  // A message this thread itself discarded must not claim its id. If it did,
+  // the same message positioned as a genuine reply elsewhere would be
+  // dropped. That turn would lose its agent half (DEC-37).
   it('does not let a message its own thread discarded claim an id', async () => {
     const { events } = await collectEvents([
       { sourceId: '1', rfc5322Text: SIMPLE_TEXT_EMAIL },
@@ -670,8 +670,8 @@ describe('buildCorpusTickets turn structure', () => {
     // Thread A opens with the agent message, which no turn can carry, and
     // then holds a customer turn — so the thread SURVIVES while that one
     // message is discarded. A thread that produced nothing exits before the
-    // line under test, which is why the first version of this case passed
-    // against the bug it was written for.
+    // line under test, so a case built on one passes against the bug it is
+    // written for.
     const root = 'orphan-root@example.test';
     const orphanAgent: NormalizedEvent = {
       ...agent, sourceId: 'orphan-agent',

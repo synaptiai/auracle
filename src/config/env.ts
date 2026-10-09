@@ -57,10 +57,10 @@ export function requiredEnv(name: string): string {
  *
  * The digits are matched before they are parsed, because `Number` is far
  * wider than the set of things anyone means to write here. `Number('0x10')`
- * is 16, `Number('1e3')` is 1000 and `Number('8.0')` is 8, and every one of
- * the four parsers accepted all three — `PARTITION_COUNT=0x10` silently
- * meant sixteen. `src/coordinator/arrival-signal.ts` had already found this
- * in its notification payload and fixed it the same way.
+ * is 16, `Number('1e3')` is 1000 and `Number('8.0')` is 8. A parser that
+ * accepted those would read `PARTITION_COUNT=0x10` as sixteen without a word.
+ * `src/coordinator/arrival-signal.ts` guards its notification payload the
+ * same way.
  */
 export function positiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];

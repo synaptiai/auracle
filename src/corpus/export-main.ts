@@ -150,8 +150,8 @@ async function main(): Promise<void> {
   const { tickets, stats, orderFallbackConversations } = buildCorpusTickets(events, { agentAddresses });
 
   // Printed before validation and before the write. These counters describe
-  // the build, and a validation fault used to discard the only explanation of
-  // why the build produced what it did.
+  // the build. Printed after validation, they would be lost to a validation
+  // fault. They are the only explanation of what the build produced.
   console.log(
     `built ${stats.turns} turns across ${stats.threads} threads, from ${events.length} messages`,
   );

@@ -1,22 +1,22 @@
 // One validator, one argument order, one whitespace rule.
 //
-// Each adapter used to carry a private `requireNonEmpty`, and the three had
-// drifted into disagreeing about all three of those:
+// A private `requireNonEmpty` in each adapter drifts. Three such copies can
+// disagree about all three of those:
 //
 //   helpdesk.ts    (value, field)   TypeError, no trim, returns the value
 //   freescout.ts   (field, value)   Error, trims, returns nothing
 //   imap-smtp.ts   (field, value | null | undefined)
 //
-// Both parameters were `string`, so a line copied from one adapter into
-// another compiled. The field name is never empty, so a swapped call always
-// passed and an empty `idemKey` could reach the outbox. DEC-24 is the
+// With both parameters typed `string`, a line copied from one adapter into
+// another compiles. The field name is never empty, so a swapped call always
+// passes and an empty `idemKey` can reach the outbox. DEC-24 is the
 // guarantee that key carries: the key comes from the action semantics, so two
 // runs of one request produce the same key and land once on the target. A key
 // that is empty carries nothing.
 //
-// The whitespace rule mattered on its own. A single space was rejected by two
-// adapters and accepted by the third, so the same reply was valid or invalid
-// depending on which target system it was bound for.
+// The whitespace rule matters on its own. If two adapters reject a single
+// space and the third accepts it, the same reply is valid or invalid. Which
+// one depends on the target system it is bound for.
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';

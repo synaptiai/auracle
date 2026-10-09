@@ -29,9 +29,9 @@ const COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
 /**
  * One module as the compiler reads it.
  *
- * The guards below used to blank prose with patterns. A pattern has to guess
- * where a string ends, and a `//` inside a URL, or a quote inside a regular
- * expression, made it blank the rest of a line. The tree cannot be misled
+ * The guards below read the tree, not patterns. A pattern has to guess where
+ * a string ends. A `//` inside a URL, or a quote inside a regular
+ * expression, makes it blank the rest of a line. The tree cannot be misled
  * that way: a comment is trivia, a string is a node, and an import path is a
  * specifier, so none of them reads as a call or a statement.
  */

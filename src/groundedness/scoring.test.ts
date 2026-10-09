@@ -51,13 +51,13 @@ function failingStore(failures: number): ResumeStore & { records: number } {
 }
 
 describe('scoreHalf and the checkpoint it writes', () => {
-  // The sharp one. The sample used to join the run before the checkpoint was
+  // The sharp one. Suppose the sample joins the run before the checkpoint is
   // written, with the write inside the same try. A failed write is not an
-  // UnreadableAnswerError, so it fell through to the transport arm: the draft
-  // was scored again and the sample already pushed stayed. One draft then
-  // contributed three samples to an interval whose whole purpose is to carry
-  // its own sample size honestly — and the run did not fail, so the inflated
-  // count reached the artifact with nothing to say so.
+  // UnreadableAnswerError, so it falls through to the transport arm. The draft
+  // is scored again, and the sample already pushed stays. One draft then
+  // contributes three samples to an interval whose whole purpose is to carry
+  // its own sample size honestly. The run does not fail, so the inflated
+  // count reaches the artifact with nothing to say so.
   it('fails the run when it cannot checkpoint, rather than scoring twice', async () => {
     const store = failingStore(1);
     await expect(scoreHalf(

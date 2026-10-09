@@ -385,8 +385,8 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
     const misses = new Map(
       tickets.filter((t) => t.ticket_id.startsWith('V-')).map((t) => [t.ticket_id, 1]),
     );
-    // One more draft, whose first claim comes back with no verdict. The whole
-    // run used to abort there and discard every draft scored before it.
+    // One more draft, whose first claim comes back with no verdict. The run
+    // must not abort there and discard every draft scored before it.
     const faulting = draft('F-0', 3, 0);
     // The judge aborts on that draft's first claim, so it consumes one entry
     // and the entries for the drafts before it stay aligned.

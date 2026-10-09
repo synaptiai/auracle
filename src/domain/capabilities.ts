@@ -25,8 +25,8 @@
  * it (DEC-13).
  *
  * The runtime list and the type come from the same line, so a tier added to
- * one is added to the other. `src/fixtures/load.ts` validates a taxonomy
- * against `RISK_TIERS` and used to own a second copy of the type.
+ * one is added to the other. `src/fixtures/validate.ts` validates a taxonomy
+ * against `RISK_TIERS` and keeps no second copy of the type.
  */
 export const RISK_TIERS = ['low', 'medium', 'high'] as const;
 

@@ -15,19 +15,18 @@
 // hazard is not the spelling. So the argument must be a call to one of the
 // two functions that produce a connection string.
 //
-// Three ways past the first version of this guard were demonstrated, and all
-// three are closed below. It built its scan from the literal name, so
-// `import { pgArrivalSignal as listenArrivals }` was invisible. It asserted
-// an empty offender list, so deleting every call site passed it. And it
-// matched `\bPool\b`, which does not match `PoolClient` — a signature
-// taking a daemon's only client, which is the hazard itself.
+// Three ways past a weaker guard are closed below. A scan built from the
+// literal name cannot see `import { pgArrivalSignal as listenArrivals }`. A
+// guard that asserts an empty offender list passes when every call site is
+// deleted. And `\bPool\b` does not match `PoolClient` — a signature taking a
+// daemon's only client, which is the hazard itself.
 //
-// `src/ledger/clock-reachability.test.ts` had already closed the first two
-// for the clock seam. This carries its anti-vacuity floor.
+// `src/ledger/clock-reachability.test.ts` closes the first two for the clock
+// seam. This carries its anti-vacuity floor.
 //
-// The guard reads the source with the TypeScript compiler. It used to strip
-// strings and comments with patterns, and a string holding an apostrophe and
-// a quoted field made the pattern swallow the call site it looks for.
+// The guard reads the source with the TypeScript compiler, not with patterns.
+// A pattern that strips strings and comments can swallow the call site it
+// looks for. A string that holds an apostrophe and a quoted field does that.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
@@ -72,9 +71,9 @@ function nodes(source: ts.SourceFile): ts.Node[] {
 /**
  * Every local name bound to `name`, including an alias.
  *
- * `import { pgArrivalSignal as listenArrivals }` used to defeat the scan
- * completely: the search built its pattern from the literal name, so a call
- * written `listenArrivals(pool)` was invisible and the guard reported no
+ * A search built from the literal name misses
+ * `import { pgArrivalSignal as listenArrivals }` completely. A call written
+ * `listenArrivals(pool)` is invisible to it, and the guard reports no
  * offender. An alias is a rename, not an escape. So is a destructure of a
  * dynamic import, `const { pgArrivalSignal: listen } = await import(...)`.
  */

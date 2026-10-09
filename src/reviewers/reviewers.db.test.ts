@@ -112,8 +112,8 @@ describe('the reviewer roster (DEC-45)', () => {
   });
 
   // The deactivate path refuses the same values the add path refuses. It
-  // used to report `not_active`, which reads as "that reviewer was already
-  // off" — while the reviewer the operator meant stayed active.
+  // must not report `not_active`, which reads as "that reviewer was already
+  // off". The reviewer the operator meant stays active.
   it('refuses to deactivate a name the ledger would not record', async () => {
     const identity = `reviewer-${randomUUID().slice(0, 8)}@example.test`;
     await addReviewer(pool, identity);

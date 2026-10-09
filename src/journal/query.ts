@@ -729,7 +729,7 @@ export function gateVerdictsOf(gated: Record<string, unknown> | null): ClaimVerd
  * Reads a row written before DEC-43 as well. Such a row holds `claims`, whose
  * members all cite, which is the same partition with no courtesy sentence in
  * it. A reader that answered null for those rows would report every run
- * before this change as having drafted nothing.
+ * recorded before DEC-43 as having drafted nothing.
  */
 function sentencesOf(result: Record<string, unknown> | null): ReplySentence[] | null {
   if (result === null) return null;

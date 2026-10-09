@@ -141,9 +141,8 @@ describe('the per-intent threshold as it actually reaches the gate', () => {
       groundednessReview: 0.8,
       perIntent: { 'refund-request': 0.7 },
     });
-    // The first version of this change spread the map in at the call site and
-    // it was dropped here in silence, leaving a wired feature that could
-    // never fire.
+    // A map spread in at the call site is dropped here in silence. That
+    // leaves a wired feature that can never fire.
     expect(built.perIntent).toEqual({ 'refund-request': 0.7 });
     expect(
       evaluatePolicyDetailed(input({ intent: 'refund-request', thresholds: built })).reason,

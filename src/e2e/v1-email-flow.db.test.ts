@@ -54,9 +54,9 @@ const pool = new Pool({ connectionString: dbUrl(), max: 10 });
 await pool.query('SELECT 1');
 
 // The GreenMail server is shared: src/test-support/mail-global-setup.ts starts one
-// per run, waits until it answers IMAP, and provides its mapped address. This
-// suite used to start its own and guard itself with describe.skipIf, so a
-// container that failed to start produced a green run.
+// per run, waits until it answers IMAP, and provides its mapped address. A
+// suite that starts its own and guards itself with describe.skipIf turns a
+// container that fails to start into a green run.
 const greenmail = inject('mail');
 
 afterAll(async () => {

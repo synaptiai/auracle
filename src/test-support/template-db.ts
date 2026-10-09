@@ -1,10 +1,10 @@
 // One migrated template database per run, cloned per test file.
 //
-// The database suites used to share one database and run one file at a time,
-// because they truncate tables between cases and two files at once corrupt
-// each other. Serial execution was the 3-minute step in CI.
+// The database suites truncate tables between cases, so two files that share
+// one database corrupt each other. One shared database forces one file at a
+// time, which makes the database step slow in CI.
 //
-// Each file gets its own database now. `CREATE DATABASE ... TEMPLATE` copies
+// So each file gets its own database. `CREATE DATABASE ... TEMPLATE` copies
 // a migrated database at the file-system level, which costs far less than
 // replaying sixteen migrations, so the isolation is nearly free.
 //
@@ -16,14 +16,13 @@
 //
 // ## Every name carries a run id
 //
-// A run must never touch another run's databases, and the first version of
-// this file did. It matched `datname LIKE 'auracle_t_%'`, where `_` is a
-// single-character wildcard: that pattern matches `auracle_template` — the
-// template the same run had just built — and any bystander database called
-// `auracle_test`, `auracle_tickets` and so on. Teardown terminated their
-// backends and dropped them. Two concurrent runs against one server destroyed
-// each other, measured, and a database belonging to no run at all was equally
-// exposed.
+// A run must never touch another run's databases. A teardown that matched
+// `datname LIKE 'auracle_t_%'` would, because `_` is a single-character
+// wildcard: that pattern matches `auracle_template`, the template the same
+// run builds, and any bystander database called `auracle_test`,
+// `auracle_tickets` and so on. The teardown would terminate their backends and
+// drop them, so two concurrent runs against one server would destroy each
+// other, and so would a database that belongs to no run.
 //
 // So the names carry a run id, the match is `starts_with` rather than `LIKE`
 // (no wildcard semantics at all), and a run only ever drops what it created.

@@ -122,7 +122,7 @@ export type ApproveOutcome =
     }
   /**
    * DEC-44, DEC-14: the reply the ledger holds carries no disclosure, so it
-   * may not be sent. Only a park journaled before this change has no
+   * may not be sent. Only a park that an earlier version journaled has no
    * disclosure beside its body: the adapters refuse an empty one at park
    * time, so a new reply always has one.
    */
@@ -288,8 +288,8 @@ interface ParkRecord {
   /**
    * DEC-44: the adopter's disclosure and the reply's provenance (DEC-14,
    * DEC-33), journaled so an approval that sends this reply from the ledger
-   * attaches what the adapter would have attached. Absent on a park
-   * journaled before this change, which is what `no_disclosure` names.
+   * attaches what the adapter would have attached. Absent on a park that an
+   * earlier version journaled, which is what `no_disclosure` names.
    */
   readonly disclosure?: string;
   readonly provenance?: ReplyProvenance;
@@ -518,7 +518,7 @@ export async function approveRun(
     if (park.disclosure === undefined || park.provenance === undefined) {
       // DEC-44, DEC-14: every customer reply carries the adopter's disclosure
       // and its provenance (DEC-33). The park journals both, so a park
-      // without them is one written before this change, and the approval
+      // without them is one an earlier version wrote, and the approval
       // cannot attach what the ledger does not hold.
       return { outcome: 'no_disclosure' };
     }

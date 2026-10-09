@@ -84,10 +84,9 @@ describe('the latency artifact', () => {
     }))).toThrow(/reports a figure over zero runs/);
   });
 
-  // `runs` used to be a free-standing count, checked only for being a
-  // non-negative integer. An artifact claiming a million runs over one
-  // partition of four validated cleanly, and `runs` is the first figure a
-  // reader sees.
+  // A free-standing `runs` count, checked only for being a non-negative
+  // integer, lets an artifact claim a million runs over one partition of
+  // four. `runs` is the first figure a reader sees.
   it('refuses a total that its partitions do not account for', () => {
     expect(() => validateLatencyArtifact(makeArtifact({ runs: 1_000_000 })))
       .toThrow(/the partitions account for 4/);

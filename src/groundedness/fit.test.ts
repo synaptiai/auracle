@@ -127,7 +127,7 @@ describe('fitCoverageThresholds (DEC-05, section 4.7)', () => {
 
   it('rejects a block whose band holds a grounded draft', () => {
     // The floor is the whole reason block is fitted by a different rule from
-    // review, and deleting it used to leave every case green.
+    // review. This case is the one that fails when the floor is deleted.
     // One grounded draft sits at the very bottom, at 0.05. A block at 0.1
     // would escalate it and nothing else, so the floor must reject that
     // candidate; the next one up holds because ten ungrounded drafts join the

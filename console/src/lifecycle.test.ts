@@ -32,13 +32,13 @@ describe('the console as a long-running process', () => {
     expect(MAIN).toMatch(/guardLedgerPool\(new Pool\(consolePoolConfig\(connectionString\)\), logLedgerPoolError\('the console'\)\)/);
   });
 
-  // Order again, and this one was a hang rather than a nuisance.
+  // Order again, and here the wrong order causes a hang.
   //
   // `allowedHosts` refuses a `CONSOLE_ALLOWED_HOSTS` entry that can never
-  // match a `Host`. It used to run after the probe, and the probe leaves an
-  // idle client in the pool: an idle pg client keeps the event loop alive, so
-  // the refusal printed and the process then ran forever. A supervisor saw a
-  // live console serving nothing.
+  // match a `Host`. It runs before the probe. The probe leaves an idle pg
+  // client in the pool, which keeps the event loop alive. A refusal after the
+  // probe prints, and then the process runs forever. A supervisor sees a live
+  // console that serves nothing.
   it('reads and refuses its configuration before it opens the pool', () => {
     // The read-back adapter too. A FreeScout adapter missing its key refuses
     // where it is built, and built after the pool that refusal would hang the

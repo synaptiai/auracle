@@ -5912,7 +5912,7 @@ const OUTCOMES = {
   copy_changed: 'The copy in the helpdesk was edited after this reply was parked, so nothing was'
     + ' sent.',
   // DEC-14: a reply may not reach a customer without the adopter's
-  // disclosure. A reply parked before this change carries none, and the
+  // disclosure. A reply that an earlier version parked carries none, and the
   // parked copy still carries one: the draft path sends that.
   no_disclosure: 'This reply carries no disclosure, so nothing was sent (DEC-14).'
     + ' A reply parked before this deploy carries none, and its parked copy does.'

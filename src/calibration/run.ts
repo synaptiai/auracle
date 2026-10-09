@@ -265,10 +265,10 @@ function labellersOf(
  * Refuses a half whose labels cannot be scored, before the run spends
  * anything.
  *
- * `scoreLabeller` throws on a case that carries a labeller but no label, and
- * it used to run after the classification loop — so one such case discarded a
- * run of 36 900 model calls over a field readable before the first one. This
- * is the hazard `assertCalibrationDirUsable` was moved ahead of the loop for.
+ * `scoreLabeller` throws on a case that carries a labeller but no label.
+ * After the classification loop, one such case would discard a run of 36 900
+ * model calls. The field it needs is readable before the first call. So this
+ * check runs before the loop, as `assertCalibrationDirUsable` does.
  */
 function assertLabelsScoreable(tickets: readonly GoldTicket[]): void {
   for (const ticket of tickets) {

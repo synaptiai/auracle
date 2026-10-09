@@ -40,11 +40,11 @@ export const ALLOW_REMOTE_MAIL = 'AURACLE_TEST_ALLOW_REMOTE_MAIL';
 /**
  * Refuses to empty mailboxes on a host that is not this machine.
  *
- * `MAIL_HOST` used to mean "read mail here". It now also means "delete every
- * message in INBOX and Drafts of the two support accounts here", and the
- * reachability probe checks a TCP port rather than who owns the server. A
- * shared GreenMail — one a team keeps for a demo, or a colleague's — would be
- * emptied under someone else's run by a variable that reads like a pointer.
+ * `MAIL_HOST` means "read mail here", and also "delete every message in
+ * INBOX and Drafts of the two support accounts here". The reachability probe
+ * checks a TCP port rather than who owns the server. A shared GreenMail — one
+ * a team keeps for a demo, or a colleague's — would be emptied under someone
+ * else's run by a variable that reads like a pointer.
  *
  * The ledger has the same shape of hazard and the same shape of answer:
  * `.claude/hooks/live_db_approval.py` stops a command reaching a database that

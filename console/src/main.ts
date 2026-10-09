@@ -268,12 +268,11 @@ async function main(): Promise<void> {
   // Every configuration value is read and refused before a socket is opened.
   //
   // The order is the point, not the tidiness. `allowedHosts` throws on a
-  // `CONSOLE_ALLOWED_HOSTS` entry that can never match a `Host`, and it used
-  // to run after the probe. The probe leaves an idle client in the pool, and
-  // an idle pg client keeps the event loop alive, so the refusal printed and
-  // the process then ran forever: a supervisor saw a live console serving
-  // nothing. That is the failure class this file exists to close, introduced
-  // by the code closing it.
+  // `CONSOLE_ALLOWED_HOSTS` entry that can never match a `Host`, so it runs
+  // before the probe. The probe leaves an idle client in the pool, and an
+  // idle pg client keeps the event loop alive. After the probe, the refusal
+  // would print and the process would run on: a supervisor would see a live
+  // console that serves nothing, the failure class this file exists to close.
   const port = requirePort(process.env['CONSOLE_PORT']);
   // A blank value is refused, because listen() binds every interface for it.
   const host = hostEnv('CONSOLE_HOST', '127.0.0.1');

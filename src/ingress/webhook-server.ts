@@ -98,9 +98,9 @@ export function createWebhookServer(deps: WebhookServerDeps): Server {
   return createServer((req, res) => {
     void handleDelivery(req, res, adapter, deps.onEvent, log, secret).catch((error: unknown) => {
       // Everything the intake seam throws lands here: a Postgres failure, a
-      // constraint violation, a pool exhaustion. This used to discard the
-      // error, so a source could retry, give up, and lose the ticket while
-      // the daemon's own logs stayed clean.
+      // constraint violation, a pool exhaustion. The error is logged. If it
+      // were discarded, a source could retry, give up, and lose the ticket.
+      // The daemon's own logs would stay clean.
       log({
         event: 'delivery_failed',
         at: new Date().toISOString(),

@@ -341,7 +341,7 @@ def case_no_markdown_at_all(root):
 
 
 def case_second_entity_diagram_without_the_sentence(root):
-    # The check used to return after the first entity diagram.
+    # The check reads every entity diagram, not only the first one.
     quiet = ER.replace(
         "The database declares no foreign key, so every relationship is unenforced.\n",
         "")
@@ -578,8 +578,8 @@ def case_fence_with_an_attributed_info_string(root):
 
 
 def case_link_target_of_only_whitespace(root):
-    # `[x](   )` used to raise IndexError, and findings print only after every
-    # check completes, so one crash erased every finding before it.
+    # `[x](   )` must not raise. Findings print only after every check
+    # completes, so one crash would erase every finding before it.
     write(root, "README.md", "See [the guide](   ).\n")
     return "links", FAIL, "empty"
 

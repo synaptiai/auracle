@@ -5,12 +5,12 @@
 // not grounded.
 //
 // The claims come from the composer, which already proved every one of them
-// carries a citation to a retrieved span (DEC-07). This gate used to re-split
-// the draft with its own model call, which made the denominator of the
-// coverage fraction model-controlled: a split that returned one line scored
-// 1.0 and cleared both policy thresholds. Taking the composer's partition
-// removes that, drops a model call, and keeps the claim boundaries the
-// composer validated.
+// carries a citation to a retrieved span (DEC-07). This gate does not re-split
+// the draft with its own model call. A model-made split puts the denominator
+// of the coverage fraction under model control. A split that returns one line
+// scores 1.0 and clears both policy thresholds. Taking the composer's
+// partition removes that, drops a model call, and keeps the claim boundaries
+// the composer validated.
 //
 // This module returns the raw fraction of supported claims. The block and
 // review thresholds are policy concerns (section 4.8) and live in
