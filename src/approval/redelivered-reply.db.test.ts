@@ -575,6 +575,7 @@ describe('a message redelivered on a turn that is answered, or about to be', () 
 
     let undo: Promise<unknown> | null = null;
     let settledInScan: boolean | null = null;
+    let waitedInScan: boolean | null = null;
     let recordsInScan: number | null = null;
     const connect = pool.connect.bind(pool);
     const inScan = {
@@ -594,10 +595,10 @@ describe('a message redelivered on a turn that is answered, or about to be', () 
             let settled = false;
             undo = undoApproval(pool, newer!.runId, { reviewer: 'anna@example.test' })
               .finally(() => { settled = true; });
-            // Until the undo waits on a lock, or long enough for one that does
-            // not wait to commit. Postgres reports the wait, so a slow host
-            // moves the moment and not the result.
-            await lockWaitSeen(pool, { withinMs: 3_000 });
+            // Until the undo waits on a lock. Postgres reports the wait, so a
+            // slow host moves the moment and not the result. An undo that
+            // takes no lock never waits, and commits instead.
+            waitedInScan = await lockWaitSeen(pool, { withinMs: 10_000 });
             settledInScan = settled;
             const record = await pool.query('SELECT 1 FROM outbox WHERE run_id = $1', [newer!.runId]);
             recordsInScan = record.rowCount;
@@ -609,6 +610,7 @@ describe('a message redelivered on a turn that is answered, or about to be', () 
     } as unknown as Pool;
     await startSentBackAttempts({ ...d, pool: inScan }, OPTIONS);
     // While the scan held the turn, the undo waited and removed nothing.
+    expect(waitedInScan).toBe(true);
     expect(settledInScan).toBe(false);
     expect(recordsInScan).toBe(1);
     expect(await supersedeRecord(older!.runId))
