@@ -13,8 +13,8 @@ Check correctness against the claimed behavior.
   idempotency key comes from the action data, not the run identity. Two runs of
   one request therefore share a key and land once on the target.
 - Check liveness. A run must not wait for a result that no component supplies.
-  A run that loses an outbox insert must stop as `superseded`, never wait in
-  `queued`.
+  A run that loses an outbox insert must stop as `superseded`. It never
+  continues to `executing` or `awaiting_approval`.
 - Check the relay order. The relay sends first and sets the status second.
   A status written before the send turns a crash into a silent loss.
 
@@ -96,10 +96,10 @@ motivates each attack.
 
 | Rule | Session backstop | CI enforces the rule | CI tests the guard |
 |---|---|---|---|
-| Synthetic fixtures | PII validator hook | yes | yes |
+| Synthetic fixtures | PII guard | yes | yes |
 | DEC citation on register changes | commit hook | yes | yes |
 | No test edits during a bug fix | none, by decision | no | n/a |
-| Live database approval | live-db validator hook | no | yes |
+| Live database approval | live-database guard | no | yes |
 | Simplified Technical English | none | rules 1 and 2 | yes |
 | A design record cites a defined DEC | none | yes | yes |
 | Section 7.1 names every design document, by a name that says what it is | none | yes | yes |

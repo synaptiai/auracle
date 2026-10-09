@@ -4,9 +4,9 @@ This file records each release.
 Its format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - unreleased
+## [0.1.0] - 2026-10-09
 
-The first public release. A maintainer adds the tag and its date when they cut it.
+The first public release.
 
 ### Added
 
@@ -18,4 +18,4 @@ The first public release. A maintainer adds the tag and its date when they cut i
   person.
 - Synapti licenses the repository under the Apache License 2.0.
 
-[0.1.0]: https://github.com/synaptiai/auracle/commits/main
+[0.1.0]: https://github.com/synaptiai/auracle/releases/tag/v0.1.0

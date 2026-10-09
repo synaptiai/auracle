@@ -113,7 +113,7 @@ one thing and open with opposite words.
 - a record in a subdirectory of `docs/decisions/`, because the style checker
   reads one level;
 - a `docs/decisions/` directory that holds no record;
-- any file in `intent/` except the template;
+- any markdown file directly in `intent/` except the template;
 - a record under `intent/archive/` that declares `Affects:`. The archive holds
   frozen records that declare no decision.
 
@@ -125,7 +125,7 @@ Never commit real emails, phone numbers, names or account identifiers.
 Read `fixtures/README.md` before you touch anything under `fixtures/`.
 
 A labeled half drawn from real mailbox history is not a fixture.
-It lives under `corpus/`, which is gitignored, and it never enters a commit.
+It lives under `corpus/`, which git ignores, and it never enters a commit.
 The offline jobs read such a half through `GOLD_FIT_PATH` and `GOLD_REPORT_PATH`.
 A half declares its provenance as `synthetic` or `real`, and every artifact
 records which one it consumed.
@@ -223,10 +223,10 @@ Use `feature/` for new work and `fix/` for a defect.
 
 Write each commit subject as a sentence in the present tense that says what
 is now true. End it with the issue number in parentheses, as in
-`The queue takes the next free case (#154)`. Keep the subject short, and
+`The queue takes the next free case (#42)`. Keep the subject short, and
 explain the reason in the body.
 
-A pull request merges as one squashed commit. Its title becomes that commit's
+Merge a pull request as one squashed commit. Its title becomes that commit's
 subject, so the title follows the same rule.
 
 The pull request template asks for these headings:
@@ -292,7 +292,8 @@ python3 scripts/check-docs.py
 ```
 
 It proves that each diagram declares and explains every box it draws an edge
-to. It proves that every relative link resolves. It proves that the register's
+to. It proves that every relative link names a file that exists. It does not
+check a `#` anchor. It proves that the register's
 design table accounts for every open item, and names every design document
 under `docs/design/`. It refuses a document whose file name says nothing, such
 as a UUID. It proves that each design record cites a decision the register

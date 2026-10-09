@@ -226,12 +226,25 @@ Take a snapshot before you run any migration.
 pg_dump "$DATABASE_URL" > pre-migrate.sql
 ```
 
-If a migration succeeds and then causes a problem in production, restore that snapshot.
+If a migration succeeds and then causes a problem in production, restore that
+snapshot into a new, empty database. A restore into the old database fails on
+the tables it already holds. Every write after the snapshot is lost.
+
+1. Stop every daemon and the console. A database with an open connection
+   cannot be dropped.
+2. Check out the commit before the faulty migration, or run its image.
+3. Recreate the database, restore the snapshot, and migrate. Connect to the
+   `postgres` database to drop and create `auracle`:
 
 ```sh
-psql "$DATABASE_URL" < pre-migrate.sql   # careful: replaces current data
-pnpm run db:migrate                       # re-applies up to the last good version
+psql postgres://auracle:auracle@localhost:5433/postgres \
+  -c 'DROP DATABASE auracle;' -c 'CREATE DATABASE auracle;'
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 < pre-migrate.sql
+pnpm run db:migrate   # applies nothing new, and restates auracle_reader
 ```
+
+Do not run `db:migrate` from the commit that holds the faulty migration. It
+applies that migration again.
 
 Do not write reverse scripts per migration. A hand-written down-migration can
 diverge from what the forward step really did. A snapshot cannot diverge,
@@ -478,6 +491,11 @@ The consumer reads this configuration:
 
 | Variable | Meaning | Default |
 |----------|---------|---------|
+| `DATABASE_URL` | The ledger. Required. | none |
+| `OPENROUTER_API_KEY` | The model provider's key. Required. | none |
+| `OPENROUTER_BASE_URL` | The provider's endpoint. | `https://openrouter.ai/api/v1` |
+| `AURACLE_ZDR_ONLY` | `1` asks the provider for zero data retention on every call (DEC-17). Absence means off. | off |
+| `PRODUCTS_FILE` | The product catalogue. A relative path reads from the working directory. | `products.json` |
 | `CONSUMER_PARTITIONS` | Comma-separated partitions this process owns. Required. | none |
 | `CONSUMER_INTERVAL_MS` | Ceiling on the wait between scans, in milliseconds. Intake signals an arrival and the consumer wakes on it, so this bounds the wait when a signal is lost. | 5000 |
 | `TICKET_DEADLINE_MS` | Per-ticket clock budget (DEC-25). | 60000 |
@@ -628,10 +646,13 @@ the customer. An automatic write that resolves the case ends it as well.
 
 A person may save or rewrite a reply on the turn after the publish. The re-run
 then ends too, so a new attempt never throws their work away (DEC-46). A
-failed embedding never starts the attempt. A re-run on a run the system still
-walks waits for a person. After `RERUN_STALE_HOURS` in the system's hands,
-three hours, the scan takes the run as dead and ends the re-run. The case page draws the same
-answer, from the same rule, before the scan records it.
+failed embedding never starts the attempt.
+
+A re-run on a run the system still walks waits for a person.
+`RERUN_STALE_HOURS` in `src/knowledge/rerun.ts` sets a limit of three hours.
+After three hours in the system's hands, the scan takes the run as dead and
+ends the re-run. The case page draws the same answer, from the same rule,
+before the scan records it.
 
 The same post from the case then asks for that re-run again. The new request
 keeps the time and the replies of the first one. So a reply that a person
@@ -1380,7 +1401,9 @@ There a tag would be text, and it would be saved with the reply.
 ### Which gate numbers a process runs on
 
 Every process that evaluates policy resolves its gate numbers once at startup.
-It reads the highest artifact under `calibration/` and logs what it adopted.
+It reads the highest artifact under `calibration/` for the agreement threshold,
+and the highest under `groundedness/` for the coverage pair. It logs what it
+adopted.
 Read that line before you trust a gate number.
 
 ```
@@ -1415,8 +1438,9 @@ reads `synthetic` for the shipped corpus and `real` for a half of your own
 history. The `model_ver` and `prompt_ver` fields name the pins the fit ran
 under.
 
-Read those two. The consumer checks the model behind a fitted coverage pair.
-It refuses to start when that model is not the one `MODEL_VER` names.
+Read those two. The consumer checks the model behind each fitted gate: the
+coverage pair and the agreement threshold. It refuses to start when either
+was fitted under a model other than the one `MODEL_VER` names.
 
 A threshold is one model's judgment of what coverage means. A model that
 reads claims more generously reaches the same number on weaker evidence.
@@ -1506,7 +1530,7 @@ The report states a band, or it states why it has none. It never states both.
 | `steady at 0 over 30 days` | The metric held one value all window, and today matches it. | Nothing. This is the healthy reading for the delivery count. |
 | `no spread over 30 days, and today moved to 3` | The metric held one value all window, and today left it. | Look now. There is no sigma to measure the step against. |
 | `the day measured a value that is not a number` | The ledger holds a value no arithmetic can use. | Read the ledger for that day. This needs a person. |
-| `the window spans more than one provider: stub and model` | The compared days span more than one model provider. | Wait out the window, or read the days on each side of the change separately. |
+| `the window spans more than one provider: model and stub` | The compared days span more than one model provider. | Wait out the window, or read the days on each side of the change separately. |
 
 Each line has a code in the artifact, in `shortfall_code`. Read that rather
 than the sentence if a tool consumes the file.
@@ -1562,7 +1586,7 @@ still acquire a value later.
 
 ### What happened on this run
 
-Two ledger tables answer this question. The `step_journal` table holds one row
+Three ledger tables answer this question. The `step_journal` table holds one row
 per step of a run. Each row has the status, the result JSON and the prompt and
 model versions (DEC-26). The pinned versions let you reproduce later exactly
 which prompt and model produced each step:
@@ -1621,7 +1645,7 @@ coordinator can record appears below. A queued message that failed
 | `classifier_unreadable` | Every classifier sample came back unreadable, so agreement measured nothing. | An answer budget too small for the model. Check `MODEL_VER` and the budget it needs. |
 | `classifier_no_label` | Samples were readable and named no intent this taxonomy holds. | A taxonomy or prompt fault, not a budget one. Compare the answers against `fixtures/taxonomy.json`. |
 | `retriever_unreadable` | The embedder answered with something the retriever could not read, or with no cost and no `EMBEDDINGS_USD_PER_MTOK` to price it. | Check the embedding model pin, the provider response and the price. |
-| `composer_unreadable` | The composer answered nothing at all. | The same cause, on the compose step. |
+| `composer_unreadable` | The composer answered with neither a draft nor an abstain. | The same cause, on the compose step. |
 | `gate_unreadable` | The coverage judge answered with no verdict. | The same cause, on the gate step. |
 | `internal_fault` | An invariant inside the coordinator did not hold. | A defect in this system. Read `fault` on the escalate row, then file an issue with that message. |
 
@@ -1783,7 +1807,7 @@ a partition. Drop the window when you hunt a stalled one.
 
 #### The counts beside the figures
 
-The job reports six counts rather than folding them into the figures. Each
+The job reports seven counts rather than folding them into the figures. Each
 names one cause, because each sends you somewhere different.
 
 | Count | What it means | What you do |
@@ -1794,6 +1818,7 @@ names one cause, because each sends you somewhere different.
 | `unstamped` | The run carries no finish time. | Nothing, unless it grows. |
 | `never_ran` | The run reaches a terminal state without executing, such as an intake abandonment. | Read `pnpm run escalations`. This count rises when a partition is failing. |
 | `snoozed` | A reviewer puts the case aside (DEC-48). Its duration is the wait, not work. | Nothing. It is the wait the distribution leaves out, and it falls as reviewers answer those cases. |
+| `rejected` | A reviewer sent the case back for a new attempt (DEC-49). Its duration is a person's reading time, not work. | Nothing. A rise says reviewers disagree with more drafts, so read those cases. |
 
 A run the job cannot measure never enters a figure as a zero. A zero would
 flatter exactly the runs the ledger understands least.
@@ -1811,16 +1836,16 @@ package, so nothing it needs reaches the daemons.
 
 ```sh
 pnpm install
-pnpm run build
 DATABASE_URL=postgres://auracle:auracle@localhost:5433/auracle \
 READER_DATABASE_URL=postgres://auracle_reader:auracle_reader@localhost:5433/auracle \
 CONSOLE_IDENTITY_HEADER=<header-your-proxy-sets> \
-  pnpm --filter @auracle/console start
+  pnpm run console
 ```
 
-`pnpm run build` compiles the core and the console together, because the
-solution references both. Without an identity source, the console refuses
-every request. The README's Quickstart uses `CONSOLE_DEV_REVIEWER` from source
+`pnpm run console` builds the core and the console together, because the
+solution references both. It runs from the repository root, where the console
+finds `products.json`. Without an identity source, the console refuses every
+request. The README's Quickstart uses `CONSOLE_DEV_REVIEWER` from source
 instead, for a checkout.
 
 It listens on 127.0.0.1:8787. Set `CONSOLE_PORT` and `CONSOLE_HOST` to change
@@ -1846,7 +1871,7 @@ front, and the browser sends the proxy's name instead. Name it in
 
 ```sh
 CONSOLE_ALLOWED_HOSTS=console.internal.example,console.internal.example:8443 \
-  pnpm --filter @auracle/console start
+  pnpm run console
 ```
 
 Each entry is a host and a port, exactly as the browser sends it. Omit the
@@ -2111,7 +2136,7 @@ client writes it.
 
 It also refuses a header that carries a credential, such as `authorization`.
 The ledger records the name the console resolves, and a credential is not a
-name. `hosts.ts` holds both lists.
+name. `console/src/hosts.ts` holds both lists.
 
 Each list holds the common names, not every possible name. So have the proxy
 name the reviewer in a header of its own: `X-Auth-Request-Email`, for
@@ -2236,12 +2261,14 @@ the queue does not list it. A line under the header links to the escalated
 runs on the runs list, which shows the newest 200. `pnpm run escalations`
 lists every one.
 
-The queue draws three groups, in the order a reviewer works them. The first
+The queue draws four groups, in the order a reviewer works them. The first
 holds a case that the rule `irreversible` or `high_risk` stopped. It also holds
 a case whose gate row records a high-tier intent, and a parked compensation.
 The second, Both gates clean, holds a case whose agreement and coverage each
-cleared their own line. The third holds every other waiting case. The oldest
-case comes first in each group.
+cleared their own line. The third holds every other waiting case. The fourth
+holds the cases another reviewer has taken (DEC-46).
+
+In each group the reader's own products come first, then the oldest case.
 
 Clean compares each gate with its own line and never combines the two
 (DEC-05). A gate the ledger did not measure clears nothing, so its case is not
@@ -2354,7 +2381,8 @@ judges that class irreversible. It sends at most once, so an unconfirmed send
 escalates (DEC-30).
 
 The warning reads the action, not the rule that stopped the run. The engine
-tests five rules in order and reports the first that fired. So a compensation
+tests five rules in order before it reads either gate, and it reports the
+first that fired. So a compensation
 can stop on a rule that says nothing about permanence.
 
 A case reads one journal, for its own run. The queue reads none. Reading one
@@ -3097,7 +3125,7 @@ helpdesk. The console offers no editor there. A member of staff who typed there 
 text that never sends. Nobody can recall a sent reply (DEC-12).
 
 The console reads the draft back when `APPROVE_ADAPTER` names `imap-smtp` or
-`freescout`. That is the path `pnpm run approve --read-back` takes. The approval
+`freescout`. That is the path `pnpm run approve -- --run <run-id> --read-back` takes. The approval
 reads the draft the helpdesk holds and records the approval-edit distance
 against it. Export the adapter's own variables too, because the console reads no
 `.env`. Name the adapter the consumer parks through. The console cannot read a
@@ -3274,7 +3302,7 @@ not the explanation.
 | `pnpm run check:guards` | The session hooks and the structural eval layer. |
 | `pnpm run check:fixtures` | Regenerates the corpus and refuses any difference. |
 
-**The pipeline daemons.** "Running the processes" explains each one. The
+**The daemons.** "Running the processes" explains the first four, and the
 console has its own section.
 
 | Command | What it does |
@@ -3283,6 +3311,7 @@ console has its own section.
 | `pnpm run imap` | Takes messages in over IMAP. |
 | `pnpm run consumer` | Walks the state machine for its partitions, and returns the cases whose snooze is due (DEC-48). |
 | `pnpm run relay` | Drains the outbox to the adapters. |
+| `pnpm run console` | Serves the operator console. Its own section explains it. |
 
 Each daemon also starts from source with no build step, for a local session:
 `pnpm run dev:webhook`, `pnpm run dev:imap`, `pnpm run dev:consumer`,
@@ -3295,7 +3324,7 @@ explains why Node's own type stripping cannot run this tree.
 |---|---|
 | `pnpm run db:migrate` | Applies the SQL files under `db/` in order, and restates the readers' role. |
 | `pnpm run escalations` | Lists what needs a person, and why. |
-| `pnpm run approve` | Approves or rejects one parked reply. |
+| `pnpm run approve` | Approves one parked run. |
 | `pnpm run reviewers` | Adds, deactivates and lists the reviewers who may use the console. |
 | `pnpm run latency` | Reports queue wait and service time per partition. |
 | `pnpm run bands` | Reports the `bands.yaml` metrics for one day. |

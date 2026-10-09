@@ -44,8 +44,8 @@ $ pnpm run verify
 ## 2. Decisions
 
 <!--
-Asked once, here. One sentence per behavior change: name the DEC it cites, or
-state that it is an implementation detail. A change that contradicts a DEC
+Name what the finished change cites. Write one sentence per behavior change:
+name the DEC it cites, or state that it is an implementation detail. A change that contradicts a DEC
 needs a decision first, not a pull request.
 
 If it cites a DEC, link the design record you committed under
@@ -57,7 +57,7 @@ file is needed.
 
 <!--
 Did you change `scripts/generate-fixtures.mjs`? If so, paste the output of:
-  node scripts/generate-fixtures.mjs && git diff --exit-code fixtures/
+  pnpm run check:fixtures
 If not, write "unchanged".
 -->
 

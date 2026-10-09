@@ -13,7 +13,8 @@ pnpm run verify
 ```
 
 It runs the build, the type check, the lint and every test project. It also
-runs the console's targets, the documentation checks and the fixtures diff.
+runs the console's targets, the documentation checks, the style check, the
+guard self-tests and the fixtures diff.
 For a change to markdown alone, the caller may ask for `pnpm run verify:fast`
 instead.
 

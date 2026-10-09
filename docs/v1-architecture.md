@@ -8,9 +8,11 @@ TypeScript. Postgres. No orchestration framework.
 ## 1. Scope
 
 This document specifies each component that processes a support request. The
-flow starts at the inbound message. The flow stops at one of two results. The
+flow starts at the inbound message. The flow stops at one of three results. The
 first result is an internal write that the system does automatically. The second
-result is a reply to the customer that a person approves.
+result is an action that a person approves, such as a reply to the customer.
+The third result is a case that a person takes over: an escalation, a close or
+a snooze.
 
 ### 1.1 In V1
 
@@ -25,12 +27,15 @@ result is a reply to the customer that a person approves.
 - Replay evaluation.
 - Induction of the taxonomy.
 - Calibration of the threshold.
+- Conversations of more than one turn (DEC-35 to DEC-39).
+- The operator console (DEC-40, DEC-44 to DEC-51).
 
 ### 1.2 Not in V1
 
 - Replies to customers that the system sends automatically.
 - Automatic clusters of feedback.
-- A different threshold for each intent.
+- A different threshold for each intent below the labeled-case trigger
+  (DEC-13). Above it, DEC-41 fits one for each intent.
 - Online A/B tests.
 
 ### 1.3 The contracts are the deliverable
@@ -114,6 +119,7 @@ row replaces, and the earlier row governs the rest.
 | The rejection of "a console that parks its own drafts", for those helpdesks | DEC-40 | DEC-44 |
 | The approval from the console. The command-line approval keeps DEC-42 | DEC-42 | DEC-45 |
 | The key, which also carries the attempt a person requested | DEC-38 | DEC-49 |
+| The partition key. A run with no conversation keeps the ticket id | DEC-27 | DEC-36 |
 
 ---
 
@@ -223,6 +229,8 @@ operator supplies the API key.
 **`ledger`** (Postgres). Obeys DEC-04, DEC-24, DEC-26, DEC-27, DEC-28.
 
 The ledger holds all state. No component keeps state outside the ledger.
+The sketch below shows the core columns that the decisions name. The
+migrations under `db/` hold the full schema.
 
 ```sql
 CREATE TABLE run (
@@ -298,7 +306,7 @@ control flow from the model.
 
 ```
 received -> classified -> retrieved -> composed -> gated
-  -> executing          (automatic path, internal writes only)
+  -> executing          (automatic path, reversible internal writes only)
   -> awaiting_approval  (customer replies, DEC-12)
   -> resolved | escalated | superseded | abandoned | closed
   -> snoozed           (waiting for a period or the customer, DEC-48)
@@ -326,7 +334,7 @@ in operations. It does not become a surprise in the invoice.
 
 ### 4.4 Outbox relay
 
-**`relay`**. Obeys DEC-04, DEC-06, DEC-28, DEC-29, DEC-30, DEC-44.
+**`relay`**. Obeys DEC-04, DEC-06, DEC-28, DEC-29, DEC-30, DEC-44, DEC-51.
 
 The relay is a different process. It reads the records in the outbox that have
 the `pending` status. It calls the adapter with the `idem_key` and the `epoch`.
@@ -541,7 +549,7 @@ cannot find a confident error. See section 3.2.
 
 ### 4.8 Policy engine
 
-**`policy`**. Obeys DEC-03, DEC-06, DEC-12, DEC-13, DEC-30.
+**`policy`**. Obeys DEC-03, DEC-05, DEC-06, DEC-12, DEC-13, DEC-30, DEC-34, DEC-41.
 
 This component is a pure function. It does not call a model.
 
@@ -765,7 +773,8 @@ each month, not for each ticket.
 Below the labeled-case trigger the job fits one global threshold. At or above
 it, the job fits a threshold for each intent that clears the data floor
 (DEC-41). An intent below that floor keeps the global threshold.
-`TRIGGER_MIN_LABELLED` sets the trigger from the arithmetic of section 3.3.
+`TRIGGER_MIN_LABELLED` sets the trigger at 8 000 labeled cases: the section 3.3
+figure of about 7 700, rounded up.
 
 **`bands`**. Obeys DEC-18, DEC-19.
 
@@ -932,7 +941,7 @@ never sufficient.
 
 A draft below block is escalated, and a person handles the escalation.
 
-**No run measures the report half at this pair yet.** DEC-31 exists for this.
+**No shipped artifact measures the report half at this pair.** DEC-31 exists for this.
 The numbers above choose the threshold, so they carry a selection effect. Only
 the report half can check them. DEC-31 forbids fit-half figures in that place.
 
@@ -1204,20 +1213,20 @@ decision only when a row enters the table in section 2.
 
 | Item | Document | Status |
 |---|---|---|
-| 1. Phase 2 exit criteria | `v2-automatic-customer-replies.md` | proposed, blocked |
-| 2. Compensation | `v2-compensation.md` | accepted, ratified as DEC-34 |
-| 3. Conversation state | `v2-multi-turn-conversation-state.md` | ratified as DEC-35 to DEC-39 |
-| 4. Automatic feedback clusters | `v2-automatic-feedback-clusters.md` | blocked on volume |
-| 5. A threshold for each intent | `v2-per-intent-agreement-thresholds.md` | open. The mechanism ships, and the item waits on an adopter's labeled history |
+| 1. Phase 2 exit criteria | [`v2-automatic-customer-replies.md`](design/v2-automatic-customer-replies.md) | proposed, blocked |
+| 2. Compensation | [`v2-compensation.md`](design/v2-compensation.md) | accepted, ratified as DEC-34 |
+| 3. Conversation state | [`v2-multi-turn-conversation-state.md`](design/v2-multi-turn-conversation-state.md) | ratified as DEC-35 to DEC-39 |
+| 4. Automatic feedback clusters | [`v2-automatic-feedback-clusters.md`](design/v2-automatic-feedback-clusters.md) | blocked on volume |
+| 5. A threshold for each intent | [`v2-per-intent-agreement-thresholds.md`](design/v2-per-intent-agreement-thresholds.md) | open. The mechanism ships, and the item waits on an adopter's labeled history |
 | 6. Schema migration procedure | none needed | closed by `src/ledger/migrate.ts` |
-| 7. Head-of-line delay | `v2-head-of-line-delay-correction.md` | proposed. The measurement ships, and the correction is unchosen |
-| (none) | `amendment-an-operator-console-beside-the-helpdesk-draft.md` operator console | ratified as DEC-40 |
-| (none) | `amendment-a-threshold-for-each-intent.md` a threshold for each intent | ratified as DEC-41 |
+| 7. Head-of-line delay | [`v2-head-of-line-delay-correction.md`](design/v2-head-of-line-delay-correction.md) | proposed. The measurement ships, and the correction is unchosen |
+| (none) | [`amendment-an-operator-console-beside-the-helpdesk-draft.md`](design/amendment-an-operator-console-beside-the-helpdesk-draft.md) operator console | ratified as DEC-40 |
+| (none) | [`amendment-a-threshold-for-each-intent.md`](design/amendment-a-threshold-for-each-intent.md) a threshold for each intent | ratified as DEC-41 |
 | (none) | no document: the approver a reply carries | ratified as DEC-42 |
-| (none) | `trace-bounded-intra-partition-concurrency.md` partition concurrency | a trace. No row needed |
-| (none) | `v2-online-ab-experiments.md` online A/B tests | proposed, blocked |
-| (none) | `ledger-implementation.md` ledger implementation | V1 background |
-| (none) | `amendment-a-reviewer-console-four-people-work-from.md` a reviewer console four people work from | ratified as DEC-44 to DEC-51 |
+| (none) | [`trace-bounded-intra-partition-concurrency.md`](design/trace-bounded-intra-partition-concurrency.md) partition concurrency | a trace. No row needed |
+| (none) | [`v2-online-ab-experiments.md`](design/v2-online-ab-experiments.md) online A/B tests | proposed, blocked |
+| (none) | [`ledger-implementation.md`](design/ledger-implementation.md) ledger implementation | V1 background |
+| (none) | [`amendment-a-reviewer-console-four-people-work-from.md`](design/amendment-a-reviewer-console-four-people-work-from.md) a reviewer console four people work from | ratified as DEC-44 to DEC-51 |
 
 A DEC number inside one of those documents is provisional. The register
 assigns the real number at ratification. So two documents may propose the

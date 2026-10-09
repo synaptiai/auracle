@@ -69,7 +69,7 @@ for B3 exists. The data does not.
 
 ### The next step
 
-**One part of this item is addressable in code today, and it is C7.**
+**C7 is the one part of this item that a change to code can move.**
 
 C7 sets an adapter floor. An automatic send needs `supportsIdempotencyKey` and
 `supportsReadBack` (DEC-06). With no person in the loop, the relay must
@@ -206,8 +206,8 @@ The figures in that design document do not describe the shipped corpus. Read
 the register and this item instead.
 
 The shipped corpus holds 8,200 synthetic cases, which clears the trigger. Its
-intent frequencies follow the Zipf shape at exponent 1 that section 3.3
-assumes. So the per-intent path runs end to end on synthetic data, and the stub
+intent frequencies follow a Zipf shape at exponent 1, the long tail that
+section 3.3 assumes. So the per-intent path runs end to end on synthetic data, and the stub
 labeler labels the cases (DEC-18).
 
 The fit refuses a threshold whose 95 percent lower bound cannot hold the
@@ -216,8 +216,8 @@ target precision. The shipped target precision is 0.985, and
 to hold 0.985.
 
 On the shipped fit half, the four most frequent intents hold that many, and
-the other 21 do not. So the fit sets four thresholds of 25, and the other 21
-keep the global threshold. The case count settles each refusal before the fit
+the other 21 do not. So the fit sets a threshold for four of the 25 intents,
+and the other 21 keep the global threshold. The case count settles each refusal before the fit
 reads precision.
 
 ### The next step
@@ -233,9 +233,10 @@ statement about the sample minimum, and never about accuracy.
 It also cannot show that the mechanism selects anything. A run at a target
 precision of 0.9 fits all 25 intents, each at a threshold of 1.0.
 
-No fitted threshold gates the shipped gold report either. That report records
-a gate source of `seed`, which names the section 4.5 seed. It records no
-calibration version, so the number it publishes rests on no fitted threshold.
+No fitted agreement threshold gates the shipped gold report either. That
+report records a gate source of `seed`, which names the section 4.5 seed, and
+no calibration version. Its coverage pair is fitted: it records a coverage
+source of `groundedness` and the fit version.
 
 ---
 
@@ -305,7 +306,7 @@ operator puts a proxy in front and adds that proxy's reviewer to the roster.
 | Item | What settles it |
 |---|---|
 | 2. Compensation for irreversible actions | DEC-34. The policy engine gates every irreversible write |
-| 3. Conversation state for more than one turn | DEC-35 to DEC-39, with `db/008` and `db/009` |
+| 3. Conversation state for more than one turn | DEC-35 to DEC-39. `db/008_conversation.sql` creates the conversation and turn tables |
 | 6. A schema migration procedure for adopters | `src/ledger/migrate.ts` and the `schema_version` table |
 
 ## Where to go next
