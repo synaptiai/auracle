@@ -95,8 +95,10 @@ while `WEBHOOK_SECRET` is empty. The console serves only an active reviewer,
 and a trusted proxy authenticates that reviewer (DEC-45). So put an
 authenticating proxy in front of anything another machine reaches.
 
-A merge to `main` runs `.github/workflows/release.yml`. It builds the image,
-checks that the image names its processes, and only then pushes it to GHCR.
+A merge to `main` runs the tests, and `.github/workflows/release.yml` runs
+once they pass on that commit. It builds the image, checks that the image
+names its processes, and only then pushes it to GHCR. A commit whose tests
+fail publishes no image.
 The tag is the commit SHA and never `latest`. Nobody can roll back to a tag
 that moves.
 

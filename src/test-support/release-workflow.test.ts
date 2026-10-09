@@ -31,7 +31,10 @@ interface Job {
   steps?: Step[];
 }
 
-const workflow = parse(readFileSync(WORKFLOW, 'utf8')) as { on: unknown; jobs: Record<string, Job> };
+const workflow = parse(readFileSync(WORKFLOW, 'utf8')) as { on: unknown; env: Record<string, string>; jobs: Record<string, Job> };
+
+/** The commit a run builds: the one Tests ran on, or the dispatched one. */
+const COMMIT = '${{ github.event.workflow_run.head_sha || github.sha }}';
 const image = workflow.jobs.image!;
 const refusal = workflow.jobs['not-main']!;
 const steps = image.steps ?? [];
@@ -50,15 +53,24 @@ function stringsOf(value: unknown): string[] {
 }
 
 describe('the release workflow', () => {
-  it('runs on a push to main and on a dispatch, and nothing else', () => {
-    expect(workflow.on).toEqual({ push: { branches: ['main'] }, workflow_dispatch: null });
+  // An image of a commit whose tests failed never reaches the registry: the
+  // build starts only after Tests passes on that commit.
+  it('runs after Tests completes on main, and on a dispatch, and nothing else', () => {
+    expect(workflow.on).toEqual({
+      workflow_run: { workflows: ['Tests'], types: ['completed'], branches: ['main'] },
+      workflow_dispatch: null,
+    });
   });
 
-  it('runs the image job on main, and refuses a dispatch from any other branch', () => {
+  it('builds only a commit pushed to main whose tests passed, or one dispatched from main', () => {
     expect(Object.keys(workflow.jobs).sort()).toEqual(['image', 'not-main']);
-    expect(image.if).toBe("github.ref == 'refs/heads/main'");
+    expect(image.if).toBe(
+      "(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'"
+        + " && github.event.workflow_run.event == 'push')"
+        + " || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')",
+    );
     expect(image.permissions).toEqual({ contents: 'read', packages: 'write' });
-    expect(refusal.if).toBe("github.ref != 'refs/heads/main'");
+    expect(refusal.if).toBe("github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'");
     expect(refusal.permissions).toEqual({});
     expect(refusal.steps).toHaveLength(1);
     const run = refusal.steps![0]!.run ?? '';
@@ -105,14 +117,16 @@ describe('the release workflow', () => {
     expect(run.match(/exit 1/g)?.length).toBeGreaterThanOrEqual(4);
   });
 
-  it('tags the image with the commit SHA alone', () => {
-    expect(steps[1]!.run).toBe('echo "tag=${REGISTRY}/${IMAGE}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"');
+  it('builds and tags the commit the tests ran on, by its SHA alone', () => {
+    expect(workflow.env.COMMIT).toBe(COMMIT);
+    expect(steps[0]!.with?.ref).toBe(COMMIT);
+    expect(steps[1]!.run).toBe('echo "tag=${REGISTRY}/${IMAGE}:${COMMIT}" >> "$GITHUB_OUTPUT"');
     // `ubuntu-latest` names a runner, not a tag.
     expect(stringsOf(workflow).filter((text) => /(?<!ubuntu-)\blatest\b/.test(text))).toEqual([]);
   });
 
   it('builds every commit on main in a group of its own, so a newer one cancels none', () => {
-    expect(image.concurrency).toEqual({ group: 'image-${{ github.sha }}', 'cancel-in-progress': false });
+    expect(image.concurrency).toEqual({ group: `image-${COMMIT}`, 'cancel-in-progress': false });
   });
 
   it('names no host, remote shell or deploy', () => {
