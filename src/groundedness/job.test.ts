@@ -237,10 +237,10 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
     }
   }, 30_000);
 
-  // The size rule applies to a synthetic half only, so on the real path
-  // this is the only check on a declared count. A four-hour run over the committed fit half died on `fetch failed` after
-  // roughly 3900 calls, and every scored draft went with it. The job holds no
-  // checkpoint, so a connection that drops once costs the whole run.
+  // The size rule applies to a synthetic half only, so on the real path this
+  // is the only check on a declared count. A run over the whole fit half makes
+  // thousands of calls, and the job holds no checkpoint, so a connection that
+  // drops once would cost every scored draft.
   //
   // A judging call reads; it delivers nothing and changes nothing outside this
   // process. So repeating one duplicates no effect, and DEC-30 does not reach
@@ -641,10 +641,9 @@ describe('runGroundednessJob (section 4.7, DEC-31)', () => {
     ).rejects.toThrow(/DOC-SYN-999/);
   });
 
-  // The refusal exists so a half
-  // with no labels names its own cause instead of dying inside the fitter
-  // with "needs both classes", and the warning is what tells an operator how
-  // much of their half was not scored.
+  // The refusal exists so a half with no labels names its own cause instead of
+  // dying inside the fitter with "needs both classes". The warning tells an
+  // operator how much of their half was not scored.
   it('refuses a half that carries no labelled claims, naming the cause (DEC-07)', async () => {
     const bare = { ...draft('A', 1, 0) };
     delete (bare as { claims?: unknown }).claims;

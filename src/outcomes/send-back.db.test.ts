@@ -963,7 +963,8 @@ describe('DEC-49: twin runs at one attempt', () => {
       const second = sendBackRun(pool, twinRunId, { note: 'Note B.', ledgerReply: true });
       // Wait until reviewer B's write is blocked on a lock, rather than for a
       // fixed time: it must have started before A commits.
-      expect(await lockWaitSeen(pool), 'reviewer B waits on the turn lock').toBe(true);
+      const holderPid = (await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+      expect(await lockWaitSeen(pool, { blockedBy: holderPid }), 'reviewer B waits on the turn lock').toBe(true);
       await holder.query(
         'UPDATE turn SET attempt = 2 WHERE conversation_id = $1 AND turn_number = $2',
         [first.conversationId, first.turnNumber],

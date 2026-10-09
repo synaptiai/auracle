@@ -642,7 +642,7 @@ describe('DEC-51: the undo', () => {
       // it refuses: by the time it reads the record, the send has landed.
       undone = undoApproval(pool, runId, { reviewer: 'synthetic-reviewer@example.test' });
       undone.catch(() => undefined);
-      expect(await lockWaitSeen(pool), 'the undo waits on the run row lock').toBe(true);
+      expect(await lockWaitSeen(pool), 'the undo waits on a lock behind the send').toBe(true);
     } finally {
       release();
     }

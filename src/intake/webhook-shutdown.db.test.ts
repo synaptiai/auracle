@@ -11,7 +11,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { SHUTDOWN_GRACE_MS } from '../cli/shutdown.js';
@@ -36,8 +36,9 @@ describe('the webhook shutdown with a stuck insert', () => {
     await started.listening;
     const { child, closed, stderr, port } = started;
     const killer = setTimeout(() => child.kill('SIGKILL'), 40_000);
-    const holder = await pool.connect();
+    let holder: PoolClient | undefined;
     try {
+      holder = await pool.connect();
       // The lock the delivery's insert waits behind, held for the whole case.
       await holder.query('BEGIN');
       await holder.query('LOCK TABLE intake IN ACCESS EXCLUSIVE MODE');
@@ -67,8 +68,8 @@ describe('the webhook shutdown with a stuck insert', () => {
     } finally {
       clearTimeout(killer);
       child.kill('SIGKILL');
-      await holder.query('ROLLBACK').catch(() => undefined);
-      holder.release();
+      await holder?.query('ROLLBACK').catch(() => undefined);
+      holder?.release();
     }
   }, 60_000);
 });

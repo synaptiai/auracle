@@ -584,6 +584,24 @@ describe('test titles', () => {
     ]);
   });
 
+  // The scan reads each test file inside one program built from the disk.
+  // A text that differs from the disk must not reuse it: an import resolved
+  // at a position in the disk text names some other identifier, or none.
+  it('reads a changed text of a scanned file by its own text, not the disk', () => {
+    scannedFiles();
+    const path = join(REPO_ROOT, 'src/config/node-version.test.ts');
+    const changed = [
+      "import { OUTBOX_STATUSES } from '../ledger/insert.js';",
+      "it.each(OUTBOX_STATUSES)('reads %s', () => undefined);",
+      readFileSync(path, 'utf8'),
+    ].join('\n');
+    const { found, unread } = titlesOf(path, changed);
+    expect(unread).toEqual([]);
+    expect(found.map(({ title }) => title)).toEqual(expect.arrayContaining([
+      'reads pending', 'reads sent', 'reads fenced', 'reads delivery_unknown', 'reads malformed', 'reads not_sent',
+    ]));
+  });
+
   it('cites no issue number in any core or console test title, and reads every one', () => {
     const scanned = scannedFiles().map((result) => ({ ...result, path: relative(REPO_ROOT, result.path) }));
     const paths = scanned.map(({ path }) => path);

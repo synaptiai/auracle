@@ -85,6 +85,9 @@ export function startFromSource(
  * when another process took the first one before the child bound it. The
  * child names that as `EADDRINUSE` on stderr. Any other outcome, a refusal
  * included, goes to the caller, who reads it from `listening`.
+ *
+ * `listening` must settle within a bound the caller sets: this helper waits
+ * on it and adds no limit of its own.
  */
 export async function startOnFreePort<T extends {
   readonly listening: Promise<unknown>;
@@ -102,7 +105,10 @@ export async function startOnFreePort<T extends {
 /** A loopback port nothing listens on at the moment of the call. */
 export async function freePort(): Promise<number> {
   const probe = createServer();
-  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+  await new Promise<void>((resolve, reject) => {
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', resolve);
+  });
   const { port } = probe.address() as AddressInfo;
   await new Promise<void>((resolve) => probe.close(() => resolve()));
   return port;

@@ -503,13 +503,25 @@ describe('the consumer loop', () => {
   // the filter one busy partition wakes the whole fleet.
   it('ignores a wake for a partition it does not own', async () => {
     const manual = signalByHand();
+    // Queries started, queries still running, and intake polls finished.
     let scans = 0;
+    let running = 0;
+    let polls = 0;
     const counting = {
       ...deps(),
       pool: new Proxy(pool, {
-        get(target, key) {
-          if (key === 'query') scans += 1;
-          return Reflect.get(target, key) as unknown;
+        get(target, key, receiver) {
+          if (key !== 'query') return Reflect.get(target, key, receiver) as unknown;
+          return async (...args: unknown[]): Promise<unknown> => {
+            scans += 1;
+            running += 1;
+            try {
+              return await (target.query as (...a: unknown[]) => Promise<unknown>)(...args);
+            } finally {
+              running -= 1;
+              if (typeof args[0] === 'string' && args[0].includes('FROM intake i')) polls += 1;
+            }
+          };
         },
       }) as Pool,
     };
@@ -521,10 +533,12 @@ describe('the consumer loop', () => {
       options({ partitions: [0], signal: manual, intervalMs: 30_000 }),
     );
     try {
-      // The first scan has ended: no query for 300 ms. A slow first scan on a
-      // loaded host then delays the case rather than failing it.
+      // The first scan has polled, no query is running, and none starts for
+      // 300 ms. A slow first scan on a loaded host then delays the case rather
+      // than failing it, and a scan that has not begun never reads as ended.
+      await awaitPolls(() => polls, 1);
       let seen = -1;
-      for (let waited = 0; seen !== scans; waited += 300) {
+      for (let waited = 0; seen !== scans || running > 0; waited += 300) {
         if (waited >= 15_000) throw new Error('the first scan never went quiet');
         seen = scans;
         await new Promise((resolve) => setTimeout(resolve, 300));
