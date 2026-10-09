@@ -103,9 +103,9 @@ One turn moves through these steps. The
    the gates. It escalates below the agreement threshold or the block
    threshold. It parks below the review threshold. At or above all three, it
    takes the automatic path, through the outbox.
-8. **Approval.** A person approves, sends back or closes each parked action.
-   They do it in the helpdesk or in the operator console (DEC-11, DEC-40,
-   DEC-44).
+8. **Approval.** A person approves each parked action, or sends back or closes
+   its case. They do it in the helpdesk or in the operator console (DEC-11,
+   DEC-40, DEC-44).
 
 The two gates stay separate (DEC-05). Each one catches a failure the other
 cannot see, and one blended score can pass while either gate fails.

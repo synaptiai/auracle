@@ -359,10 +359,11 @@ corpus, and committed fixtures match its output byte for byte.
 - Blending agreement and coverage into one confidence score. The gates are
   independent (DEC-05, section 3.2).
 - Reading `gate_pass_rate` from the gate verdict alone. `evaluatePolicy`
-returns `gated` for five reasons before it compares agreement. They are a
-customer reply, a high-tier intent, an irreversible write, a missing idempotency
-capability and a missing read-back capability. The journaled `reason` says which
-rule decided. `reachedAgreementGate` says whether the comparison happened.
+  returns `gated` for five reasons before it compares agreement. They are a
+  customer reply, a high-tier intent, an irreversible write, a missing
+  idempotency capability and a missing read-back capability. The journaled
+  `reason` says which rule decided. `reachedAgreementGate` says whether the
+  comparison happened.
 - Setting the classifier temperature to zero. At zero, agreement is always 1.0
   and the gate passes every ticket (section 4.5).
 - Deriving the idempotency key from `run_id` or a timestamp. Two runs of the

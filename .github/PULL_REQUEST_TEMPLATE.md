@@ -45,8 +45,8 @@ $ pnpm run verify
 
 <!--
 Name what the finished change cites. Write one sentence per behavior change:
-name the DEC it cites, or state that it is an implementation detail. A change that contradicts a DEC
-needs a decision first, not a pull request.
+name the DEC it cites, or state that it is an implementation detail. A change
+that contradicts a DEC needs a decision first, not a pull request.
 
 If it cites a DEC, link the design record you committed under
 `docs/decisions/`. If it cites none, this section is the whole record and no

@@ -5,6 +5,8 @@
 // listEscalations surfaces exactly what needs a person and why. Also pins
 // the filters (--since parsing, --state) as unit cases.
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { truncateLedger } from '../test-support/schema.js';
 import { Pool } from 'pg';
@@ -13,6 +15,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { dbUrl, readerDbUrl } from '../db/config.js';
 import { fencedInsert, type FencedRunInput } from '../ledger/insert.js';
 import { listEscalations, parseSince, listRuns, readRun } from './query.js';
+import { pendingRows } from '../relay/relay.js';
 import { readRunJournal } from '../journal/query.js';
 
 const pool = new Pool({ connectionString: dbUrl(), max: 10 });
@@ -705,6 +708,35 @@ describe('escalations CLI queries', () => {
     it('rejects garbage instead of silently dropping items', () => {
       expect(() => parseSince('yesterday')).toThrow(/--since/);
     });
+  });
+
+  // The runbook's rollback ends by holding every action the snapshot left
+  // pending, because the snapshot cannot tell an action still due from one the
+  // relay sent, or one a reviewer undid, after it. This runs the statement the
+  // runbook prints, so a reworded statement that no longer holds them fails.
+  it('holds a restored pending action from the relay, and lists it for a person', async () => {
+    const runbook = readFileSync(fileURLToPath(new URL('../../docs/operations.md', import.meta.url)), 'utf8');
+    const section = runbook.slice(runbook.indexOf('### Rollback story'));
+    const statement = /"(UPDATE outbox SET status = 'not_sent' WHERE [^"]*)"/.exec(section.slice(0, section.indexOf('\n### ', 1)));
+    expect(statement, 'the rollback block holds the pending actions').not.toBeNull();
+
+    const due = await seedRun('awaiting_approval');
+    const settled = await seedRun('resolved');
+    for (const [run, status] of [[due, 'pending'], [settled, 'sent']] as const) {
+      await pool.query(
+        `INSERT INTO outbox (run_id, step_id, idem_key, epoch, action_class, delivery, payload, status)
+         VALUES ($1, 'approve', $2, 1, 'customer_reply', 'at_most_once', '{}', $3)`,
+        [run.runId, 'idem-' + randomUUID(), status],
+      );
+    }
+    expect((await pendingRows(pool)).map((row) => row.run_id)).toEqual([due.runId]);
+
+    await pool.query(statement![1]!);
+
+    expect(await pendingRows(pool)).toEqual([]);
+    const listed = new Map((await listEscalations(pool)).map((item) => [item.runId, item.outboxStatus]));
+    expect(listed.get(due.runId)).toBe('not_sent');
+    expect(listed.has(settled.runId)).toBe(false);
   });
 
   afterAll(async () => {

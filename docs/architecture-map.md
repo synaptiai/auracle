@@ -218,7 +218,7 @@ flowchart LR
 | IMAPPOLL | Accepts messages from a mailbox. |
 | CONSUMERD | Walks each run through the steps. |
 | RELAYD2 | Sends the actions the outbox holds. |
-| CONSOLED | Serves the operator console, where a reviewer approves, closes, sends back or snoozes a parked action. It approves through the same path as the approve command. |
+| CONSOLED | Serves the operator console, where a reviewer approves a parked action, or closes, sends back or snoozes its case. It approves through the same path as the approve command. |
 | RUNTIME | The components that handle one ticket. The consumer calls all but the first. |
 | ENQ2 | Turns one arriving message into one queue row, and routes it to its conversation. |
 | CLASSIFY | Picks the intent. It samples nine times, so disagreement is visible. |

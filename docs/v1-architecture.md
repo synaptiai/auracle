@@ -12,8 +12,10 @@ flow starts at the inbound message.
 
 The flow stops at one of three results. The first result is an internal write
 that the system does automatically. The second result is an action that a person
-approves, such as a reply to the customer. The third result is a run that a
-person takes over. The run escalates, or a reviewer closes or snoozes its case.
+approves, such as a reply to the customer. The third result is a run that
+escalates to a person, or whose case a reviewer closes. A snoozed case waits,
+and it returns to the flow when its period ends or the customer writes
+(DEC-48).
 
 ### 1.1 In V1
 
