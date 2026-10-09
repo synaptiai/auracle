@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Brings a fresh clone to a state where `pnpm run verify` can run.
 #
-# Setup was a list in a document: enable corepack, install, copy the commit
-# hook, copy .env.example, start compose, migrate. Six manual steps, and the
-# commit hook is the one that fails silently — a contributor who skips it
-# edits the register with no DEC citation and learns of it from CI.
+# It enables corepack, installs the dependencies, installs the commit hook and
+# copies .env.example. Without the commit hook, a contributor can edit the
+# register with no DEC citation and learn of it only from CI.
 #
 # Idempotent. Every step checks before it acts, so running it a second time
 # changes nothing and says so.
@@ -65,19 +64,27 @@ else
   say "auracle bootstrap — $ROOT"
 fi
 
-# 1. Node. The engines field asks for 22.13 or later, and a lower one fails
-#    later and less clearly: vitest needs 22.12 and eslint needs 22.13.
+# 1. Node. vitest runs on release lines 22, 24, and 26 and later, and
+#    testcontainers needs 22.22. Any other version fails later and less
+#    clearly, so the engines field and this check name the same set.
 if ! command -v node >/dev/null 2>&1; then
-  step "node" "MISSING — install Node 22.13 or later, then run this again"
+  step "node" "MISSING — install Node 22.22 or later, then run this again"
   exit 1
 fi
-NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
-NODE_MINOR="$(node -p 'process.versions.node.split(".")[1]')"
-if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 13 ]; }; then
-  step "node" "$(node -v) — too old, this repository needs 22.13 or later"
+NODE_VERSION="$(node -v)"
+NODE_MAJOR="${NODE_VERSION#v}"
+NODE_MAJOR="${NODE_MAJOR%%.*}"
+NODE_MINOR="${NODE_VERSION#v*.}"
+NODE_MINOR="${NODE_MINOR%%.*}"
+if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 22 ]; }; then
+  step "node" "$NODE_VERSION — too old, this repository needs Node 22.22 or later"
   exit 1
 fi
-step "node" "$(node -v)"
+if [ "$NODE_MAJOR" -eq 23 ] || [ "$NODE_MAJOR" -eq 25 ]; then
+  step "node" "$NODE_VERSION — not supported: use Node 22.22 or later on line 22, or 24, or 26 and later"
+  exit 1
+fi
+step "node" "$NODE_VERSION"
 
 # 2. pnpm, through corepack. `packageManager` in package.json pins the
 #    version, and corepack is what honours it. An `npm install` here produces
@@ -94,7 +101,7 @@ if [ "$CHECK_ONLY" -eq 0 ] && command -v corepack >/dev/null 2>&1; then
   fi
 fi
 if ! command -v pnpm >/dev/null 2>&1; then
-  # Node 25 and later ship no corepack, so the message names the route that
+  # Node 26 and later ship no corepack, so the message names the route that
   # works on every supported Node: the version `packageManager` pins.
   # The read never fails, and it takes a plain version or nothing. A missing,
   # malformed or unusual field names no version, so the message never prints
@@ -109,7 +116,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
   if [ "$COREPACK_RAN" -eq 1 ] || ! command -v corepack >/dev/null 2>&1; then
     step "pnpm" "MISSING — $INSTALL, then run this again"
   else
-    step "pnpm" "MISSING — run 'corepack enable' (Node 22 to 24), or $INSTALL, then run this again"
+    step "pnpm" "MISSING — run 'corepack enable' (Node 22 or 24), or $INSTALL, then run this again"
   fi
   exit 1
 fi

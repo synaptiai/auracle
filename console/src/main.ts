@@ -1,4 +1,4 @@
-// The console entry point. Run with `pnpm --filter @auracle/console start`.
+// The console entry point. Run with `pnpm run console` from the repository root.
 //
 // This is where the surfaces meet the ledger, and it is the only file that
 // holds a pool. Every read goes through a query module the jobs already use —

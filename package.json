@@ -27,7 +27,7 @@
   ],
   "type": "module",
   "engines": {
-    "node": ">=22.13"
+    "node": "^22.22.0 || ^24.0.0 || >=26.0.0"
   },
   "packageManager": "pnpm@11.20.0",
   "exports": {
@@ -72,6 +72,7 @@
     "induce": "pnpm run build && node dist/jobs/run-taxonomy-induction.js",
     "triage": "pnpm run build && node dist/triage/run.js",
     "relay": "pnpm run build && node dist/relay/main.js",
+    "console": "pnpm run build && node console/dist/main.js",
     "consumer": "pnpm run build && node dist/coordinator/consumer-main.js",
     "imap": "pnpm run build && node dist/imap/main.js",
     "webhook": "pnpm run build && node dist/intake/webhook-main.js",

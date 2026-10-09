@@ -68,6 +68,6 @@ describe('the Node major', () => {
 
   it('is the major of the engines floor', () => {
     const engines = (JSON.parse(read('package.json')) as { engines: { node: string } }).engines.node;
-    expect(engines).toMatch(new RegExp(`^>=${major}\\.`));
+    expect(engines).toMatch(new RegExp(`^\\^${major}\\.`));
   });
 });

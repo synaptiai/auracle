@@ -38,11 +38,13 @@ let caseCount = 0;
 function bootstrap(options: {
   readonly args?: readonly string[];
   readonly packageManager?: string | null;
-  /** A stand-in, or null for no corepack at all, as Node 25 and later ship. */
+  /** A stand-in, or null for no corepack at all, as Node 26 and later ship. */
   readonly corepack?: Tool | null;
   readonly pnpm?: Tool;
   /** The locale the script runs under, as a developer's shell sets it. */
   readonly locale?: string;
+  /** The version `node -v` reports, as `v22.22.0`. Unset, the real one. */
+  readonly nodeVersion?: string;
 }): { status: number | null; stdout: string; stderr: string; ran: string } {
   caseCount += 1;
   const root = path.join(SCRATCH, `case-${caseCount}`);
@@ -52,7 +54,19 @@ function bootstrap(options: {
   copyFileSync(`${REPO_ROOT}scripts/bootstrap.sh`, path.join(root, 'tree', 'scripts', 'bootstrap.sh'));
   const manifest = options.packageManager === null ? {} : { packageManager: options.packageManager ?? 'pnpm@11.20.0' };
   writeFileSync(path.join(root, 'tree', 'package.json'), JSON.stringify(manifest));
-  symlinkSync(process.execPath, path.join(bin, 'node'));
+  if (options.nodeVersion === undefined) {
+    symlinkSync(process.execPath, path.join(bin, 'node'));
+  } else {
+    // A stand-in that reports this version and runs every other call on the
+    // real node, so the script's own reads still work.
+    const node = path.join(bin, 'node');
+    writeFileSync(node, [
+      '#!/bin/sh',
+      `[ "$1" = "-v" ] && { echo '${options.nodeVersion}'; exit 0; }`,
+      `exec '${process.execPath}' "$@"`,
+    ].join('\n'));
+    chmodSync(node, 0o755);
+  }
   const log = path.join(root, 'ran.log');
   const tools: ReadonlyArray<readonly [string, Tool | undefined]> = [
     ['corepack', options.corepack === null ? undefined : (options.corepack ?? { exit: 1 })],
@@ -92,10 +106,31 @@ function bootstrap(options: {
 }
 
 describe('the bootstrap script', () => {
+  // vitest runs on Node 22, 24, and 26 and later, and testcontainers needs
+  // 22.22. A version outside that set fails later and less clearly.
+  it.each(['v22.21.1', 'v20.19.0'])('refuses Node %s, and names the floor', (version) => {
+    const run = bootstrap({ nodeVersion: version });
+    expect(run.stdout).toContain(`${version} — too old, this repository needs Node 22.22 or later`);
+    expect(run.status).toBe(1);
+  });
+
+  it.each(['v23.11.0', 'v25.2.1'])('refuses Node %s, a release line vitest does not support', (version) => {
+    const run = bootstrap({ nodeVersion: version });
+    expect(run.stdout).toContain(`${version} — not supported: use Node 22.22 or later on line 22, or 24, or 26 and later`);
+    expect(run.status).toBe(1);
+  });
+
+  it.each(['v22.22.0', 'v24.0.0', 'v26.0.0'])('accepts Node %s', (version) => {
+    const run = bootstrap({ nodeVersion: version });
+    expect(run.stdout).toMatch(new RegExp(`node\\s+${version.replaceAll('.', '\\.')}\\n`));
+    expect(run.stdout).not.toContain('too old');
+    expect(run.stdout).not.toContain('not supported');
+  });
+
   it('enables nothing in check mode', () => {
     const run = bootstrap({ args: ['--check'], corepack: { exit: 0 } });
     expect(run.ran).not.toContain('corepack');
-    expect(run.stdout).toContain("run 'corepack enable' (Node 22 to 24), or run 'npm install -g pnpm@11.20.0'");
+    expect(run.stdout).toContain("run 'corepack enable' (Node 22 or 24), or run 'npm install -g pnpm@11.20.0'");
     expect(run.status).toBe(1);
   });
 

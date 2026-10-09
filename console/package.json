@@ -24,8 +24,7 @@
   "scripts": {
     "build": "node node_modules/typescript-7/bin/tsc -p tsconfig.json",
     "check": "node node_modules/typescript-7/bin/tsc -p tsconfig.check.json",
-    "test": "vitest run",
-    "start": "node dist/main.js"
+    "test": "vitest run"
   },
   "dependencies": {
     "auracle": "workspace:*"
