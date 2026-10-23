@@ -40,3 +40,14 @@ allowBuilds:
   protobufjs: false
   ssh2: false
   cpu-features: false
+
+# Security floors for transitive dependencies. vitest pulls vite, and imapflow
+# pulls ip-address through socks; both ranges admit the patched releases, and
+# these floors keep a re-resolve from landing on a vulnerable one.
+#
+#   vite        >=7.3.7  GHSA-9jrq-w75r-8gcw, GHSA-rq7h-c2jc-7f22 and the
+#                        bundled launch-editor advisories
+#   ip-address  >=10.7.4 GHSA-rxp7-6hxx-x8q5
+overrides:
+  vite: '>=7.3.7 <8'
+  ip-address: '>=10.7.4 <11'

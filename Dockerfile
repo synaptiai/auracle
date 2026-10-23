@@ -14,16 +14,17 @@
 # `exports` map points into `dist/`, so both trees are copied and the link is
 # recreated by a production install rather than carried across.
 
-# The base is pinned by digest, not by tag alone. `node:22-bookworm-slim`
-# moves, so two builds of one commit could carry different base layers.
-# Dependabot proposes each new digest as a pull request, and both stages must
-# name the same one. The major version matches `.nvmrc`. To move it by hand,
-# `docker buildx imagetools inspect node:22-bookworm-slim` prints the current
-# digest. The two FROM lines spell the image literally, because Dependabot
+# The base is pinned by an exact Node release and its digest, not by a moving
+# tag. `node:22-bookworm-slim` moves, so two builds of one commit could carry
+# different base layers, and the release in the tag says which Node security
+# fixes the image has. Dependabot proposes each new release as a pull request,
+# and both stages must name the same one. The major version matches `.nvmrc`.
+# To move it by hand, `docker buildx imagetools inspect node:<version>-bookworm-slim`
+# prints the digest. The two FROM lines spell the image literally, because Dependabot
 # cannot read a base image built from build arguments.
 
 # ---------------------------------------------------------------- build ----
-FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS build
+FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d AS build
 WORKDIR /app
 
 # The version is pinned here and in package.json's `packageManager` field.
@@ -43,7 +44,7 @@ COPY console ./console
 RUN pnpm run build
 
 # -------------------------------------------------------------- runtime ----
-FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS runtime
+FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
