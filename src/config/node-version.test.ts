@@ -24,7 +24,8 @@ describe('the Node major', () => {
     // A scan that found no stage would pass the loop below without looking.
     expect(stages.length).toBeGreaterThanOrEqual(2);
     for (const line of stages) {
-      expect(line, line).toMatch(new RegExp(`^\\s*FROM\\s+node:${major}-`, 'i'));
+      // The tag is the bare major or an exact release of it: `22-` or `22.x.y-`.
+      expect(line, line).toMatch(new RegExp(`^\\s*FROM\\s+node:${major}(?:\\.\\d+\\.\\d+)?-`, 'i'));
     }
   });
 
