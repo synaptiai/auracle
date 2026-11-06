@@ -88,18 +88,18 @@
     "@testcontainers/postgresql": "^12.2.1",
     "@types/node": "^22.20.5",
     "@types/pg": "^8.23.1",
-    "eslint": "^10.13.0",
+    "eslint": "^10.14.0",
     "testcontainers": "^12.2.1",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "typescript-7": "npm:typescript@^7.0.2",
-    "typescript-eslint": "^8.72.0",
-    "vitest": "^5.0.5",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.1.0",
     "yaml": "^2.9.1"
   },
   "dependencies": {
-    "imapflow": "^2.5.9",
-    "nodemailer": "^10.1.7",
+    "imapflow": "^2.10.0",
+    "nodemailer": "^10.3.1",
     "pg": "^8.23.1"
   }
 }
