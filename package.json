@@ -1,6 +1,6 @@
 {
   "name": "auracle",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Reference architecture for agentic customer support under two independent evidence gates, with a person approving every reply",
   "license": "Apache-2.0",
