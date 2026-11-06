@@ -49,6 +49,12 @@ allowBuilds:
 #                        bundled launch-editor advisories. vitest 5.1 types
 #                        need vite 8, so the floor is the patched 8.x release.
 #   ip-address  >=10.7.4 GHSA-rxp7-6hxx-x8q5
+#   minimatch   >=11.0.1 GHSA-g3hv-75wg-m249. eslint and testcontainers pull
+#                        7.x to 10.x, and only 11.0.1 carries the fix.
+#   glob        >=14.0.2 GHSA-3g3m-2fjr-6pw4. testcontainers pulls 10.x through
+#                        archiver, and only 14.0.2 carries the fix.
 overrides:
   vite: '>=8.3.3 <9'
   ip-address: '>=10.7.4 <11'
+  minimatch@>=7.0.0 <11.0.1: '>=11.0.1 <12'
+  glob@>=9.0.0 <14.0.2: '>=14.0.2 <15'
