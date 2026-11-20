@@ -39,7 +39,7 @@ services:
       retries: 20
 
   freescout:
-    image: nfrastack/freescout:2.2.23-alpine@sha256:1b22ddbc4f044ad838a885d091980554f9e9c477a006106bb3bca23f9728e5e9
+    image: nfrastack/freescout:2.2.25-alpine@sha256:0c27d6c21f7f48fb5b53f6302f8e33c97aec75f5f687fe5b19e7b9842d7c59f5
     depends_on:
       freescout-db:
         condition: service_healthy
